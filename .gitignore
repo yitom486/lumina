@@ -44,6 +44,10 @@ Desktop.ini
 src-tauri/native/mpv/*
 !src-tauri/native/mpv/README.md
 !src-tauri/native/mpv/VERSION
+# Native ffmpeg/ffprobe (dev machine only; keep README + VERSION)
+src-tauri/native/ffmpeg/*
+!src-tauri/native/ffmpeg/README.md
+!src-tauri/native/ffmpeg/VERSION
 # Native whisper (optional, on-demand ASR; keep README only)
 src-tauri/native/whisper/*
 !src-tauri/native/whisper/README.md
