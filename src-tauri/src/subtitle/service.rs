@@ -91,20 +91,24 @@ impl SubtitleService {
             .iter()
             .find(|c| c.id == choice_id)
             .ok_or_else(|| {
-                SubtitleError::extract_failed("找不到该字幕选项", Some(choice_id))
+                SubtitleError::extract_failed(Some(&format!(
+                    "subtitle choice not found: {choice_id}"
+                )))
             })?;
 
         if !choice.supported {
             return Err(SubtitleError::unsupported(
-                "暂不支持位图字幕（尚无 OCR）",
-                choice.codec_name.as_deref(),
+                choice
+                    .codec_name
+                    .as_deref()
+                    .or(Some("bitmap subtitle (no OCR)")),
             ));
         }
 
         match choice.source {
             SubtitleSource::Embedded => {
                 let stream_index = choice.stream_index.ok_or_else(|| {
-                    SubtitleError::internal("内嵌字幕缺少流索引", None)
+                    SubtitleError::internal(Some("embedded subtitle missing stream index"))
                 })?;
                 let (content, _format) = extract::extract_text_subtitle(
                     media_path,
@@ -123,7 +127,7 @@ impl SubtitleService {
             }
             SubtitleSource::Sidecar => {
                 let external = choice.external_path.as_deref().ok_or_else(|| {
-                    SubtitleError::internal("外挂字幕缺少文件路径", None)
+                    SubtitleError::internal(Some("sidecar subtitle missing file path"))
                 })?;
                 let (content, path_buf) = extract::read_external_subtitle(Path::new(external))?;
                 let cues = parse_subtitle_text(&content)?;

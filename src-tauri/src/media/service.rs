@@ -11,7 +11,18 @@ pub struct MediaInspector;
 impl MediaInspector {
     pub fn inspect(path: impl AsRef<Path>) -> Result<MediaInfo, MediaError> {
         let path = path.as_ref();
-        let info = ffprobe::probe_file(path)?;
+        let info = match ffprobe::probe_file(path) {
+            Ok(info) => info,
+            Err(error) => {
+                tracing::warn!(
+                    path = %path.display(),
+                    code = ?error.code,
+                    details = ?error.details,
+                    "media inspect failed"
+                );
+                return Err(error);
+            }
+        };
         tracing::info!(
             path = %info.path,
             format = ?info.format_name,

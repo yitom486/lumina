@@ -14,7 +14,7 @@ where
 {
     // NoteService is behind AppState; use blocking path from async commands.
     let Some(state) = app.try_state::<AppState>() else {
-        return Err(NoteError::internal("应用状态不可用", None));
+        return Err(NoteError::internal(Some("app state unavailable")));
     };
     work(&state.notes)
 }
@@ -23,28 +23,28 @@ where
 pub async fn notes_list(app: AppHandle, media_path: String) -> Result<Vec<Note>, NoteError> {
     tauri::async_runtime::spawn_blocking(move || with_notes(app, move |notes| notes.list_for_media(&media_path)))
         .await
-        .map_err(|error| NoteError::internal("列出笔记任务异常结束", Some(&error.to_string())))?
+        .map_err(|error| NoteError::internal(Some(&format!("notes list join: {error}"))))?
 }
 
 #[tauri::command]
 pub async fn notes_create(app: AppHandle, input: NoteCreate) -> Result<Note, NoteError> {
     tauri::async_runtime::spawn_blocking(move || with_notes(app, move |notes| notes.create(input)))
         .await
-        .map_err(|error| NoteError::internal("创建笔记任务异常结束", Some(&error.to_string())))?
+        .map_err(|error| NoteError::internal(Some(&format!("notes create join: {error}"))))?
 }
 
 #[tauri::command]
 pub async fn notes_update(app: AppHandle, input: NoteUpdate) -> Result<Note, NoteError> {
     tauri::async_runtime::spawn_blocking(move || with_notes(app, move |notes| notes.update(input)))
         .await
-        .map_err(|error| NoteError::internal("更新笔记任务异常结束", Some(&error.to_string())))?
+        .map_err(|error| NoteError::internal(Some(&format!("notes update join: {error}"))))?
 }
 
 #[tauri::command]
 pub async fn notes_delete(app: AppHandle, id: String) -> Result<(), NoteError> {
     tauri::async_runtime::spawn_blocking(move || with_notes(app, move |notes| notes.delete(&id)))
         .await
-        .map_err(|error| NoteError::internal("删除笔记任务异常结束", Some(&error.to_string())))?
+        .map_err(|error| NoteError::internal(Some(&format!("notes delete join: {error}"))))?
 }
 
 #[tauri::command]
@@ -56,5 +56,5 @@ pub async fn notes_export_markdown(
         with_notes(app, move |notes| notes.export_markdown(&media_path))
     })
     .await
-    .map_err(|error| NoteError::internal("导出笔记任务异常结束", Some(&error.to_string())))?
+    .map_err(|error| NoteError::internal(Some(&format!("notes export join: {error}"))))?
 }

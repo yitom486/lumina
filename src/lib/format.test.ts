@@ -26,7 +26,7 @@ describe("formatPlayerError", () => {
         code: "ProbeFailed",
         message: "ffprobe exited with error",
       }),
-    ).toBe("媒体探测失败");
+    ).toBe("无法读取该视频的媒体信息");
   });
 
   it("handles null / empty", () => {
@@ -39,8 +39,9 @@ describe("formatPlayerError", () => {
     expect(formatPlayerError({ code: "InvalidState" })).toBe(
       "当前状态无法执行该操作",
     );
-    expect(formatPlayerError({ code: "SpawnFailed" })).toBe("无法启动 ACP 进程");
-    expect(formatPlayerError({ code: "InvalidNote" })).toBe("笔记无效");
+    expect(formatPlayerError({ code: "SpawnFailed" })).toBe("无法启动 AI Agent");
+    expect(formatPlayerError({ code: "ProtocolError" })).toBe("与 Agent 通信失败");
+    expect(formatPlayerError({ code: "ToolNotFound" })).toBe("字幕工具未就绪");
   });
 });
 

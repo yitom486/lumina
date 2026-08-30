@@ -12,25 +12,25 @@ use crate::state::AppState;
 pub async fn acp_status(app: AppHandle) -> Result<AcpStatus, AcpError> {
     tauri::async_runtime::spawn_blocking(move || {
         let Some(state) = app.try_state::<AppState>() else {
-            return Err(AcpError::internal("应用状态不可用", None));
+            return Err(AcpError::internal(Some("app state unavailable")));
         };
         Ok(state.acp.status())
     })
     .await
-    .map_err(|error| AcpError::internal("ACP 状态查询异常结束", Some(&error.to_string())))?
+    .map_err(|error| AcpError::internal(Some(&format!("acp status join: {error}"))))?
 }
 
 #[tauri::command]
 pub async fn acp_set_active_profile(app: AppHandle, id: String) -> Result<AcpStatus, AcpError> {
     tauri::async_runtime::spawn_blocking(move || {
         let Some(state) = app.try_state::<AppState>() else {
-            return Err(AcpError::internal("应用状态不可用", None));
+            return Err(AcpError::internal(Some("app state unavailable")));
         };
         state.acp.set_active_profile(&id)?;
         Ok(state.acp.status())
     })
     .await
-    .map_err(|error| AcpError::internal("切换 Agent 任务异常结束", Some(&error.to_string())))?
+    .map_err(|error| AcpError::internal(Some(&format!("acp set active join: {error}"))))?
 }
 
 #[tauri::command]
@@ -40,12 +40,12 @@ pub async fn acp_upsert_profile(
 ) -> Result<AgentProfile, AcpError> {
     tauri::async_runtime::spawn_blocking(move || {
         let Some(state) = app.try_state::<AppState>() else {
-            return Err(AcpError::internal("应用状态不可用", None));
+            return Err(AcpError::internal(Some("app state unavailable")));
         };
         state.acp.upsert_profile(profile)
     })
     .await
-    .map_err(|error| AcpError::internal("保存 Agent 配置异常结束", Some(&error.to_string())))?
+    .map_err(|error| AcpError::internal(Some(&format!("acp upsert join: {error}"))))?
 }
 
 #[tauri::command]
@@ -65,18 +65,18 @@ pub async fn acp_prompt(
         })
     })
     .await
-    .map_err(|error| AcpError::internal("ACP 任务异常结束", Some(&error.to_string())))?
+    .map_err(|error| AcpError::internal(Some(&format!("acp prompt join: {error}"))))?
 }
 
 #[tauri::command]
 pub async fn acp_cancel(app: AppHandle) -> Result<(), AcpError> {
     tauri::async_runtime::spawn_blocking(move || {
         let Some(state) = app.try_state::<AppState>() else {
-            return Err(AcpError::internal("应用状态不可用", None));
+            return Err(AcpError::internal(Some("app state unavailable")));
         };
         state.acp.request_cancel();
         Ok(())
     })
     .await
-    .map_err(|error| AcpError::internal("ACP 取消任务异常结束", Some(&error.to_string())))?
+    .map_err(|error| AcpError::internal(Some(&format!("acp cancel join: {error}"))))?
 }

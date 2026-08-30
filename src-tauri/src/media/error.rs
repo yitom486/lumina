@@ -1,4 +1,5 @@
 //! Structured media inspection errors.
+//! `message` = business Chinese for UI; technical text only in `details` (+ tracing).
 
 use std::fmt;
 
@@ -38,8 +39,10 @@ impl MediaError {
     pub fn probe_not_found(details: Option<&str>) -> Self {
         Self::new(
             MediaErrorCode::ProbeNotFound,
-            "未找到 ffprobe，请放到 native/ffmpeg/",
-            details.map(str::to_string),
+            "媒体分析组件未就绪",
+            details
+                .map(str::to_string)
+                .or_else(|| Some("ffprobe missing under native/ffmpeg/".into())),
         )
     }
 
@@ -51,26 +54,27 @@ impl MediaError {
         )
     }
 
-    pub fn probe_failed(message: impl Into<String>, details: Option<&str>) -> Self {
+    /// User sees a stable business message; put tool/serde text in `details`.
+    pub fn probe_failed(details: Option<&str>) -> Self {
         Self::new(
             MediaErrorCode::ProbeFailed,
-            message,
+            "无法读取该视频的媒体信息",
             details.map(str::to_string),
         )
     }
 
-    pub fn invalid_media(message: impl Into<String>, details: Option<&str>) -> Self {
+    pub fn invalid_media(details: Option<&str>) -> Self {
         Self::new(
             MediaErrorCode::InvalidMedia,
-            message,
+            "该文件无法作为媒体使用",
             details.map(str::to_string),
         )
     }
 
-    pub fn internal(message: impl Into<String>, details: Option<&str>) -> Self {
+    pub fn internal(details: Option<&str>) -> Self {
         Self::new(
             MediaErrorCode::InternalError,
-            message,
+            "内部错误，请重试",
             details.map(str::to_string),
         )
     }
@@ -96,12 +100,14 @@ mod tests {
     }
 
     #[test]
-    fn constructors_use_chinese_messages() {
+    fn constructors_use_chinese_business_messages() {
         assert!(has_cjk(&MediaError::probe_not_found(None).message));
+        assert!(!MediaError::probe_not_found(None).message.contains("ffprobe"));
         assert!(has_cjk(&MediaError::file_not_found("x").message));
-        assert_eq!(
-            MediaError::probe_failed("媒体探测失败", None).code,
-            MediaErrorCode::ProbeFailed
-        );
+        let probe = MediaError::probe_failed(Some("serde boom"));
+        assert_eq!(probe.code, MediaErrorCode::ProbeFailed);
+        assert_eq!(probe.message, "无法读取该视频的媒体信息");
+        assert_eq!(probe.details.as_deref(), Some("serde boom"));
+        assert!(!MediaError::invalid_media(Some("no format")).message.contains("format"));
     }
 }

@@ -1,4 +1,6 @@
 //! Structured ACP errors.
+//! `message` = fixed business Chinese; spawn/protocol text only in `details` (+ tracing).
+//! User-input validation may use `bad_request` with a specific Chinese `message`.
 
 use std::fmt;
 
@@ -39,39 +41,47 @@ impl AcpError {
     pub fn not_configured(details: Option<&str>) -> Self {
         Self::new(
             AcpErrorCode::NotConfigured,
-            "未配置 ACP Agent（可选）。请安装 Codex ACP 适配器，或在设置中配置其它 Agent 命令",
-            details.map(str::to_string),
+            "未配置 AI Agent（可选）",
+            details.map(str::to_string).or_else(|| {
+                Some("install Codex ACP adapter or configure another Agent command".into())
+            }),
         )
     }
 
     pub fn busy() -> Self {
-        Self::new(AcpErrorCode::Busy, "已有 ACP 会话在运行", None)
+        Self::new(AcpErrorCode::Busy, "已有 AI 会话在运行", None)
     }
 
     pub fn spawn_failed(details: Option<&str>) -> Self {
         Self::new(
             AcpErrorCode::SpawnFailed,
-            "无法启动 ACP 进程",
+            "无法启动 AI Agent",
             details.map(str::to_string),
         )
     }
 
-    pub fn protocol(message: impl Into<String>, details: Option<&str>) -> Self {
+    /// Wire / protocol / I/O failures against the Agent process.
+    pub fn protocol(details: Option<&str>) -> Self {
         Self::new(
             AcpErrorCode::ProtocolError,
-            message,
+            "与 Agent 通信失败",
             details.map(str::to_string),
         )
+    }
+
+    /// User-facing validation (empty prompt, bad profile fields, …).
+    pub fn bad_request(message: impl Into<String>) -> Self {
+        Self::new(AcpErrorCode::ProtocolError, message, None)
     }
 
     pub fn cancelled() -> Self {
-        Self::new(AcpErrorCode::Cancelled, "已取消 ACP 会话", None)
+        Self::new(AcpErrorCode::Cancelled, "已取消 AI 会话", None)
     }
 
-    pub fn internal(message: impl Into<String>, details: Option<&str>) -> Self {
+    pub fn internal(details: Option<&str>) -> Self {
         Self::new(
             AcpErrorCode::InternalError,
-            message,
+            "内部错误，请重试",
             details.map(str::to_string),
         )
     }
@@ -97,10 +107,15 @@ mod tests {
     }
 
     #[test]
-    fn constructors_use_chinese_messages() {
+    fn constructors_use_chinese_business_messages() {
         assert!(has_cjk(&AcpError::not_configured(None).message));
+        assert!(!AcpError::not_configured(None).message.contains("Codex"));
         assert!(has_cjk(&AcpError::busy().message));
         assert!(has_cjk(&AcpError::cancelled().message));
         assert_eq!(AcpError::busy().code, AcpErrorCode::Busy);
+        let p = AcpError::protocol(Some("json parse failed"));
+        assert_eq!(p.message, "与 Agent 通信失败");
+        assert_eq!(p.details.as_deref(), Some("json parse failed"));
+        assert_eq!(AcpError::bad_request("提问内容不能为空").message, "提问内容不能为空");
     }
 }

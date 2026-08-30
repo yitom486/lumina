@@ -17,13 +17,13 @@ where
 {
     tauri::async_runtime::spawn_blocking(move || {
         let Some(state) = app.try_state::<AppState>() else {
-            return Err(PlayerError::internal("应用状态不可用", None));
+            return Err(PlayerError::internal(Some("app state unavailable")));
         };
         work(state.inner())
     })
     .await
     .map_err(|error| {
-        PlayerError::internal("播放任务异常结束", Some(&error.to_string()))
+        PlayerError::internal(Some(&format!("player task join: {error}")))
     })?
 }
 

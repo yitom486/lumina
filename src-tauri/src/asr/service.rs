@@ -49,10 +49,10 @@ impl AsrService {
         let result = (|| {
             let media_path = media_path.as_ref();
             if !media_path.is_file() {
-                return Err(AsrError::extract_failed(
-                    "找不到媒体文件",
-                    Some(&media_path.to_string_lossy()),
-                ));
+                return Err(AsrError::extract_failed(Some(&format!(
+                    "media file not found: {}",
+                    media_path.to_string_lossy()
+                ))));
             }
 
             let asr_paths = resolve_asr_paths()?;
@@ -66,7 +66,8 @@ impl AsrService {
 
             let work = temp_job_dir(media_path);
             std::fs::create_dir_all(&work).map_err(|error| {
-                AsrError::internal("无法创建 ASR 工作目录", Some(&error.to_string()))
+                tracing::warn!(%error, "ASR work dir create failed");
+                AsrError::internal(Some(&format!("create ASR work dir: {error}")))
             })?;
             let wav = work.join("audio.wav");
             extract::extract_wav_16k_mono(media_path, &wav)?;

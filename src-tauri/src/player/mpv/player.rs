@@ -131,9 +131,9 @@ impl LibMpvPlayer {
                 .map_err(map_playback_error);
         }
 
-        Err(PlayerError::playback(format!(
-            "未找到匹配的字幕轨（ff-index {ff_stream_index}）"
-        )))
+        Err(PlayerError::playback(Some(&format!(
+            "no matching subtitle track (ff-index {ff_stream_index})"
+        ))))
     }
 
     /// Load and select an external subtitle file.
@@ -172,9 +172,9 @@ impl LibMpvPlayer {
                 .set_property("aid", aid)
                 .map_err(map_playback_error);
         }
-        Err(PlayerError::playback(format!(
-            "未找到匹配的音轨（ff-index {ff_stream_index}）"
-        )))
+        Err(PlayerError::playback(Some(&format!(
+            "no matching audio track (ff-index {ff_stream_index})"
+        ))))
     }
 }
 
@@ -323,9 +323,9 @@ fn map_load_error(error: libmpv2::Error) -> PlayerError {
         || lower.contains("no demuxer")
         || lower.contains("unrecognized")
     {
-        return PlayerError::unsupported("不支持或无法识别该媒体格式", Some(&details));
+        return PlayerError::unsupported(Some(&details));
     }
-    PlayerError::load("无法打开该媒体文件", Some(&details))
+    PlayerError::load(Some(&details))
 }
 
 fn map_playback_error(error: libmpv2::Error) -> PlayerError {

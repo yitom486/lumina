@@ -1,4 +1,5 @@
 //! Structured subtitle / transcript errors.
+//! `message` = fixed business Chinese; tool/serde text only in `details` (+ tracing).
 
 use std::fmt;
 
@@ -40,8 +41,10 @@ impl SubtitleError {
     pub fn tool_not_found(details: Option<&str>) -> Self {
         Self::new(
             SubtitleErrorCode::ToolNotFound,
-            "未找到 ffmpeg，请放到 native/ffmpeg/",
-            details.map(str::to_string),
+            "字幕工具未就绪",
+            details
+                .map(str::to_string)
+                .or_else(|| Some("ffmpeg missing under native/ffmpeg/".into())),
         )
     }
 
@@ -53,26 +56,26 @@ impl SubtitleError {
         )
     }
 
-    pub fn extract_failed(message: impl Into<String>, details: Option<&str>) -> Self {
+    pub fn extract_failed(details: Option<&str>) -> Self {
         Self::new(
             SubtitleErrorCode::ExtractFailed,
-            message,
+            "无法提取字幕",
             details.map(str::to_string),
         )
     }
 
-    pub fn parse_failed(message: impl Into<String>, details: Option<&str>) -> Self {
+    pub fn parse_failed(details: Option<&str>) -> Self {
         Self::new(
             SubtitleErrorCode::ParseFailed,
-            message,
+            "无法解析字幕",
             details.map(str::to_string),
         )
     }
 
-    pub fn unsupported(message: impl Into<String>, details: Option<&str>) -> Self {
+    pub fn unsupported(details: Option<&str>) -> Self {
         Self::new(
             SubtitleErrorCode::UnsupportedSubtitle,
-            message,
+            "不支持该字幕格式",
             details.map(str::to_string),
         )
     }
@@ -85,10 +88,10 @@ impl SubtitleError {
         )
     }
 
-    pub fn internal(message: impl Into<String>, details: Option<&str>) -> Self {
+    pub fn internal(details: Option<&str>) -> Self {
         Self::new(
             SubtitleErrorCode::InternalError,
-            message,
+            "内部错误，请重试",
             details.map(str::to_string),
         )
     }
@@ -108,13 +111,15 @@ impl std::error::Error for SubtitleError {}
 impl From<crate::media::MediaError> for SubtitleError {
     fn from(value: crate::media::MediaError) -> Self {
         use crate::media::MediaErrorCode;
-        let code = match value.code {
-            MediaErrorCode::ProbeNotFound => SubtitleErrorCode::ToolNotFound,
-            MediaErrorCode::FileNotFound => SubtitleErrorCode::FileNotFound,
-            MediaErrorCode::InvalidMedia => SubtitleErrorCode::UnsupportedSubtitle,
-            _ => SubtitleErrorCode::ExtractFailed,
-        };
-        Self::new(code, value.message, value.details)
+        let details = value.details.as_deref();
+        match value.code {
+            MediaErrorCode::ProbeNotFound => Self::tool_not_found(details),
+            MediaErrorCode::FileNotFound => {
+                Self::file_not_found(details.unwrap_or("unknown path"))
+            }
+            MediaErrorCode::InvalidMedia => Self::unsupported(details),
+            _ => Self::extract_failed(details),
+        }
     }
 }
 
@@ -127,18 +132,22 @@ mod tests {
     }
 
     #[test]
-    fn constructors_use_chinese_messages() {
+    fn constructors_use_chinese_business_messages() {
         assert!(has_cjk(&SubtitleError::tool_not_found(None).message));
+        assert!(!SubtitleError::tool_not_found(None).message.contains("ffmpeg"));
         assert!(has_cjk(&SubtitleError::file_not_found("x").message));
         assert!(has_cjk(&SubtitleError::no_track().message));
+        let extract = SubtitleError::extract_failed(Some("ffmpeg spawn failed"));
+        assert_eq!(extract.message, "无法提取字幕");
+        assert_eq!(extract.details.as_deref(), Some("ffmpeg spawn failed"));
         assert_eq!(SubtitleError::no_track().code, SubtitleErrorCode::NoSubtitleTrack);
     }
 
     #[test]
-    fn media_error_maps_codes() {
+    fn media_error_maps_to_subtitle_business_messages() {
         let media = crate::media::MediaError::probe_not_found(None);
         let sub = SubtitleError::from(media);
         assert_eq!(sub.code, SubtitleErrorCode::ToolNotFound);
-        assert!(has_cjk(&sub.message));
+        assert_eq!(sub.message, "字幕工具未就绪");
     }
 }

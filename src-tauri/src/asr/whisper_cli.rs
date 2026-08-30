@@ -43,16 +43,16 @@ pub fn transcribe_wav(
         ])
         .output()
         .map_err(|error| {
-            AsrError::transcribe_failed("无法启动 whisper-cli", Some(&error.to_string()))
+            tracing::warn!(%error, "whisper-cli spawn failed");
+            AsrError::transcribe_failed(Some(&format!("whisper-cli spawn: {error}")))
         })?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         let stdout = String::from_utf8_lossy(&output.stdout);
-        return Err(AsrError::transcribe_failed(
-            "whisper-cli 执行失败",
-            Some(format!("{stderr}\n{stdout}").trim()),
-        ));
+        let details = format!("{stderr}\n{stdout}");
+        tracing::warn!(%details, "whisper-cli exited with error");
+        return Err(AsrError::transcribe_failed(Some(details.trim())));
     }
 
     // Some builds write next to wav or use different suffix — probe common paths.
@@ -66,14 +66,14 @@ pub fn transcribe_wav(
         .iter()
         .find_map(|p| std::fs::read_to_string(p).ok().filter(|c| !c.trim().is_empty()))
         .ok_or_else(|| {
-            AsrError::transcribe_failed(
-                "转写完成但未找到 SRT 输出",
-                Some("expected asr.srt in the temp job directory"),
-            )
+            AsrError::transcribe_failed(Some(
+                "expected asr.srt in the temp job directory",
+            ))
         })?;
 
     let cues = parse_subtitle_text(&content).map_err(|error| {
-        AsrError::transcribe_failed("无法解析 ASR 生成的 SRT", Some(&error.to_string()))
+        tracing::warn!(%error, "failed to parse ASR SRT");
+        AsrError::transcribe_failed(Some(&format!("parse ASR SRT: {error}")))
     })?;
 
     Ok(Transcript {

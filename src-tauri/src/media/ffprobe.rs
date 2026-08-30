@@ -50,7 +50,9 @@ struct ProbeTags {
 
 #[derive(Debug, Deserialize)]
 struct ProbeChapter {
-    id: Option<u32>,
+    /// ffprobe may emit huge/negative ids; accept loosely and fall back when mapping.
+    #[serde(default)]
+    id: Option<serde_json::Value>,
     start_time: Option<String>,
     end_time: Option<String>,
     tags: Option<ProbeTags>,
@@ -81,28 +83,34 @@ pub fn probe_file(path: &Path) -> Result<MediaInfo, MediaError> {
         ])
         .output()
         .map_err(|error| {
-            MediaError::probe_failed("无法启动 ffprobe", Some(&error.to_string()))
+            tracing::warn!(%error, "ffprobe spawn failed");
+            MediaError::probe_failed(Some(&error.to_string()))
         })?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-        return Err(MediaError::probe_failed(
-            "媒体探测失败",
-            Some(if stderr.is_empty() {
-                "non-zero exit status"
-            } else {
-                &stderr
-            }),
-        ));
+        let details = if stderr.is_empty() {
+            "ffprobe non-zero exit status".to_string()
+        } else {
+            format!("ffprobe stderr: {stderr}")
+        };
+        tracing::warn!(%details, "ffprobe exited with error");
+        return Err(MediaError::probe_failed(Some(&details)));
     }
 
     let parsed: ProbeJson = serde_json::from_slice(&output.stdout).map_err(|error| {
-        MediaError::probe_failed("无法解析 ffprobe 输出", Some(&error.to_string()))
+        tracing::warn!(
+            %error,
+            stdout_len = output.stdout.len(),
+            "ffprobe json parse failed"
+        );
+        MediaError::probe_failed(Some(&format!("ffprobe json: {error}")))
     })?;
 
-    let format = parsed
-        .format
-        .ok_or_else(|| MediaError::invalid_media("媒体信息缺少 format 段", None))?;
+    let format = parsed.format.ok_or_else(|| {
+        tracing::warn!("ffprobe json missing format section");
+        MediaError::invalid_media(Some("ffprobe returned no format section"))
+    })?;
 
     let streams = parsed
         .streams
@@ -112,7 +120,10 @@ pub fn probe_file(path: &Path) -> Result<MediaInfo, MediaError> {
         .collect::<Vec<_>>();
 
     if streams.is_empty() {
-        return Err(MediaError::invalid_media("媒体文件中没有可用流", None));
+        tracing::warn!("ffprobe returned zero streams");
+        return Err(MediaError::invalid_media(Some(
+            "no streams found in media file",
+        )));
     }
 
     let chapters = parsed
@@ -142,11 +153,31 @@ fn map_chapter(fallback_id: u32, chapter: ProbeChapter) -> Option<MediaChapter> 
     let end_ms = parse_secs_to_ms(chapter.end_time.as_deref());
     let title = chapter.tags.and_then(|t| t.title);
     Some(MediaChapter {
-        id: chapter.id.unwrap_or(fallback_id),
+        id: parse_flexible_u32(chapter.id).unwrap_or(fallback_id),
         start_ms,
         end_ms,
         title,
     })
+}
+
+fn parse_flexible_u32(value: Option<serde_json::Value>) -> Option<u32> {
+    match value? {
+        serde_json::Value::Number(n) => {
+            if let Some(u) = n.as_u64() {
+                if u <= u32::MAX as u64 {
+                    return Some(u as u32);
+                }
+            }
+            if let Some(i) = n.as_i64() {
+                if (0..=u32::MAX as i64).contains(&i) {
+                    return Some(i as u32);
+                }
+            }
+            None
+        }
+        serde_json::Value::String(s) => s.parse().ok(),
+        _ => None,
+    }
 }
 
 fn map_stream(stream: ProbeStream) -> MediaStream {
@@ -246,5 +277,15 @@ mod tests {
         let err = probe_file(Path::new("Z:\\lumina-missing-media-xyz.mp4")).expect_err("missing");
         assert_eq!(err.code, crate::media::error::MediaErrorCode::FileNotFound);
         assert!(err.message.chars().any(|c| ('\u{4e00}'..='\u{9fff}').contains(&c)));
+    }
+
+    #[test]
+    fn flexible_u32_ignores_huge_negative() {
+        assert_eq!(
+            parse_flexible_u32(Some(serde_json::json!(-2481607921214808748_i64))),
+            None
+        );
+        assert_eq!(parse_flexible_u32(Some(serde_json::json!(3))), Some(3));
+        assert_eq!(parse_flexible_u32(Some(serde_json::json!("7"))), Some(7));
     }
 }

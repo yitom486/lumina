@@ -19,24 +19,24 @@ const ERROR_FALLBACK: Record<string, string> = {
   InvalidState: "当前状态无法执行该操作",
   InternalError: "内部错误，请重试",
   // Media
-  ProbeNotFound: "未找到 ffprobe",
-  FileNotFound: "找不到文件",
-  ProbeFailed: "媒体探测失败",
-  InvalidMedia: "无效的媒体文件",
-  // Subtitle
-  ToolNotFound: "未找到 ffmpeg",
-  ExtractFailed: "字幕抽取失败",
-  ParseFailed: "字幕解析失败",
+  ProbeNotFound: "媒体分析组件未就绪",
+  FileNotFound: "找不到媒体文件或无法访问",
+  ProbeFailed: "无法读取该视频的媒体信息",
+  InvalidMedia: "该文件无法作为媒体使用",
+  // Subtitle / Asr share ExtractFailed code — Rust message is authoritative
+  ToolNotFound: "字幕工具未就绪",
+  ExtractFailed: "内容提取失败",
+  ParseFailed: "无法解析字幕",
   UnsupportedSubtitle: "不支持该字幕格式",
-  NoSubtitleTrack: "没有可用字幕轨",
+  NoSubtitleTrack: "该媒体没有可用字幕轨",
   // Asr
   NotConfigured: "未配置可选组件（ASR/ACP）",
   Busy: "已有任务在运行",
   TranscribeFailed: "语音转写失败",
   Cancelled: "已取消",
   // Acp
-  SpawnFailed: "无法启动 ACP 进程",
-  ProtocolError: "ACP 协议错误",
+  SpawnFailed: "无法启动 AI Agent",
+  ProtocolError: "与 Agent 通信失败",
   // Note
   IoError: "笔记读写失败",
   NotFound: "找不到该笔记",

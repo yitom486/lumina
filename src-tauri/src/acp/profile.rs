@@ -72,13 +72,15 @@ impl ProfileStore {
             return Ok(default_agents_file());
         }
         let raw = fs::read_to_string(&self.path).map_err(|error| {
-            AcpError::internal("无法读取 Agent 配置", Some(&error.to_string()))
+            tracing::warn!(%error, "failed to read agent config");
+            AcpError::internal(Some(&format!("read agent config: {error}")))
         })?;
         if raw.trim().is_empty() {
             return Ok(default_agents_file());
         }
         let mut file: AgentsFile = serde_json::from_str(&raw).map_err(|error| {
-            AcpError::internal("Agent 配置格式无效", Some(&error.to_string()))
+            tracing::warn!(%error, "invalid agent config json");
+            AcpError::internal(Some(&format!("parse agent config: {error}")))
         })?;
         merge_builtin_profiles(&mut file);
         Ok(file)
@@ -87,14 +89,16 @@ impl ProfileStore {
     pub fn save(&self, file: &AgentsFile) -> Result<(), AcpError> {
         if let Some(parent) = self.path.parent() {
             fs::create_dir_all(parent).map_err(|error| {
-                AcpError::internal("无法创建 Agent 配置目录", Some(&error.to_string()))
+                tracing::warn!(%error, "failed to create agent config dir");
+                AcpError::internal(Some(&format!("create agent config dir: {error}")))
             })?;
         }
         let raw = serde_json::to_string_pretty(file).map_err(|error| {
-            AcpError::internal("无法序列化 Agent 配置", Some(&error.to_string()))
+            AcpError::internal(Some(&format!("serialize agent config: {error}")))
         })?;
         fs::write(&self.path, raw).map_err(|error| {
-            AcpError::internal("无法写入 Agent 配置", Some(&error.to_string()))
+            tracing::warn!(%error, "failed to write agent config");
+            AcpError::internal(Some(&format!("write agent config: {error}")))
         })?;
         Ok(())
     }
@@ -121,10 +125,7 @@ impl ProfileStore {
     pub fn set_active(&self, id: &str) -> Result<(), AcpError> {
         let mut file = self.load_or_default()?;
         if !file.profiles.iter().any(|p| p.id == id) {
-            return Err(AcpError::protocol(
-                "找不到该 Agent 配置",
-                Some(id),
-            ));
+            return Err(AcpError::bad_request(format!("找不到该 Agent 配置：{id}")));
         }
         file.active_profile_id = id.to_string();
         self.save(&file)
@@ -132,7 +133,7 @@ impl ProfileStore {
 
     pub fn upsert(&self, profile: AgentProfile) -> Result<AgentProfile, AcpError> {
         if profile.id.trim().is_empty() || profile.command.trim().is_empty() {
-            return Err(AcpError::protocol("Agent id 与 command 不能为空", None));
+            return Err(AcpError::bad_request("Agent id 与 command 不能为空"));
         }
         let mut file = self.load_or_default()?;
         if let Some(existing) = file.profiles.iter_mut().find(|p| p.id == profile.id) {

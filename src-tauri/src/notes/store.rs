@@ -41,13 +41,15 @@ pub fn load(path: &Path) -> Result<Vec<Note>, NoteError> {
         return Ok(Vec::new());
     }
     let raw = fs::read_to_string(path).map_err(|error| {
-        NoteError::io("无法读取笔记文件", Some(&error.to_string()))
+        tracing::warn!(%error, "failed to read notes file");
+        NoteError::io(Some(&format!("read notes file: {error}")))
     })?;
     if raw.trim().is_empty() {
         return Ok(Vec::new());
     }
     let parsed: NotesFile = serde_json::from_str(&raw).map_err(|error| {
-        NoteError::io("笔记文件格式无效", Some(&error.to_string()))
+        tracing::warn!(%error, "invalid notes json");
+        NoteError::io(Some(&format!("parse notes file: {error}")))
     })?;
     Ok(parsed.notes)
 }
@@ -55,17 +57,19 @@ pub fn load(path: &Path) -> Result<Vec<Note>, NoteError> {
 pub fn save(path: &Path, notes: &[Note]) -> Result<(), NoteError> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).map_err(|error| {
-            NoteError::io("无法创建笔记目录", Some(&error.to_string()))
+            tracing::warn!(%error, "failed to create notes dir");
+            NoteError::io(Some(&format!("create notes dir: {error}")))
         })?;
     }
     let payload = NotesFile {
         notes: notes.to_vec(),
     };
     let raw = serde_json::to_string_pretty(&payload).map_err(|error| {
-        NoteError::internal("无法序列化笔记", Some(&error.to_string()))
+        NoteError::internal(Some(&format!("serialize notes: {error}")))
     })?;
     fs::write(path, raw).map_err(|error| {
-        NoteError::io("无法写入笔记文件", Some(&error.to_string()))
+        tracing::warn!(%error, "failed to write notes file");
+        NoteError::io(Some(&format!("write notes file: {error}")))
     })?;
     Ok(())
 }

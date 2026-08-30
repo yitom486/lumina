@@ -1,5 +1,5 @@
 //! Structured player errors. Frontend shape: `{ code, message, details? }`.
-//! `message` is user-facing Chinese; technical text goes in `details`.
+//! `message` is fixed user-facing Chinese; technical text goes in `details`.
 
 use std::fmt;
 
@@ -52,39 +52,56 @@ impl PlayerError {
         )
     }
 
-    pub fn playback(message: impl Into<String>) -> Self {
-        Self::new(PlayerErrorCode::PlaybackError, message, None)
+    pub fn playback(details: Option<&str>) -> Self {
+        Self::new(
+            PlayerErrorCode::PlaybackError,
+            "播放操作失败，请重试",
+            details.map(str::to_string),
+        )
     }
 
-    pub fn load(message: impl Into<String>, details: Option<&str>) -> Self {
+    pub fn load(details: Option<&str>) -> Self {
         Self::new(
             PlayerErrorCode::LoadError,
-            message,
+            "无法打开该媒体文件",
             details.map(str::to_string),
         )
     }
 
-    pub fn unsupported(message: impl Into<String>, details: Option<&str>) -> Self {
+    pub fn unsupported(details: Option<&str>) -> Self {
         Self::new(
             PlayerErrorCode::UnsupportedMedia,
-            message,
+            "不支持该媒体格式",
             details.map(str::to_string),
         )
     }
 
-    pub fn internal(message: impl Into<String>, details: Option<&str>) -> Self {
+    pub fn native_window(details: Option<&str>) -> Self {
+        Self::new(
+            PlayerErrorCode::NativeWindowError,
+            "视频窗口异常",
+            details.map(str::to_string),
+        )
+    }
+
+    pub fn initialization(details: Option<&str>) -> Self {
+        Self::new(
+            PlayerErrorCode::InitializationError,
+            "播放引擎初始化失败",
+            details.map(str::to_string),
+        )
+    }
+
+    pub fn internal(details: Option<&str>) -> Self {
         Self::new(
             PlayerErrorCode::InternalError,
-            message,
+            "内部错误，请重试",
             details.map(str::to_string),
         )
     }
 
     pub fn backend_missing() -> Self {
-        Self::internal(
-            "播放引擎尚未就绪",
-            Some("libmpv backend is not attached"),
-        )
+        Self::internal(Some("libmpv backend is not attached"))
     }
 }
 
@@ -145,6 +162,7 @@ mod tests {
         let err = PlayerError::backend_missing();
         assert!(err.message.chars().any(|c| ('\u{4e00}'..='\u{9fff}').contains(&c)));
         assert_eq!(err.code, PlayerErrorCode::InternalError);
+        assert_eq!(err.message, "内部错误，请重试");
 
         let invalid = PlayerError::invalid_state("play", PlayerState::Error);
         assert!(invalid.message.contains("错误"));
@@ -162,7 +180,7 @@ mod tests {
 
     #[test]
     fn serde_shape_has_pascal_code() {
-        let err = PlayerError::load("无法打开该媒体文件", Some("raw"));
+        let err = PlayerError::load(Some("raw"));
         let json = serde_json::to_value(&err).expect("json");
         assert_eq!(json["code"], "LoadError");
         assert_eq!(json["message"], "无法打开该媒体文件");

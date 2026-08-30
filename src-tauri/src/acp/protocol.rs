@@ -54,7 +54,10 @@ pub fn session_prompt_params(session_id: &str, text: &str) -> Value {
 
 pub fn encode_line(value: &Value) -> Result<String, AcpError> {
     serde_json::to_string(value)
-        .map_err(|error| AcpError::protocol("无法序列化 ACP 请求", Some(&error.to_string())))
+        .map_err(|error| {
+            tracing::warn!(%error, "failed to serialize ACP request");
+            AcpError::protocol(Some(&format!("serialize ACP request: {error}")))
+        })
 }
 
 /// Extract assistant-visible text fragments from an ACP notification / result.

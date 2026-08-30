@@ -125,7 +125,7 @@ impl AcpService {
     ) -> Result<String, AcpError> {
         let prompt_text = prompt_text.trim();
         if prompt_text.is_empty() {
-            return Err(AcpError::protocol("提问内容不能为空", None));
+            return Err(AcpError::bad_request("提问内容不能为空"));
         }
 
         if let Some(id) = profile_id {
@@ -174,7 +174,7 @@ impl AcpService {
             let mut slot = self
                 .child
                 .lock()
-                .map_err(|_| AcpError::internal("ACP 内部锁异常", None))?;
+                .map_err(|_| AcpError::internal(Some("ACP child mutex poisoned")))?;
             *slot = Some(child);
         }
 
@@ -182,10 +182,12 @@ impl AcpService {
             |stdin: &mut std::process::ChildStdin, id: u64, method: &str, params: Value| {
                 let line = encode_line(&request(id, method, params))?;
                 writeln!(stdin, "{line}").map_err(|error| {
-                    AcpError::protocol("写入 ACP 请求失败", Some(&error.to_string()))
+                    tracing::warn!(%error, "ACP write failed");
+                    AcpError::protocol(Some(&format!("write ACP request: {error}")))
                 })?;
                 stdin.flush().map_err(|error| {
-                    AcpError::protocol("刷新 ACP stdin 失败", Some(&error.to_string()))
+                    tracing::warn!(%error, "ACP flush failed");
+                    AcpError::protocol(Some(&format!("flush ACP stdin: {error}")))
                 })?;
                 Ok::<(), AcpError>(())
             };
@@ -200,25 +202,24 @@ impl AcpService {
                 }
                 line_buf.clear();
                 let bytes = reader.read_line(&mut line_buf).map_err(|error| {
-                    AcpError::protocol("读取 ACP 输出失败", Some(&error.to_string()))
+                    tracing::warn!(%error, "ACP read failed");
+                    AcpError::protocol(Some(&format!("read ACP stdout: {error}")))
                 })?;
                 if bytes == 0 {
-                    return Err(AcpError::protocol(
-                        "ACP 进程已结束（无响应）",
-                        Some("EOF on stdout"),
-                    ));
+                    return Err(AcpError::protocol(Some("EOF on stdout")));
                 }
                 let trimmed = line_buf.trim();
                 if trimmed.is_empty() {
                     continue;
                 }
                 let value: Value = serde_json::from_str(trimmed).map_err(|error| {
-                    AcpError::protocol("无法解析 ACP JSON", Some(&error.to_string()))
+                    tracing::warn!(%error, line = trimmed, "ACP JSON parse failed");
+                    AcpError::protocol(Some(&format!("parse ACP JSON: {error}")))
                 })?;
 
                 if value.get("id").and_then(|v| v.as_u64()) == Some(target_id) {
                     if let Some(msg) = is_error_response(&value) {
-                        return Err(AcpError::protocol("ACP 返回错误", Some(&msg)));
+                        return Err(AcpError::protocol(Some(&msg)));
                     }
                     return Ok(value);
                 }
@@ -242,7 +243,7 @@ impl AcpService {
         )?;
         let session_resp = read_until_id(2)?;
         let session_id = parse_session_id(&session_resp).ok_or_else(|| {
-            AcpError::protocol("ACP 未返回 sessionId", Some(&session_resp.to_string()))
+            AcpError::protocol(Some(&format!("missing sessionId: {session_resp}")))
         })?;
 
         on_event(AcpEvent::Progress {
@@ -269,12 +270,13 @@ impl AcpService {
                 return Err(AcpError::cancelled());
             }
             if Instant::now() > deadline {
-                return Err(AcpError::protocol("ACP 等待回复超时", None));
+                return Err(AcpError::protocol(Some("ACP wait timed out")));
             }
 
             line_buf.clear();
             let bytes = reader.read_line(&mut line_buf).map_err(|error| {
-                AcpError::protocol("读取 ACP 输出失败", Some(&error.to_string()))
+                tracing::warn!(%error, "ACP read failed");
+                AcpError::protocol(Some(&format!("read ACP stdout: {error}")))
             })?;
             if bytes == 0 {
                 break;
@@ -300,7 +302,7 @@ impl AcpService {
 
             if value.get("id").and_then(|v| v.as_u64()) == Some(3) {
                 if let Some(msg) = is_error_response(&value) {
-                    return Err(AcpError::protocol("ACP 提问失败", Some(&msg)));
+                    return Err(AcpError::protocol(Some(&msg)));
                 }
                 break;
             }

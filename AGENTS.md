@@ -51,7 +51,13 @@ React 不得知道：mpv handle、native window handle、FFI pointer、libmpv / 
 
 ## Error handling（必读）
 
-细则见 [`.cursor/rules/errors.mdc`](.cursor/rules/errors.mdc)。
+细则见 [`.cursor/rules/errors.mdc`](.cursor/rules/errors.mdc)。摘要：
+
+1. 形状：`{ code, message, details? }` — `message` 中文给用户；`details` + `tracing` 才放底层原文
+2. **底层 → 业务**：spawn / stderr / serde 等在域构造函数里映射成**固定**业务 `message`，调用方只传 `details`
+3. **禁止**在 `message` 里写 `ffprobe` / `ffmpeg` / `whisper-cli` / serde 等实现细节
+4. 用户输入校验可用具体中文（`bad_request` / `invalid`），不算泄漏
+5. 前端只用 `formatPlayerError` / `errorMessage` 展示，不要拼接工具口吻前缀
 
 ## Testing
 
@@ -81,6 +87,6 @@ cd src-tauri && cargo test --lib
 
 - 优先级：可运行 > 架构清晰 > 代码简洁 > UI 美观
 - 业务代码禁止 `unwrap()` / `expect()`
-- 给前端的错误必须是 `{ code, message, details? }`
+- 给前端的错误必须是 `{ code, message, details? }`；底层错误只进 `details` / 日志
 - 日志用 `tracing`；不要刷 position
 - 不与其他产品强行统一 lockfile；对齐领域模型与错误形状即可

@@ -1,4 +1,6 @@
 //! Structured note errors.
+//! `message` = fixed business Chinese; I/O text only in `details` (+ tracing).
+//! Validation may use `invalid` with a specific Chinese `message`.
 
 use std::fmt;
 
@@ -34,10 +36,10 @@ impl NoteError {
         }
     }
 
-    pub fn io(message: impl Into<String>, details: Option<&str>) -> Self {
+    pub fn io(details: Option<&str>) -> Self {
         Self::new(
             NoteErrorCode::IoError,
-            message,
+            "笔记读写失败",
             details.map(str::to_string),
         )
     }
@@ -50,14 +52,15 @@ impl NoteError {
         )
     }
 
+    /// User-facing validation (empty body, empty path, …).
     pub fn invalid(message: impl Into<String>) -> Self {
         Self::new(NoteErrorCode::InvalidNote, message, None)
     }
 
-    pub fn internal(message: impl Into<String>, details: Option<&str>) -> Self {
+    pub fn internal(details: Option<&str>) -> Self {
         Self::new(
             NoteErrorCode::InternalError,
-            message,
+            "内部错误，请重试",
             details.map(str::to_string),
         )
     }
@@ -78,14 +81,17 @@ impl std::error::Error for NoteError {}
 mod tests {
     use super::*;
 
+    fn has_cjk(s: &str) -> bool {
+        s.chars().any(|c| ('\u{4e00}'..='\u{9fff}').contains(&c))
+    }
+
     #[test]
-    fn messages_are_chinese() {
-        assert!(NoteError::not_found("x")
-            .message
-            .chars()
-            .any(|c| ('\u{4e00}'..='\u{9fff}').contains(&c)));
-        assert!(NoteError::invalid("内容不能为空")
+    fn messages_are_chinese_business() {
+        assert!(has_cjk(&NoteError::not_found("x").message));
+        assert_eq!(NoteError::io(Some("disk full")).message, "笔记读写失败");
+        assert!(NoteError::invalid("笔记内容不能为空")
             .message
             .contains("空"));
+        assert_eq!(NoteError::internal(Some("lock")).message, "内部错误，请重试");
     }
 }

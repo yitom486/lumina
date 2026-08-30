@@ -1,4 +1,4 @@
-import { formatTime } from "@/lib/format";
+import { errorMessage, formatTime } from "@/lib/format";
 import { Separator } from "@/components/ui/separator";
 
 import { useMediaInfoQuery } from "../hooks/useMediaInfoQuery";
@@ -44,10 +44,9 @@ export function MediaInfoPanel() {
   }
 
   if (query.isError) {
-    const err = query.error as { message?: string };
     return (
       <div className="px-3 py-2 text-xs text-destructive">
-        探测失败：{err.message ?? String(query.error)}
+        {errorMessage(query.error)}
       </div>
     );
   }

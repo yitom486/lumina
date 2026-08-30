@@ -32,7 +32,7 @@ impl NoteService {
         let _guard = self
             .lock
             .lock()
-            .map_err(|_| NoteError::internal("笔记锁异常", None))?;
+            .map_err(|_| NoteError::internal(Some("notes mutex poisoned")))?;
         let mut notes = store::load(&self.path)?;
         notes.retain(|n| n.media_path == media_path);
         notes.sort_by_key(|n| n.position_ms);
@@ -51,7 +51,7 @@ impl NoteService {
         let _guard = self
             .lock
             .lock()
-            .map_err(|_| NoteError::internal("笔记锁异常", None))?;
+            .map_err(|_| NoteError::internal(Some("notes mutex poisoned")))?;
         let mut notes = store::load(&self.path)?;
         let now = now_iso();
         let note = Note {
@@ -71,7 +71,7 @@ impl NoteService {
         let _guard = self
             .lock
             .lock()
-            .map_err(|_| NoteError::internal("笔记锁异常", None))?;
+            .map_err(|_| NoteError::internal(Some("notes mutex poisoned")))?;
         let mut notes = store::load(&self.path)?;
         let note = notes
             .iter_mut()
@@ -97,7 +97,7 @@ impl NoteService {
         let _guard = self
             .lock
             .lock()
-            .map_err(|_| NoteError::internal("笔记锁异常", None))?;
+            .map_err(|_| NoteError::internal(Some("notes mutex poisoned")))?;
         let mut notes = store::load(&self.path)?;
         let before = notes.len();
         notes.retain(|n| n.id != id);

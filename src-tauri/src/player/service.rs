@@ -273,9 +273,8 @@ impl PlayerService {
 
     pub fn set_volume(&mut self, volume: f64) -> Result<PlayerSnapshot, PlayerError> {
         if !(VOLUME_MIN..=VOLUME_MAX).contains(&volume) {
-            return Err(PlayerError::playback(format!(
-                "音量需在 {VOLUME_MIN}–{VOLUME_MAX} 之间"
-            )));
+            let msg = format!("volume out of range {VOLUME_MIN}–{VOLUME_MAX}: {volume}");
+            return Err(PlayerError::playback(Some(&msg)));
         }
         tracing::info!(volume, "set_volume");
         self.snapshot.volume = volume;
@@ -287,9 +286,8 @@ impl PlayerService {
 
     pub fn set_rate(&mut self, rate: f64) -> Result<PlayerSnapshot, PlayerError> {
         if !(RATE_MIN..=RATE_MAX).contains(&rate) {
-            return Err(PlayerError::playback(format!(
-                "倍速需在 {RATE_MIN}–{RATE_MAX} 之间"
-            )));
+            let msg = format!("rate out of range {RATE_MIN}–{RATE_MAX}: {rate}");
+            return Err(PlayerError::playback(Some(&msg)));
         }
         tracing::info!(rate, "set_rate");
         self.snapshot.rate = rate;
@@ -367,20 +365,19 @@ impl PlayerService {
             }
             "Embedded" => {
                 let index = stream_index.ok_or_else(|| {
-                    PlayerError::playback("内嵌字幕缺少 streamIndex")
+                    PlayerError::playback(Some("embedded subtitle missing streamIndex"))
                 })?;
                 backend.set_embedded_subtitle(i64::from(index))?;
             }
             "Sidecar" => {
                 let path = external_path.ok_or_else(|| {
-                    PlayerError::playback("外挂字幕缺少文件路径")
+                    PlayerError::playback(Some("sidecar subtitle missing file path"))
                 })?;
                 backend.set_external_subtitle(path)?;
             }
             other => {
-                return Err(PlayerError::playback(format!(
-                    "未知字幕来源：{other}"
-                )));
+                let msg = format!("unknown subtitle source: {other}");
+                return Err(PlayerError::playback(Some(&msg)));
             }
         }
 
@@ -419,28 +416,19 @@ impl PlayerService {
 fn validate_media_path(path: &str) -> Result<(), PlayerError> {
     let trimmed = path.trim();
     if trimmed.is_empty() {
-        return Err(PlayerError::load("媒体路径为空", None));
+        return Err(PlayerError::load(Some("empty media path")));
     }
 
     let meta = std::fs::metadata(trimmed).map_err(|error| {
-        PlayerError::load(
-            "找不到该文件或无法访问",
-            Some(&error.to_string()),
-        )
+        PlayerError::load(Some(&format!("path not accessible: {error}")))
     })?;
 
     if !meta.is_file() {
-        return Err(PlayerError::load(
-            "路径不是普通文件",
-            Some(trimmed),
-        ));
+        return Err(PlayerError::load(Some(&format!("not a regular file: {trimmed}"))));
     }
 
     if meta.len() == 0 {
-        return Err(PlayerError::unsupported(
-            "文件为空，无法播放",
-            Some(trimmed),
-        ));
+        return Err(PlayerError::unsupported(Some(&format!("empty file: {trimmed}"))));
     }
 
     Ok(())
@@ -494,7 +482,7 @@ mod tests {
         let err = player.open(path_str.clone()).expect_err("backend missing");
         let _ = std::fs::remove_file(&path);
         assert_eq!(err.code, PlayerErrorCode::InternalError);
-        assert!(err.message.contains("播放引擎"));
+        assert_eq!(err.message, "内部错误，请重试");
         assert_eq!(player.get_state(), PlayerState::Error);
         assert_eq!(player.snapshot().current_file.as_deref(), Some(path_str.as_str()));
     }
@@ -504,7 +492,8 @@ mod tests {
         let mut player = PlayerService::new();
         let err = player.open("   ".into()).expect_err("empty path");
         assert_eq!(err.code, PlayerErrorCode::LoadError);
-        assert!(err.message.contains("空"));
+        assert_eq!(err.message, "无法打开该媒体文件");
+        assert_eq!(err.details.as_deref(), Some("empty media path"));
         assert_eq!(player.get_state(), PlayerState::Error);
     }
 
@@ -512,10 +501,12 @@ mod tests {
     fn volume_and_rate_range() {
         let mut player = PlayerService::new();
         let vol_err = player.set_volume(101.0).expect_err("over max");
-        assert!(vol_err.message.contains("音量"));
+        assert_eq!(vol_err.code, PlayerErrorCode::PlaybackError);
+        assert!(vol_err.details.as_deref().is_some_and(|d| d.contains("volume")));
         assert!(player.set_volume(40.0).is_ok());
         let rate_err = player.set_rate(0.1).expect_err("under min");
-        assert!(rate_err.message.contains("倍速"));
+        assert_eq!(rate_err.code, PlayerErrorCode::PlaybackError);
+        assert!(rate_err.details.as_deref().is_some_and(|d| d.contains("rate")));
         assert!(player.set_rate(1.25).is_ok());
         assert_eq!(player.snapshot().volume, 40.0);
         assert_eq!(player.snapshot().rate, 1.25);

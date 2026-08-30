@@ -12,12 +12,16 @@ pub fn list_sibling_videos(file_path: impl AsRef<Path>) -> Result<Vec<String>, M
         return Err(MediaError::file_not_found(&path.to_string_lossy()));
     }
     let parent = path.parent().ok_or_else(|| {
-        MediaError::internal("媒体路径无效（无上级目录）", Some(&path.to_string_lossy()))
+        MediaError::internal(Some(&format!(
+            "media path has no parent: {}",
+            path.to_string_lossy()
+        )))
     })?;
 
     let mut items: Vec<PathBuf> = std::fs::read_dir(parent)
         .map_err(|error| {
-            MediaError::internal("无法读取媒体所在目录", Some(&error.to_string()))
+            tracing::warn!(%error, "failed to read media sibling dir");
+            MediaError::internal(Some(&format!("read media dir: {error}")))
         })?
         .flatten()
         .map(|entry| entry.path())

@@ -6,7 +6,7 @@ use crate::subtitle::model::Cue;
 pub fn parse_subtitle_text(content: &str) -> Result<Vec<Cue>, SubtitleError> {
     let trimmed = content.trim_start_matches('\u{feff}').trim();
     if trimmed.is_empty() {
-        return Err(SubtitleError::parse_failed("字幕内容为空", None));
+        return Err(SubtitleError::parse_failed(Some("empty subtitle content")));
     }
 
     if trimmed.starts_with("WEBVTT") || looks_like_vtt(trimmed) {
@@ -51,7 +51,9 @@ pub fn parse_srt(content: &str) -> Result<Vec<Cue>, SubtitleError> {
     }
 
     if cues.is_empty() {
-        return Err(SubtitleError::parse_failed("SRT 中未找到有效字幕条目", None));
+        return Err(SubtitleError::parse_failed(Some(
+            "no valid SRT cues found",
+        )));
     }
 
     renumber(cues)
@@ -76,11 +78,11 @@ fn parse_srt_block(lines: &[&str]) -> Result<Option<Cue>, SubtitleError> {
         return Ok(None);
     };
     let start_ms = parse_srt_time(start_raw.trim()).ok_or_else(|| {
-        SubtitleError::parse_failed("SRT 开始时间无效", Some(start_raw.trim()))
+        SubtitleError::parse_failed(Some(start_raw.trim()))
     })?;
     let end_part = end_raw.split_whitespace().next().unwrap_or("");
     let end_ms = parse_srt_time(end_part).ok_or_else(|| {
-        SubtitleError::parse_failed("SRT 结束时间无效", Some(end_part))
+        SubtitleError::parse_failed(Some(end_part))
     })?;
 
     let text = lines[idx + 1..]
@@ -148,10 +150,10 @@ pub fn parse_vtt(content: &str) -> Result<Vec<Cue>, SubtitleError> {
         };
         let end_raw = rest.split_whitespace().next().unwrap_or("");
         let start_ms = parse_vtt_time(start_raw.trim()).ok_or_else(|| {
-            SubtitleError::parse_failed("WebVTT 开始时间无效", Some(start_raw.trim()))
+            SubtitleError::parse_failed(Some(start_raw.trim()))
         })?;
         let end_ms = parse_vtt_time(end_raw).ok_or_else(|| {
-            SubtitleError::parse_failed("WebVTT 结束时间无效", Some(end_raw))
+            SubtitleError::parse_failed(Some(end_raw))
         })?;
 
         let mut text_lines = Vec::new();
@@ -181,10 +183,9 @@ pub fn parse_vtt(content: &str) -> Result<Vec<Cue>, SubtitleError> {
     let _ = body;
 
     if cues.is_empty() {
-        return Err(SubtitleError::parse_failed(
-            "WebVTT 中未找到有效字幕条目",
-            None,
-        ));
+        return Err(SubtitleError::parse_failed(Some(
+            "no valid WebVTT cues found",
+        )));
     }
     renumber(cues)
 }
@@ -230,10 +231,10 @@ pub fn parse_ass(content: &str) -> Result<Vec<Cue>, SubtitleError> {
             continue;
         }
         let start_ms = parse_ass_time(parts[1]).ok_or_else(|| {
-            SubtitleError::parse_failed("ASS 开始时间无效", Some(parts[1]))
+            SubtitleError::parse_failed(Some(parts[1]))
         })?;
         let end_ms = parse_ass_time(parts[2]).ok_or_else(|| {
-            SubtitleError::parse_failed("ASS 结束时间无效", Some(parts[2]))
+            SubtitleError::parse_failed(Some(parts[2]))
         })?;
         let text = strip_ass_overrides(parts[9..].join(",").trim());
         if text.is_empty() {
@@ -248,10 +249,9 @@ pub fn parse_ass(content: &str) -> Result<Vec<Cue>, SubtitleError> {
     }
 
     if cues.is_empty() {
-        return Err(SubtitleError::parse_failed(
-            "ASS 中未找到 Dialogue 条目",
-            None,
-        ));
+        return Err(SubtitleError::parse_failed(Some(
+            "no ASS Dialogue entries found",
+        )));
     }
     renumber(cues)
 }
@@ -343,7 +343,9 @@ fn renumber(mut cues: Vec<Cue>) -> Result<Vec<Cue>, SubtitleError> {
         cue.index = i as u32;
     }
     if cues.is_empty() {
-        return Err(SubtitleError::parse_failed("清理后没有可用字幕条目", None));
+        return Err(SubtitleError::parse_failed(Some(
+            "no cues left after cleanup",
+        )));
     }
     Ok(cues)
 }
@@ -399,6 +401,7 @@ mod tests {
     #[test]
     fn invalid_srt_body_is_parse_failed() {
         let err = parse_srt("not a subtitle").expect_err("bad");
-        assert!(err.message.contains("SRT") || err.message.contains("字幕"));
+        assert_eq!(err.message, "无法解析字幕");
+        assert!(err.details.as_deref().is_some_and(|d| d.contains("SRT") || d.contains("cue")));
     }
 }

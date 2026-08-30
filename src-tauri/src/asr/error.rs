@@ -1,4 +1,5 @@
 //! Structured ASR errors.
+//! `message` = fixed business Chinese; tool/serde text only in `details` (+ tracing).
 
 use std::fmt;
 
@@ -39,35 +40,41 @@ impl AsrError {
     pub fn not_configured(details: Option<&str>) -> Self {
         Self::new(
             AsrErrorCode::NotConfigured,
-            "未配置 ASR（可选）。请将 whisper-cli 与 ggml 模型放到 native/whisper/",
-            details.map(str::to_string),
+            "未配置语音转写（可选）",
+            details
+                .map(str::to_string)
+                .or_else(|| Some("place whisper-cli + ggml model under native/whisper/".into())),
         )
     }
 
     pub fn busy() -> Self {
-        Self::new(AsrErrorCode::Busy, "已有 ASR 任务在运行", None)
+        Self::new(AsrErrorCode::Busy, "已有语音转写任务在运行", None)
     }
 
-    pub fn extract_failed(message: impl Into<String>, details: Option<&str>) -> Self {
+    pub fn extract_failed(details: Option<&str>) -> Self {
         Self::new(
             AsrErrorCode::ExtractFailed,
-            message,
+            "无法提取音频",
             details.map(str::to_string),
         )
     }
 
-    pub fn transcribe_failed(message: impl Into<String>, details: Option<&str>) -> Self {
+    pub fn transcribe_failed(details: Option<&str>) -> Self {
         Self::new(
             AsrErrorCode::TranscribeFailed,
-            message,
+            "语音转写失败",
             details.map(str::to_string),
         )
     }
 
-    pub fn internal(message: impl Into<String>, details: Option<&str>) -> Self {
+    pub fn cancelled() -> Self {
+        Self::new(AsrErrorCode::Cancelled, "已取消语音转写", None)
+    }
+
+    pub fn internal(details: Option<&str>) -> Self {
         Self::new(
             AsrErrorCode::InternalError,
-            message,
+            "内部错误，请重试",
             details.map(str::to_string),
         )
     }
@@ -93,10 +100,14 @@ mod tests {
     }
 
     #[test]
-    fn constructors_use_chinese_messages() {
+    fn constructors_use_chinese_business_messages() {
         assert!(has_cjk(&AsrError::not_configured(None).message));
+        assert!(!AsrError::not_configured(None).message.contains("whisper"));
         assert!(has_cjk(&AsrError::busy().message));
         assert_eq!(AsrError::busy().code, AsrErrorCode::Busy);
+        let t = AsrError::transcribe_failed(Some("whisper-cli exit 1"));
+        assert_eq!(t.message, "语音转写失败");
+        assert_eq!(t.details.as_deref(), Some("whisper-cli exit 1"));
         assert_eq!(
             AsrError::not_configured(None).code,
             AsrErrorCode::NotConfigured

@@ -13,31 +13,63 @@ alwaysApply: true
 { "code": "PascalCaseEnum", "message": "给用户看的中文", "details": "可选技术细节" }
 ```
 
-- **`message`**：中文、可展示；禁止把 raw FFI / panic 原文当主文案
+- **`message`**：中文、可展示；禁止把 raw FFI / panic / 工具原文当主文案
 - **`details`**：英文或原始工具输出均可；默认折叠，调试时再展开
 - **`code`**：稳定枚举；前端可按 code 兜底翻译
+
+## 分层（硬性）
+
+```
+底层失败（spawn / stderr / serde / lock / join）
+  → 域构造函数映射为固定业务 message
+  → details = 技术原文
+  → tracing::warn! / error! 记完整原因
+  → UI 只展示 message（formatPlayerError / errorMessage）
+```
+
+| 放哪里 | 放什么 | 示例 |
+|--------|--------|------|
+| `message` | 固定、面向用户的中文 | 「无法读取该视频的媒体信息」 |
+| `details` | 工具名、serde、exit code、路径 | `ffprobe json: invalid type…` |
+| `tracing` | 与 details 同级或更全 | `tracing::warn!(%error, …)` |
+
+**禁止**：在 `message` 里出现 `ffprobe` / `ffmpeg` / `whisper-cli` / `libmpv` / JSON / serde 等实现细节。  
+**允许**：用户输入校验用单独构造函数写具体中文（如 `bad_request("提问内容不能为空")`、`invalid("笔记内容不能为空")`）——这本身就是业务文案，不是底层泄漏。
+
+域构造函数应对每个 `code` 提供**固定** `message`（校验类除外），调用方只传 `details: Option<&str>`。
 
 ## 链路
 
 ```
-Domain (Player / Media / Subtitle / Asr)
+Domain (Player / Media / Subtitle / Asr / Acp / Note)
   → 构造 *Error { code, message(zh), details? }
-  → Tauri Command Result<T, E>（async 重活用 spawn_blocking）
+  → Tauri Command Result<T, E>（重 I/O 用 async + spawn_blocking）
   → 前端 invoke catch / Channel Error 事件
   → formatPlayerError / errorMessage（有中文用中文，否则按 code 兜底）
   → UI 展示；tracing 记完整错误
 ```
 
-## 域错误码
+## 域错误码与固定 message（参考）
 
-| 域 | 主要 code |
-|----|-----------|
-| Player | InitializationError / LoadError / UnsupportedMedia / NativeWindowError / PlaybackError / InvalidState / InternalError |
-| Media | ProbeNotFound / FileNotFound / ProbeFailed / InvalidMedia / InternalError |
-| Subtitle | ToolNotFound / FileNotFound / ExtractFailed / ParseFailed / UnsupportedSubtitle / NoSubtitleTrack / InternalError |
-| Asr | NotConfigured / Busy / ExtractFailed / TranscribeFailed / Cancelled / InternalError |
-| Acp | NotConfigured / Busy / SpawnFailed / ProtocolError / Cancelled / InternalError |
-| Note | IoError / NotFound / InvalidNote / InternalError |
+| 域 | code | 典型 message |
+|----|------|----------------|
+| Player | LoadError | 无法打开该媒体文件 |
+| Player | PlaybackError | 播放操作失败，请重试 |
+| Player | InvalidState | 当前为「…」状态，无法执行「…」（动态业务） |
+| Media | ProbeFailed | 无法读取该视频的媒体信息 |
+| Media | ProbeNotFound | 媒体分析组件未就绪 |
+| Subtitle | ExtractFailed | 无法提取字幕 |
+| Subtitle | ParseFailed | 无法解析字幕 |
+| Subtitle | ToolNotFound | 字幕工具未就绪 |
+| Asr | NotConfigured | 未配置语音转写（可选） |
+| Asr | TranscribeFailed | 语音转写失败 |
+| Acp | NotConfigured | 未配置 AI Agent（可选） |
+| Acp | SpawnFailed | 无法启动 AI Agent |
+| Acp | ProtocolError | 与 Agent 通信失败（校验用 `bad_request`） |
+| Note | IoError | 笔记读写失败 |
+| * | InternalError | 内部错误，请重试 |
+
+安装路径、CLI 名称等指引放进 `details` 或设置页文案，不要塞进失败时的主 `message`。
 
 ## 硬性规则
 
@@ -45,10 +77,10 @@ Domain (Player / Media / Subtitle / Asr)
 2. **可恢复失败**（如 open 后 demux 未就绪时的 seek）**不要** `fail()` 打成整机会话 `Error`
 3. 同步 Tauri command 会占 UI 线程；凡 ffmpeg / ffprobe / whisper / 重 I/O 必须 `async + spawn_blocking`
 4. React 禁止猜测播放状态；错误状态以 Rust / invoke 结果为准
-5. 新增错误构造函数时：`message` 必须中文，并补单测断言含 CJK
+5. 新增 / 改错误构造函数：`message` 必须中文；单测断言含 CJK，且断言工具名**不**出现在 `message` 中
+6. 改文案或 code 时同步改：域单测、`src/lib/format.ts` 兜底、`format.test.ts`
 
 ## 测试期望
 
 - `cargo test --lib`：错误映射、路径校验、状态机非法转换、解析器
 - 前端：`formatPlayerError` 等纯函数单测（`bun run test`）
-- 改错误文案或 code 时同步改测试
