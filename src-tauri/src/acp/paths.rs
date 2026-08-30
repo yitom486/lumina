@@ -3,12 +3,10 @@
 use std::path::Path;
 use std::process::Command;
 
-use crate::acp::discover::{find_acp_adapter, find_codex};
+use crate::acp::discover::{find_acp_adapter, find_bunx, find_codex};
 use crate::acp::error::AcpError;
 use crate::acp::model::AcpStatus;
-use crate::acp::profile::{
-    install_hint, AgentKind, ProfileStore, RESPONSES_ONLY_NOTE,
-};
+use crate::acp::profile::{install_hint, AgentKind, ProfileStore, RESPONSES_ONLY_NOTE};
 
 #[derive(Debug, Clone)]
 pub struct AcpPaths {
@@ -31,6 +29,7 @@ pub fn resolve_acp_paths() -> Result<AcpPaths, AcpError> {
 
 pub fn status_from_store(store: &ProfileStore) -> AcpStatus {
     let adapter_found = find_acp_adapter().is_some();
+    let bunx_found = find_bunx().is_some();
     let codex_found = find_codex().is_some();
     let (active_id, profiles) = match store.list_status() {
         Ok(v) => v,
@@ -44,7 +43,7 @@ pub fn status_from_store(store: &ProfileStore) -> AcpStatus {
                 cli_path: None,
                 codex_path: find_codex().map(|p| p.to_string_lossy().to_string()),
                 message: error.message,
-                hint: install_hint(adapter_found, codex_found),
+                hint: install_hint(adapter_found, codex_found, bunx_found),
                 responses_only_note: RESPONSES_ONLY_NOTE.into(),
             };
         }
@@ -80,7 +79,7 @@ pub fn status_from_store(store: &ProfileStore) -> AcpStatus {
         cli_path,
         codex_path: find_codex().map(|p| p.to_string_lossy().to_string()),
         message,
-        hint: install_hint(adapter_found, codex_found),
+        hint: install_hint(adapter_found, codex_found, bunx_found),
         responses_only_note: RESPONSES_ONLY_NOTE.into(),
     }
 }

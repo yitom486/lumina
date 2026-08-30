@@ -35,7 +35,7 @@
 ## Phase 5 — ACP Client（可插拔 Agent）
 
 - Lumina **只做 ACP Client**；不直连 Codex App Server 协议
-- **默认 profile：`codex`**：spawn `codex-acp`（TS 适配器，可单文件）→ 内部 Codex App Server → **Responses API**
+- **默认 profile：`codex`**：spawn `bunx @agentclientprotocol/codex-acp`（可回退单文件）→ 内部 Codex App Server → **Responses API**
 - **其它 harness**（Claude 等）：另配 AgentProfile（command/args/env），换进程而非锁死 App Server
 - Codex 内换模型：`config.toml` provider，须 Responses 兼容（Chat Completions 已弃用）
 - 未配置 → `NotConfigured`；播放 / 字幕 / 笔记仍可用

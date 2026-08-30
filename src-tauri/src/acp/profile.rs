@@ -6,8 +6,10 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-use crate::acp::discover::{find_codex, find_command, native_acp_dir};
+use crate::acp::discover::{find_acp_adapter, find_bunx, find_codex, find_command, native_acp_dir};
 use crate::acp::error::AcpError;
+
+pub const CODEX_ACP_PACKAGE: &str = "@agentclientprotocol/codex-acp";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "PascalCase")]
@@ -67,7 +69,7 @@ impl ProfileStore {
         Self { path }
     }
 
-    pub fn load_or_default(&self) -> Result<AgentsFile, AcpError> {
+    fn load_or_default(&self) -> Result<AgentsFile, AcpError> {
         if !self.path.exists() {
             return Ok(default_agents_file());
         }
@@ -86,7 +88,7 @@ impl ProfileStore {
         Ok(file)
     }
 
-    pub fn save(&self, file: &AgentsFile) -> Result<(), AcpError> {
+    fn save(&self, file: &AgentsFile) -> Result<(), AcpError> {
         if let Some(parent) = self.path.parent() {
             fs::create_dir_all(parent).map_err(|error| {
                 tracing::warn!(%error, "failed to create agent config dir");
@@ -105,11 +107,7 @@ impl ProfileStore {
 
     pub fn list_status(&self) -> Result<(String, Vec<AgentProfileStatus>), AcpError> {
         let file = self.load_or_default()?;
-        let statuses = file
-            .profiles
-            .iter()
-            .map(profile_status)
-            .collect::<Vec<_>>();
+        let statuses = file.profiles.iter().map(profile_status).collect::<Vec<_>>();
         Ok((file.active_profile_id, statuses))
     }
 
@@ -161,35 +159,53 @@ pub struct LaunchSpec {
 }
 
 pub fn resolve_launch(profile: &AgentProfile) -> Result<LaunchSpec, AcpError> {
-    let program = resolve_program(&profile.command).ok_or_else(|| {
-        AcpError::not_configured(Some(&format!(
-            "agent `{}` command not found: {}",
-            profile.id, profile.command
-        )))
-    })?;
+    let (program, args) = if is_builtin_codex(profile) {
+        if let Some(bunx) = find_bunx() {
+            (bunx, profile.args.clone())
+        } else if let Some(adapter) = find_acp_adapter() {
+            // Packaged installations may ship a standalone adapter and no Bun.
+            (adapter, Vec::new())
+        } else {
+            return Err(AcpError::not_configured(Some(
+                "codex profile requires bunx or a standalone codex-acp adapter",
+            )));
+        }
+    } else {
+        let program = resolve_program(&profile.command).ok_or_else(|| {
+            AcpError::not_configured(Some(&format!(
+                "agent `{}` command not found: {}",
+                profile.id, profile.command
+            )))
+        })?;
+        (program, profile.args.clone())
+    };
 
     let mut env = profile.env.clone();
     if profile.kind == AgentKind::Codex {
         if !env.contains_key("CODEX_PATH") {
             if let Some(codex) = find_codex() {
-                env.insert(
-                    "CODEX_PATH".into(),
-                    codex.to_string_lossy().to_string(),
-                );
+                env.insert("CODEX_PATH".into(), codex.to_string_lossy().to_string());
             }
         }
     }
 
     Ok(LaunchSpec {
         program,
-        args: profile.args.clone(),
+        args,
         env,
         display_name: profile.name.clone(),
     })
 }
 
+fn is_builtin_codex(profile: &AgentProfile) -> bool {
+    profile.id == "codex"
+        && profile.kind == AgentKind::Codex
+        && matches!(profile.command.as_str(), "bunx" | "bunx.exe")
+        && profile.args.first().map(String::as_str) == Some(CODEX_ACP_PACKAGE)
+}
+
 fn profile_status(profile: &AgentProfile) -> AgentProfileStatus {
-    let resolved = resolve_program(&profile.command);
+    let resolved = resolve_launch(profile).ok();
     AgentProfileStatus {
         id: profile.id.clone(),
         name: profile.name.clone(),
@@ -198,7 +214,7 @@ fn profile_status(profile: &AgentProfile) -> AgentProfileStatus {
         args: profile.args.clone(),
         env: profile.env.clone(),
         available: resolved.is_some(),
-        resolved_command: resolved.map(|p| p.to_string_lossy().to_string()),
+        resolved_command: resolved.map(|launch| launch.program.to_string_lossy().to_string()),
     }
 }
 
@@ -227,11 +243,11 @@ fn builtin_codex() -> AgentProfile {
         name: "Codex（默认）".into(),
         kind: AgentKind::Codex,
         command: if cfg!(windows) {
-            "codex-acp.exe".into()
+            "bunx.exe".into()
         } else {
-            "codex-acp".into()
+            "bunx".into()
         },
-        args: Vec::new(),
+        args: vec![CODEX_ACP_PACKAGE.into()],
         env: HashMap::new(),
     }
 }
@@ -271,6 +287,22 @@ fn merge_builtin_profiles(file: &mut AgentsFile) {
             }
             continue;
         }
+        if builtin.id == "codex" {
+            if let Some(existing) = file.profiles.iter_mut().find(|p| p.id == "codex") {
+                // Migrate only the previous untouched built-in profile. User-edited
+                // Codex commands remain authoritative.
+                let legacy_command =
+                    existing.command == "codex-acp" || existing.command == "codex-acp.exe";
+                if existing.kind == AgentKind::Codex
+                    && legacy_command
+                    && existing.args.is_empty()
+                    && existing.env.is_empty()
+                {
+                    *existing = builtin;
+                }
+                continue;
+            }
+        }
         if !file.profiles.iter().any(|p| p.id == builtin.id) {
             file.profiles.push(builtin);
         }
@@ -308,7 +340,14 @@ fn data_dir() -> Option<PathBuf> {
 }
 
 /// Hint text: install guidance without requiring bun for end users.
-pub fn install_hint(adapter_found: bool, codex_found: bool) -> String {
+pub fn install_hint(adapter_found: bool, codex_found: bool, bunx_found: bool) -> String {
+    if bunx_found {
+        return if codex_found {
+            "将通过 Bun 按需获取并启动 Codex ACP；已找到本机 Codex，也可通过 CODEX_PATH 指定版本。首次使用可能需要下载适配器。".into()
+        } else {
+            "将通过 Bun 按需获取并启动 Codex ACP；发布包自带兼容的 Codex。首次使用可能需要下载适配器。".into()
+        };
+    }
     if adapter_found {
         if codex_found {
             return "Codex ACP 适配器与 Codex 均已找到。模型侧请使用 Responses API（非 Chat Completions）。".into();
@@ -316,7 +355,7 @@ pub fn install_hint(adapter_found: bool, codex_found: bool) -> String {
         return "已找到 ACP 适配器；未找到 Codex 本体时，适配器可能仍能使用自带/环境中的 Codex。可选安装官方 Codex，或设置 CODEX_PATH。".into();
     }
     format!(
-        "未找到可用 ACP Agent。可将 codex-acp（单文件或 PATH）放到 {}，或安装官方 Codex 后配置 Agent。播放不依赖 bun/pnpm/Node。",
+        "未找到可用 ACP Agent。请安装 Bun，或将 codex-acp 单文件放到 {}。播放功能不依赖这些可选组件。",
         native_acp_dir().display()
     )
 }
@@ -332,7 +371,13 @@ mod tests {
     fn default_file_has_codex_active() {
         let file = default_agents_file();
         assert_eq!(file.active_profile_id, "codex");
-        assert!(file.profiles.iter().any(|p| p.id == "codex"));
+        let codex = file
+            .profiles
+            .iter()
+            .find(|p| p.id == "codex")
+            .expect("codex");
+        assert!(codex.command.contains("bunx"));
+        assert_eq!(codex.args, vec![CODEX_ACP_PACKAGE]);
         assert!(file.profiles.iter().any(|p| p.id == "claude"));
     }
 
@@ -352,8 +397,16 @@ mod tests {
 
     #[test]
     fn install_hint_is_chinese() {
-        let hint = install_hint(false, false);
+        let hint = install_hint(false, false, false);
         assert!(hint.chars().any(|c| ('\u{4e00}'..='\u{9fff}').contains(&c)));
         assert!(!hint.to_ascii_lowercase().contains("must install bun"));
+    }
+
+    #[test]
+    fn bunx_hint_describes_on_demand_launch() {
+        let hint = install_hint(false, true, true);
+        assert!(hint.contains("Bun"));
+        assert!(hint.contains("按需"));
+        assert!(!hint.contains("未找到可用"));
     }
 }

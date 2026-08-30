@@ -65,3 +65,34 @@ pub fn find_acp_adapter() -> Option<PathBuf> {
     })
     .or_else(|| find_command("codex-acp"))
 }
+
+/// Bun installs `bunx` alongside Bun. Prefer the explicit override, then PATH,
+/// then Bun's conventional per-user install directory on Windows.
+pub fn find_bunx() -> Option<PathBuf> {
+    if let Ok(override_path) = std::env::var("BUNX_PATH") {
+        let path = PathBuf::from(override_path);
+        if path.is_file() {
+            return Some(path);
+        }
+    }
+
+    let command = if cfg!(windows) { "bunx.exe" } else { "bunx" };
+    if let Some(path) = find_command(command).or_else(|| find_command("bunx")) {
+        return Some(path);
+    }
+
+    #[cfg(windows)]
+    {
+        if let Some(home) = std::env::var_os("USERPROFILE") {
+            let path = PathBuf::from(home)
+                .join(".bun")
+                .join("bin")
+                .join("bunx.exe");
+            if path.is_file() {
+                return Some(path);
+            }
+        }
+    }
+
+    None
+}
