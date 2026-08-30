@@ -22,7 +22,9 @@ export type PlayerEvent =
   | { type: "DurationChanged"; payload: { durationMs: number } }
   | { type: "FileLoaded"; payload: { path: string; durationMs: number } }
   | { type: "Ended" }
-  | { type: "Error"; payload: { error: PlayerErrorDto } };
+  | { type: "Error"; payload: { error: PlayerErrorDto } }
+  | { type: "SurfaceClick" }
+  | { type: "SurfaceDoubleClick" };
 
 export const IDLE_SNAPSHOT: PlayerSnapshot = {
   status: "Idle",

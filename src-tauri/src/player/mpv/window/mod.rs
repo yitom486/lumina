@@ -4,7 +4,7 @@
 mod win32;
 
 #[cfg(windows)]
-pub use win32::{hwnd_from_webview_window, VideoSurface};
+pub use win32::{hwnd_from_webview_window, register_surface_app, VideoSurface};
 
 #[cfg(not(windows))]
 mod unsupported {
@@ -41,6 +41,8 @@ mod unsupported {
         }
     }
 
+    pub fn register_surface_app(_app: tauri::AppHandle) {}
+
     pub fn hwnd_from_webview_window(_window: &WebviewWindow) -> Result<isize, PlayerError> {
         Err(PlayerError::new(
             PlayerErrorCode::NativeWindowError,
@@ -51,4 +53,4 @@ mod unsupported {
 }
 
 #[cfg(not(windows))]
-pub use unsupported::{hwnd_from_webview_window, VideoSurface};
+pub use unsupported::{hwnd_from_webview_window, register_surface_app, VideoSurface};

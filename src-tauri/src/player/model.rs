@@ -57,4 +57,8 @@ pub enum PlayerEvent {
     FileLoaded { path: String, duration_ms: u64 },
     Ended,
     Error { error: PlayerError },
+    /// Left-click on the native video surface (after click/dblclick discrimination on UI).
+    SurfaceClick,
+    /// Double-click on the native video surface.
+    SurfaceDoubleClick,
 }

@@ -2,24 +2,46 @@
 //!
 //! Sibling of WebView2, placed over the video rect only so HTML controls below
 //! stay clickable. HWND is stored as `isize` so AppState stays `Send`.
+//! Mouse clicks are forwarded as PlayerEvent (HTML cannot receive them under HWND).
 
 use std::sync::OnceLock;
 
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
-use tauri::WebviewWindow;
+use tauri::{AppHandle, Manager, WebviewWindow};
 use windows::core::w;
 use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
 use windows::Win32::Graphics::Gdi::HBRUSH;
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, DestroyWindow, LoadCursorW, MoveWindow, RegisterClassW,
-    SetWindowPos, ShowWindow, CS_HREDRAW, CS_OWNDC, CS_VREDRAW, HWND_TOP, IDC_ARROW,
-    SWP_NOACTIVATE, SWP_SHOWWINDOW, SW_HIDE, WM_DESTROY, WNDCLASSW, WS_CHILD, WS_CLIPSIBLINGS,
+    SetWindowPos, ShowWindow, CS_DBLCLKS, CS_HREDRAW, CS_OWNDC, CS_VREDRAW, HWND_TOP, IDC_ARROW,
+    SWP_NOACTIVATE, SWP_SHOWWINDOW, SW_HIDE, WM_DESTROY, WM_LBUTTONDBLCLK, WM_LBUTTONUP,
+    WNDCLASSW, WS_CHILD, WS_CLIPSIBLINGS,
 };
 
 use crate::player::error::{PlayerError, PlayerErrorCode};
+use crate::player::model::PlayerEvent;
+use crate::state::AppState;
 
 static CLASS_REGISTERED: OnceLock<()> = OnceLock::new();
+static SURFACE_APP: OnceLock<AppHandle> = OnceLock::new();
+
+/// Call once from setup so the surface WndProc can emit player events.
+pub fn register_surface_app(app: AppHandle) {
+    if SURFACE_APP.set(app).is_err() {
+        tracing::debug!("surface app handle already registered");
+    }
+}
+
+fn emit_surface_event(event: PlayerEvent) {
+    let Some(app) = SURFACE_APP.get() else {
+        return;
+    };
+    let Some(state) = app.try_state::<AppState>() else {
+        return;
+    };
+    state.emit(event);
+}
 
 pub struct VideoSurface {
     hwnd: isize,
@@ -179,7 +201,7 @@ fn ensure_window_class() -> Result<(), PlayerError> {
     };
 
     let class = WNDCLASSW {
-        style: CS_HREDRAW | CS_VREDRAW | CS_OWNDC,
+        style: CS_HREDRAW | CS_VREDRAW | CS_OWNDC | CS_DBLCLKS,
         lpfnWndProc: Some(surface_wnd_proc),
         hInstance: module.into(),
         hCursor: cursor,
@@ -203,8 +225,17 @@ unsafe extern "system" fn surface_wnd_proc(
     wparam: WPARAM,
     lparam: LPARAM,
 ) -> LRESULT {
-    if msg == WM_DESTROY {
-        return LRESULT(0);
+    match msg {
+        WM_LBUTTONDBLCLK => {
+            emit_surface_event(PlayerEvent::SurfaceDoubleClick);
+            return LRESULT(0);
+        }
+        WM_LBUTTONUP => {
+            emit_surface_event(PlayerEvent::SurfaceClick);
+            return LRESULT(0);
+        }
+        WM_DESTROY => return LRESULT(0),
+        _ => {}
     }
     unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) }
 }

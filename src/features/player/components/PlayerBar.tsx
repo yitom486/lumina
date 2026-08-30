@@ -26,7 +26,7 @@ export function PlayerBar() {
         {fullscreen ? <FullscreenToggleButton /> : null}
       </div>
       <p className="text-[11px] text-muted-foreground">
-        空格 播放/暂停 · ←→ 5 秒 · ↑↓ 音量 · M 静音 · F 全屏 · Esc 退出全屏
+        空格 播放/暂停 · 单击画面 播放/暂停 · 双击画面 全屏 · ←→ 5 秒 · ↑↓ 音量 · M 静音 · F / Esc 全屏
       </p>
     </div>
   );

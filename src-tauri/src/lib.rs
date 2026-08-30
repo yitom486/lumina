@@ -23,7 +23,7 @@ use commands::player::{
     player_subscribe,
 };
 use commands::subtitle::{subtitle_list_choices, subtitle_load_choice};
-use player::mpv::window::{hwnd_from_webview_window, VideoSurface};
+use player::mpv::window::{hwnd_from_webview_window, register_surface_app, VideoSurface};
 use state::AppState;
 use tauri::Manager;
 
@@ -82,6 +82,8 @@ fn init_tracing() {
 }
 
 fn attach_native_surface(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
+    register_surface_app(app.handle().clone());
+
     let window = app
         .get_webview_window("main")
         .ok_or("main webview window is missing")?;
