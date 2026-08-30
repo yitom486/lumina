@@ -125,7 +125,7 @@ export function TranscriptPanel() {
     return (
       <section className="flex min-h-0 flex-1 flex-col px-3 py-3 text-sm text-muted-foreground">
         <p className="mt-1 text-xs leading-relaxed">
-          打开视频后，可在播放条右侧切换音轨/字幕，并在此浏览文稿或按需 ASR。
+          打开视频后，可在右侧切换音轨/字幕，并在此浏览文稿或按需 ASR。
         </p>
       </section>
     );
@@ -160,7 +160,7 @@ export function TranscriptPanel() {
         </div>
 
         <p className="text-[11px] text-muted-foreground">
-          音轨/字幕请用播放条右侧菜单切换
+          音轨/字幕请用右侧边栏切换
           {selected ? ` · 当前：${selected.label}` : ""}
         </p>
 

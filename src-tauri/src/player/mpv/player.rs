@@ -76,9 +76,16 @@ impl LibMpvPlayer {
     }
 
     pub fn set_volume(&self, volume: f64) -> Result<(), PlayerError> {
-        self.mpv
-            .set_property("volume", volume)
-            .map_err(map_playback_error)
+        // mpv accepts 0–100+ soft volume; prefer f64, fall back to int property.
+        match self.mpv.set_property("volume", volume) {
+            Ok(()) => Ok(()),
+            Err(first) => {
+                tracing::warn!(%first, volume, "set volume f64 failed; retry as i64");
+                self.mpv
+                    .set_property("volume", volume.round() as i64)
+                    .map_err(map_playback_error)
+            }
+        }
     }
 
     pub fn set_rate(&self, rate: f64) -> Result<(), PlayerError> {

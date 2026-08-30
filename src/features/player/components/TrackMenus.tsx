@@ -1,4 +1,4 @@
-/** Subtitle + audio track menus for the player bar (bottom-right, outside HWND). */
+/** Audio / subtitle / rate controls for the HTML sidebar (never over HWND). */
 
 import { useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
@@ -9,6 +9,7 @@ import {
   DropdownMenu,
   DropdownMenuCheckboxItem,
   DropdownMenuContent,
+  DropdownMenuItem,
   DropdownMenuLabel,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
@@ -22,6 +23,7 @@ import { useMediaInfoQuery } from "@/features/media";
 import { listSubtitleChoices } from "@/features/transcript/api";
 import type { SubtitleChoice } from "@/features/transcript/types";
 
+import { RateSelect } from "./RateSelect";
 import { usePlayerStore } from "../store";
 import { useTrackStore } from "../trackStore";
 
@@ -67,6 +69,7 @@ function audioLabel(stream: {
   return [lang, codec, ch].filter(Boolean).join(" · ");
 }
 
+/** Compact track + rate row for the reader sidebar. */
 export function TrackMenus() {
   const path = usePlayerStore((s) => s.currentFile);
   const status = usePlayerStore((s) => s.status);
@@ -118,14 +121,20 @@ export function TrackMenus() {
     void applySubtitleChoice(choice, setSubtitle);
   }, [mediaReady, subtitleChoiceId, choicesQuery.data, setSubtitle]);
 
+  if (!mediaReady) {
+    return (
+      <div className="px-3 py-1.5 text-[11px] text-muted-foreground">
+        打开视频后可切换音轨 / 字幕 / 倍速
+      </div>
+    );
+  }
+
   const choices = choicesQuery.data ?? [];
   const selectedSub = choices.find((c) => c.id === subtitleChoiceId);
   const selectedAudio = audioTracks.find((t) => t.index === audioStreamIndex);
 
-  if (!mediaReady) return null;
-
   return (
-    <div className="flex items-center gap-1">
+    <div className="flex flex-wrap items-center gap-1.5 border-b border-border px-2 py-1.5">
       <DropdownMenu>
         <Tooltip>
           <TooltipTrigger asChild>
@@ -140,7 +149,9 @@ export function TrackMenus() {
                 <Languages className="size-3.5 shrink-0" />
                 <span className="truncate">
                   {selectedAudio
-                    ? (selectedAudio.language ?? selectedAudio.codecName ?? "音轨")
+                    ? (selectedAudio.language ??
+                      selectedAudio.codecName ??
+                      "音轨")
                     : "音轨"}
                 </span>
               </Button>
@@ -148,9 +159,17 @@ export function TrackMenus() {
           </TooltipTrigger>
           <TooltipContent>音轨</TooltipContent>
         </Tooltip>
-        <DropdownMenuContent align="end" className="min-w-[14rem]">
+        <DropdownMenuContent align="start" side="bottom" className="min-w-[14rem]">
           <DropdownMenuLabel>音轨</DropdownMenuLabel>
           <DropdownMenuSeparator />
+          {audioTracks.length === 0 ? (
+            <DropdownMenuItem disabled>没有音轨</DropdownMenuItem>
+          ) : null}
+          {audioTracks.length === 1 ? (
+            <DropdownMenuLabel className="text-[11px] font-normal text-muted-foreground">
+              本片仅有一条音轨
+            </DropdownMenuLabel>
+          ) : null}
           {audioTracks.map((track) => (
             <DropdownMenuCheckboxItem
               key={track.index}
@@ -188,7 +207,7 @@ export function TrackMenus() {
           </TooltipTrigger>
           <TooltipContent>字幕</TooltipContent>
         </Tooltip>
-        <DropdownMenuContent align="end" className="min-w-[16rem]">
+        <DropdownMenuContent align="start" side="bottom" className="min-w-[16rem]">
           <DropdownMenuLabel>字幕</DropdownMenuLabel>
           <DropdownMenuSeparator />
           <DropdownMenuCheckboxItem
@@ -212,6 +231,8 @@ export function TrackMenus() {
           ))}
         </DropdownMenuContent>
       </DropdownMenu>
+
+      <RateSelect />
     </div>
   );
 }

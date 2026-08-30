@@ -35,7 +35,9 @@ describe("formatPlayerError", () => {
   });
 
   it("covers player, asr, acp and note codes", () => {
-    expect(formatPlayerError({ code: "NotConfigured" })).toBe("未配置可选组件（ASR/ACP）");
+    expect(formatPlayerError({ code: "NotConfigured" })).toBe(
+      "未配置可选组件（ASR/ACP）",
+    );
     expect(formatPlayerError({ code: "InvalidState" })).toBe(
       "当前状态无法执行该操作",
     );
@@ -43,12 +45,29 @@ describe("formatPlayerError", () => {
     expect(formatPlayerError({ code: "ProtocolError" })).toBe("与 Agent 通信失败");
     expect(formatPlayerError({ code: "ToolNotFound" })).toBe("字幕工具未就绪");
   });
+
+  it("never surfaces details even when present", () => {
+    expect(
+      formatPlayerError({
+        code: "LoadError",
+        message: "无法打开该媒体文件",
+        details: "ffprobe json: boom",
+      }),
+    ).toBe("无法打开该媒体文件");
+    expect(
+      errorMessage({
+        code: "ProbeFailed",
+        message: "无法读取该视频的媒体信息",
+        details: "serde error",
+      }),
+    ).toBe("无法读取该视频的媒体信息");
+  });
 });
 
 describe("errorMessage", () => {
   it("unwraps structured errors", () => {
-    expect(errorMessage({ code: "Busy", message: "已有 ASR 任务在运行" })).toBe(
-      "已有 ASR 任务在运行",
+    expect(errorMessage({ code: "Busy", message: "已有语音转写任务在运行" })).toBe(
+      "已有语音转写任务在运行",
     );
   });
 });

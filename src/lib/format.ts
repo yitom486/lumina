@@ -47,7 +47,7 @@ function hasCjk(text: string): boolean {
   return /[\u4e00-\u9fff]/.test(text);
 }
 
-/** Prefer Rust Chinese `message`; fall back by `code` if still English. */
+/** Prefer Rust business `message`; fall back by `code`. Never surface `details`. */
 export function formatPlayerError(error: {
   code?: string;
   message?: string;
@@ -62,6 +62,7 @@ export function formatPlayerError(error: {
   return "发生未知错误";
 }
 
+/** User-visible error text only — ignores technical `details`. */
 export function errorMessage(error: unknown): string {
   if (typeof error === "object" && error && "code" in error && "message" in error) {
     return formatPlayerError(

@@ -8,5 +8,6 @@ export { usePlayerHotkeys } from "./hooks/usePlayerHotkeys";
 export { useProgressPersistence } from "./hooks/useProgressPersistence";
 export { VideoSurface } from "./components/VideoSurface";
 export { PlayerBar } from "./components/PlayerBar";
+export { TrackMenus } from "./components/TrackMenus";
 export { PlaylistPanel } from "./components/PlaylistPanel";
 export { ResumeChip } from "./components/ResumeChip";

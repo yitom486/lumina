@@ -1,4 +1,7 @@
-/** Wire Tauri Channel → Zustand. Surface click/dblclick → play/fullscreen. */
+/** Wire Tauri Channel → Zustand. Surface click/dblclick → play/fullscreen.
+ * On mount / HMR reload, pull authoritative snapshot from Rust so UI does not
+ * show empty-state while mpv is still playing.
+ */
 
 import { useEffect, useRef } from "react";
 import { Channel } from "@tauri-apps/api/core";
@@ -6,6 +9,7 @@ import { Channel } from "@tauri-apps/api/core";
 import { errorMessage } from "@/lib/format";
 
 import * as api from "../api";
+import { ensureSurfaceBounds } from "../surfaceBridge";
 import { usePlayerStore } from "../store";
 import { useUiStore } from "../uiStore";
 import type { PlayerEvent } from "../types";
@@ -55,11 +59,60 @@ export function usePlayerEvents(): void {
       usePlayerStore.getState().applyEvent(event);
     };
 
-    void api.subscribePlayerEvents(onEvent).catch((error) => {
-      console.error("player_subscribe failed", error);
-      usePlayerStore.getState().setStatusMessage(errorMessage(error));
-    });
+    let cancelled = false;
+    let syncVersion = 0;
 
-    return () => clearClickTimer();
+    const syncFromRuntime = async () => {
+      const version = ++syncVersion;
+      const store = usePlayerStore.getState();
+      store.setRuntimeSynced(false);
+
+      try {
+        const snapshot = await api.getPlayerState();
+        if (cancelled || version !== syncVersion) return;
+        usePlayerStore.getState().applySnapshot(snapshot);
+        usePlayerStore.getState().setRuntimeSynced(true);
+        if (snapshot.currentFile) {
+          usePlayerStore.setState({
+            statusMessage:
+              snapshot.currentFile.split(/[/\\]/).pop() ?? snapshot.currentFile,
+          });
+        }
+        requestAnimationFrame(() => {
+          void ensureSurfaceBounds();
+        });
+      } catch (error) {
+        if (cancelled || version !== syncVersion) return;
+        console.error("player state resync failed", error);
+        usePlayerStore.getState().setStatusMessage(errorMessage(error));
+      }
+    };
+
+    const onViteAfterUpdate = () => {
+      void syncFromRuntime();
+    };
+
+    import.meta.hot?.on("vite:afterUpdate", onViteAfterUpdate);
+
+    void (async () => {
+      try {
+        await api.subscribePlayerEvents(onEvent);
+        if (cancelled) return;
+        await syncFromRuntime();
+        window.setTimeout(() => {
+          void ensureSurfaceBounds();
+        }, 80);
+      } catch (error) {
+        console.error("player_subscribe / resync failed", error);
+        usePlayerStore.getState().setStatusMessage(errorMessage(error));
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+      syncVersion += 1;
+      clearClickTimer();
+      import.meta.hot?.off("vite:afterUpdate", onViteAfterUpdate);
+    };
   }, []);
 }

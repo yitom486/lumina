@@ -219,6 +219,7 @@ impl AcpService {
 
                 if value.get("id").and_then(|v| v.as_u64()) == Some(target_id) {
                     if let Some(msg) = is_error_response(&value) {
+                        tracing::warn!(%msg, "ACP error response");
                         return Err(AcpError::protocol(Some(&msg)));
                     }
                     return Ok(value);

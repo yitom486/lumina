@@ -18,11 +18,16 @@ export function RateSelect() {
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        <Button type="button" variant="outline" size="sm" className="min-w-14 tabular-nums">
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          className="min-w-14 tabular-nums"
+        >
           {rate}x
         </Button>
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="end">
+      <DropdownMenuContent align="start" side="bottom">
         <DropdownMenuLabel>播放速度</DropdownMenuLabel>
         {RATES.map((value) => (
           <DropdownMenuCheckboxItem

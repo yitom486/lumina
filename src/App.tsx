@@ -1,3 +1,16 @@
+/**
+ * Layout stacking (must keep):
+ *
+ *   AppShell
+ *   └─ row
+ *      ├─ column (min-w-0 flex-1)
+ *      │   ├─ VideoSurface  ← ONLY this rect maps to libmpv HWND
+ *      │   └─ PlayerBar     ← HTML only (transport / seek / volume)
+ *      └─ aside (sidebar)   ← HTML only (media info / tracks / tabs)
+ *
+ * Never put upward-opening menus on PlayerBar — HWND always paints above WebView.
+ */
+
 import { AppShell } from "@/layouts/AppShell";
 import { AcpPanel } from "@/features/acp";
 import { ChaptersPanel } from "@/features/chapters";
@@ -6,6 +19,7 @@ import { NotesPanel } from "@/features/notes";
 import {
   PlayerBar,
   PlaylistPanel,
+  TrackMenus,
   usePlayerEvents,
   usePlayerHotkeys,
   useProgressPersistence,
@@ -22,7 +36,7 @@ const TABS: { id: SidebarTab; label: string }[] = [
   { id: "transcript", label: "文稿" },
   { id: "notes", label: "笔记" },
   { id: "chapters", label: "章节" },
-  { id: "acp", label: "ACP" },
+  { id: "acp", label: "对话" },
 ];
 
 export default function App() {
@@ -37,15 +51,17 @@ export default function App() {
   return (
     <TooltipProvider>
       <AppShell>
-        <div className="flex min-h-0 flex-1">
-          <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+        <div className="flex min-h-0 flex-1 overflow-hidden">
+          {/* Playback column: surface + chrome. HWND binds to VideoSurface only. */}
+          <div className="relative z-0 flex min-h-0 min-w-0 flex-1 flex-col">
             <VideoSurface />
             <PlayerBar />
           </div>
 
           {!fullscreen ? (
-            <aside className="flex w-[380px] shrink-0 flex-col border-l border-border bg-card">
+            <aside className="relative z-10 flex w-[380px] shrink-0 flex-col border-l border-border bg-card">
               <MediaInfoPanel />
+              <TrackMenus />
               <div className="flex shrink-0 flex-wrap gap-1 border-b border-border px-2 py-1.5">
                 {TABS.map((tab) => (
                   <button
@@ -63,11 +79,13 @@ export default function App() {
                   </button>
                 ))}
               </div>
-              {sidebarTab === "playlist" ? <PlaylistPanel /> : null}
-              {sidebarTab === "transcript" ? <TranscriptPanel /> : null}
-              {sidebarTab === "notes" ? <NotesPanel /> : null}
-              {sidebarTab === "chapters" ? <ChaptersPanel /> : null}
-              {sidebarTab === "acp" ? <AcpPanel /> : null}
+              <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+                {sidebarTab === "playlist" ? <PlaylistPanel /> : null}
+                {sidebarTab === "transcript" ? <TranscriptPanel /> : null}
+                {sidebarTab === "notes" ? <NotesPanel /> : null}
+                {sidebarTab === "chapters" ? <ChaptersPanel /> : null}
+                {sidebarTab === "acp" ? <AcpPanel /> : null}
+              </div>
             </aside>
           ) : null}
         </div>

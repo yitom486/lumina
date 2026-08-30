@@ -9,13 +9,12 @@ import { usePlayerStore } from "../store";
 import { useVideoSurface } from "../hooks/useVideoSurface";
 
 export function VideoSurface() {
-  const { surfaceRef, showNative } = useVideoSurface();
+  const { surfaceRef, showEmpty } = useVideoSurface();
   const openFile = usePlayerStore((s) => s.openFile);
   const busy = usePlayerStore((s) => s.busy);
   const status = usePlayerStore((s) => s.status);
   const error = usePlayerStore((s) => s.error);
 
-  const empty = !showNative;
   const errorText = formatPlayerError(error);
 
   return (
@@ -24,7 +23,7 @@ export function VideoSurface() {
       className="relative min-h-0 flex-1 bg-black"
       aria-label="Native video surface"
     >
-      {empty ? (
+      {showEmpty ? (
         <button
           type="button"
           disabled={busy}
@@ -41,14 +40,6 @@ export function VideoSurface() {
                 ? errorText
                 : "点击选择本地文件，同目录视频会加入播放列表"}
             </p>
-            {status === "Error" && error?.details ? (
-              <p
-                className="mt-2 max-w-md truncate text-[11px] text-muted-foreground/80"
-                title={error.details}
-              >
-                详情：{error.details}
-              </p>
-            ) : null}
           </div>
         </button>
       ) : null}

@@ -39,3 +39,15 @@ export type AcpEvent =
   | { type: "agentMessage"; text: string }
   | { type: "finished"; text: string }
   | { type: "failed"; code: string; message: string };
+
+/** UI chat shell — video context linkage comes later. */
+export type ChatRole = "user" | "assistant" | "system";
+
+export type ChatMessageStatus = "streaming" | "done" | "error";
+
+export type ChatMessage = {
+  id: string;
+  role: ChatRole;
+  content: string;
+  status?: ChatMessageStatus;
+};

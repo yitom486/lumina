@@ -53,11 +53,11 @@ React 不得知道：mpv handle、native window handle、FFI pointer、libmpv / 
 
 细则见 [`.cursor/rules/errors.mdc`](.cursor/rules/errors.mdc)。摘要：
 
-1. 形状：`{ code, message, details? }` — `message` 中文给用户；`details` + `tracing` 才放底层原文
-2. **底层 → 业务**：spawn / stderr / serde 等在域构造函数里映射成**固定**业务 `message`，调用方只传 `details`
-3. **禁止**在 `message` 里写 `ffprobe` / `ffmpeg` / `whisper-cli` / serde 等实现细节
-4. 用户输入校验可用具体中文（`bad_request` / `invalid`），不算泄漏
-5. 前端只用 `formatPlayerError` / `errorMessage` 展示，不要拼接工具口吻前缀
+1. **目标是隐藏实现，不是「翻译」**：用户看不到工具名 / stderr / serde / 路径等底层信息
+2. 形状：`{ code, message, details? }` — UI **只展示** `message`；`details` 仅日志（前端默认不渲染）
+3. 底层失败在域构造函数映射为**固定**业务 `message`；调用方只传 `details`
+4. 用户输入校验可用具体中文（`bad_request` / `invalid`）
+5. 前端只用 `formatPlayerError` / `errorMessage`，禁止拼「详情：」+ `details`
 
 ## Testing
 

@@ -24,6 +24,8 @@ export type ResumeToast = {
 };
 
 type PlayerStore = PlayerSnapshot & {
+  /** Rust is authoritative; false means the WebView must not hide/show HWND yet. */
+  runtimeSynced: boolean;
   busy: boolean;
   statusMessage: string;
   isSeeking: boolean;
@@ -37,6 +39,7 @@ type PlayerStore = PlayerSnapshot & {
 
   applySnapshot: (snapshot: PlayerSnapshot) => void;
   applyEvent: (event: PlayerEvent) => void;
+  setRuntimeSynced: (runtimeSynced: boolean) => void;
   setSeeking: (seeking: boolean) => void;
   setPreviewTime: (currentTimeMs: number) => void;
   setStatusMessage: (message: string) => void;
@@ -114,6 +117,7 @@ function maybeResume(
 
 export const usePlayerStore = create<PlayerStore>((set, get) => ({
   ...IDLE_SNAPSHOT,
+  runtimeSynced: false,
   busy: false,
   statusMessage: "打开本地视频开始观看",
   isSeeking: false,
@@ -128,8 +132,13 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
       currentTimeMs: snapshot.currentTimeMs,
       // Never clobber a known duration with 0 (mpv often reports 0 until demux settles;
       // a later seek/play snapshot would otherwise wipe DurationChanged).
+      // Exception: resync with a real file + positive duration from Rust always wins.
       durationMs:
-        snapshot.durationMs > 0 ? snapshot.durationMs : state.durationMs,
+        snapshot.durationMs > 0
+          ? snapshot.durationMs
+          : snapshot.currentFile
+            ? state.durationMs
+            : 0,
       volume: snapshot.volume,
       rate: snapshot.rate,
       currentFile: snapshot.currentFile,
@@ -143,6 +152,8 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
         set({ status: event.payload.status });
         break;
       case "PositionChanged":
+        // Ignore ghost ticks after HMR reset (Zustand idle, mpv still ticking).
+        if (!get().currentFile) break;
         if (!get().isSeeking) {
           set({ currentTimeMs: event.payload.positionMs });
         }
@@ -179,6 +190,8 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
         break;
     }
   },
+
+  setRuntimeSynced: (runtimeSynced) => set({ runtimeSynced }),
 
   setSeeking: (seeking) => set({ isSeeking: seeking }),
   setPreviewTime: (currentTimeMs) => set({ currentTimeMs }),
@@ -239,7 +252,6 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
       }
     }
 
-    await ensureSurfaceBounds();
     try {
       const snapshot = await api.openPlayer(path);
       get().applySnapshot(snapshot);
@@ -257,6 +269,7 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
           set,
         );
       }
+      await ensureSurfaceBounds();
     } catch (error) {
       const message = errorMessage(error);
       set({
@@ -345,8 +358,10 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
   },
 
   setVolume: async (volume) => {
+    const clamped = Math.max(0, Math.min(100, volume));
+    set({ volume: clamped });
     try {
-      get().applySnapshot(await api.setPlayerVolume(volume));
+      get().applySnapshot(await api.setPlayerVolume(clamped));
     } catch (error) {
       set({ statusMessage: errorMessage(error) });
     }

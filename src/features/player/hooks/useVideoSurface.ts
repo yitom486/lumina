@@ -1,5 +1,5 @@
-/** Keep native mpv HWND aligned with the HTML placeholder rect.
- * When no media is showing, report 0×0 so HWND hides and HTML empty-state is clickable.
+/** Keep native mpv HWND aligned with the HTML placeholder rect ONLY.
+ * Player bar / sidebar are pure HTML and must never be covered by HWND.
  */
 
 import { useCallback, useEffect, useRef } from "react";
@@ -8,31 +8,50 @@ import * as api from "../api";
 import { setSurfaceReporter } from "../surfaceBridge";
 import { usePlayerStore } from "../store";
 
-function shouldShowNativeSurface(status: string, currentFile: string | null): boolean {
-  if (!currentFile) return false;
+export type NativeSurfaceMode = "preserve" | "show" | "hide";
+
+/** CSS cannot order against HWND. Do not mutate it until Rust state is known. */
+export function nativeSurfaceMode(
+  runtimeSynced: boolean,
+  status: string,
+  currentFile: string | null,
+): NativeSurfaceMode {
+  if (!runtimeSynced) return "preserve";
+  if (!currentFile) return "hide";
   return (
     status === "Loading" ||
     status === "Ready" ||
     status === "Playing" ||
     status === "Paused" ||
     status === "Ended"
-  );
+  )
+    ? "show"
+    : "hide";
 }
 
 export function useVideoSurface() {
   const surfaceRef = useRef<HTMLDivElement>(null);
+  const runtimeSynced = usePlayerStore((s) => s.runtimeSynced);
   const status = usePlayerStore((s) => s.status);
   const currentFile = usePlayerStore((s) => s.currentFile);
-  const showNative = shouldShowNativeSurface(status, currentFile);
+  const mode = nativeSurfaceMode(runtimeSynced, status, currentFile);
 
   const reportBounds = useCallback(async () => {
     const el = surfaceRef.current;
     if (!el) return;
 
-    if (!shouldShowNativeSurface(
-      usePlayerStore.getState().status,
-      usePlayerStore.getState().currentFile,
-    )) {
+    const state = usePlayerStore.getState();
+    const nextMode = nativeSurfaceMode(
+      state.runtimeSynced,
+      state.status,
+      state.currentFile,
+    );
+
+    // During mount/HMR, the native player can still be showing valid pixels.
+    // A stale WebView Idle state must not collapse that HWND to 0x0.
+    if (nextMode === "preserve") return;
+
+    if (nextMode === "hide") {
       try {
         await api.setSurfaceBounds({ x: 0, y: 0, width: 0, height: 0 });
       } catch (error) {
@@ -42,12 +61,23 @@ export function useVideoSurface() {
     }
 
     const rect = el.getBoundingClientRect();
+    const width = Math.round(rect.width);
+    const height = Math.round(rect.height);
+    if (width < 2 || height < 2) {
+      try {
+        await api.setSurfaceBounds({ x: 0, y: 0, width: 0, height: 0 });
+      } catch (error) {
+        console.error("hide tiny surface failed", error);
+      }
+      return;
+    }
+
     try {
       await api.setSurfaceBounds({
-        x: rect.left,
-        y: rect.top,
-        width: rect.width,
-        height: rect.height,
+        x: Math.round(rect.left),
+        y: Math.round(rect.top),
+        width,
+        height,
       });
     } catch (error) {
       console.error("set surface bounds failed", error);
@@ -61,7 +91,7 @@ export function useVideoSurface() {
 
   useEffect(() => {
     void reportBounds();
-  }, [reportBounds, showNative, status, currentFile]);
+  }, [reportBounds, mode, status, currentFile]);
 
   useEffect(() => {
     void reportBounds();
@@ -79,5 +109,10 @@ export function useVideoSurface() {
     };
   }, [reportBounds]);
 
-  return { surfaceRef, reportBounds, showNative };
+  return {
+    surfaceRef,
+    reportBounds,
+    showNative: mode === "show",
+    showEmpty: mode === "hide",
+  };
 }
