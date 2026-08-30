@@ -1,118 +1,88 @@
-//! Resolve optional on-demand codex-acp (+ optional codex). Never started at app boot.
+//! Status aggregation for ACP (uses profiles + discovery).
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::Command;
 
+use crate::acp::discover::{find_acp_adapter, find_codex};
 use crate::acp::error::AcpError;
 use crate::acp::model::AcpStatus;
+use crate::acp::profile::{
+    install_hint, AgentKind, ProfileStore, RESPONSES_ONLY_NOTE,
+};
 
 #[derive(Debug, Clone)]
 pub struct AcpPaths {
-    pub cli: PathBuf,
-    pub codex: Option<PathBuf>,
+    pub cli: std::path::PathBuf,
+    pub codex: Option<std::path::PathBuf>,
 }
 
+/// Legacy helper / tests: resolve default Codex adapter only.
 pub fn resolve_acp_paths() -> Result<AcpPaths, AcpError> {
-    let cli = find_acp_cli().ok_or_else(|| {
+    let cli = find_acp_adapter().ok_or_else(|| {
         AcpError::not_configured(Some(
             "missing codex-acp on PATH or under src-tauri/native/acp/",
         ))
     })?;
-    let codex = find_codex();
-    Ok(AcpPaths { cli, codex })
+    Ok(AcpPaths {
+        cli,
+        codex: find_codex(),
+    })
 }
 
-pub fn status() -> AcpStatus {
-    match resolve_acp_paths() {
-        Ok(paths) => AcpStatus {
-            available: true,
-            cli_path: Some(paths.cli.to_string_lossy().to_string()),
-            codex_path: paths.codex.map(|p| p.to_string_lossy().to_string()),
-            message: "ACP 已就绪（仅在你发起会话时启动）".into(),
-        },
-        Err(error) => AcpStatus {
-            available: false,
-            cli_path: None,
-            codex_path: None,
-            message: error.message,
-        },
-    }
-}
-
-fn find_acp_cli() -> Option<PathBuf> {
-    let mut candidates = vec![
-        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("native")
-            .join("acp")
-            .join(if cfg!(windows) {
-                "codex-acp.exe"
-            } else {
-                "codex-acp"
-            }),
-    ];
-
-    if let Ok(exe) = std::env::current_exe() {
-        if let Some(dir) = exe.parent() {
-            candidates.push(dir.join(if cfg!(windows) {
-                "codex-acp.exe"
-            } else {
-                "codex-acp"
-            }));
-            candidates.push(dir.join("acp").join(if cfg!(windows) {
-                "codex-acp.exe"
-            } else {
-                "codex-acp"
-            }));
+pub fn status_from_store(store: &ProfileStore) -> AcpStatus {
+    let adapter_found = find_acp_adapter().is_some();
+    let codex_found = find_codex().is_some();
+    let (active_id, profiles) = match store.list_status() {
+        Ok(v) => v,
+        Err(error) => {
+            return AcpStatus {
+                available: false,
+                adapter_found,
+                codex_found,
+                active_profile_id: "codex".into(),
+                profiles: Vec::new(),
+                cli_path: None,
+                codex_path: find_codex().map(|p| p.to_string_lossy().to_string()),
+                message: error.message,
+                hint: install_hint(adapter_found, codex_found),
+                responses_only_note: RESPONSES_ONLY_NOTE.into(),
+            };
         }
-    }
+    };
 
-    if let Some(from_path) = which("codex-acp") {
-        candidates.push(from_path);
-    }
-    if cfg!(windows) {
-        if let Some(from_path) = which("codex-acp.exe") {
-            candidates.push(from_path);
-        }
-    }
+    let active = profiles.iter().find(|p| p.id == active_id);
+    let available = active.map(|p| p.available).unwrap_or(false)
+        && !(active.map(|p| p.command.is_empty()).unwrap_or(true));
 
-    candidates.into_iter().find(|p| p.is_file())
-}
+    let cli_path = active
+        .and_then(|p| p.resolved_command.clone())
+        .or_else(|| find_acp_adapter().map(|p| p.to_string_lossy().to_string()));
 
-fn find_codex() -> Option<PathBuf> {
-    let mut candidates = Vec::new();
-    if let Ok(override_path) = std::env::var("CODEX_PATH") {
-        let p = PathBuf::from(override_path);
-        if p.is_file() {
-            return Some(p);
+    let message = if available {
+        let name = active.map(|p| p.name.as_str()).unwrap_or("Agent");
+        format!("{name} 已就绪（仅在你发起会话时启动）")
+    } else if let Some(p) = active {
+        if p.kind == AgentKind::Custom && p.command.is_empty() {
+            "自定义 Agent 尚未填写启动命令".into()
+        } else {
+            format!("当前 Agent「{}」不可用：找不到 {}", p.name, p.command)
         }
-    }
-    candidates.push(
-        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("native")
-            .join("acp")
-            .join(if cfg!(windows) { "codex.exe" } else { "codex" }),
-    );
-    if let Some(p) = which("codex") {
-        candidates.push(p);
-    }
-    if cfg!(windows) {
-        if let Some(p) = which("codex.exe") {
-            candidates.push(p);
-        }
-    }
-    candidates.into_iter().find(|p| p.is_file())
-}
+    } else {
+        AcpError::not_configured(None).message
+    };
 
-/// Best-effort PATH lookup without extra crates.
-fn which(name: &str) -> Option<PathBuf> {
-    let path_var = std::env::var_os("PATH")?;
-    for dir in std::env::split_paths(&path_var) {
-        let candidate = dir.join(name);
-        if candidate.is_file() {
-            return Some(candidate);
-        }
+    AcpStatus {
+        available,
+        adapter_found,
+        codex_found,
+        active_profile_id: active_id,
+        profiles,
+        cli_path,
+        codex_path: find_codex().map(|p| p.to_string_lossy().to_string()),
+        message,
+        hint: install_hint(adapter_found, codex_found),
+        responses_only_note: RESPONSES_ONLY_NOTE.into(),
     }
-    None
 }
 
 pub fn probe_cli_version(cli: &Path) -> Option<String> {
@@ -135,12 +105,24 @@ mod tests {
 
     #[test]
     fn status_message_is_chinese_when_missing() {
-        // On CI without codex-acp this is the common path.
-        let status = status();
+        let store = ProfileStore::new();
+        let status = status_from_store(&store);
         assert!(
-            status.message.chars().any(|c| ('\u{4e00}'..='\u{9fff}').contains(&c)),
+            status
+                .message
+                .chars()
+                .any(|c| ('\u{4e00}'..='\u{9fff}').contains(&c)),
             "{}",
             status.message
         );
+        assert!(
+            status
+                .hint
+                .chars()
+                .any(|c| ('\u{4e00}'..='\u{9fff}').contains(&c)),
+            "{}",
+            status.hint
+        );
+        assert!(status.responses_only_note.contains("Responses"));
     }
 }

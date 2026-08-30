@@ -39,7 +39,7 @@ impl AcpError {
     pub fn not_configured(details: Option<&str>) -> Self {
         Self::new(
             AcpErrorCode::NotConfigured,
-            "未配置 ACP（可选）。请安装 Codex 与 codex-acp，并确保可在 PATH 中找到",
+            "未配置 ACP Agent（可选）。请安装 Codex ACP 适配器，或在设置中配置其它 Agent 命令",
             details.map(str::to_string),
         )
     }

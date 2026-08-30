@@ -1,4 +1,4 @@
-//! AcpService — optional on-demand Codex ACP session over stdio JSON-RPC.
+//! AcpService — optional on-demand ACP session over stdio JSON-RPC.
 
 use std::io::{BufRead, BufReader, Write};
 use std::process::{Command, Stdio};
@@ -9,8 +9,9 @@ use std::time::{Duration, Instant};
 use serde_json::Value;
 
 use crate::acp::error::AcpError;
-use crate::acp::model::{AcpEvent, AcpStatus};
-use crate::acp::paths::{self, resolve_acp_paths};
+use crate::acp::model::{AcpEvent, AcpStatus, AgentProfileInput};
+use crate::acp::paths::status_from_store;
+use crate::acp::profile::{resolve_launch, AgentKind, AgentProfile, ProfileStore};
 use crate::acp::protocol::{
     encode_line, extract_agent_text, initialize_params, is_error_response, parse_session_id,
     request, session_new_params, session_prompt_params,
@@ -20,6 +21,7 @@ pub struct AcpService {
     busy: AtomicBool,
     cancel: AtomicBool,
     child: Mutex<Option<std::process::Child>>,
+    profiles: ProfileStore,
 }
 
 impl AcpService {
@@ -28,11 +30,27 @@ impl AcpService {
             busy: AtomicBool::new(false),
             cancel: AtomicBool::new(false),
             child: Mutex::new(None),
+            profiles: ProfileStore::new(),
         }
     }
 
     pub fn status(&self) -> AcpStatus {
-        paths::status()
+        status_from_store(&self.profiles)
+    }
+
+    pub fn set_active_profile(&self, id: &str) -> Result<(), AcpError> {
+        self.profiles.set_active(id)
+    }
+
+    pub fn upsert_profile(&self, input: AgentProfileInput) -> Result<AgentProfile, AcpError> {
+        self.profiles.upsert(AgentProfile {
+            id: input.id,
+            name: input.name,
+            kind: input.kind,
+            command: input.command,
+            args: input.args,
+            env: input.env,
+        })
     }
 
     pub fn is_busy(&self) -> bool {
@@ -48,11 +66,12 @@ impl AcpService {
         }
     }
 
-    /// Minimal ACP prompt session. Emits progress via callback.
+    /// Minimal ACP prompt session using the active (or overridden) profile.
     pub fn prompt<F>(
         &self,
         text: impl AsRef<str>,
         cwd: Option<String>,
+        profile_id: Option<String>,
         mut on_event: F,
     ) -> Result<String, AcpError>
     where
@@ -67,7 +86,8 @@ impl AcpService {
         }
         self.cancel.store(false, Ordering::SeqCst);
 
-        let outcome = self.run_prompt_inner(text.as_ref(), cwd.as_deref(), &mut on_event);
+        let outcome =
+            self.run_prompt_inner(text.as_ref(), cwd.as_deref(), profile_id.as_deref(), &mut on_event);
 
         self.busy.store(false, Ordering::SeqCst);
         if let Ok(mut slot) = self.child.lock() {
@@ -100,6 +120,7 @@ impl AcpService {
         &self,
         prompt_text: &str,
         cwd: Option<&str>,
+        profile_id: Option<&str>,
         on_event: &mut dyn FnMut(AcpEvent),
     ) -> Result<String, AcpError> {
         let prompt_text = prompt_text.trim();
@@ -107,19 +128,30 @@ impl AcpService {
             return Err(AcpError::protocol("提问内容不能为空", None));
         }
 
-        let acp_paths = resolve_acp_paths()?;
+        if let Some(id) = profile_id {
+            self.profiles.set_active(id)?;
+        }
+        let profile = self.profiles.active_profile()?;
+        if profile.command.trim().is_empty() {
+            return Err(AcpError::not_configured(Some(
+                "active profile has empty command",
+            )));
+        }
+
+        let launch = resolve_launch(&profile)?;
         on_event(AcpEvent::Started);
         on_event(AcpEvent::Progress {
-            message: "正在启动 codex-acp…".into(),
+            message: format!("正在启动 {}…", launch.display_name),
         });
 
-        let mut command = Command::new(&acp_paths.cli);
+        let mut command = Command::new(&launch.program);
         command
+            .args(&launch.args)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
-        if let Some(codex) = &acp_paths.codex {
-            command.env("CODEX_PATH", codex);
+        for (key, value) in &launch.env {
+            command.env(key, value);
         }
         if let Some(dir) = cwd {
             command.current_dir(dir);
@@ -225,6 +257,12 @@ impl AcpService {
 
         let mut collected = String::new();
         let deadline = Instant::now() + Duration::from_secs(600);
+        let empty_hint = match profile.kind {
+            AgentKind::Codex => {
+                "（会话结束，未解析到文本回复；请确认 Codex 已登录，且模型走 Responses API）"
+            }
+            _ => "（会话结束，未解析到文本回复；请确认该 ACP Agent 可用）",
+        };
 
         loop {
             if self.cancel.load(Ordering::SeqCst) {
@@ -269,8 +307,7 @@ impl AcpService {
         }
 
         if collected.is_empty() {
-            collected =
-                "（会话结束，未解析到文本回复；请确认 Codex 已安装并完成登录）".into();
+            collected = empty_hint.into();
         }
         Ok(collected)
     }

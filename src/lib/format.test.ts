@@ -35,7 +35,7 @@ describe("formatPlayerError", () => {
   });
 
   it("covers player, asr, acp and note codes", () => {
-    expect(formatPlayerError({ code: "NotConfigured" })).toBe("未配置 ASR（可选）");
+    expect(formatPlayerError({ code: "NotConfigured" })).toBe("未配置可选组件（ASR/ACP）");
     expect(formatPlayerError({ code: "InvalidState" })).toBe(
       "当前状态无法执行该操作",
     );

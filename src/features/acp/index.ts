@@ -1,3 +1,15 @@
 export { AcpPanel } from "./components/AcpPanel";
-export { acpCancel, acpPrompt, getAcpStatus } from "./api";
-export type { AcpEvent, AcpStatus } from "./types";
+export {
+  acpCancel,
+  acpPrompt,
+  getAcpStatus,
+  setActiveAcpProfile,
+  upsertAcpProfile,
+} from "./api";
+export type {
+  AcpEvent,
+  AcpStatus,
+  AgentKind,
+  AgentProfileInput,
+  AgentProfileStatus,
+} from "./types";

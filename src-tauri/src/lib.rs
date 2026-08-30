@@ -7,7 +7,10 @@ pub mod player;
 pub mod subtitle;
 mod state;
 
-pub use acp::{AcpError, AcpErrorCode, AcpEvent, AcpService, AcpStatus};
+pub use acp::{
+    AcpError, AcpErrorCode, AcpEvent, AcpService, AcpStatus, AgentKind, AgentProfile,
+    AgentProfileInput, AgentProfileStatus,
+};
 pub use asr::{AsrError, AsrErrorCode, AsrEvent, AsrService, AsrStatus};
 pub use media::{
     MediaChapter, MediaError, MediaErrorCode, MediaInfo, MediaInspector, MediaStream, StreamKind,
@@ -21,7 +24,9 @@ pub use subtitle::{
     Transcript,
 };
 
-use commands::acp::{acp_cancel, acp_prompt, acp_status};
+use commands::acp::{
+    acp_cancel, acp_prompt, acp_set_active_profile, acp_status, acp_upsert_profile,
+};
 use commands::asr::{asr_status, asr_transcribe};
 use commands::media::{media_inspect, media_list_siblings};
 use commands::notes::{
@@ -67,6 +72,8 @@ pub fn run() {
             acp_status,
             acp_prompt,
             acp_cancel,
+            acp_set_active_profile,
+            acp_upsert_profile,
             notes_list,
             notes_create,
             notes_update,

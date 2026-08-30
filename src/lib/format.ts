@@ -30,7 +30,7 @@ const ERROR_FALLBACK: Record<string, string> = {
   UnsupportedSubtitle: "不支持该字幕格式",
   NoSubtitleTrack: "没有可用字幕轨",
   // Asr
-  NotConfigured: "未配置 ASR（可选）",
+  NotConfigured: "未配置可选组件（ASR/ACP）",
   Busy: "已有任务在运行",
   TranscribeFailed: "语音转写失败",
   Cancelled: "已取消",

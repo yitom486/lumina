@@ -17,7 +17,7 @@
 - Native 画面：子 HWND + `wid`，非 HTML `<video>`
 - 控制：Open / Play / Pause / Stop / Seek / Volume / Rate
 - 状态：Rust 权威，Channel → Zustand 镜像
-- 检查：`cargo check` / `clippy -D warnings` / `pnpm lint`
+- 检查：`cargo check` / `clippy -D warnings` / `bun run lint`
 
 ## Phase 3 摘要
 
@@ -32,12 +32,14 @@
 - 启动不加载模型；点击按钮才 spawn whisper-cli
 - 未配置时播放/字幕仍可用
 
-## Phase 5 — Codex ACP
+## Phase 5 — ACP Client（可插拔 Agent）
 
-- **按需**：检测本机 `codex-acp`（及可选 `codex`）；启动不预热 Agent
-- React 只做 Client UI；Rust 负责 paths / spawn / JSON-RPC / 生命周期
-- 未配置 → `NotConfigured`；播放、字幕、笔记仍可用
-- **pnpm 仅开发/CI**；打包后的应用与终端用户都不需要安装 pnpm / bun / Node 才能播放
+- Lumina **只做 ACP Client**；不直连 Codex App Server 协议
+- **默认 profile：`codex`**：spawn `codex-acp`（TS 适配器，可单文件）→ 内部 Codex App Server → **Responses API**
+- **其它 harness**（Claude 等）：另配 AgentProfile（command/args/env），换进程而非锁死 App Server
+- Codex 内换模型：`config.toml` provider，须 Responses 兼容（Chat Completions 已弃用）
+- 未配置 → `NotConfigured`；播放 / 字幕 / 笔记仍可用
+- **bun 仅开发/CI**；不要求终端用户装 bun 才能播放
 - 不把 Codex / Node 打进默认安装包
 
 ## 笔记 + 导出
@@ -55,7 +57,7 @@
 
 | 场景 | 工具 |
 |------|------|
-| 开发 Lumina 前端 | **pnpm**（仓库约定） |
-| 终端用户运行安装包 | 无需 pnpm / bun |
-| 可选 ACP | 本机已安装的 `codex-acp` / Codex CLI |
-| 另一款 bun 阅读器 | 可继续用 bun；不必与本仓库统一 lockfile |
+| 开发 Lumina 前端 | **bun**（仓库约定） |
+| 终端用户运行安装包 | 无需 bun / pnpm |
+| 可选 ACP | 本机 Agent（默认 codex-acp；bunx 路径自带 Codex，或单文件/PATH） |
+| 另一款产品 | 可同用 bun；对齐领域模型，不必强行同一仓库 |
