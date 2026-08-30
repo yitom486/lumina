@@ -1,6 +1,6 @@
 # Lumina
 
-AI Video Reader。当前阶段：**Phase 1 Native Playback Spike**。
+AI Video Reader。
 
 - 产品定位与约束：`PROJECT.md`
 - 架构：`ARCHITECTURE.md`
@@ -8,6 +8,8 @@ AI Video Reader。当前阶段：**Phase 1 Native Playback Spike**。
 - Agent 约定：`AGENTS.md`
 
 ```bash
-pnpm install
-pnpm tauri dev
+bun install
+bun run tauri dev
 ```
+
+开发用 **bun**；打成安装包后，终端用户**不需要** bun 才能播放。

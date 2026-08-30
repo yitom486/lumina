@@ -50,5 +50,5 @@ Domain (Player / Media / Subtitle / Asr)
 ## 测试期望
 
 - `cargo test --lib`：错误映射、路径校验、状态机非法转换、解析器
-- 前端：`formatPlayerError` 等纯函数单测（`pnpm test`）
+- 前端：`formatPlayerError` 等纯函数单测（`bun run test`）
 - 改错误文案或 code 时同步改测试

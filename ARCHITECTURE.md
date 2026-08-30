@@ -70,7 +70,7 @@ Zustand 只镜像 Rust；actions 一律走 Tauri Command；时间轴走 Channel�
 - open 前校验路径（空 / 不存在 / 非文件 / 空文件）→ `LoadError` / `UnsupportedMedia`
 - `loadfile` 失败按文案分类为 Load / Unsupported
 - 退出：`mark_shutdown` → drop Channel → `PlayerService::shutdown`（drop mpv）→ `VideoSurface::Drop`（DestroyWindow）
-- 业务代码无 `unwrap`/`expect`；`pnpm lint` = `tsc --noEmit`
+- 业务代码无 `unwrap`/`expect`；`bun run lint` = `tsc --noEmit`
 
 ### Media inspection (Phase 2)
 
