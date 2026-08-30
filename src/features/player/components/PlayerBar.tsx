@@ -1,22 +1,21 @@
 import { RateSelect } from "./RateSelect";
 import { SeekBar } from "./SeekBar";
-import { StatusLine } from "./StatusLine";
 import { TransportControls } from "./TransportControls";
 import { VolumeControl } from "./VolumeControl";
 
-/** Bottom chrome: transport + scrubber + volume/rate. Native video sits above. */
+/** Control strip below the native video surface (never overlays HWND). */
 export function PlayerBar() {
   return (
-    <div className="flex flex-col gap-3 border-t border-border px-6 py-4">
-      <div className="flex flex-wrap items-center gap-3">
+    <div className="flex shrink-0 flex-col gap-2 border-t border-border bg-card/80 px-3 py-2.5">
+      <div className="flex items-center gap-3">
         <TransportControls />
-        <StatusLine />
-      </div>
-      <SeekBar />
-      <div className="flex flex-wrap items-center gap-6">
+        <SeekBar />
         <VolumeControl />
         <RateSelect />
       </div>
+      <p className="text-[11px] text-muted-foreground">
+        空格 播放/暂停 · ←→ 快退/快进 5 秒 · ↑↓ 音量 · M 静音
+      </p>
     </div>
   );
 }

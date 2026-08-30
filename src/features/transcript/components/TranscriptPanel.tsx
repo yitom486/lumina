@@ -6,6 +6,7 @@ import type { Transcript } from "@/features/transcript";
 import { formatTime } from "@/lib/format";
 import { usePlayerStore } from "@/features/player";
 import { Button } from "@/components/ui/button";
+import { ScrollArea } from "@/components/ui/scroll-area";
 
 import { listSubtitleChoices, loadSubtitleChoice } from "../api";
 import type { Cue, SubtitleChoice } from "../types";
@@ -68,7 +69,6 @@ export function TranscriptPanel() {
   const asrStatusQuery = useQuery({
     queryKey: ["asrStatus"],
     queryFn: getAsrStatus,
-    // Status only — does not load the model.
     staleTime: 60_000,
     retry: false,
   });
@@ -100,7 +100,9 @@ export function TranscriptPanel() {
     void applyChoiceToPlayer(choice, setSubtitle);
   }, [mediaReady, choiceId, choicesQuery.data, setSubtitle, asrTranscript]);
 
-  const canLoadTranscript = Boolean(choiceId && selected?.supported && !asrTranscript);
+  const canLoadTranscript = Boolean(
+    choiceId && selected?.supported && !asrTranscript,
+  );
 
   const transcriptQuery = useQuery({
     queryKey: ["transcript", path, choiceId],
@@ -152,8 +154,11 @@ export function TranscriptPanel() {
 
   if (!mediaReady) {
     return (
-      <section className="border-t border-border px-6 py-3 text-sm text-muted-foreground">
-        Open a video to choose a subtitle track.
+      <section className="flex min-h-0 flex-1 flex-col px-3 py-3 text-sm text-muted-foreground">
+        <p className="font-medium text-foreground">文稿</p>
+        <p className="mt-2 text-xs leading-relaxed">
+          打开视频后，可在此选择字幕轨、浏览时间轴文稿，或按需生成 ASR。
+        </p>
       </section>
     );
   }
@@ -173,16 +178,23 @@ export function TranscriptPanel() {
               choicesQuery.error,
           )
         : selected && !selected.supported && !asrTranscript
-          ? "已在画面显示位图字幕；文稿可点下方按需 ASR，或换文本轨/外挂 .srt"
+          ? "已在画面显示位图字幕；文稿可点 ASR，或换文本轨/外挂 .srt"
           : null;
 
   return (
-    <section className="flex max-h-72 flex-col border-t border-border">
-      <div className="flex flex-wrap items-center gap-3 px-6 py-2 text-sm">
-        <label className="flex items-center gap-2">
-          <span className="font-medium">字幕</span>
+    <section className="flex min-h-0 flex-1 flex-col">
+      <div className="flex shrink-0 flex-col gap-2 border-b border-border px-3 py-2">
+        <div className="flex items-center justify-between gap-2">
+          <p className="text-sm font-medium">文稿</p>
+          {choicesQuery.isLoading ? (
+            <span className="text-xs text-muted-foreground">扫描…</span>
+          ) : null}
+        </div>
+
+        <label className="flex flex-col gap-1 text-xs">
+          <span className="text-muted-foreground">字幕轨</span>
           <select
-            className="min-w-[16rem] rounded border border-border bg-background px-2 py-1"
+            className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm"
             value={choiceId ?? ""}
             disabled={choices.length === 0 || Boolean(asrTranscript)}
             onChange={(e) => {
@@ -203,87 +215,88 @@ export function TranscriptPanel() {
           </select>
         </label>
 
-        <Button
-          type="button"
-          variant="outline"
-          disabled={asrBusy}
-          onClick={() => void handleAsr()}
-          title={
-            asrAvailable
-              ? "按需启动本地 whisper-cli（不预加载）"
-              : "未配置 ASR 也可点，会提示如何放置 whisper-cli"
-          }
-        >
-          {asrBusy ? "生成中…" : "生成文稿 (ASR)"}
-        </Button>
-
-        {asrTranscript ? (
-          <button
+        <div className="flex flex-wrap items-center gap-2">
+          <Button
             type="button"
-            className="text-muted-foreground underline"
-            onClick={() => setAsrTranscript(null)}
+            variant="outline"
+            size="sm"
+            disabled={asrBusy}
+            onClick={() => void handleAsr()}
+            title={
+              asrAvailable
+                ? "按需启动本地 whisper-cli（不预加载）"
+                : "未配置 ASR 也可点，会提示如何放置"
+            }
           >
-            回到字幕文稿
-          </button>
-        ) : null}
+            {asrBusy ? "生成中…" : "生成文稿 (ASR)"}
+          </Button>
+          {asrTranscript ? (
+            <button
+              type="button"
+              className="text-xs text-muted-foreground underline"
+              onClick={() => setAsrTranscript(null)}
+            >
+              回到字幕文稿
+            </button>
+          ) : null}
+        </div>
 
-        {choicesQuery.isLoading ? (
-          <span className="text-muted-foreground">扫描字幕…</span>
+        {asrProgress ? (
+          <p className="text-xs text-muted-foreground">{asrProgress}</p>
+        ) : null}
+        {!asrAvailable && asrStatusQuery.data ? (
+          <p className="text-[11px] leading-snug text-muted-foreground">
+            ASR 未配置：{asrStatusQuery.data.message}
+          </p>
         ) : null}
       </div>
 
-      {asrProgress ? (
-        <p className="px-6 pb-1 text-sm text-muted-foreground">{asrProgress}</p>
-      ) : null}
+      <ScrollArea className="min-h-0 flex-1">
+        <div className="px-2 py-2">
+          {transcriptQuery.isLoading && canLoadTranscript ? (
+            <p className="px-2 text-sm text-muted-foreground">加载文稿…</p>
+          ) : null}
 
-      {!asrAvailable && asrStatusQuery.data ? (
-        <p className="px-6 pb-1 text-xs text-muted-foreground">
-          ASR 可选未配置：{asrStatusQuery.data.message}
-        </p>
-      ) : null}
+          {errorText && !transcript ? (
+            <p className="px-2 text-sm text-muted-foreground">{errorText}</p>
+          ) : null}
 
-      {transcriptQuery.isLoading && canLoadTranscript ? (
-        <p className="px-6 pb-3 text-sm text-muted-foreground">加载文稿…</p>
-      ) : null}
+          {!errorText &&
+          choices.length === 0 &&
+          !choicesQuery.isLoading &&
+          !asrTranscript ? (
+            <p className="px-2 text-sm text-muted-foreground">
+              无文本字幕时，可按需使用 ASR（需本地 whisper-cli）。
+            </p>
+          ) : null}
 
-      {errorText && !transcript ? (
-        <p className="px-6 pb-3 text-sm text-muted-foreground">{errorText}</p>
-      ) : null}
-
-      {!errorText &&
-      choices.length === 0 &&
-      !choicesQuery.isLoading &&
-      !asrTranscript ? (
-        <p className="px-6 pb-3 text-sm text-muted-foreground">
-          无文本字幕时，可按需使用「生成文稿 (ASR)」（需本地 whisper-cli）。
-        </p>
-      ) : null}
-
-      {transcript ? (
-        <ul className="min-h-0 flex-1 space-y-1 overflow-y-auto px-4 pb-3">
-          {transcript.cues.map((cue, i) => {
-            const active = i === activeIndex;
-            return (
-              <li key={`${transcript.choiceId}-${cue.index}`} id={`cue-${i}`}>
-                <button
-                  type="button"
-                  className={`w-full rounded px-2 py-1.5 text-left text-sm ${
-                    active
-                      ? "bg-black/10 font-medium"
-                      : "hover:bg-black/5 text-muted-foreground"
-                  }`}
-                  onClick={() => void seek(cue.startMs)}
-                >
-                  <span className="mr-2 tabular-nums text-xs opacity-70">
-                    {formatTime(cue.startMs)}
-                  </span>
-                  {cue.text}
-                </button>
-              </li>
-            );
-          })}
-        </ul>
-      ) : null}
+          {transcript ? (
+            <ul className="space-y-0.5">
+              {transcript.cues.map((cue, i) => {
+                const active = i === activeIndex;
+                return (
+                  <li key={`${transcript.choiceId}-${cue.index}`} id={`cue-${i}`}>
+                    <button
+                      type="button"
+                      className={`w-full rounded-md px-2 py-1.5 text-left text-sm transition-colors ${
+                        active
+                          ? "bg-accent font-medium text-accent-foreground"
+                          : "text-muted-foreground hover:bg-muted hover:text-foreground"
+                      }`}
+                      onClick={() => void seek(cue.startMs)}
+                    >
+                      <span className="mr-2 tabular-nums text-[11px] opacity-70">
+                        {formatTime(cue.startMs)}
+                      </span>
+                      {cue.text}
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
+          ) : null}
+        </div>
+      </ScrollArea>
     </section>
   );
 }

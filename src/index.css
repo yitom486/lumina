@@ -4,25 +4,52 @@
   --font-sans: "Segoe UI", system-ui, sans-serif;
   --color-background: var(--background);
   --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
   --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-muted: var(--muted);
   --color-muted-foreground: var(--muted-foreground);
   --color-primary: var(--primary);
   --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
 }
 
 :root {
-  --background: #ececec;
-  --foreground: #1a1a1a;
-  --border: #c8c8c8;
-  --muted-foreground: #5c5c5c;
-  --primary: #1a1a1a;
-  --primary-foreground: #f5f5f5;
+  /* Cinema dark shell for desktop player */
+  --background: #121417;
+  --foreground: #e8eaed;
+  --card: #1a1d22;
+  --card-foreground: #e8eaed;
+  --popover: #1e2228;
+  --popover-foreground: #e8eaed;
+  --border: #2a2f38;
+  --input: #2a2f38;
+  --ring: #7a8494;
+  --muted: #22262c;
+  --muted-foreground: #9aa3b2;
+  --primary: #e8eaed;
+  --primary-foreground: #121417;
+  --secondary: #262b33;
+  --secondary-foreground: #e8eaed;
+  --accent: #2c323c;
+  --accent-foreground: #e8eaed;
+  --destructive: #e35d5d;
   font-family: var(--font-sans);
+  color-scheme: dark;
 }
 
 html,
 body,
 #root {
+  height: 100%;
   min-height: 100%;
 }
 
@@ -30,4 +57,5 @@ body {
   margin: 0;
   background: var(--background);
   color: var(--foreground);
+  overflow: hidden;
 }
