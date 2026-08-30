@@ -1,21 +1,13 @@
 //! Subtitle / transcript Tauri commands.
 
-use crate::subtitle::{SubtitleError, SubtitleService, SubtitleTrackInfo, Transcript};
+use crate::subtitle::{SubtitleChoice, SubtitleError, SubtitleService, Transcript};
 
 #[tauri::command]
-pub fn subtitle_list_tracks(path: String) -> Result<Vec<SubtitleTrackInfo>, SubtitleError> {
-    SubtitleService::list_tracks(path)
+pub fn subtitle_list_choices(path: String) -> Result<Vec<SubtitleChoice>, SubtitleError> {
+    SubtitleService::list_choices(path)
 }
 
 #[tauri::command]
-pub fn subtitle_load_transcript(
-    path: String,
-    stream_index: u32,
-) -> Result<Transcript, SubtitleError> {
-    SubtitleService::load_from_media(path, stream_index)
-}
-
-#[tauri::command]
-pub fn subtitle_load_external(path: String) -> Result<Transcript, SubtitleError> {
-    SubtitleService::load_external(path)
+pub fn subtitle_load_choice(path: String, choice_id: String) -> Result<Transcript, SubtitleError> {
+    SubtitleService::load_choice(path, choice_id)
 }

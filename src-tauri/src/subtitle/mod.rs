@@ -7,5 +7,5 @@ pub mod parse;
 pub mod service;
 
 pub use error::{SubtitleError, SubtitleErrorCode};
-pub use model::{Cue, SubtitleTrackInfo, Transcript};
+pub use model::{Cue, SubtitleChoice, SubtitleSource, Transcript};
 pub use service::SubtitleService;

@@ -4,22 +4,16 @@ import { useQuery } from "@tanstack/react-query";
 import { formatTime } from "@/lib/format";
 import { usePlayerStore } from "@/features/player";
 
-import {
-  listSubtitleTracks,
-  loadExternalTranscript,
-  loadTranscript,
-  pickExternalSubtitle,
-} from "../api";
-import type { Cue, SubtitleTrackInfo, Transcript } from "../types";
-
-function trackLabel(track: SubtitleTrackInfo): string {
-  const lang = track.language ?? "und";
-  const codec = track.codecName ?? "sub";
-  return `#${track.streamIndex} · ${lang} · ${codec}`;
-}
+import { listSubtitleChoices, loadSubtitleChoice } from "../api";
+import type { Cue, SubtitleChoice } from "../types";
 
 function activeCueIndex(cues: Cue[], timeMs: number): number {
   return cues.findIndex((c) => timeMs >= c.startMs && timeMs < c.endMs);
+}
+
+function pickDefaultChoice(choices: SubtitleChoice[]): string | null {
+  const text = choices.find((c) => c.supported);
+  return text?.id ?? null;
 }
 
 export function TranscriptPanel() {
@@ -34,134 +28,108 @@ export function TranscriptPanel() {
     status !== "Loading" &&
     status !== "Error";
 
-  const tracksQuery = useQuery({
-    queryKey: ["subtitleTracks", path],
-    queryFn: () => listSubtitleTracks(path as string),
+  const choicesQuery = useQuery({
+    queryKey: ["subtitleChoices", path],
+    queryFn: () => listSubtitleChoices(path as string),
     enabled: mediaReady,
     retry: false,
   });
 
-  const [streamIndex, setStreamIndex] = useState<number | null>(null);
-  const [external, setExternal] = useState<Transcript | null>(null);
-  const [loadError, setLoadError] = useState<string | null>(null);
+  const [choiceId, setChoiceId] = useState<string | null>(null);
 
   useEffect(() => {
-    setExternal(null);
-    setLoadError(null);
-    setStreamIndex(null);
+    setChoiceId(null);
   }, [path]);
 
   useEffect(() => {
-    if (!tracksQuery.data?.length) return;
-    if (streamIndex != null) return;
-    const preferred =
-      tracksQuery.data.find(
-        (t) => t.codecName && !/pgs|dvd_subtitle|dvb_subtitle/i.test(t.codecName),
-      ) ?? tracksQuery.data[0];
-    setStreamIndex(preferred.streamIndex);
-  }, [tracksQuery.data, streamIndex]);
+    if (!choicesQuery.data?.length) return;
+    if (choiceId != null) return;
+    setChoiceId(pickDefaultChoice(choicesQuery.data));
+  }, [choicesQuery.data, choiceId]);
+
+  const selected = choicesQuery.data?.find((c) => c.id === choiceId);
+  const canLoad = Boolean(choiceId && selected?.supported);
 
   const transcriptQuery = useQuery({
-    queryKey: ["transcript", path, streamIndex],
-    queryFn: () => loadTranscript(path as string, streamIndex as number),
-    enabled: mediaReady && streamIndex != null && !external,
+    queryKey: ["transcript", path, choiceId],
+    queryFn: () => loadSubtitleChoice(path as string, choiceId as string),
+    enabled: mediaReady && canLoad,
     retry: false,
   });
 
-  const transcript = external ?? transcriptQuery.data ?? null;
+  const transcript = transcriptQuery.data ?? null;
   const activeIndex = useMemo(
     () => (transcript ? activeCueIndex(transcript.cues, currentTimeMs) : -1),
     [transcript, currentTimeMs],
   );
 
-  async function handleOpenExternal() {
-    setLoadError(null);
-    try {
-      const file = await pickExternalSubtitle();
-      if (!file) return;
-      const data = await loadExternalTranscript(file);
-      setExternal(data);
-    } catch (error) {
-      setLoadError(
-        typeof error === "object" && error && "message" in error
-          ? String((error as { message: string }).message)
-          : String(error),
-      );
-    }
-  }
-
   if (!mediaReady) {
     return (
       <section className="border-t border-border px-6 py-3 text-sm text-muted-foreground">
-        Open a video to load subtitle transcript.
+        Open a video to choose a subtitle track.
       </section>
     );
   }
 
-  const errorText =
-    loadError ??
-    (transcriptQuery.isError
+  const choices = choicesQuery.data ?? [];
+  const errorText = transcriptQuery.isError
+    ? String(
+        (transcriptQuery.error as { message?: string }).message ??
+          transcriptQuery.error,
+      )
+    : choicesQuery.isError
       ? String(
-          (transcriptQuery.error as { message?: string }).message ??
-            transcriptQuery.error,
+          (choicesQuery.error as { message?: string }).message ??
+            choicesQuery.error,
         )
-      : null) ??
-    (tracksQuery.isError
-      ? String(
-          (tracksQuery.error as { message?: string }).message ?? tracksQuery.error,
-        )
-      : null);
+      : selected && !selected.supported
+        ? "该轨是位图字幕，暂不能转成文稿（可换外挂 .srt 或等 ASR）"
+        : null;
 
   return (
     <section className="flex max-h-64 flex-col border-t border-border">
       <div className="flex flex-wrap items-center gap-3 px-6 py-2 text-sm">
-        <span className="font-medium">Transcript</span>
-        {tracksQuery.data && tracksQuery.data.length > 0 ? (
+        <label className="flex items-center gap-2">
+          <span className="font-medium">字幕</span>
           <select
-            className="rounded border border-border bg-background px-2 py-1"
-            value={streamIndex ?? ""}
-            disabled={Boolean(external)}
-            onChange={(e) => {
-              setExternal(null);
-              setStreamIndex(Number(e.target.value));
-            }}
+            className="min-w-[16rem] rounded border border-border bg-background px-2 py-1"
+            value={choiceId ?? ""}
+            disabled={choices.length === 0}
+            onChange={(e) => setChoiceId(e.target.value || null)}
             aria-label="Subtitle track"
           >
-            {tracksQuery.data.map((track) => (
-              <option key={track.streamIndex} value={track.streamIndex}>
-                {trackLabel(track)}
-              </option>
-            ))}
+            {choices.length === 0 ? (
+              <option value="">无可用字幕</option>
+            ) : (
+              choices.map((choice) => (
+                <option
+                  key={choice.id}
+                  value={choice.id}
+                  disabled={!choice.supported}
+                >
+                  {choice.label}
+                </option>
+              ))
+            )}
           </select>
-        ) : (
-          <span className="text-muted-foreground">No embedded text tracks</span>
-        )}
-        <button
-          type="button"
-          className="rounded border border-border px-2 py-1 hover:bg-black/5"
-          onClick={() => void handleOpenExternal()}
-        >
-          Open .srt/.vtt/.ass
-        </button>
-        {external ? (
-          <button
-            type="button"
-            className="text-muted-foreground underline"
-            onClick={() => setExternal(null)}
-          >
-            Use embedded
-          </button>
+        </label>
+        {choicesQuery.isLoading ? (
+          <span className="text-muted-foreground">扫描字幕…</span>
         ) : null}
       </div>
 
-      {transcriptQuery.isLoading && !external ? (
-        <p className="px-6 pb-3 text-sm text-muted-foreground">
-          Extracting subtitle…
-        </p>
+      {transcriptQuery.isLoading && canLoad ? (
+        <p className="px-6 pb-3 text-sm text-muted-foreground">加载文稿…</p>
       ) : null}
 
       {errorText && !transcript ? (
         <p className="px-6 pb-3 text-sm text-red-600">{errorText}</p>
+      ) : null}
+
+      {!errorText && choices.length === 0 && !choicesQuery.isLoading ? (
+        <p className="px-6 pb-3 text-sm text-muted-foreground">
+          未找到内嵌文本字幕，也没有同名外挂（如 video.srt / video.en.srt）。
+        </p>
       ) : null}
 
       {transcript ? (

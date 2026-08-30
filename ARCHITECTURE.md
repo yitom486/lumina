@@ -88,6 +88,7 @@ subtitle_list_tracks / subtitle_load_transcript
   → SubtitleService → ffmpeg 抽出 → SRT/ASS/VTT 解析 → Transcript
 ```
 
-- 文稿面板：轨选择、当前句高亮、点击 seek；可打开外挂字幕
-- 位图字幕（PGS 等）→ `UnsupportedSubtitle`（留给后续 OCR/ASR）
+- 字幕下拉：内嵌轨 + 同名/同 stem 外挂（`video.srt`、`video.en.srt`）自动发现
+- 用户只做选择题；位图轨显示为不可选
+- 文稿：当前句高亮、点击 seek
 

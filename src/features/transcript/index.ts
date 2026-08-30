@@ -1,2 +1,7 @@
-export type { Cue, SubtitleTrackInfo, Transcript } from "./types";
+export type {
+  Cue,
+  SubtitleChoice,
+  SubtitleSource,
+  Transcript,
+} from "./types";
 export { TranscriptPanel } from "./components/TranscriptPanel";

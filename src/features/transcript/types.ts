@@ -1,8 +1,14 @@
-export type SubtitleTrackInfo = {
-  streamIndex: number;
+export type SubtitleSource = "Embedded" | "Sidecar";
+
+export type SubtitleChoice = {
+  id: string;
+  source: SubtitleSource;
+  label: string;
+  supported: boolean;
+  streamIndex?: number | null;
+  externalPath?: string | null;
   codecName?: string | null;
   language?: string | null;
-  title?: string | null;
 };
 
 export type Cue = {
@@ -14,6 +20,7 @@ export type Cue = {
 
 export type Transcript = {
   sourcePath: string;
+  choiceId: string;
   streamIndex?: number | null;
   language?: string | null;
   codecName?: string | null;
