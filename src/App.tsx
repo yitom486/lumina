@@ -1,4 +1,5 @@
 import { AppShell } from "@/layouts/AppShell";
+import { MediaInfoPanel } from "@/features/media";
 import {
   PlayerBar,
   usePlayerEvents,
@@ -12,6 +13,7 @@ export default function App() {
     <AppShell>
       <VideoSurface />
       <PlayerBar />
+      <MediaInfoPanel />
     </AppShell>
   );
 }

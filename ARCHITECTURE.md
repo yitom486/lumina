@@ -72,3 +72,12 @@ Zustand 只镜像 Rust；actions 一律走 Tauri Command；时间轴走 Channel�
 - 退出：`mark_shutdown` → drop Channel → `PlayerService::shutdown`（drop mpv）→ `VideoSurface::Drop`（DestroyWindow）
 - 业务代码无 `unwrap`/`expect`；`pnpm lint` = `tsc --noEmit`
 
+### Media inspection (Phase 2)
+
+```
+media_inspect(path) → MediaInspector → ffprobe (native/ffmpeg/) → MediaInfo
+```
+
+- 与 Player / libmpv 解耦；只读探测，不转码
+- 前端 `features/media` + TanStack Query；打开文件后底部面板展示
+

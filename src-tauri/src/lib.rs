@@ -1,11 +1,14 @@
 mod commands;
+pub mod media;
 pub mod player;
 mod state;
 
+pub use media::{MediaError, MediaErrorCode, MediaInfo, MediaInspector, MediaStream, StreamKind};
 pub use player::{
     PlayerError, PlayerErrorCode, PlayerEvent, PlayerService, PlayerSnapshot, PlayerState,
 };
 
+use commands::media::media_inspect;
 use commands::player::{
     player_get_state, player_open, player_pause, player_play, player_seek, player_set_rate,
     player_set_surface_bounds, player_set_volume, player_stop, player_subscribe,
@@ -33,6 +36,7 @@ pub fn run() {
             player_set_volume,
             player_set_rate,
             player_set_surface_bounds,
+            media_inspect,
         ])
         .setup(|app| {
             attach_native_surface(app)?;

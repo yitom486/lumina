@@ -1,0 +1,14 @@
+---
+description: Phase 2 — FFmpeg Media Inspection 范围与禁区
+alwaysApply: true
+---
+
+# Phase 2
+
+目标：在 native 播放之上，用项目本地 **ffprobe** 读取媒体元数据并展示。
+
+允许：`MediaInspector`、format/streams 摘要、`media_inspect` Command、只读探测 UI。
+
+禁止本阶段：转码、remux、批量抽帧、Whisper/ASR、Transcript、SQLite、RAG、embedding、ACP、AI Chat、OCR、Cloud。
+
+不要为 Phase 3+ 提前实现。探测失败不得拖垮播放。

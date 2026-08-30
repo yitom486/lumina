@@ -44,4 +44,7 @@ Desktop.ini
 src-tauri/native/mpv/*
 !src-tauri/native/mpv/README.md
 !src-tauri/native/mpv/VERSION
+src-tauri/native/ffmpeg/*
+!src-tauri/native/ffmpeg/README.md
+!src-tauri/native/ffmpeg/VERSION
 *.pdb

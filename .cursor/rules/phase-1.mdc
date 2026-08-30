@@ -1,14 +1,10 @@
 ---
-description: Phase 1 范围：只做 Native Playback Spike，禁止提前实现后续能力
-alwaysApply: true
+description: Phase 1 已完成；保留验收记忆，不再阻塞 Phase 2
+alwaysApply: false
 ---
 
-# Phase 1
+# Phase 1（已完成）
 
-唯一目标：Tauri 2 → Rust → libmpv → Native Video Rendering。
+Native Playback Spike 已验收：`libmpv` + wid 嵌入 + 基本控制。
 
-本阶段禁止：HTML video、Codex ACP、MCP、ASR、Whisper、FFmpeg extraction、Transcript、SQLite、RAG、embedding、AI Chat、OCR、Cloud、plugin system。
-
-不要为“以后可能需要”提前实现。Native rendering 失败时停止扩展其他功能，优先解决 rendering spike。
-
-验收垂直切片：Open 本地视频 → native libmpv 播放 → Play / Pause / Seek / Volume / Rate → 关闭并正确释放 native resources。
+历史禁区已解除中的「FFmpeg extraction」——Phase 2 允许 **只读 ffprobe 探测**，仍禁止转码/抽帧流水线/ASR 等（见 `phase-2.mdc`）。
