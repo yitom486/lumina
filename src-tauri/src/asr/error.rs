@@ -39,13 +39,13 @@ impl AsrError {
     pub fn not_configured(details: Option<&str>) -> Self {
         Self::new(
             AsrErrorCode::NotConfigured,
-            "ASR is not configured (optional). Place whisper-cli and a ggml model under native/whisper/",
+            "未配置 ASR（可选）。请将 whisper-cli 与 ggml 模型放到 native/whisper/",
             details.map(str::to_string),
         )
     }
 
     pub fn busy() -> Self {
-        Self::new(AsrErrorCode::Busy, "an ASR job is already running", None)
+        Self::new(AsrErrorCode::Busy, "已有 ASR 任务在运行", None)
     }
 
     pub fn extract_failed(message: impl Into<String>, details: Option<&str>) -> Self {

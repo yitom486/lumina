@@ -1,4 +1,5 @@
 //! Structured player errors. Frontend shape: `{ code, message, details? }`.
+//! `message` is user-facing Chinese; technical text goes in `details`.
 
 use std::fmt;
 
@@ -42,7 +43,11 @@ impl PlayerError {
     pub fn invalid_state(operation: &str, status: PlayerState) -> Self {
         Self::new(
             PlayerErrorCode::InvalidState,
-            format!("cannot {operation} while {status:?}"),
+            format!(
+                "当前为「{}」状态，无法执行「{}」",
+                status_label(status),
+                operation_label(operation)
+            ),
             None,
         )
     }
@@ -77,8 +82,8 @@ impl PlayerError {
 
     pub fn backend_missing() -> Self {
         Self::internal(
-            "libmpv backend is not attached",
-            Some("player runtime is not running"),
+            "播放引擎尚未就绪",
+            Some("libmpv backend is not attached"),
         )
     }
 }
@@ -105,5 +110,44 @@ fn format_code(code: PlayerErrorCode) -> &'static str {
         PlayerErrorCode::PlaybackError => "PlaybackError",
         PlayerErrorCode::InvalidState => "InvalidState",
         PlayerErrorCode::InternalError => "InternalError",
+    }
+}
+
+fn status_label(status: PlayerState) -> &'static str {
+    match status {
+        PlayerState::Idle => "空闲",
+        PlayerState::Loading => "加载中",
+        PlayerState::Ready => "就绪",
+        PlayerState::Playing => "播放中",
+        PlayerState::Paused => "已暂停",
+        PlayerState::Ended => "已结束",
+        PlayerState::Error => "错误",
+    }
+}
+
+fn operation_label(operation: &str) -> &'static str {
+    match operation {
+        "open" => "打开",
+        "play" => "播放",
+        "pause" => "暂停",
+        "stop" => "停止",
+        "seek" => "跳转",
+        _ => "该操作",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn user_messages_are_chinese() {
+        let err = PlayerError::backend_missing();
+        assert!(err.message.chars().any(|c| ('\u{4e00}'..='\u{9fff}').contains(&c)));
+        assert_eq!(err.code, PlayerErrorCode::InternalError);
+
+        let invalid = PlayerError::invalid_state("play", PlayerState::Error);
+        assert!(invalid.message.contains("错误"));
+        assert!(invalid.message.contains("播放"));
     }
 }

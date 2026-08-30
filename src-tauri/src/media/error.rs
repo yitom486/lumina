@@ -38,7 +38,7 @@ impl MediaError {
     pub fn probe_not_found(details: Option<&str>) -> Self {
         Self::new(
             MediaErrorCode::ProbeNotFound,
-            "ffprobe executable was not found",
+            "未找到 ffprobe，请放到 native/ffmpeg/",
             details.map(str::to_string),
         )
     }
@@ -46,7 +46,7 @@ impl MediaError {
     pub fn file_not_found(path: &str) -> Self {
         Self::new(
             MediaErrorCode::FileNotFound,
-            "media file not found or inaccessible",
+            "找不到媒体文件或无法访问",
             Some(path.to_string()),
         )
     }

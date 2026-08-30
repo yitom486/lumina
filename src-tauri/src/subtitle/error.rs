@@ -40,7 +40,7 @@ impl SubtitleError {
     pub fn tool_not_found(details: Option<&str>) -> Self {
         Self::new(
             SubtitleErrorCode::ToolNotFound,
-            "ffmpeg executable was not found",
+            "未找到 ffmpeg，请放到 native/ffmpeg/",
             details.map(str::to_string),
         )
     }
@@ -48,7 +48,7 @@ impl SubtitleError {
     pub fn file_not_found(path: &str) -> Self {
         Self::new(
             SubtitleErrorCode::FileNotFound,
-            "file not found or inaccessible",
+            "找不到字幕文件",
             Some(path.to_string()),
         )
     }
@@ -80,7 +80,7 @@ impl SubtitleError {
     pub fn no_track() -> Self {
         Self::new(
             SubtitleErrorCode::NoSubtitleTrack,
-            "no subtitle tracks found in media",
+            "该媒体没有可用字幕轨",
             None,
         )
     }

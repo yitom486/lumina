@@ -251,7 +251,9 @@ impl PlayerService {
             .ok_or_else(PlayerError::backend_missing)
             .and_then(|backend| backend.seek_ms(position_ms));
         if let Err(error) = result {
-            self.fail(error.clone());
+            // Seek can fail transiently (demux not ready after open/resume).
+            // Do not hard-fault the whole session into Error.
+            tracing::warn!(%error, position_ms, "seek failed");
             return Err(error);
         }
         self.snapshot.current_time_ms = position_ms;
@@ -272,7 +274,7 @@ impl PlayerService {
     pub fn set_volume(&mut self, volume: f64) -> Result<PlayerSnapshot, PlayerError> {
         if !(VOLUME_MIN..=VOLUME_MAX).contains(&volume) {
             return Err(PlayerError::playback(format!(
-                "volume must be {VOLUME_MIN}..={VOLUME_MAX}"
+                "音量需在 {VOLUME_MIN}–{VOLUME_MAX} 之间"
             )));
         }
         tracing::info!(volume, "set_volume");
@@ -286,7 +288,7 @@ impl PlayerService {
     pub fn set_rate(&mut self, rate: f64) -> Result<PlayerSnapshot, PlayerError> {
         if !(RATE_MIN..=RATE_MAX).contains(&rate) {
             return Err(PlayerError::playback(format!(
-                "rate must be {RATE_MIN}..={RATE_MAX}"
+                "倍速需在 {RATE_MIN}–{RATE_MAX} 之间"
             )));
         }
         tracing::info!(rate, "set_rate");
@@ -365,19 +367,19 @@ impl PlayerService {
             }
             "Embedded" => {
                 let index = stream_index.ok_or_else(|| {
-                    PlayerError::playback("embedded subtitle requires streamIndex")
+                    PlayerError::playback("内嵌字幕缺少 streamIndex")
                 })?;
                 backend.set_embedded_subtitle(i64::from(index))?;
             }
             "Sidecar" => {
                 let path = external_path.ok_or_else(|| {
-                    PlayerError::playback("sidecar subtitle requires externalPath")
+                    PlayerError::playback("外挂字幕缺少文件路径")
                 })?;
                 backend.set_external_subtitle(path)?;
             }
             other => {
                 return Err(PlayerError::playback(format!(
-                    "unknown subtitle source: {other}"
+                    "未知字幕来源：{other}"
                 )));
             }
         }
@@ -417,26 +419,26 @@ impl PlayerService {
 fn validate_media_path(path: &str) -> Result<(), PlayerError> {
     let trimmed = path.trim();
     if trimmed.is_empty() {
-        return Err(PlayerError::load("media path is empty", None));
+        return Err(PlayerError::load("媒体路径为空", None));
     }
 
     let meta = std::fs::metadata(trimmed).map_err(|error| {
         PlayerError::load(
-            "media file not found or inaccessible",
+            "找不到该文件或无法访问",
             Some(&error.to_string()),
         )
     })?;
 
     if !meta.is_file() {
         return Err(PlayerError::load(
-            "media path is not a regular file",
+            "路径不是普通文件",
             Some(trimmed),
         ));
     }
 
     if meta.len() == 0 {
         return Err(PlayerError::unsupported(
-            "media file is empty",
+            "文件为空，无法播放",
             Some(trimmed),
         ));
     }

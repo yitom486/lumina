@@ -4,6 +4,7 @@
 
 import { FolderOpen } from "lucide-react";
 
+import { formatPlayerError } from "@/lib/format";
 import { usePlayerStore } from "../store";
 import { useVideoSurface } from "../hooks/useVideoSurface";
 
@@ -15,6 +16,7 @@ export function VideoSurface() {
   const error = usePlayerStore((s) => s.error);
 
   const empty = !showNative;
+  const errorText = formatPlayerError(error);
 
   return (
     <div
@@ -30,15 +32,23 @@ export function VideoSurface() {
           className="absolute inset-0 flex flex-col items-center justify-center gap-4 text-muted-foreground transition-colors hover:bg-white/5 hover:text-foreground disabled:opacity-60"
         >
           <FolderOpen className="size-24 stroke-[1.25]" aria-hidden />
-          <div className="text-center">
+          <div className="px-6 text-center">
             <p className="text-base font-medium text-foreground">
               {status === "Error" ? "打开失败，点击重新选择" : "打开视频"}
             </p>
-            <p className="mt-1 max-w-xs text-sm text-muted-foreground">
-              {status === "Error" && error?.message
-                ? error.message
+            <p className="mt-1 max-w-sm text-sm text-muted-foreground">
+              {status === "Error"
+                ? errorText
                 : "点击选择本地文件，同目录视频会加入播放列表"}
             </p>
+            {status === "Error" && error?.details ? (
+              <p
+                className="mt-2 max-w-md truncate text-[11px] text-muted-foreground/80"
+                title={error.details}
+              >
+                详情：{error.details}
+              </p>
+            ) : null}
           </div>
         </button>
       ) : null}

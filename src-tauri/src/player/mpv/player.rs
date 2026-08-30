@@ -132,7 +132,7 @@ impl LibMpvPlayer {
         }
 
         Err(PlayerError::playback(format!(
-            "no mpv subtitle track matches ff-index {ff_stream_index}"
+            "未找到匹配的字幕轨（ff-index {ff_stream_index}）"
         )))
     }
 
@@ -173,7 +173,7 @@ impl LibMpvPlayer {
                 .map_err(map_playback_error);
         }
         Err(PlayerError::playback(format!(
-            "no mpv audio track matches ff-index {ff_stream_index}"
+            "未找到匹配的音轨（ff-index {ff_stream_index}）"
         )))
     }
 }
@@ -310,7 +310,7 @@ fn log_version(mpv: &Mpv) {
 fn map_init_error(error: libmpv2::Error) -> PlayerError {
     PlayerError::new(
         PlayerErrorCode::InitializationError,
-        "failed to initialize libmpv",
+        "播放引擎初始化失败",
         Some(error.to_string()),
     )
 }
@@ -323,16 +323,25 @@ fn map_load_error(error: libmpv2::Error) -> PlayerError {
         || lower.contains("no demuxer")
         || lower.contains("unrecognized")
     {
-        return PlayerError::unsupported("unsupported or unreadable media", Some(&details));
+        return PlayerError::unsupported("不支持或无法识别该媒体格式", Some(&details));
     }
-    PlayerError::load("failed to load media file", Some(&details))
+    PlayerError::load("无法打开该媒体文件", Some(&details))
 }
 
 fn map_playback_error(error: libmpv2::Error) -> PlayerError {
+    let details = error.to_string();
+    let lower = details.to_ascii_lowercase();
+    let message = if lower.contains("seek") {
+        "跳转失败，请稍后再试"
+    } else if lower.contains("property") {
+        "播放属性设置失败"
+    } else {
+        "播放操作失败，请重试"
+    };
     PlayerError::new(
         PlayerErrorCode::PlaybackError,
-        "libmpv playback command failed",
-        Some(error.to_string()),
+        message,
+        Some(details),
     )
 }
 
@@ -342,5 +351,17 @@ mod tests {
     fn initialize_and_shutdown() {
         let player = super::LibMpvPlayer::initialize().expect("libmpv should initialize");
         drop(player);
+    }
+
+    #[test]
+    fn map_playback_error_is_chinese() {
+        // Construct via Display-like string path used in production mapping.
+        let err = super::map_playback_error(libmpv2::Error::Raw(1));
+        assert!(
+            err.message.chars().any(|c| ('\u{4e00}'..='\u{9fff}').contains(&c)),
+            "message should be Chinese: {}",
+            err.message
+        );
+        assert!(err.details.is_some());
     }
 }
