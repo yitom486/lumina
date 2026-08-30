@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { keepPreviousData, useQuery } from "@tanstack/react-query";
 
 import { getAsrStatus, transcribeOnDemand } from "@/features/asr";
 import type { Transcript } from "@/features/transcript";
@@ -94,10 +94,18 @@ export function TranscriptPanel() {
 
   const selected = choicesQuery.data?.find((c) => c.id === choiceId);
 
+  // On-video subtitle: fire-and-forget; never block the select.
   useEffect(() => {
     if (!mediaReady || !choiceId || asrTranscript) return;
     const choice = choicesQuery.data?.find((c) => c.id === choiceId);
-    void applyChoiceToPlayer(choice, setSubtitle);
+    let cancelled = false;
+    void (async () => {
+      await applyChoiceToPlayer(choice, setSubtitle);
+      if (cancelled) return;
+    })();
+    return () => {
+      cancelled = true;
+    };
   }, [mediaReady, choiceId, choicesQuery.data, setSubtitle, asrTranscript]);
 
   const canLoadTranscript = Boolean(
@@ -109,19 +117,26 @@ export function TranscriptPanel() {
     queryFn: () => loadSubtitleChoice(path as string, choiceId as string),
     enabled: mediaReady && canLoadTranscript,
     retry: false,
+    placeholderData: keepPreviousData,
   });
 
   const transcript = asrTranscript ?? transcriptQuery.data ?? null;
+  const showStale =
+    !asrTranscript &&
+    transcriptQuery.isFetching &&
+    transcript != null &&
+    transcript.choiceId !== choiceId;
+
   const activeIndex = useMemo(
     () => (transcript ? activeCueIndex(transcript.cues, currentTimeMs) : -1),
     [transcript, currentTimeMs],
   );
 
   useEffect(() => {
-    if (activeIndex < 0) return;
+    if (activeIndex < 0 || showStale) return;
     const el = document.getElementById(`cue-${activeIndex}`);
     el?.scrollIntoView({ block: "nearest", behavior: "smooth" });
-  }, [activeIndex]);
+  }, [activeIndex, showStale]);
 
   async function handleAsr() {
     if (!path || asrBusy) return;
@@ -155,8 +170,7 @@ export function TranscriptPanel() {
   if (!mediaReady) {
     return (
       <section className="flex min-h-0 flex-1 flex-col px-3 py-3 text-sm text-muted-foreground">
-        <p className="font-medium text-foreground">文稿</p>
-        <p className="mt-2 text-xs leading-relaxed">
+        <p className="mt-1 text-xs leading-relaxed">
           打开视频后，可在此选择字幕轨、浏览时间轴文稿，或按需生成 ASR。
         </p>
       </section>
@@ -167,7 +181,7 @@ export function TranscriptPanel() {
   const asrAvailable = asrStatusQuery.data?.available === true;
   const errorText = asrError
     ? asrError
-    : transcriptQuery.isError && !asrTranscript
+    : transcriptQuery.isError && !asrTranscript && !transcriptQuery.isFetching
       ? String(
           (transcriptQuery.error as { message?: string }).message ??
             transcriptQuery.error,
@@ -185,20 +199,22 @@ export function TranscriptPanel() {
     <section className="flex min-h-0 flex-1 flex-col">
       <div className="flex shrink-0 flex-col gap-2 border-b border-border px-3 py-2">
         <div className="flex items-center justify-between gap-2">
-          <p className="text-sm font-medium">文稿</p>
-          {choicesQuery.isLoading ? (
-            <span className="text-xs text-muted-foreground">扫描…</span>
+          <p className="text-sm font-medium">字幕 / 文稿</p>
+          {transcriptQuery.isFetching || choicesQuery.isFetching ? (
+            <span className="text-xs text-muted-foreground">加载中…</span>
           ) : null}
         </div>
 
         <label className="flex flex-col gap-1 text-xs">
-          <span className="text-muted-foreground">字幕轨</span>
+          <span className="text-muted-foreground">字幕轨（可随时切换）</span>
           <select
-            className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm"
+            className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm disabled:opacity-50"
             value={choiceId ?? ""}
-            disabled={choices.length === 0 || Boolean(asrTranscript)}
+            disabled={choices.length === 0}
             onChange={(e) => {
+              // Immediate local update — do not wait for extract/ffmpeg.
               setAsrTranscript(null);
+              setAsrError(null);
               setChoiceId(e.target.value || null);
             }}
             aria-label="Subtitle track"
@@ -252,8 +268,8 @@ export function TranscriptPanel() {
       </div>
 
       <ScrollArea className="min-h-0 flex-1">
-        <div className="px-2 py-2">
-          {transcriptQuery.isLoading && canLoadTranscript ? (
+        <div className={`px-2 py-2 ${showStale ? "opacity-50" : ""}`}>
+          {transcriptQuery.isFetching && !transcript ? (
             <p className="px-2 text-sm text-muted-foreground">加载文稿…</p>
           ) : null}
 
@@ -273,7 +289,7 @@ export function TranscriptPanel() {
           {transcript ? (
             <ul className="space-y-0.5">
               {transcript.cues.map((cue, i) => {
-                const active = i === activeIndex;
+                const active = !showStale && i === activeIndex;
                 return (
                   <li key={`${transcript.choiceId}-${cue.index}`} id={`cue-${i}`}>
                     <button

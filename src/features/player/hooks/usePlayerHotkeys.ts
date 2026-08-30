@@ -3,6 +3,7 @@
 import { useEffect, useRef } from "react";
 
 import { usePlayerStore } from "../store";
+import { useUiStore } from "../uiStore";
 
 function isTypingTarget(target: EventTarget | null): boolean {
   if (!(target instanceof HTMLElement)) return false;
@@ -21,11 +22,19 @@ export function usePlayerHotkeys() {
       if (event.metaKey || event.ctrlKey || event.altKey) return;
 
       const store = usePlayerStore.getState();
+      const ui = useUiStore.getState();
+
       if (store.resumePrompt) {
         if (event.key === "Escape") {
           event.preventDefault();
           void store.resolveResume("continue");
         }
+        return;
+      }
+
+      if (event.key === "Escape" && ui.fullscreen) {
+        event.preventDefault();
+        void ui.setFullscreen(false);
         return;
       }
 
@@ -54,7 +63,10 @@ export function usePlayerHotkeys() {
         case "ArrowRight": {
           event.preventDefault();
           if (!ready) return;
-          const max = store.durationMs > 0 ? store.durationMs : store.currentTimeMs + 5_000;
+          const max =
+            store.durationMs > 0
+              ? store.durationMs
+              : store.currentTimeMs + 5_000;
           void store.seek(Math.min(max, store.currentTimeMs + 5_000));
           break;
         }
@@ -76,6 +88,21 @@ export function usePlayerHotkeys() {
           } else {
             void store.setVolume(volumeBeforeMute.current || 100);
           }
+          break;
+        }
+        case "KeyF": {
+          event.preventDefault();
+          void ui.toggleFullscreen();
+          break;
+        }
+        case "KeyN": {
+          event.preventDefault();
+          void store.playNext();
+          break;
+        }
+        case "KeyP": {
+          event.preventDefault();
+          void store.playPrev();
           break;
         }
         default:

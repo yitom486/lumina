@@ -1,13 +1,33 @@
 //! Subtitle / transcript Tauri commands.
 
-use crate::subtitle::{SubtitleChoice, SubtitleError, SubtitleService, Transcript};
+use crate::subtitle::{SubtitleChoice, SubtitleError, SubtitleErrorCode, SubtitleService, Transcript};
 
 #[tauri::command]
-pub fn subtitle_list_choices(path: String) -> Result<Vec<SubtitleChoice>, SubtitleError> {
-    SubtitleService::list_choices(path)
+pub async fn subtitle_list_choices(path: String) -> Result<Vec<SubtitleChoice>, SubtitleError> {
+    tauri::async_runtime::spawn_blocking(move || SubtitleService::list_choices(path))
+        .await
+        .map_err(|error| {
+            SubtitleError::new(
+                SubtitleErrorCode::InternalError,
+                "subtitle list join failed",
+                Some(error.to_string()),
+            )
+        })?
 }
 
+/// Heavy ffmpeg extract — must not block the UI thread.
 #[tauri::command]
-pub fn subtitle_load_choice(path: String, choice_id: String) -> Result<Transcript, SubtitleError> {
-    SubtitleService::load_choice(path, choice_id)
+pub async fn subtitle_load_choice(
+    path: String,
+    choice_id: String,
+) -> Result<Transcript, SubtitleError> {
+    tauri::async_runtime::spawn_blocking(move || SubtitleService::load_choice(path, choice_id))
+        .await
+        .map_err(|error| {
+            SubtitleError::new(
+                SubtitleErrorCode::InternalError,
+                "subtitle load join failed",
+                Some(error.to_string()),
+            )
+        })?
 }

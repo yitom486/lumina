@@ -14,7 +14,7 @@ export function PlayerBar() {
         <RateSelect />
       </div>
       <p className="text-[11px] text-muted-foreground">
-        空格 播放/暂停 · ←→ 快退/快进 5 秒 · ↑↓ 音量 · M 静音
+        空格 播放/暂停 · ←→ 5 秒 · ↑↓ 音量 · M 静音 · F 全屏 · Esc 退出全屏
       </p>
     </div>
   );

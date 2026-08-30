@@ -1,4 +1,13 @@
-import { FolderOpen, Pause, Play, Square } from "lucide-react";
+import {
+  FolderOpen,
+  Maximize2,
+  Minimize2,
+  Pause,
+  Play,
+  SkipBack,
+  SkipForward,
+  Square,
+} from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -8,13 +17,20 @@ import {
 } from "@/components/ui/tooltip";
 
 import { usePlayerStore } from "../store";
+import { useUiStore } from "../uiStore";
 
 export function TransportControls() {
   const busy = usePlayerStore((s) => s.busy);
   const status = usePlayerStore((s) => s.status);
+  const playlist = usePlayerStore((s) => s.playlist);
+  const playlistIndex = usePlayerStore((s) => s.playlistIndex);
   const openFile = usePlayerStore((s) => s.openFile);
   const togglePlayPause = usePlayerStore((s) => s.togglePlayPause);
   const stop = usePlayerStore((s) => s.stop);
+  const playNext = usePlayerStore((s) => s.playNext);
+  const playPrev = usePlayerStore((s) => s.playPrev);
+  const fullscreen = useUiStore((s) => s.fullscreen);
+  const toggleFullscreen = useUiStore((s) => s.toggleFullscreen);
 
   const playing = status === "Playing";
   const canToggle =
@@ -22,6 +38,8 @@ export function TransportControls() {
     status !== "Idle" &&
     status !== "Loading" &&
     status !== "Error";
+  const canPrev = !busy && playlistIndex > 0;
+  const canNext = !busy && playlistIndex >= 0 && playlistIndex < playlist.length - 1;
 
   return (
     <div className="flex items-center gap-1">
@@ -38,7 +56,23 @@ export function TransportControls() {
             <FolderOpen className="size-4" />
           </Button>
         </TooltipTrigger>
-        <TooltipContent>打开视频</TooltipContent>
+        <TooltipContent>打开视频（同目录加入播放列表）</TooltipContent>
+      </Tooltip>
+
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-sm"
+            onClick={() => void playPrev()}
+            disabled={!canPrev}
+            aria-label="上一个"
+          >
+            <SkipBack className="size-4" />
+          </Button>
+        </TooltipTrigger>
+        <TooltipContent>上一个</TooltipContent>
       </Tooltip>
 
       <Tooltip>
@@ -67,6 +101,22 @@ export function TransportControls() {
             type="button"
             variant="ghost"
             size="icon-sm"
+            onClick={() => void playNext()}
+            disabled={!canNext}
+            aria-label="下一个"
+          >
+            <SkipForward className="size-4" />
+          </Button>
+        </TooltipTrigger>
+        <TooltipContent>下一个</TooltipContent>
+      </Tooltip>
+
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-sm"
             onClick={() => void stop()}
             disabled={busy || status === "Idle"}
             aria-label="停止"
@@ -75,6 +125,25 @@ export function TransportControls() {
           </Button>
         </TooltipTrigger>
         <TooltipContent>停止</TooltipContent>
+      </Tooltip>
+
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-sm"
+            onClick={() => void toggleFullscreen()}
+            aria-label={fullscreen ? "退出全屏" : "全屏"}
+          >
+            {fullscreen ? (
+              <Minimize2 className="size-4" />
+            ) : (
+              <Maximize2 className="size-4" />
+            )}
+          </Button>
+        </TooltipTrigger>
+        <TooltipContent>{fullscreen ? "退出全屏 (Esc / F)" : "全屏 (F)"}</TooltipContent>
       </Tooltip>
     </div>
   );

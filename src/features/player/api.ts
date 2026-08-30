@@ -81,3 +81,8 @@ export function setSurfaceBounds(bounds: {
 }): Promise<void> {
   return invoke("player_set_surface_bounds", bounds);
 }
+
+/** Sorted video paths in the same directory as `path`. */
+export function listSiblingVideos(path: string): Promise<string[]> {
+  return invoke<string[]>("media_list_siblings", { path });
+}
