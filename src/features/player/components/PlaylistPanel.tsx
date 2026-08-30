@@ -44,7 +44,7 @@ export function PlaylistPanel() {
                   if (active) return;
                   void openPath(path, { rebuildPlaylist: false }).then(() => {
                     const store = usePlayerStore.getState();
-                    if (!store.resumePrompt) {
+                    if (!store.resumeToast) {
                       void store.play();
                     }
                   });

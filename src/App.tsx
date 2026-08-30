@@ -3,7 +3,6 @@ import { MediaInfoPanel } from "@/features/media";
 import {
   PlayerBar,
   PlaylistPanel,
-  ResumeDialog,
   usePlayerEvents,
   usePlayerHotkeys,
   useProgressPersistence,
@@ -69,7 +68,6 @@ export default function App() {
             </aside>
           ) : null}
         </div>
-        <ResumeDialog />
       </AppShell>
     </TooltipProvider>
   );

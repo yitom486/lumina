@@ -1,4 +1,5 @@
 import { RateSelect } from "./RateSelect";
+import { ResumeChip } from "./ResumeChip";
 import { SeekBar } from "./SeekBar";
 import { TransportControls } from "./TransportControls";
 import { VolumeControl } from "./VolumeControl";
@@ -9,7 +10,10 @@ export function PlayerBar() {
     <div className="flex shrink-0 flex-col gap-2 border-t border-border bg-card/80 px-3 py-2.5">
       <div className="flex items-center gap-3">
         <TransportControls />
-        <SeekBar />
+        <div className="flex min-w-0 flex-1 flex-col">
+          <ResumeChip />
+          <SeekBar />
+        </div>
         <VolumeControl />
         <RateSelect />
       </div>

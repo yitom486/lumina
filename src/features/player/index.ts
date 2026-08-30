@@ -8,4 +8,4 @@ export { useProgressPersistence } from "./hooks/useProgressPersistence";
 export { VideoSurface } from "./components/VideoSurface";
 export { PlayerBar } from "./components/PlayerBar";
 export { PlaylistPanel } from "./components/PlaylistPanel";
-export { ResumeDialog } from "./components/ResumeDialog";
+export { ResumeChip } from "./components/ResumeChip";

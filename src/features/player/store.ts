@@ -18,18 +18,18 @@ import {
 import { ensureSurfaceBounds } from "./surfaceBridge";
 import { useUiStore } from "./uiStore";
 
-export type ResumePrompt = {
+export type ResumeToast = {
   path: string;
   positionMs: number;
-  durationMs: number;
 };
 
 type PlayerStore = PlayerSnapshot & {
   busy: boolean;
   statusMessage: string;
   isSeeking: boolean;
-  resumePrompt: ResumePrompt | null;
-  /** Skip auto-resume check once after user already resolved for this open. */
+  /** Non-blocking MX-style chip; auto-resume already applied. */
+  resumeToast: ResumeToast | null;
+  /** Skip auto-resume once after handled for this open. */
   resumeHandledForPath: string | null;
   /** Same-folder videos (sorted). */
   playlist: string[];
@@ -40,7 +40,8 @@ type PlayerStore = PlayerSnapshot & {
   setSeeking: (seeking: boolean) => void;
   setPreviewTime: (currentTimeMs: number) => void;
   setStatusMessage: (message: string) => void;
-  resolveResume: (choice: "continue" | "restart") => Promise<void>;
+  dismissResumeToast: () => void;
+  restartFromBeginning: () => Promise<void>;
 
   openFile: () => Promise<void>;
   openPath: (path: string, options?: { rebuildPlaylist?: boolean }) => Promise<void>;
@@ -73,7 +74,8 @@ function indexOfPath(playlist: string[], path: string): number {
   );
 }
 
-function maybeOfferResume(
+/** MX Player style: seek+play immediately; show dismissible toast (no modal). */
+function maybeResume(
   path: string,
   durationMs: number,
   get: () => PlayerStore,
@@ -86,17 +88,24 @@ function maybeOfferResume(
   if (get().resumeHandledForPath === path) return;
   const saved = useProgressStore.getState().getProgress(path);
   if (!saved || !shouldOfferResume(saved.positionMs, durationMs)) {
-    set({ resumeHandledForPath: path, resumePrompt: null });
+    set({ resumeHandledForPath: path, resumeToast: null });
     return;
   }
+
+  const positionMs = saved.positionMs;
   set({
-    resumePrompt: {
-      path,
-      positionMs: saved.positionMs,
-      durationMs,
-    },
+    resumeHandledForPath: path,
+    resumeToast: { path, positionMs },
   });
-  void get().pause();
+
+  void (async () => {
+    try {
+      await get().seek(positionMs);
+      await get().play();
+    } catch (error) {
+      set({ statusMessage: errorMessage(error) });
+    }
+  })();
 }
 
 export const usePlayerStore = create<PlayerStore>((set, get) => ({
@@ -104,7 +113,7 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
   busy: false,
   statusMessage: "打开本地视频开始观看",
   isSeeking: false,
-  resumePrompt: null,
+  resumeToast: null,
   resumeHandledForPath: null,
   playlist: [],
   playlistIndex: -1,
@@ -146,7 +155,7 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
           statusMessage: fileName(path) ?? path,
           playlistIndex: idx >= 0 ? idx : get().playlistIndex,
         });
-        maybeOfferResume(path, durationMs, get, set);
+        maybeResume(path, durationMs, get, set);
         break;
       }
       case "Ended":
@@ -168,17 +177,17 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
   setPreviewTime: (currentTimeMs) => set({ currentTimeMs }),
   setStatusMessage: (statusMessage) => set({ statusMessage }),
 
-  resolveResume: async (choice) => {
-    const prompt = get().resumePrompt;
-    if (!prompt) return;
-    set({ resumePrompt: null, resumeHandledForPath: prompt.path });
+  dismissResumeToast: () => set({ resumeToast: null }),
+
+  restartFromBeginning: async () => {
+    const toast = get().resumeToast;
+    set({ resumeToast: null });
+    const path = toast?.path ?? get().currentFile;
+    if (path) {
+      useProgressStore.getState().clearProgress(path);
+    }
     try {
-      if (choice === "restart") {
-        useProgressStore.getState().clearProgress(prompt.path);
-        await get().seek(0);
-      } else {
-        await get().seek(prompt.positionMs);
-      }
+      await get().seek(0);
       await get().play();
     } catch (error) {
       set({ statusMessage: errorMessage(error) });
@@ -201,7 +210,7 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
     const rebuild = options?.rebuildPlaylist ?? false;
     set({
       resumeHandledForPath: null,
-      resumePrompt: null,
+      resumeToast: null,
     });
 
     if (rebuild) {
@@ -234,7 +243,7 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
         error: snapshot.error,
       });
       if (snapshot.currentFile) {
-        maybeOfferResume(
+        maybeResume(
           snapshot.currentFile,
           snapshot.durationMs,
           get,
@@ -259,7 +268,8 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
     set({ busy: true });
     try {
       await get().openPath(playlist[next], { rebuildPlaylist: false });
-      if (!get().resumePrompt) {
+      // Auto-resume already plays; otherwise start playback.
+      if (!get().resumeToast) {
         await get().play();
       }
     } finally {
@@ -275,7 +285,7 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
     set({ busy: true });
     try {
       await get().openPath(playlist[prev], { rebuildPlaylist: false });
-      if (!get().resumePrompt) {
+      if (!get().resumeToast) {
         await get().play();
       }
     } finally {

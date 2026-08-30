@@ -24,14 +24,6 @@ export function usePlayerHotkeys() {
       const store = usePlayerStore.getState();
       const ui = useUiStore.getState();
 
-      if (store.resumePrompt) {
-        if (event.key === "Escape") {
-          event.preventDefault();
-          void store.resolveResume("continue");
-        }
-        return;
-      }
-
       if (event.key === "Escape" && ui.fullscreen) {
         event.preventDefault();
         void ui.setFullscreen(false);
