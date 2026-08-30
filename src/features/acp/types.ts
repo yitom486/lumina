@@ -22,6 +22,8 @@ export type AcpStatus = {
   message: string;
   hint: string;
   responsesOnlyNote: string;
+  sessionActive: boolean;
+  busy: boolean;
 };
 
 export type AgentProfileInput = {
@@ -37,7 +39,27 @@ export type AcpEvent =
   | { type: "started" }
   | { type: "progress"; message: string }
   | { type: "agentMessage"; text: string }
-  | { type: "finished"; text: string }
+  | { type: "agentThought"; text: string }
+  | {
+      type: "toolCall";
+      toolCallId: string;
+      title?: string | null;
+      kind?: string | null;
+      status?: string | null;
+    }
+  | {
+      type: "toolCallUpdate";
+      toolCallId: string;
+      status?: string | null;
+      title?: string | null;
+    }
+  | { type: "plan"; text: string }
+  | {
+      type: "permissionResolved";
+      toolCallId?: string | null;
+      decision: string;
+    }
+  | { type: "finished"; text: string; stopReason?: string | null }
   | { type: "failed"; code: string; message: string };
 
 /** UI chat shell — video context linkage comes later. */

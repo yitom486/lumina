@@ -25,7 +25,7 @@ pub use subtitle::{
 };
 
 use commands::acp::{
-    acp_cancel, acp_prompt, acp_set_active_profile, acp_status, acp_upsert_profile,
+    acp_cancel, acp_close, acp_prompt, acp_set_active_profile, acp_status, acp_upsert_profile,
 };
 use commands::asr::{asr_status, asr_transcribe};
 use commands::media::{media_inspect, media_list_siblings};
@@ -72,6 +72,7 @@ pub fn run() {
             acp_status,
             acp_prompt,
             acp_cancel,
+            acp_close,
             acp_set_active_profile,
             acp_upsert_profile,
             notes_list,

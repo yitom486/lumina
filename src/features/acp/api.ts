@@ -34,3 +34,7 @@ export async function acpPrompt(
 export function acpCancel(): Promise<void> {
   return invoke("acp_cancel");
 }
+
+export function acpClose(): Promise<void> {
+  return invoke("acp_close");
+}

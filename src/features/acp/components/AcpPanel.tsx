@@ -1,9 +1,10 @@
-import { useMutation, useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useId, useState } from "react";
 
+import { Button } from "@/components/ui/button";
 import { errorMessage } from "@/lib/format";
 
-import { acpCancel, acpPrompt, getAcpStatus } from "../api";
+import { acpCancel, acpClose, acpPrompt, getAcpStatus } from "../api";
 import type { AcpEvent, ChatMessage } from "../types";
 import { AgentSetupBar } from "./AgentSetupBar";
 import { ChatComposer } from "./ChatComposer";
@@ -16,6 +17,7 @@ function nextId(prefix: string, seq: { n: number }): string {
 
 /** ACP chat shell. Video context linkage is intentionally deferred. */
 export function AcpPanel() {
+  const queryClient = useQueryClient();
   const statusQuery = useQuery({
     queryKey: ["acp-status"],
     queryFn: getAcpStatus,
@@ -30,6 +32,7 @@ export function AcpPanel() {
   const [progress, setProgress] = useState<string | null>(null);
 
   const available = statusQuery.data?.available ?? false;
+  const sessionActive = statusQuery.data?.sessionActive ?? false;
   const activeProfileId = statusQuery.data?.activeProfileId ?? "codex";
 
   const pushSystem = (content: string) => {
@@ -38,6 +41,15 @@ export function AcpPanel() {
       { id: nextId("sys", idSeq), role: "system", content },
     ]);
   };
+
+  const closeMutation = useMutation({
+    mutationFn: acpClose,
+    onSuccess: async () => {
+      pushSystem("会话已关闭");
+      await queryClient.invalidateQueries({ queryKey: ["acp-status"] });
+    },
+    onError: (error) => pushSystem(errorMessage(error)),
+  });
 
   const runMutation = useMutation({
     mutationFn: async (text: string) => {
@@ -90,6 +102,27 @@ export function AcpPanel() {
                   ),
                 );
                 break;
+              case "agentThought":
+                setProgress(`思考中… ${event.text.slice(0, 80)}`);
+                break;
+              case "toolCall":
+                pushSystem(
+                  `工具：${event.title ?? event.toolCallId}${event.status ? `（${event.status}）` : ""}`,
+                );
+                break;
+              case "toolCallUpdate":
+                if (event.status) {
+                  setProgress(`工具更新：${event.status}`);
+                }
+                break;
+              case "plan":
+                pushSystem(`计划\n${event.text}`);
+                break;
+              case "permissionResolved":
+                pushSystem(
+                  `权限：${event.decision}${event.toolCallId ? ` · ${event.toolCallId}` : ""}`,
+                );
+                break;
               case "finished":
                 setProgress(null);
                 setMessages((prev) =>
@@ -103,6 +136,7 @@ export function AcpPanel() {
                       : m,
                   ),
                 );
+                void queryClient.invalidateQueries({ queryKey: ["acp-status"] });
                 break;
               case "failed":
                 setProgress(null);
@@ -110,6 +144,7 @@ export function AcpPanel() {
                   content: event.message,
                   status: "error",
                 });
+                void queryClient.invalidateQueries({ queryKey: ["acp-status"] });
                 break;
             }
           },
@@ -126,6 +161,7 @@ export function AcpPanel() {
     onSettled: () => {
       setBusy(false);
       setProgress(null);
+      void queryClient.invalidateQueries({ queryKey: ["acp-status"] });
     },
   });
 
@@ -144,6 +180,23 @@ export function AcpPanel() {
         busy={busy}
         onStatusError={pushSystem}
       />
+
+      {(sessionActive || busy) && (
+        <div className="flex shrink-0 items-center justify-between gap-2 border-b border-border px-3 py-1">
+          <span className="text-[11px] text-muted-foreground">
+            {busy ? "回合进行中" : "会话保持中（可继续提问）"}
+          </span>
+          <Button
+            size="sm"
+            variant="ghost"
+            className="h-7 text-[11px]"
+            disabled={busy || closeMutation.isPending}
+            onClick={() => closeMutation.mutate()}
+          >
+            结束会话
+          </Button>
+        </div>
+      )}
 
       <ChatMessageList messages={messages} />
 

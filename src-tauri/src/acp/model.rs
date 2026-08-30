@@ -10,9 +10,7 @@ use crate::acp::profile::{AgentKind, AgentProfileStatus};
 #[serde(rename_all = "camelCase")]
 pub struct AcpStatus {
     pub available: bool,
-    /// Whether a Codex ACP adapter was found on disk/PATH (informational).
     pub adapter_found: bool,
-    /// Whether a Codex binary was found (informational; adapter may bundle its own).
     pub codex_found: bool,
     pub active_profile_id: String,
     pub profiles: Vec<AgentProfileStatus>,
@@ -21,6 +19,9 @@ pub struct AcpStatus {
     pub message: String,
     pub hint: String,
     pub responses_only_note: String,
+    /// Whether a live Agent process/session is currently open.
+    pub session_active: bool,
+    pub busy: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -49,8 +50,35 @@ pub enum AcpEvent {
         text: String,
     },
     #[serde(rename_all = "camelCase")]
+    AgentThought {
+        text: String,
+    },
+    #[serde(rename_all = "camelCase")]
+    ToolCall {
+        tool_call_id: String,
+        title: Option<String>,
+        kind: Option<String>,
+        status: Option<String>,
+    },
+    #[serde(rename_all = "camelCase")]
+    ToolCallUpdate {
+        tool_call_id: String,
+        status: Option<String>,
+        title: Option<String>,
+    },
+    #[serde(rename_all = "camelCase")]
+    Plan {
+        text: String,
+    },
+    #[serde(rename_all = "camelCase")]
+    PermissionResolved {
+        tool_call_id: Option<String>,
+        decision: String,
+    },
+    #[serde(rename_all = "camelCase")]
     Finished {
         text: String,
+        stop_reason: Option<String>,
     },
     #[serde(rename_all = "camelCase")]
     Failed {

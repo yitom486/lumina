@@ -45,6 +45,8 @@ pub fn status_from_store(store: &ProfileStore) -> AcpStatus {
                 message: error.message,
                 hint: install_hint(adapter_found, codex_found, bunx_found),
                 responses_only_note: RESPONSES_ONLY_NOTE.into(),
+                session_active: false,
+                busy: false,
             };
         }
     };
@@ -81,6 +83,8 @@ pub fn status_from_store(store: &ProfileStore) -> AcpStatus {
         message,
         hint: install_hint(adapter_found, codex_found, bunx_found),
         responses_only_note: RESPONSES_ONLY_NOTE.into(),
+        session_active: false,
+        busy: false,
     }
 }
 

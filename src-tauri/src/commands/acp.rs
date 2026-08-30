@@ -80,3 +80,15 @@ pub async fn acp_cancel(app: AppHandle) -> Result<(), AcpError> {
     .await
     .map_err(|error| AcpError::internal(Some(&format!("acp cancel join: {error}"))))?
 }
+
+#[tauri::command]
+pub async fn acp_close(app: AppHandle) -> Result<(), AcpError> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let Some(state) = app.try_state::<AppState>() else {
+            return Err(AcpError::internal(Some("app state unavailable")));
+        };
+        state.acp.close_session()
+    })
+    .await
+    .map_err(|error| AcpError::internal(Some(&format!("acp close join: {error}"))))?
+}
