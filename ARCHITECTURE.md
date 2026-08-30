@@ -23,6 +23,14 @@ Player Runtime（`AppState` → `Mutex<PlayerService>` + `VideoSurface`）由 Ta
 - `PlayerError`: `{ code, message, details? }`
 - `PlayerService` + Commands（含 `player_set_surface_bounds`）
 
+### Playback control (M6)
+
+- Commands：`open` / `play` / `pause` / `stop` / `seek` / `set_volume` / `set_rate`
+- `player_subscribe(onEvent)`：前端传入 Tauri `Channel<PlayerEvent>`
+- 后台 ticker ~200ms 推送 `PositionChanged`（禁止 React 10ms invoke 轮询）
+- 事件：`StateChanged` / `PositionChanged` / `DurationChanged` / `FileLoaded` / `Ended` / `Error`
+- 换文件：同一 mpv 实例上 stop → loadfile，不创建第二后端
+
 ### libmpv (M4)
 
 - Crate：`libmpv2` 6.x；本地 `src-tauri/native/mpv/`
@@ -40,3 +48,20 @@ Player Runtime（`AppState` → `Mutex<PlayerService>` + `VideoSurface`）由 Ta
 6. `player_open` → `loadfile` 真实本地文件
 
 不使用 HTML `<video>` / canvas 逐帧拷贝。macOS / Linux 表面在 Phase 1 未实现。
+
+### Frontend (M7)
+
+```
+src/
+  App.tsx                 # 组装壳，无业务细节
+  layouts/AppShell.tsx    # 标题栏 + 主列
+  features/player/        # 播放器特性模块
+    types.ts / api.ts / store.ts
+    hooks/                # Channel 订阅、surface bounds
+    components/           # VideoSurface、PlayerBar、控件
+  components/ui/          # shadcn
+  lib/                    # format 等纯工具
+```
+
+Zustand 只镜像 Rust；actions 一律走 Tauri Command；时间轴走 Channel。
+

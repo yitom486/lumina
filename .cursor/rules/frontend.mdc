@@ -11,3 +11,15 @@ alwaysApply: false
 - 异步请求用 TanStack Query；播放控制走 Tauri Command，状态更新走 Channel。
 - 禁止 `<video>`、canvas 逐帧拷贝。画面区域只是 native surface 的占位，React 只做控件：Open / Play / Pause / Seek / Volume / Rate / time / duration。
 - 错误按 `{ code, message, details? }` 展示，不要把原始 FFI 字符串丢给用户。
+
+## 目录（Phase 1）
+
+```
+src/App.tsx                 # 组装，不写业务细节
+src/layouts/                # 桌面壳（标题栏等）
+src/features/player/        # 播放器特性：types / api / store / hooks / components
+src/components/ui/          # shadcn
+src/lib/                    # 纯工具
+```
+
+新增播放相关逻辑放进 `features/player/`，不要继续堆进 `App.tsx`。
