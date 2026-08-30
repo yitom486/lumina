@@ -84,6 +84,12 @@ impl PlayerService {
             return Err(PlayerError::invalid_state("open", self.snapshot.status));
         }
 
+        if let Err(error) = validate_media_path(&path) {
+            self.snapshot.current_file = Some(path);
+            self.fail(error.clone());
+            return Err(error);
+        }
+
         if self.backend.is_none() {
             self.snapshot.current_file = Some(path);
             let err = PlayerError::backend_missing();
@@ -355,6 +361,36 @@ impl PlayerService {
     }
 }
 
+fn validate_media_path(path: &str) -> Result<(), PlayerError> {
+    let trimmed = path.trim();
+    if trimmed.is_empty() {
+        return Err(PlayerError::load("media path is empty", None));
+    }
+
+    let meta = std::fs::metadata(trimmed).map_err(|error| {
+        PlayerError::load(
+            "media file not found or inaccessible",
+            Some(&error.to_string()),
+        )
+    })?;
+
+    if !meta.is_file() {
+        return Err(PlayerError::load(
+            "media path is not a regular file",
+            Some(trimmed),
+        ));
+    }
+
+    if meta.len() == 0 {
+        return Err(PlayerError::unsupported(
+            "media file is empty",
+            Some(trimmed),
+        ));
+    }
+
+    Ok(())
+}
+
 impl Default for PlayerService {
     fn default() -> Self {
         Self::new()
@@ -379,13 +415,37 @@ mod tests {
         let mut player = PlayerService::new();
         let err = player
             .open(r"C:\video.mp4".into())
-            .expect_err("backend missing");
-        assert_eq!(err.code, PlayerErrorCode::InternalError);
+            .expect_err("missing path");
+        assert_eq!(err.code, PlayerErrorCode::LoadError);
         assert_eq!(player.get_state(), PlayerState::Error);
         assert_eq!(
             player.snapshot().current_file.as_deref(),
             Some(r"C:\video.mp4")
         );
+    }
+
+    #[test]
+    fn open_existing_file_without_backend_is_internal() {
+        let dir = std::env::temp_dir();
+        let path = dir.join("lumina-m8-probe.bin");
+        if std::fs::write(&path, b"not-a-video").is_err() {
+            return;
+        }
+        let path_str = path.to_string_lossy().to_string();
+        let mut player = PlayerService::new();
+        let err = player.open(path_str.clone()).expect_err("backend missing");
+        let _ = std::fs::remove_file(&path);
+        assert_eq!(err.code, PlayerErrorCode::InternalError);
+        assert_eq!(player.get_state(), PlayerState::Error);
+        assert_eq!(player.snapshot().current_file.as_deref(), Some(path_str.as_str()));
+    }
+
+    #[test]
+    fn open_empty_path_is_load_error() {
+        let mut player = PlayerService::new();
+        let err = player.open("   ".into()).expect_err("empty path");
+        assert_eq!(err.code, PlayerErrorCode::LoadError);
+        assert_eq!(player.get_state(), PlayerState::Error);
     }
 
     #[test]

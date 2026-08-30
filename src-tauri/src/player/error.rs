@@ -51,6 +51,22 @@ impl PlayerError {
         Self::new(PlayerErrorCode::PlaybackError, message, None)
     }
 
+    pub fn load(message: impl Into<String>, details: Option<&str>) -> Self {
+        Self::new(
+            PlayerErrorCode::LoadError,
+            message,
+            details.map(str::to_string),
+        )
+    }
+
+    pub fn unsupported(message: impl Into<String>, details: Option<&str>) -> Self {
+        Self::new(
+            PlayerErrorCode::UnsupportedMedia,
+            message,
+            details.map(str::to_string),
+        )
+    }
+
     pub fn internal(message: impl Into<String>, details: Option<&str>) -> Self {
         Self::new(
             PlayerErrorCode::InternalError,

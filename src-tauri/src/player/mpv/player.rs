@@ -44,7 +44,7 @@ impl LibMpvPlayer {
         tracing::info!(path, "libmpv loadfile");
         self.mpv
             .command("loadfile", &[path, "replace"])
-            .map_err(map_playback_error)?;
+            .map_err(map_load_error)?;
         self.mpv
             .set_property("pause", false)
             .map_err(map_playback_error)?;
@@ -128,6 +128,19 @@ fn map_init_error(error: libmpv2::Error) -> PlayerError {
         "failed to initialize libmpv",
         Some(error.to_string()),
     )
+}
+
+fn map_load_error(error: libmpv2::Error) -> PlayerError {
+    let details = error.to_string();
+    let lower = details.to_ascii_lowercase();
+    if lower.contains("unsupported")
+        || lower.contains("codec")
+        || lower.contains("no demuxer")
+        || lower.contains("unrecognized")
+    {
+        return PlayerError::unsupported("unsupported or unreadable media", Some(&details));
+    }
+    PlayerError::load("failed to load media file", Some(&details))
 }
 
 fn map_playback_error(error: libmpv2::Error) -> PlayerError {

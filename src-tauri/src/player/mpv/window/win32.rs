@@ -150,7 +150,7 @@ pub fn hwnd_from_webview_window(window: &WebviewWindow) -> Result<isize, PlayerE
     })?;
 
     match handle.as_raw() {
-        RawWindowHandle::Win32(win32) => Ok(win32.hwnd.get() as isize),
+        RawWindowHandle::Win32(win32) => Ok(win32.hwnd.get()),
         other => Err(native_error(
             "expected Win32 window handle",
             Some(format!("{other:?}")),
