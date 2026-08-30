@@ -9,7 +9,7 @@ use crate::media::tools::resolve_ffmpeg;
 pub fn extract_wav_16k_mono(media_path: &Path, out_wav: &Path) -> Result<(), AsrError> {
     let ffmpeg = resolve_ffmpeg().map_err(|error| {
         AsrError::extract_failed(
-            "ffmpeg not found (needed to extract audio for ASR)",
+            "未找到 ffmpeg（ASR 需要先抽音频）",
             Some(&error.to_string()),
         )
     })?;
@@ -17,7 +17,7 @@ pub fn extract_wav_16k_mono(media_path: &Path, out_wav: &Path) -> Result<(), Asr
     if let Some(parent) = out_wav.parent() {
         std::fs::create_dir_all(parent).map_err(|error| {
             AsrError::extract_failed(
-                "failed to create temp audio directory",
+                "无法创建临时音频目录",
                 Some(&error.to_string()),
             )
         })?;
@@ -50,13 +50,13 @@ pub fn extract_wav_16k_mono(media_path: &Path, out_wav: &Path) -> Result<(), Asr
         ])
         .output()
         .map_err(|error| {
-            AsrError::extract_failed("failed to spawn ffmpeg", Some(&error.to_string()))
+            AsrError::extract_failed("无法启动 ffmpeg", Some(&error.to_string()))
         })?;
 
     if !output.status.success() || !out_wav.is_file() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         return Err(AsrError::extract_failed(
-            "ffmpeg audio extract failed",
+            "音频抽取失败",
             Some(stderr.trim()),
         ));
     }

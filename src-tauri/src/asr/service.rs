@@ -50,7 +50,7 @@ impl AsrService {
             let media_path = media_path.as_ref();
             if !media_path.is_file() {
                 return Err(AsrError::extract_failed(
-                    "media file not found",
+                    "找不到媒体文件",
                     Some(&media_path.to_string_lossy()),
                 ));
             }
@@ -61,19 +61,19 @@ impl AsrService {
             });
             on_event(AsrEvent::Progress {
                 stage: "extract".into(),
-                message: "Extracting audio…".into(),
+                message: "正在抽取音频…".into(),
             });
 
             let work = temp_job_dir(media_path);
             std::fs::create_dir_all(&work).map_err(|error| {
-                AsrError::internal("failed to create ASR work dir", Some(&error.to_string()))
+                AsrError::internal("无法创建 ASR 工作目录", Some(&error.to_string()))
             })?;
             let wav = work.join("audio.wav");
             extract::extract_wav_16k_mono(media_path, &wav)?;
 
             on_event(AsrEvent::Progress {
                 stage: "transcribe".into(),
-                message: "Running whisper-cli (on-demand)…".into(),
+                message: "正在运行 whisper-cli（按需加载）…".into(),
             });
 
             let transcript = whisper_cli::transcribe_wav(&asr_paths, &wav, &work, media_path)?;

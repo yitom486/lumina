@@ -70,13 +70,13 @@ pub fn probe_file(path: &Path) -> Result<MediaInfo, MediaError> {
         ])
         .output()
         .map_err(|error| {
-            MediaError::probe_failed("failed to spawn ffprobe", Some(&error.to_string()))
+            MediaError::probe_failed("无法启动 ffprobe", Some(&error.to_string()))
         })?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
         return Err(MediaError::probe_failed(
-            "ffprobe exited with error",
+            "媒体探测失败",
             Some(if stderr.is_empty() {
                 "non-zero exit status"
             } else {
@@ -86,12 +86,12 @@ pub fn probe_file(path: &Path) -> Result<MediaInfo, MediaError> {
     }
 
     let parsed: ProbeJson = serde_json::from_slice(&output.stdout).map_err(|error| {
-        MediaError::probe_failed("failed to parse ffprobe JSON", Some(&error.to_string()))
+        MediaError::probe_failed("无法解析 ffprobe 输出", Some(&error.to_string()))
     })?;
 
     let format = parsed
         .format
-        .ok_or_else(|| MediaError::invalid_media("ffprobe returned no format section", None))?;
+        .ok_or_else(|| MediaError::invalid_media("媒体信息缺少 format 段", None))?;
 
     let streams = parsed
         .streams
@@ -101,10 +101,7 @@ pub fn probe_file(path: &Path) -> Result<MediaInfo, MediaError> {
         .collect::<Vec<_>>();
 
     if streams.is_empty() {
-        return Err(MediaError::invalid_media(
-            "no streams found in media file",
-            None,
-        ));
+        return Err(MediaError::invalid_media("媒体文件中没有可用流", None));
     }
 
     Ok(MediaInfo {
@@ -191,6 +188,16 @@ mod tests {
     fn frame_rate_fraction() {
         assert!((parse_frame_rate("30000/1001").unwrap() - 29.97).abs() < 0.01);
         assert!(parse_frame_rate("0/0").is_none());
+        assert!(parse_frame_rate("").is_none());
+        assert_eq!(parse_frame_rate("24").unwrap(), 24.0);
+    }
+
+    #[test]
+    fn parse_duration_helpers() {
+        assert_eq!(parse_secs_to_ms(Some("1.5")), Some(1500));
+        assert_eq!(parse_secs_to_ms(Some("-1")), None);
+        assert_eq!(parse_u64(Some("42")), Some(42));
+        assert_eq!(parse_u64(Some("x")), None);
     }
 
     #[test]
@@ -200,5 +207,12 @@ mod tests {
             path.is_ok(),
             "expected native/ffmpeg/ffprobe.exe: {path:?}"
         );
+    }
+
+    #[test]
+    fn missing_file_is_chinese_not_found() {
+        let err = probe_file(Path::new("Z:\\lumina-missing-media-xyz.mp4")).expect_err("missing");
+        assert_eq!(err.code, crate::media::error::MediaErrorCode::FileNotFound);
+        assert!(err.message.chars().any(|c| ('\u{4e00}'..='\u{9fff}').contains(&c)));
     }
 }

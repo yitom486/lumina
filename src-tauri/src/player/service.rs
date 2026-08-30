@@ -463,6 +463,8 @@ mod tests {
         let mut player = PlayerService::new();
         let err = player.play().expect_err("idle cannot play");
         assert_eq!(err.code, PlayerErrorCode::InvalidState);
+        assert!(err.message.contains("空闲"));
+        assert!(err.message.contains("播放"));
     }
 
     #[test]
@@ -472,6 +474,7 @@ mod tests {
             .open(r"C:\video.mp4".into())
             .expect_err("missing path");
         assert_eq!(err.code, PlayerErrorCode::LoadError);
+        assert!(err.message.chars().any(|c| ('\u{4e00}'..='\u{9fff}').contains(&c)));
         assert_eq!(player.get_state(), PlayerState::Error);
         assert_eq!(
             player.snapshot().current_file.as_deref(),
@@ -491,6 +494,7 @@ mod tests {
         let err = player.open(path_str.clone()).expect_err("backend missing");
         let _ = std::fs::remove_file(&path);
         assert_eq!(err.code, PlayerErrorCode::InternalError);
+        assert!(err.message.contains("播放引擎"));
         assert_eq!(player.get_state(), PlayerState::Error);
         assert_eq!(player.snapshot().current_file.as_deref(), Some(path_str.as_str()));
     }
@@ -500,18 +504,29 @@ mod tests {
         let mut player = PlayerService::new();
         let err = player.open("   ".into()).expect_err("empty path");
         assert_eq!(err.code, PlayerErrorCode::LoadError);
+        assert!(err.message.contains("空"));
         assert_eq!(player.get_state(), PlayerState::Error);
     }
 
     #[test]
     fn volume_and_rate_range() {
         let mut player = PlayerService::new();
-        assert!(player.set_volume(101.0).is_err());
+        let vol_err = player.set_volume(101.0).expect_err("over max");
+        assert!(vol_err.message.contains("音量"));
         assert!(player.set_volume(40.0).is_ok());
-        assert!(player.set_rate(0.1).is_err());
+        let rate_err = player.set_rate(0.1).expect_err("under min");
+        assert!(rate_err.message.contains("倍速"));
         assert!(player.set_rate(1.25).is_ok());
         assert_eq!(player.snapshot().volume, 40.0);
         assert_eq!(player.snapshot().rate, 1.25);
+    }
+
+    #[test]
+    fn pause_stop_seek_from_idle_are_invalid() {
+        let mut player = PlayerService::new();
+        assert_eq!(player.pause().unwrap_err().code, PlayerErrorCode::InvalidState);
+        assert_eq!(player.stop().unwrap_err().code, PlayerErrorCode::InvalidState);
+        assert_eq!(player.seek(1000).unwrap_err().code, PlayerErrorCode::InvalidState);
     }
 
     #[test]

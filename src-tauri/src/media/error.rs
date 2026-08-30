@@ -86,3 +86,22 @@ impl fmt::Display for MediaError {
 }
 
 impl std::error::Error for MediaError {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn has_cjk(s: &str) -> bool {
+        s.chars().any(|c| ('\u{4e00}'..='\u{9fff}').contains(&c))
+    }
+
+    #[test]
+    fn constructors_use_chinese_messages() {
+        assert!(has_cjk(&MediaError::probe_not_found(None).message));
+        assert!(has_cjk(&MediaError::file_not_found("x").message));
+        assert_eq!(
+            MediaError::probe_failed("媒体探测失败", None).code,
+            MediaErrorCode::ProbeFailed
+        );
+    }
+}

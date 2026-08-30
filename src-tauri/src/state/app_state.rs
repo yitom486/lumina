@@ -43,7 +43,7 @@ impl AppState {
         let mut player = self
             .player
             .lock()
-            .map_err(|_| PlayerError::internal("player mutex poisoned", None))?;
+            .map_err(|_| PlayerError::internal("播放器内部锁异常", None))?;
         f(&mut player)
     }
 
@@ -51,7 +51,7 @@ impl AppState {
         let mut slot = self
             .surface
             .lock()
-            .map_err(|_| PlayerError::internal("surface mutex poisoned", None))?;
+            .map_err(|_| PlayerError::internal("视频窗口内部锁异常", None))?;
         *slot = Some(surface);
         Ok(())
     }
@@ -63,10 +63,10 @@ impl AppState {
         let slot = self
             .surface
             .lock()
-            .map_err(|_| PlayerError::internal("surface mutex poisoned", None))?;
+            .map_err(|_| PlayerError::internal("视频窗口内部锁异常", None))?;
         let surface = slot
             .as_ref()
-            .ok_or_else(|| PlayerError::internal("video surface is not ready", None))?;
+            .ok_or_else(|| PlayerError::internal("视频窗口尚未就绪", None))?;
         f(surface)
     }
 
@@ -78,7 +78,7 @@ impl AppState {
         let mut slot = self
             .events
             .lock()
-            .map_err(|_| PlayerError::internal("events mutex poisoned", None))?;
+            .map_err(|_| PlayerError::internal("事件通道内部锁异常", None))?;
         *slot = Some(channel);
         tracing::info!("player event channel subscribed");
         Ok(())

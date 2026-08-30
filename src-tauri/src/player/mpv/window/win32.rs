@@ -53,14 +53,17 @@ impl VideoSurface {
 
         let parent = HWND(parent_hwnd as *mut _);
         if parent.0.is_null() {
-            return Err(native_error("parent HWND is null", None));
+            return Err(native_error(
+                "父窗口无效",
+                Some("parent HWND is null".into()),
+            ));
         }
 
         let module = unsafe {
             GetModuleHandleW(None).map_err(|error| {
                 native_error(
-                    "GetModuleHandleW failed",
-                    Some(error.to_string()),
+                    "无法获取模块句柄",
+                    Some(format!("GetModuleHandleW: {error}")),
                 )
             })?
         };
@@ -83,13 +86,16 @@ impl VideoSurface {
         }
         .map_err(|error| {
             native_error(
-                "failed to create video surface window",
-                Some(error.to_string()),
+                "无法创建视频窗口",
+                Some(format!("CreateWindowExW: {error}")),
             )
         })?;
 
         if hwnd.0.is_null() {
-            return Err(native_error("CreateWindowExW returned null HWND", None));
+            return Err(native_error(
+                "无法创建视频窗口",
+                Some("CreateWindowExW returned null HWND".into()),
+            ));
         }
 
         unsafe {
@@ -121,8 +127,8 @@ impl VideoSurface {
         unsafe {
             MoveWindow(hwnd, x, y, width, height, true).map_err(|error| {
                 native_error(
-                    "MoveWindow failed for video surface",
-                    Some(error.to_string()),
+                    "无法调整视频窗口位置",
+                    Some(format!("MoveWindow: {error}")),
                 )
             })?;
             SetWindowPos(
@@ -136,8 +142,8 @@ impl VideoSurface {
             )
             .map_err(|error| {
                 native_error(
-                    "SetWindowPos failed for video surface",
-                    Some(error.to_string()),
+                    "无法调整视频窗口层级",
+                    Some(format!("SetWindowPos: {error}")),
                 )
             })?;
         }
@@ -166,7 +172,7 @@ unsafe impl Sync for VideoSurface {}
 pub fn hwnd_from_webview_window(window: &WebviewWindow) -> Result<isize, PlayerError> {
     let handle = window.window_handle().map_err(|error| {
         native_error(
-            "failed to obtain window handle",
+            "无法获取窗口句柄",
             Some(error.to_string()),
         )
     })?;
@@ -174,8 +180,8 @@ pub fn hwnd_from_webview_window(window: &WebviewWindow) -> Result<isize, PlayerE
     match handle.as_raw() {
         RawWindowHandle::Win32(win32) => Ok(win32.hwnd.get()),
         other => Err(native_error(
-            "expected Win32 window handle",
-            Some(format!("{other:?}")),
+            "窗口句柄类型不正确",
+            Some(format!("expected Win32, got {other:?}")),
         )),
     }
 }
@@ -188,15 +194,18 @@ fn ensure_window_class() -> Result<(), PlayerError> {
     let module = unsafe {
         GetModuleHandleW(None).map_err(|error| {
             native_error(
-                "GetModuleHandleW failed",
-                Some(error.to_string()),
+                "无法获取模块句柄",
+                Some(format!("GetModuleHandleW: {error}")),
             )
         })?
     };
 
     let cursor = unsafe {
         LoadCursorW(None, IDC_ARROW).map_err(|error| {
-            native_error("LoadCursorW failed", Some(error.to_string()))
+            native_error(
+                "无法加载鼠标光标",
+                Some(format!("LoadCursorW: {error}")),
+            )
         })?
     };
 

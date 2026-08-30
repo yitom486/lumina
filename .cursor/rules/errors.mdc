@@ -1,0 +1,52 @@
+---
+description: 错误处理全链路 — Agent 必读
+alwaysApply: true
+---
+
+# Errors
+
+## 形状（前后端一致）
+
+所有业务错误序列化为：
+
+```json
+{ "code": "PascalCaseEnum", "message": "给用户看的中文", "details": "可选技术细节" }
+```
+
+- **`message`**：中文、可展示；禁止把 raw FFI / panic 原文当主文案
+- **`details`**：英文或原始工具输出均可；默认折叠，调试时再展开
+- **`code`**：稳定枚举；前端可按 code 兜底翻译
+
+## 链路
+
+```
+Domain (Player / Media / Subtitle / Asr)
+  → 构造 *Error { code, message(zh), details? }
+  → Tauri Command Result<T, E>（async 重活用 spawn_blocking）
+  → 前端 invoke catch / Channel Error 事件
+  → formatPlayerError / errorMessage（有中文用中文，否则按 code 兜底）
+  → UI 展示；tracing 记完整错误
+```
+
+## 域错误码
+
+| 域 | 主要 code |
+|----|-----------|
+| Player | InitializationError / LoadError / UnsupportedMedia / NativeWindowError / PlaybackError / InvalidState / InternalError |
+| Media | ProbeNotFound / FileNotFound / ProbeFailed / InvalidMedia / InternalError |
+| Subtitle | ToolNotFound / FileNotFound / ExtractFailed / ParseFailed / UnsupportedSubtitle / NoSubtitleTrack / InternalError |
+| Asr | NotConfigured / Busy / ExtractFailed / TranscribeFailed / Cancelled / InternalError |
+
+## 硬性规则
+
+1. 业务路径禁止 `unwrap` / `expect`
+2. **可恢复失败**（如 open 后 demux 未就绪时的 seek）**不要** `fail()` 打成整机会话 `Error`
+3. 同步 Tauri command 会占 UI 线程；凡 ffmpeg / ffprobe / whisper / 重 I/O 必须 `async + spawn_blocking`
+4. React 禁止猜测播放状态；错误状态以 Rust / invoke 结果为准
+5. 新增错误构造函数时：`message` 必须中文，并补单测断言含 CJK
+
+## 测试期望
+
+- `cargo test --lib`：错误映射、路径校验、状态机非法转换、解析器
+- 前端：`formatPlayerError` 等纯函数单测（`pnpm test`）
+- 改错误文案或 code 时同步改测试

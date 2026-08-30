@@ -12,15 +12,12 @@ pub fn list_sibling_videos(file_path: impl AsRef<Path>) -> Result<Vec<String>, M
         return Err(MediaError::file_not_found(&path.to_string_lossy()));
     }
     let parent = path.parent().ok_or_else(|| {
-        MediaError::internal("media path has no parent directory", Some(&path.to_string_lossy()))
+        MediaError::internal("媒体路径无效（无上级目录）", Some(&path.to_string_lossy()))
     })?;
 
     let mut items: Vec<PathBuf> = std::fs::read_dir(parent)
         .map_err(|error| {
-            MediaError::internal(
-                "failed to read media directory",
-                Some(&error.to_string()),
-            )
+            MediaError::internal("无法读取媒体所在目录", Some(&error.to_string()))
         })?
         .flatten()
         .map(|entry| entry.path())
@@ -48,4 +45,23 @@ fn is_video(path: &Path) -> bool {
                 .iter()
                 .any(|allowed| ext.eq_ignore_ascii_case(allowed))
         })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn is_video_filters_extensions() {
+        assert!(is_video(Path::new("a.MP4")));
+        assert!(is_video(Path::new("b.mkv")));
+        assert!(!is_video(Path::new("c.txt")));
+        assert!(!is_video(Path::new("d")));
+    }
+
+    #[test]
+    fn missing_file_lists_as_not_found() {
+        let err = list_sibling_videos(r"Z:\lumina-no-such-file.mp4").expect_err("missing");
+        assert_eq!(err.code, crate::media::error::MediaErrorCode::FileNotFound);
+    }
 }

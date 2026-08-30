@@ -17,7 +17,7 @@ mod unsupported {
         pub fn create(_parent_hwnd: isize) -> Result<Self, PlayerError> {
             Err(PlayerError::new(
                 PlayerErrorCode::NativeWindowError,
-                "native video surface is only implemented on Windows in Phase 1",
+                "当前平台尚未实现原生视频窗口（仅 Windows）",
                 None,
             ))
         }
@@ -35,7 +35,7 @@ mod unsupported {
         ) -> Result<(), PlayerError> {
             Err(PlayerError::new(
                 PlayerErrorCode::NativeWindowError,
-                "native video surface is only implemented on Windows in Phase 1",
+                "当前平台尚未实现原生视频窗口（仅 Windows）",
                 None,
             ))
         }
@@ -46,7 +46,7 @@ mod unsupported {
     pub fn hwnd_from_webview_window(_window: &WebviewWindow) -> Result<isize, PlayerError> {
         Err(PlayerError::new(
             PlayerErrorCode::NativeWindowError,
-            "native video surface is only implemented on Windows in Phase 1",
+            "当前平台尚未实现原生视频窗口（仅 Windows）",
             None,
         ))
     }

@@ -12,12 +12,12 @@ use crate::subtitle::Transcript;
 pub async fn asr_status(app: AppHandle) -> Result<AsrStatus, AsrError> {
     tauri::async_runtime::spawn_blocking(move || {
         let Some(state) = app.try_state::<AppState>() else {
-            return Err(AsrError::internal("app state is not available", None));
+            return Err(AsrError::internal("应用状态不可用", None));
         };
         Ok(state.asr.status())
     })
     .await
-    .map_err(|error| AsrError::internal("asr_status join failed", Some(&error.to_string())))?
+    .map_err(|error| AsrError::internal("ASR 状态查询异常结束", Some(&error.to_string())))?
 }
 
 /// Blocking work runs on a worker thread so the UI stays responsive.
@@ -39,5 +39,5 @@ pub async fn asr_transcribe(
         })
     })
     .await
-    .map_err(|error| AsrError::internal("ASR worker join failed", Some(&error.to_string())))?
+    .map_err(|error| AsrError::internal("ASR 任务异常结束", Some(&error.to_string())))?
 }

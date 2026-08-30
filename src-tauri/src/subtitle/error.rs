@@ -117,3 +117,28 @@ impl From<crate::media::MediaError> for SubtitleError {
         Self::new(code, value.message, value.details)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn has_cjk(s: &str) -> bool {
+        s.chars().any(|c| ('\u{4e00}'..='\u{9fff}').contains(&c))
+    }
+
+    #[test]
+    fn constructors_use_chinese_messages() {
+        assert!(has_cjk(&SubtitleError::tool_not_found(None).message));
+        assert!(has_cjk(&SubtitleError::file_not_found("x").message));
+        assert!(has_cjk(&SubtitleError::no_track().message));
+        assert_eq!(SubtitleError::no_track().code, SubtitleErrorCode::NoSubtitleTrack);
+    }
+
+    #[test]
+    fn media_error_maps_codes() {
+        let media = crate::media::MediaError::probe_not_found(None);
+        let sub = SubtitleError::from(media);
+        assert_eq!(sub.code, SubtitleErrorCode::ToolNotFound);
+        assert!(has_cjk(&sub.message));
+    }
+}

@@ -6,7 +6,7 @@ use crate::subtitle::model::Cue;
 pub fn parse_subtitle_text(content: &str) -> Result<Vec<Cue>, SubtitleError> {
     let trimmed = content.trim_start_matches('\u{feff}').trim();
     if trimmed.is_empty() {
-        return Err(SubtitleError::parse_failed("subtitle file is empty", None));
+        return Err(SubtitleError::parse_failed("字幕内容为空", None));
     }
 
     if trimmed.starts_with("WEBVTT") || looks_like_vtt(trimmed) {
@@ -51,10 +51,7 @@ pub fn parse_srt(content: &str) -> Result<Vec<Cue>, SubtitleError> {
     }
 
     if cues.is_empty() {
-        return Err(SubtitleError::parse_failed(
-            "no cues found in SRT content",
-            None,
-        ));
+        return Err(SubtitleError::parse_failed("SRT 中未找到有效字幕条目", None));
     }
 
     renumber(cues)
@@ -79,11 +76,11 @@ fn parse_srt_block(lines: &[&str]) -> Result<Option<Cue>, SubtitleError> {
         return Ok(None);
     };
     let start_ms = parse_srt_time(start_raw.trim()).ok_or_else(|| {
-        SubtitleError::parse_failed("invalid SRT start time", Some(start_raw.trim()))
+        SubtitleError::parse_failed("SRT 开始时间无效", Some(start_raw.trim()))
     })?;
     let end_part = end_raw.split_whitespace().next().unwrap_or("");
     let end_ms = parse_srt_time(end_part).ok_or_else(|| {
-        SubtitleError::parse_failed("invalid SRT end time", Some(end_part))
+        SubtitleError::parse_failed("SRT 结束时间无效", Some(end_part))
     })?;
 
     let text = lines[idx + 1..]
@@ -151,10 +148,10 @@ pub fn parse_vtt(content: &str) -> Result<Vec<Cue>, SubtitleError> {
         };
         let end_raw = rest.split_whitespace().next().unwrap_or("");
         let start_ms = parse_vtt_time(start_raw.trim()).ok_or_else(|| {
-            SubtitleError::parse_failed("invalid VTT start time", Some(start_raw.trim()))
+            SubtitleError::parse_failed("WebVTT 开始时间无效", Some(start_raw.trim()))
         })?;
         let end_ms = parse_vtt_time(end_raw).ok_or_else(|| {
-            SubtitleError::parse_failed("invalid VTT end time", Some(end_raw))
+            SubtitleError::parse_failed("WebVTT 结束时间无效", Some(end_raw))
         })?;
 
         let mut text_lines = Vec::new();
@@ -185,7 +182,7 @@ pub fn parse_vtt(content: &str) -> Result<Vec<Cue>, SubtitleError> {
 
     if cues.is_empty() {
         return Err(SubtitleError::parse_failed(
-            "no cues found in WebVTT content",
+            "WebVTT 中未找到有效字幕条目",
             None,
         ));
     }
@@ -233,10 +230,10 @@ pub fn parse_ass(content: &str) -> Result<Vec<Cue>, SubtitleError> {
             continue;
         }
         let start_ms = parse_ass_time(parts[1]).ok_or_else(|| {
-            SubtitleError::parse_failed("invalid ASS start time", Some(parts[1]))
+            SubtitleError::parse_failed("ASS 开始时间无效", Some(parts[1]))
         })?;
         let end_ms = parse_ass_time(parts[2]).ok_or_else(|| {
-            SubtitleError::parse_failed("invalid ASS end time", Some(parts[2]))
+            SubtitleError::parse_failed("ASS 结束时间无效", Some(parts[2]))
         })?;
         let text = strip_ass_overrides(parts[9..].join(",").trim());
         if text.is_empty() {
@@ -252,7 +249,7 @@ pub fn parse_ass(content: &str) -> Result<Vec<Cue>, SubtitleError> {
 
     if cues.is_empty() {
         return Err(SubtitleError::parse_failed(
-            "no Dialogue cues found in ASS content",
+            "ASS 中未找到 Dialogue 条目",
             None,
         ));
     }
@@ -346,7 +343,7 @@ fn renumber(mut cues: Vec<Cue>) -> Result<Vec<Cue>, SubtitleError> {
         cue.index = i as u32;
     }
     if cues.is_empty() {
-        return Err(SubtitleError::parse_failed("no cues left after cleanup", None));
+        return Err(SubtitleError::parse_failed("清理后没有可用字幕条目", None));
     }
     Ok(cues)
 }
@@ -381,5 +378,27 @@ mod tests {
         assert_eq!(cues.len(), 1);
         assert_eq!(cues[0].start_ms, 1000);
         assert_eq!(cues[0].text, "Hello world");
+    }
+
+    #[test]
+    fn empty_content_is_chinese_parse_error() {
+        let err = parse_subtitle_text("").expect_err("empty");
+        assert_eq!(err.code, crate::subtitle::error::SubtitleErrorCode::ParseFailed);
+        assert!(err.message.chars().any(|c| ('\u{4e00}'..='\u{9fff}').contains(&c)));
+    }
+
+    #[test]
+    fn parse_simple_vtt() {
+        let raw = "WEBVTT\n\n00:00:01.000 --> 00:00:02.000\nHi\n";
+        let cues = parse_subtitle_text(raw).expect("vtt");
+        assert_eq!(cues.len(), 1);
+        assert_eq!(cues[0].start_ms, 1000);
+        assert_eq!(cues[0].text, "Hi");
+    }
+
+    #[test]
+    fn invalid_srt_body_is_parse_failed() {
+        let err = parse_srt("not a subtitle").expect_err("bad");
+        assert!(err.message.contains("SRT") || err.message.contains("字幕"));
     }
 }

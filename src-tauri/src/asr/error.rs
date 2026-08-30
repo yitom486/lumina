@@ -83,3 +83,23 @@ impl fmt::Display for AsrError {
 }
 
 impl std::error::Error for AsrError {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn has_cjk(s: &str) -> bool {
+        s.chars().any(|c| ('\u{4e00}'..='\u{9fff}').contains(&c))
+    }
+
+    #[test]
+    fn constructors_use_chinese_messages() {
+        assert!(has_cjk(&AsrError::not_configured(None).message));
+        assert!(has_cjk(&AsrError::busy().message));
+        assert_eq!(AsrError::busy().code, AsrErrorCode::Busy);
+        assert_eq!(
+            AsrError::not_configured(None).code,
+            AsrErrorCode::NotConfigured
+        );
+    }
+}

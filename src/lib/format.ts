@@ -8,7 +8,9 @@ export function formatTime(ms: number): string {
   return `${m}:${s.toString().padStart(2, "0")}`;
 }
 
-const PLAYER_ERROR_FALLBACK: Record<string, string> = {
+/** Stable code → Chinese fallback when Rust message is missing or still English. */
+const ERROR_FALLBACK: Record<string, string> = {
+  // Player
   InitializationError: "播放引擎初始化失败",
   LoadError: "无法打开该媒体文件",
   UnsupportedMedia: "不支持该媒体格式",
@@ -16,6 +18,22 @@ const PLAYER_ERROR_FALLBACK: Record<string, string> = {
   PlaybackError: "播放操作失败，请重试",
   InvalidState: "当前状态无法执行该操作",
   InternalError: "内部错误，请重试",
+  // Media
+  ProbeNotFound: "未找到 ffprobe",
+  FileNotFound: "找不到文件",
+  ProbeFailed: "媒体探测失败",
+  InvalidMedia: "无效的媒体文件",
+  // Subtitle
+  ToolNotFound: "未找到 ffmpeg",
+  ExtractFailed: "字幕抽取失败",
+  ParseFailed: "字幕解析失败",
+  UnsupportedSubtitle: "不支持该字幕格式",
+  NoSubtitleTrack: "没有可用字幕轨",
+  // Asr
+  NotConfigured: "未配置 ASR（可选）",
+  Busy: "已有 ASR 任务在运行",
+  TranscribeFailed: "语音转写失败",
+  Cancelled: "已取消",
 };
 
 function hasCjk(text: string): boolean {
@@ -31,7 +49,7 @@ export function formatPlayerError(error: {
   if (!error) return "发生未知错误";
   const message = error.message?.trim() ?? "";
   if (message && hasCjk(message)) return message;
-  const byCode = error.code ? PLAYER_ERROR_FALLBACK[error.code] : undefined;
+  const byCode = error.code ? ERROR_FALLBACK[error.code] : undefined;
   if (byCode) return byCode;
   if (message) return message;
   return "发生未知错误";
@@ -45,7 +63,7 @@ export function errorMessage(error: unknown): string {
   }
   if (typeof error === "object" && error && "message" in error) {
     const message = String((error as { message: string }).message);
-    return hasCjk(message) ? message : message;
+    return message;
   }
   return String(error);
 }

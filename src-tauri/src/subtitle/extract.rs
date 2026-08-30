@@ -22,7 +22,7 @@ pub fn extract_text_subtitle(
 ) -> Result<(String, &'static str), SubtitleError> {
     if is_bitmap_codec(codec_name) {
         return Err(SubtitleError::unsupported(
-            "bitmap subtitles are not supported in Phase 3 (no OCR)",
+            "暂不支持位图字幕（尚无 OCR）",
             codec_name,
         ));
     }
@@ -30,7 +30,7 @@ pub fn extract_text_subtitle(
     let ffmpeg = resolve_ffmpeg().map_err(SubtitleError::from)?;
     let temp_dir = std::env::temp_dir().join("lumina-subs");
     fs::create_dir_all(&temp_dir).map_err(|error| {
-        SubtitleError::internal("failed to create temp subtitle dir", Some(&error.to_string()))
+        SubtitleError::internal("无法创建字幕临时目录", Some(&error.to_string()))
     })?;
 
     let stem = media_path
@@ -64,13 +64,13 @@ pub fn extract_text_subtitle(
             ])
             .output()
             .map_err(|error| {
-                SubtitleError::extract_failed("failed to spawn ffmpeg", Some(&error.to_string()))
+                SubtitleError::extract_failed("无法启动 ffmpeg", Some(&error.to_string()))
             })?;
 
         if output.status.success() && out.is_file() {
             let content = fs::read_to_string(&out).map_err(|error| {
                 SubtitleError::extract_failed(
-                    "failed to read extracted subtitle file",
+                    "无法读取已抽取的字幕文件",
                     Some(&error.to_string()),
                 )
             })?;
@@ -98,7 +98,7 @@ pub fn extract_text_subtitle(
     }
 
     Err(SubtitleError::extract_failed(
-        "failed to extract text subtitle track",
+        "无法抽取文本字幕轨",
         Some("ffmpeg could not convert this track to SRT/ASS"),
     ))
 }
@@ -109,9 +109,32 @@ pub fn read_external_subtitle(path: &Path) -> Result<(String, PathBuf), Subtitle
     }
     let content = fs::read_to_string(path).map_err(|error| {
         SubtitleError::extract_failed(
-            "failed to read external subtitle file",
+            "无法读取外挂字幕文件",
             Some(&error.to_string()),
         )
     })?;
     Ok((content, path.to_path_buf()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn bitmap_codecs_detected() {
+        assert!(is_bitmap_codec(Some("hdmv_pgs_subtitle")));
+        assert!(is_bitmap_codec(Some("DVD_SUBTITLE")));
+        assert!(!is_bitmap_codec(Some("subrip")));
+        assert!(!is_bitmap_codec(None));
+    }
+
+    #[test]
+    fn bitmap_extract_is_unsupported_chinese() {
+        let err = extract_text_subtitle(Path::new("x.mkv"), 2, Some("pgssub")).expect_err("bmp");
+        assert_eq!(
+            err.code,
+            crate::subtitle::error::SubtitleErrorCode::UnsupportedSubtitle
+        );
+        assert!(err.message.contains("位图"));
+    }
 }

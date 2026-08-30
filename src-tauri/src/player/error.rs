@@ -150,4 +150,22 @@ mod tests {
         assert!(invalid.message.contains("错误"));
         assert!(invalid.message.contains("播放"));
     }
+
+    #[test]
+    fn invalid_state_covers_common_ops() {
+        for op in ["open", "pause", "stop", "seek"] {
+            let err = PlayerError::invalid_state(op, PlayerState::Idle);
+            assert_eq!(err.code, PlayerErrorCode::InvalidState);
+            assert!(err.message.chars().any(|c| ('\u{4e00}'..='\u{9fff}').contains(&c)));
+        }
+    }
+
+    #[test]
+    fn serde_shape_has_pascal_code() {
+        let err = PlayerError::load("无法打开该媒体文件", Some("raw"));
+        let json = serde_json::to_value(&err).expect("json");
+        assert_eq!(json["code"], "LoadError");
+        assert_eq!(json["message"], "无法打开该媒体文件");
+        assert_eq!(json["details"], "raw");
+    }
 }

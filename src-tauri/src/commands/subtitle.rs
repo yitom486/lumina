@@ -9,7 +9,7 @@ pub async fn subtitle_list_choices(path: String) -> Result<Vec<SubtitleChoice>, 
         .map_err(|error| {
             SubtitleError::new(
                 SubtitleErrorCode::InternalError,
-                "subtitle list join failed",
+                "列出字幕任务异常结束",
                 Some(error.to_string()),
             )
         })?
@@ -26,7 +26,7 @@ pub async fn subtitle_load_choice(
         .map_err(|error| {
             SubtitleError::new(
                 SubtitleErrorCode::InternalError,
-                "subtitle load join failed",
+                "加载字幕任务异常结束",
                 Some(error.to_string()),
             )
         })?

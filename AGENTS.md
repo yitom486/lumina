@@ -2,9 +2,9 @@
 
 AI Video Reader 桌面应用。
 
-**当前阶段：Phase 4（按需 ASR）**；Phase 1–3（native playback / media inspect / 字幕文稿）已完成。
+**当前焦点：错误处理 + 单测地基**（Phase 1–4 功能已落地；Phase 5 ACP 暂缓）。
 
-完整计划见 `project.md`。执行计划与状态在 `.plan/`（本地，不入库）。每完成一个可检查点，必须更新对应文档的 `status` 与 `STATUS.md`。实现前先读本文件与 `.cursor/rules/`。
+完整计划见 `project.md`。执行计划与状态在 `.plan/`（本地，不入库）。每完成一个可检查点，必须更新对应文档的 `status` 与 `STATUS.md`。实现前先读本文件与 `.cursor/rules/`（尤其 `errors.mdc`）。
 
 ## Tech Stack
 
@@ -32,6 +32,32 @@ React → Tauri Command / Channel → PlayerService → LibMpvPlayer → libmpv
 ```
 
 React 不得知道：mpv handle、native window handle、FFI pointer、libmpv / whisper lifecycle。
+
+## Error handling（必读）
+
+```
+Domain Error { code, message(zh), details? }
+  → Command Result
+  → invoke / Channel
+  → formatPlayerError / errorMessage
+  → UI
+```
+
+细则见 [`.cursor/rules/errors.mdc`](.cursor/rules/errors.mdc)：
+
+- 用户只看中文 `message`；技术细节进 `details`
+- 可恢复失败（如瞬时 seek）不要打成整机 `PlayerState::Error`
+- 重 I/O 必须 `async + spawn_blocking`，避免卡 UI
+
+## Testing
+
+```bash
+pnpm lint          # tsc
+pnpm test          # 前端纯函数单测
+cd src-tauri && cargo test --lib
+```
+
+新增/修改错误 code 或用户文案时，必须补或更新对应单测。
 
 ## ASR（Phase 4）
 

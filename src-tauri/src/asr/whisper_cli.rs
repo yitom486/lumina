@@ -43,14 +43,14 @@ pub fn transcribe_wav(
         ])
         .output()
         .map_err(|error| {
-            AsrError::transcribe_failed("failed to spawn whisper-cli", Some(&error.to_string()))
+            AsrError::transcribe_failed("无法启动 whisper-cli", Some(&error.to_string()))
         })?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         let stdout = String::from_utf8_lossy(&output.stdout);
         return Err(AsrError::transcribe_failed(
-            "whisper-cli exited with error",
+            "whisper-cli 执行失败",
             Some(format!("{stderr}\n{stdout}").trim()),
         ));
     }
@@ -67,13 +67,13 @@ pub fn transcribe_wav(
         .find_map(|p| std::fs::read_to_string(p).ok().filter(|c| !c.trim().is_empty()))
         .ok_or_else(|| {
             AsrError::transcribe_failed(
-                "whisper-cli finished but no SRT output was found",
+                "转写完成但未找到 SRT 输出",
                 Some("expected asr.srt in the temp job directory"),
             )
         })?;
 
     let cues = parse_subtitle_text(&content).map_err(|error| {
-        AsrError::transcribe_failed("failed to parse ASR SRT", Some(&error.to_string()))
+        AsrError::transcribe_failed("无法解析 ASR 生成的 SRT", Some(&error.to_string()))
     })?;
 
     Ok(Transcript {

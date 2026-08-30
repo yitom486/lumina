@@ -23,9 +23,11 @@ Rust → React 用 Tauri Channel（或等价流式机制），禁止每 10ms inv
 
 业务代码禁止 `unwrap()` / `expect()`。
 
+错误形状：`{ code, message, details? }`。`message` 必须中文可展示；`details` 可含工具原文。详见 `errors.mdc`。
+
 `PlayerError`：InitializationError / LoadError / UnsupportedMedia / NativeWindowError / PlaybackError / InvalidState / InternalError。
 
-前端错误形状：`{ code, message, details? }`。不把 panic / raw FFI 直接展示给用户。
+不把 panic / raw FFI 直接展示给用户。可恢复失败勿整机会话 Error。
 
 日志用 `tracing`。记录 init / open / play / pause / seek / state transition / errors / shutdown。不要大量打印 position。
 

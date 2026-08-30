@@ -31,7 +31,7 @@ pub fn status() -> AsrStatus {
             available: true,
             cli_path: Some(paths.cli.to_string_lossy().to_string()),
             model_path: Some(paths.model.to_string_lossy().to_string()),
-            message: "ASR ready (loaded only when you start a job)".into(),
+            message: "ASR 已就绪（仅在你开始任务时加载）".into(),
         },
         Err(error) => AsrStatus {
             available: false,

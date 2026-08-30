@@ -17,13 +17,13 @@ where
 {
     tauri::async_runtime::spawn_blocking(move || {
         let Some(state) = app.try_state::<AppState>() else {
-            return Err(PlayerError::internal("app state is not available", None));
+            return Err(PlayerError::internal("应用状态不可用", None));
         };
         work(state.inner())
     })
     .await
     .map_err(|error| {
-        PlayerError::internal("player worker join failed", Some(&error.to_string()))
+        PlayerError::internal("播放任务异常结束", Some(&error.to_string()))
     })?
 }
 
@@ -155,7 +155,7 @@ pub fn player_set_surface_bounds(
     let scale = window.scale_factor().map_err(|error| {
         PlayerError::new(
             crate::player::PlayerErrorCode::InternalError,
-            "failed to read window scale factor",
+            "无法读取窗口缩放比例",
             Some(error.to_string()),
         )
     })?;
