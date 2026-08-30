@@ -1,0 +1,38 @@
+---
+description: 状态、错误、日志、IPC 与生命周期规范
+alwaysApply: true
+---
+
+# Conventions
+
+优先级：可运行 > 架构清晰 > 代码简洁 > UI 美观。显式优于隐式；组合优于继承；不要为抽象而抽象。
+
+## State
+
+使用 enum，禁止互相矛盾的 bool（isPlaying + isPaused + isLoading 等）：
+
+`Idle | Loading | Ready | Playing | Paused | Ended | Error`
+
+Rust Player Runtime 是权威来源。Zustand 只是 UI 镜像，不要让 React 猜测播放状态。
+
+Rust → React 用 Tauri Channel（或等价流式机制），禁止每 10ms invoke 轮询。Position 刷新 100–250ms。
+
+事件：StateChanged / PositionChanged / DurationChanged / FileLoaded / Ended / Error。
+
+## Errors & logs
+
+业务代码禁止 `unwrap()` / `expect()`。
+
+`PlayerError`：InitializationError / LoadError / UnsupportedMedia / NativeWindowError / PlaybackError / InvalidState / InternalError。
+
+前端错误形状：`{ code, message, details? }`。不把 panic / raw FFI 直接展示给用户。
+
+日志用 `tracing`。记录 init / open / play / pause / seek / state transition / errors / shutdown。不要大量打印 position。
+
+## Lifecycle
+
+明确处理 init、shutdown、换文件、播放结束、App exit、native resource release。
+
+避免 use-after-free、重复 Player 实例、native handle 泄漏、thread leak。
+
+硬件解码优先，失败则 fallback，不要因此无法播放。

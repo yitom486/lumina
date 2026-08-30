@@ -1,0 +1,6 @@
+source=shinchiro/mpv-winbuild-cmake
+tag=20260830
+archive=mpv-dev-x86_64-20260830-git-e8673660ab.7z
+git=e8673660ab
+dll=libmpv-2.dll
+url=https://github.com/shinchiro/mpv-winbuild-cmake/releases/download/20260830/mpv-dev-x86_64-20260830-git-e8673660ab.7z

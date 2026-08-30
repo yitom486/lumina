@@ -1,0 +1,17 @@
+---
+description: Lumina 技术栈与播放器选型，实现前必须遵守
+alwaysApply: true
+---
+
+# Tech Stack
+
+- Tauri 2 + Rust + React + TypeScript + Vite
+- 包管理器：pnpm（不要用 npm / yarn 作为默认）
+- UI：Tailwind CSS + shadcn/ui
+- 状态：Zustand（播放器 UI 镜像）+ TanStack Query（异步请求）
+- 播放器：libmpv；Rust 优先 `libmpv2`（当前维护版本）
+- 窗口：Tauri Window + `HasWindowHandle` / `raw-window-handle`（不要用已废弃 API）
+
+禁止 HTML `<video>` 作为播放实现。视频必须由 native player 输出到 native window / rendering surface。React 只负责周围 UI。
+
+第一阶段只需当前开发平台成功。Player 抽象不得绑定具体操作系统，为 Windows / macOS / Linux 保留边界。

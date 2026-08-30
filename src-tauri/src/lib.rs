@@ -1,0 +1,93 @@
+mod commands;
+pub mod player;
+mod state;
+
+pub use player::{
+    PlayerError, PlayerErrorCode, PlayerEvent, PlayerService, PlayerSnapshot, PlayerState,
+};
+
+use commands::player::{
+    player_get_state, player_open, player_pause, player_play, player_seek, player_set_rate,
+    player_set_surface_bounds, player_set_volume, player_stop,
+};
+use player::mpv::window::{hwnd_from_webview_window, VideoSurface};
+use state::AppState;
+use tauri::Manager;
+
+#[cfg_attr(mobile, tauri::mobile_entry_point)]
+pub fn run() {
+    init_tracing();
+
+    let app = match tauri::Builder::default()
+        .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_dialog::init())
+        .manage(AppState::new())
+        .invoke_handler(tauri::generate_handler![
+            player_get_state,
+            player_open,
+            player_play,
+            player_pause,
+            player_stop,
+            player_seek,
+            player_set_volume,
+            player_set_rate,
+            player_set_surface_bounds,
+        ])
+        .setup(|app| {
+            attach_native_surface(app)?;
+            Ok(())
+        })
+        .build(tauri::generate_context!())
+    {
+        Ok(app) => app,
+        Err(error) => {
+            tracing::error!(%error, "failed to start Tauri");
+            std::process::exit(1);
+        }
+    };
+
+    app.run(|app, event| {
+        if matches!(event, tauri::RunEvent::Exit) {
+            shutdown_backend(app);
+        }
+    });
+}
+
+fn init_tracing() {
+    let filter = tracing_subscriber::EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));
+    let _ = tracing_subscriber::fmt().with_env_filter(filter).try_init();
+}
+
+fn attach_native_surface(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
+    let window = app
+        .get_webview_window("main")
+        .ok_or("main webview window is missing")?;
+    let parent = hwnd_from_webview_window(&window)?;
+    let surface = VideoSurface::create(parent)?;
+    let wid = surface.hwnd_i64();
+
+    let state = app.state::<AppState>();
+    state.set_surface(surface)?;
+    if let Err(error) = state.with_player(|player| player.attach_backend_with_wid(wid)) {
+        tracing::error!(
+            code = ?error.code,
+            message = %error.message,
+            "libmpv init with wid failed"
+        );
+        return Err(error.into());
+    }
+
+    tracing::info!(wid, "native mpv surface attached");
+    Ok(())
+}
+
+fn shutdown_backend(app: &tauri::AppHandle) {
+    if let Some(state) = app.try_state::<AppState>() {
+        let _ = state.with_player(|player| {
+            player.shutdown();
+            Ok(())
+        });
+        drop(state.take_surface());
+    }
+}

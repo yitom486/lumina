@@ -1,0 +1,14 @@
+---
+description: Rust / Tauri 后端约定（player、错误、线程）
+globs: src-tauri/**/*.rs
+alwaysApply: false
+---
+
+# Rust
+
+- Domain（`PlayerService`）与 `player/mpv` 实现分离；上层不要直接依赖 libmpv 类型。
+- 业务路径禁止 `unwrap()` / `expect()`；用 `PlayerError` 并转成 `{ code, message, details? }`。
+- 日志用 `tracing`，不要在 position tick 里刷日志。
+- libmpv 工作放到独立 runtime，不要阻塞 Tauri UI thread。
+- 窗口句柄用当前 `HasWindowHandle` API，不要用已废弃的 `raw_window_handle` 旧接口。
+- Player 单实例，由 Tauri State 持有；shutdown / drop 必须释放 native 资源。

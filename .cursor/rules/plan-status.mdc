@@ -1,0 +1,16 @@
+---
+description: 完成工作后更新 .plan 状态，不要让计划文档落后于代码
+alwaysApply: true
+---
+
+# Plan status
+
+`.plan/` 是本地执行计划（git 不追踪）。每完成一个可检查点必须更新：
+
+1. `.plan/STATUS.md` 总看板
+2. 对应 L1 里程碑状态
+3. 对应 L2 任务勾选与文件头 `status`
+
+状态只用：`todo` | `doing` | `blocked` | `done`
+
+当前焦点写在 `STATUS.md` 的 Current focus。被阻塞时写清原因和下一步，不要只改代码不改计划。

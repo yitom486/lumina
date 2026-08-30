@@ -1,0 +1,29 @@
+---
+description: 播放链路分层：React 不直接控制 libmpv
+alwaysApply: true
+---
+
+# Architecture
+
+```
+React → Tauri Command / Channel → PlayerService → LibMpvPlayer → libmpv
+```
+
+React 不允许知道 mpv handle、native window handle、FFI pointer、libmpv lifecycle。
+
+必须分离 Domain API 与 libmpv implementation。可简化目录，不可让上层直接依赖 libmpv。
+
+建议模块：
+
+```
+src-tauri/src/player/          # service / model / error
+src-tauri/src/player/mpv/      # player / events / window
+src-tauri/src/commands/player.rs
+src-tauri/src/state/app_state.rs
+```
+
+`PlayerService`：open / play / pause / stop / seek / get_position / get_duration / set_volume / set_rate / get_state。
+
+预留、本阶段不实现：set_audio_track / set_subtitle_track。
+
+Player Runtime 由 Tauri State 管理。libmpv 不得阻塞 Tauri UI thread。

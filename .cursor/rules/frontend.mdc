@@ -1,0 +1,13 @@
+---
+description: React / TypeScript 前端约定（播放器 UI 与状态）
+globs: "**/*.{ts,tsx}"
+alwaysApply: false
+---
+
+# Frontend
+
+- 包管理器用 pnpm；UI 用 Tailwind + shadcn/ui。第一版不追求美观。
+- 播放器 UI 状态用 Zustand，镜像 Rust 推送的状态；不要本地猜测 Playing/Paused。
+- 异步请求用 TanStack Query；播放控制走 Tauri Command，状态更新走 Channel。
+- 禁止 `<video>`、canvas 逐帧拷贝。画面区域只是 native surface 的占位，React 只做控件：Open / Play / Pause / Seek / Volume / Rate / time / duration。
+- 错误按 `{ code, message, details? }` 展示，不要把原始 FFI 字符串丢给用户。
