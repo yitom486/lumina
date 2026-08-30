@@ -1,10 +1,45 @@
 import type { ReactNode } from "react";
+import { Maximize2, Minimize2 } from "lucide-react";
 
+import { Button } from "@/components/ui/button";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { usePlayerStore, useUiStore } from "@/features/player";
 
 type AppShellProps = {
   children: ReactNode;
 };
+
+export function FullscreenToggleButton() {
+  const fullscreen = useUiStore((s) => s.fullscreen);
+  const toggleFullscreen = useUiStore((s) => s.toggleFullscreen);
+
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon-sm"
+          onClick={() => void toggleFullscreen()}
+          aria-label={fullscreen ? "退出全屏" : "全屏"}
+        >
+          {fullscreen ? (
+            <Minimize2 className="size-4" />
+          ) : (
+            <Maximize2 className="size-4" />
+          )}
+        </Button>
+      </TooltipTrigger>
+      <TooltipContent>
+        {fullscreen ? "退出全屏 (Esc / F)" : "全屏 (F)"}
+      </TooltipContent>
+    </Tooltip>
+  );
+}
 
 /** Desktop app chrome: slim title bar + main content. */
 export function AppShell({ children }: AppShellProps) {
@@ -19,7 +54,7 @@ export function AppShell({ children }: AppShellProps) {
   const playlistIndex = usePlayerStore((s) => s.playlistIndex);
 
   return (
-    <div className="flex h-svh flex-col overflow-hidden bg-background text-foreground">
+    <div className="relative flex h-svh flex-col overflow-hidden bg-background text-foreground">
       {!fullscreen ? (
         <header className="flex h-11 shrink-0 items-center gap-3 border-b border-border bg-card px-4">
           <div className="flex min-w-0 items-baseline gap-2">
@@ -38,6 +73,9 @@ export function AppShell({ children }: AppShellProps) {
                 · {playlistIndex + 1}/{playlist.length}
               </span>
             ) : null}
+          </div>
+          <div className="flex shrink-0 items-center">
+            <FullscreenToggleButton />
           </div>
         </header>
       ) : null}

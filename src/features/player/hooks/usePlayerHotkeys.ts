@@ -55,11 +55,10 @@ export function usePlayerHotkeys() {
         case "ArrowRight": {
           event.preventDefault();
           if (!ready) return;
-          const max =
-            store.durationMs > 0
-              ? store.durationMs
-              : store.currentTimeMs + 5_000;
-          void store.seek(Math.min(max, store.currentTimeMs + 5_000));
+          const duration = store.durationMs;
+          const next = store.currentTimeMs + 5_000;
+          // Allow skip even when duration is still unknown (mpv demux lag).
+          void store.seek(duration > 0 ? Math.min(duration, next) : next);
           break;
         }
         case "ArrowUp": {

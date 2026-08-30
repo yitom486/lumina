@@ -1,5 +1,6 @@
 import { formatTime } from "@/lib/format";
 import { Slider } from "@/components/ui/slider";
+import { useMediaInfoQuery } from "@/features/media";
 
 import { usePlayerStore } from "../store";
 
@@ -10,9 +11,19 @@ export function SeekBar() {
   const setSeeking = usePlayerStore((s) => s.setSeeking);
   const setPreviewTime = usePlayerStore((s) => s.setPreviewTime);
   const seek = usePlayerStore((s) => s.seek);
+  const mediaInfo = useMediaInfoQuery();
 
-  const ready = status !== "Idle" && durationMs > 0;
-  const value = Math.min(currentTimeMs, durationMs || 0);
+  // Prefer Rust/mpv duration; fall back to ffprobe so the bar isn't stuck at 0:00.
+  const probeDuration = mediaInfo.data?.durationMs ?? 0;
+  const effectiveDuration =
+    durationMs > 0 ? durationMs : probeDuration > 0 ? probeDuration : 0;
+
+  const canSeek =
+    status !== "Idle" &&
+    status !== "Loading" &&
+    status !== "Error";
+  const ready = canSeek && effectiveDuration > 0;
+  const value = Math.min(currentTimeMs, effectiveDuration || 0);
 
   return (
     <div className="flex min-w-0 flex-1 items-center gap-3">
@@ -22,7 +33,7 @@ export function SeekBar() {
       <Slider
         className="min-w-0 flex-1"
         min={0}
-        max={Math.max(durationMs, 1)}
+        max={Math.max(effectiveDuration, 1)}
         step={100}
         value={[value]}
         disabled={!ready}
@@ -36,7 +47,7 @@ export function SeekBar() {
         aria-label="进度"
       />
       <span className="w-11 shrink-0 tabular-nums text-xs text-muted-foreground">
-        {formatTime(durationMs)}
+        {formatTime(effectiveDuration)}
       </span>
     </div>
   );

@@ -101,7 +101,10 @@ function maybeResume(
   void (async () => {
     try {
       await get().seek(positionMs);
-      await get().play();
+      // open() already leaves the backend in Playing — only play if not.
+      if (get().status !== "Playing") {
+        await get().play();
+      }
     } catch (error) {
       set({ statusMessage: errorMessage(error) });
     }
@@ -119,15 +122,18 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
   playlistIndex: -1,
 
   applySnapshot: (snapshot) => {
-    set({
+    set((state) => ({
       status: snapshot.status,
       currentTimeMs: snapshot.currentTimeMs,
-      durationMs: snapshot.durationMs,
+      // Never clobber a known duration with 0 (mpv often reports 0 until demux settles;
+      // a later seek/play snapshot would otherwise wipe DurationChanged).
+      durationMs:
+        snapshot.durationMs > 0 ? snapshot.durationMs : state.durationMs,
       volume: snapshot.volume,
       rate: snapshot.rate,
       currentFile: snapshot.currentFile,
       error: snapshot.error,
-    });
+    }));
   },
 
   applyEvent: (event) => {

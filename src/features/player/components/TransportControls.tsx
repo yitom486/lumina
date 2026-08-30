@@ -1,7 +1,5 @@
 import {
   FolderOpen,
-  Maximize2,
-  Minimize2,
   Pause,
   Play,
   SkipBack,
@@ -17,7 +15,6 @@ import {
 } from "@/components/ui/tooltip";
 
 import { usePlayerStore } from "../store";
-import { useUiStore } from "../uiStore";
 
 export function TransportControls() {
   const busy = usePlayerStore((s) => s.busy);
@@ -29,8 +26,6 @@ export function TransportControls() {
   const stop = usePlayerStore((s) => s.stop);
   const playNext = usePlayerStore((s) => s.playNext);
   const playPrev = usePlayerStore((s) => s.playPrev);
-  const fullscreen = useUiStore((s) => s.fullscreen);
-  const toggleFullscreen = useUiStore((s) => s.toggleFullscreen);
 
   const playing = status === "Playing";
   const canToggle =
@@ -39,7 +34,8 @@ export function TransportControls() {
     status !== "Loading" &&
     status !== "Error";
   const canPrev = !busy && playlistIndex > 0;
-  const canNext = !busy && playlistIndex >= 0 && playlistIndex < playlist.length - 1;
+  const canNext =
+    !busy && playlistIndex >= 0 && playlistIndex < playlist.length - 1;
 
   return (
     <div className="flex items-center gap-1">
@@ -125,25 +121,6 @@ export function TransportControls() {
           </Button>
         </TooltipTrigger>
         <TooltipContent>停止</TooltipContent>
-      </Tooltip>
-
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon-sm"
-            onClick={() => void toggleFullscreen()}
-            aria-label={fullscreen ? "退出全屏" : "全屏"}
-          >
-            {fullscreen ? (
-              <Minimize2 className="size-4" />
-            ) : (
-              <Maximize2 className="size-4" />
-            )}
-          </Button>
-        </TooltipTrigger>
-        <TooltipContent>{fullscreen ? "退出全屏 (Esc / F)" : "全屏 (F)"}</TooltipContent>
       </Tooltip>
     </div>
   );

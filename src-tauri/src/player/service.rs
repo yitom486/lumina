@@ -157,6 +157,9 @@ impl PlayerService {
     }
 
     pub fn play(&mut self) -> Result<(PlayerSnapshot, Vec<PlayerEvent>), PlayerError> {
+        if self.snapshot.status == PlayerState::Playing {
+            return Ok((self.snapshot(), Vec::new()));
+        }
         self.require(
             &[PlayerState::Ready, PlayerState::Paused, PlayerState::Ended],
             "play",
@@ -252,6 +255,14 @@ impl PlayerService {
             return Err(error);
         }
         self.snapshot.current_time_ms = position_ms;
+        // Refresh duration — often still 0 right after open until demux catches up.
+        if let Some(backend) = self.backend.as_ref() {
+            if let Ok(duration_ms) = backend.duration_ms() {
+                if duration_ms > 0 {
+                    self.snapshot.duration_ms = duration_ms;
+                }
+            }
+        }
         Ok((
             self.snapshot(),
             vec![PlayerEvent::PositionChanged { position_ms }],
