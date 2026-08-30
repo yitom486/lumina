@@ -1,15 +1,23 @@
 //! On-demand ASR commands. Never runs unless the frontend invokes them.
 
 use tauri::ipc::Channel;
-use tauri::State;
+use tauri::{AppHandle, Manager, State};
 
 use crate::asr::{AsrError, AsrEvent, AsrStatus};
 use crate::state::AppState;
 use crate::subtitle::Transcript;
 
+/// Path probe only — off the UI thread (directory scan).
 #[tauri::command]
-pub fn asr_status(state: State<'_, AppState>) -> AsrStatus {
-    state.asr.status()
+pub async fn asr_status(app: AppHandle) -> Result<AsrStatus, AsrError> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let Some(state) = app.try_state::<AppState>() else {
+            return Err(AsrError::internal("app state is not available", None));
+        };
+        Ok(state.asr.status())
+    })
+    .await
+    .map_err(|error| AsrError::internal("asr_status join failed", Some(&error.to_string())))?
 }
 
 /// Blocking work runs on a worker thread so the UI stays responsive.

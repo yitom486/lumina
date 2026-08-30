@@ -1,11 +1,31 @@
 //! Player Tauri commands. React talks to PlayerService only.
+//!
+//! Sync commands run on the UI/main thread in Tauri 2 — anything that may
+//! block (mpv loadfile, etc.) must use async + spawn_blocking.
 
 use tauri::ipc::Channel;
-use tauri::{AppHandle, State, WebviewWindow};
+use tauri::{AppHandle, Manager, State, WebviewWindow};
 
 use crate::player::error::PlayerError;
 use crate::player::model::{PlayerEvent, PlayerSnapshot};
 use crate::state::AppState;
+
+async fn on_worker<R, F>(app: AppHandle, work: F) -> Result<R, PlayerError>
+where
+    R: Send + 'static,
+    F: FnOnce(&AppState) -> Result<R, PlayerError> + Send + 'static,
+{
+    tauri::async_runtime::spawn_blocking(move || {
+        let Some(state) = app.try_state::<AppState>() else {
+            return Err(PlayerError::internal("app state is not available", None));
+        };
+        work(state.inner())
+    })
+    .await
+    .map_err(|error| {
+        PlayerError::internal("player worker join failed", Some(&error.to_string()))
+    })?
+}
 
 #[tauri::command]
 pub fn player_subscribe(
@@ -19,13 +39,13 @@ pub fn player_subscribe(
 }
 
 #[tauri::command]
-pub fn player_get_state(state: State<'_, AppState>) -> Result<PlayerSnapshot, PlayerError> {
-    state.with_player(|player| Ok(player.snapshot()))
+pub async fn player_get_state(app: AppHandle) -> Result<PlayerSnapshot, PlayerError> {
+    on_worker(app, |state| state.with_player(|player| Ok(player.snapshot()))).await
 }
 
 #[tauri::command]
-pub fn player_open(state: State<'_, AppState>, path: String) -> Result<PlayerSnapshot, PlayerError> {
-    match state.with_player(|player| player.open(path)) {
+pub async fn player_open(app: AppHandle, path: String) -> Result<PlayerSnapshot, PlayerError> {
+    on_worker(app, move |state| match state.with_player(|player| player.open(path)) {
         Ok((snapshot, events)) => {
             state.emit_all(events);
             Ok(snapshot)
@@ -39,68 +59,79 @@ pub fn player_open(state: State<'_, AppState>, path: String) -> Result<PlayerSna
             });
             Err(error)
         }
-    }
+    })
+    .await
 }
 
 #[tauri::command]
-pub fn player_play(state: State<'_, AppState>) -> Result<PlayerSnapshot, PlayerError> {
-    let (snapshot, events) = state.with_player(|player| player.play())?;
-    state.emit_all(events);
-    Ok(snapshot)
+pub async fn player_play(app: AppHandle) -> Result<PlayerSnapshot, PlayerError> {
+    on_worker(app, |state| {
+        let (snapshot, events) = state.with_player(|player| player.play())?;
+        state.emit_all(events);
+        Ok(snapshot)
+    })
+    .await
 }
 
 #[tauri::command]
-pub fn player_pause(state: State<'_, AppState>) -> Result<PlayerSnapshot, PlayerError> {
-    let (snapshot, events) = state.with_player(|player| player.pause())?;
-    state.emit_all(events);
-    Ok(snapshot)
+pub async fn player_pause(app: AppHandle) -> Result<PlayerSnapshot, PlayerError> {
+    on_worker(app, |state| {
+        let (snapshot, events) = state.with_player(|player| player.pause())?;
+        state.emit_all(events);
+        Ok(snapshot)
+    })
+    .await
 }
 
 #[tauri::command]
-pub fn player_stop(state: State<'_, AppState>) -> Result<PlayerSnapshot, PlayerError> {
-    let (snapshot, events) = state.with_player(|player| player.stop())?;
-    state.emit_all(events);
-    Ok(snapshot)
+pub async fn player_stop(app: AppHandle) -> Result<PlayerSnapshot, PlayerError> {
+    on_worker(app, |state| {
+        let (snapshot, events) = state.with_player(|player| player.stop())?;
+        state.emit_all(events);
+        Ok(snapshot)
+    })
+    .await
 }
 
 #[tauri::command]
-pub fn player_seek(
-    state: State<'_, AppState>,
-    position_ms: u64,
-) -> Result<PlayerSnapshot, PlayerError> {
-    let (snapshot, events) = state.with_player(|player| player.seek(position_ms))?;
-    state.emit_all(events);
-    Ok(snapshot)
+pub async fn player_seek(app: AppHandle, position_ms: u64) -> Result<PlayerSnapshot, PlayerError> {
+    on_worker(app, move |state| {
+        let (snapshot, events) = state.with_player(|player| player.seek(position_ms))?;
+        state.emit_all(events);
+        Ok(snapshot)
+    })
+    .await
 }
 
 #[tauri::command]
-pub fn player_set_volume(
-    state: State<'_, AppState>,
-    volume: f64,
-) -> Result<PlayerSnapshot, PlayerError> {
-    state.with_player(|player| player.set_volume(volume))
+pub async fn player_set_volume(app: AppHandle, volume: f64) -> Result<PlayerSnapshot, PlayerError> {
+    on_worker(app, move |state| {
+        state.with_player(|player| player.set_volume(volume))
+    })
+    .await
 }
 
 #[tauri::command]
-pub fn player_set_rate(
-    state: State<'_, AppState>,
-    rate: f64,
-) -> Result<PlayerSnapshot, PlayerError> {
-    state.with_player(|player| player.set_rate(rate))
+pub async fn player_set_rate(app: AppHandle, rate: f64) -> Result<PlayerSnapshot, PlayerError> {
+    on_worker(app, move |state| state.with_player(|player| player.set_rate(rate))).await
 }
 
 #[tauri::command]
-pub fn player_set_subtitle(
-    state: State<'_, AppState>,
+pub async fn player_set_subtitle(
+    app: AppHandle,
     source: String,
     stream_index: Option<u32>,
     external_path: Option<String>,
 ) -> Result<PlayerSnapshot, PlayerError> {
-    state.with_player(|player| {
-        player.set_subtitle(&source, stream_index, external_path.as_deref())
+    on_worker(app, move |state| {
+        state.with_player(|player| {
+            player.set_subtitle(&source, stream_index, external_path.as_deref())
+        })
     })
+    .await
 }
 
+/// HWND layout must stay on the UI thread (Win32 parenting).
 #[tauri::command]
 pub fn player_set_surface_bounds(
     state: State<'_, AppState>,
