@@ -1,9 +1,11 @@
 mod commands;
+pub mod asr;
 pub mod media;
 pub mod player;
 pub mod subtitle;
 mod state;
 
+pub use asr::{AsrError, AsrErrorCode, AsrEvent, AsrService, AsrStatus};
 pub use media::{MediaError, MediaErrorCode, MediaInfo, MediaInspector, MediaStream, StreamKind};
 pub use player::{
     PlayerError, PlayerErrorCode, PlayerEvent, PlayerService, PlayerSnapshot, PlayerState,
@@ -13,6 +15,7 @@ pub use subtitle::{
     Transcript,
 };
 
+use commands::asr::{asr_status, asr_transcribe};
 use commands::media::media_inspect;
 use commands::player::{
     player_get_state, player_open, player_pause, player_play, player_seek, player_set_rate,
@@ -47,6 +50,8 @@ pub fn run() {
             media_inspect,
             subtitle_list_choices,
             subtitle_load_choice,
+            asr_status,
+            asr_transcribe,
         ])
         .setup(|app| {
             attach_native_surface(app)?;

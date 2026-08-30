@@ -1,8 +1,11 @@
 import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 
+import { getAsrStatus, transcribeOnDemand } from "@/features/asr";
+import type { Transcript } from "@/features/transcript";
 import { formatTime } from "@/lib/format";
 import { usePlayerStore } from "@/features/player";
+import { Button } from "@/components/ui/button";
 
 import { listSubtitleChoices, loadSubtitleChoice } from "../api";
 import type { Cue, SubtitleChoice } from "../types";
@@ -14,7 +17,6 @@ function activeCueIndex(cues: Cue[], timeMs: number): number {
 function pickDefaultChoice(choices: SubtitleChoice[]): string | null {
   const text = choices.find((c) => c.supported);
   if (text) return text.id;
-  // Bitmap-only: still selectable for on-video display via mpv.
   return choices[0]?.id ?? null;
 }
 
@@ -63,10 +65,25 @@ export function TranscriptPanel() {
     retry: false,
   });
 
+  const asrStatusQuery = useQuery({
+    queryKey: ["asrStatus"],
+    queryFn: getAsrStatus,
+    // Status only — does not load the model.
+    staleTime: 60_000,
+    retry: false,
+  });
+
   const [choiceId, setChoiceId] = useState<string | null>(null);
+  const [asrTranscript, setAsrTranscript] = useState<Transcript | null>(null);
+  const [asrBusy, setAsrBusy] = useState(false);
+  const [asrProgress, setAsrProgress] = useState<string | null>(null);
+  const [asrError, setAsrError] = useState<string | null>(null);
 
   useEffect(() => {
     setChoiceId(null);
+    setAsrTranscript(null);
+    setAsrProgress(null);
+    setAsrError(null);
   }, [path]);
 
   useEffect(() => {
@@ -77,14 +94,13 @@ export function TranscriptPanel() {
 
   const selected = choicesQuery.data?.find((c) => c.id === choiceId);
 
-  // Always push selection to mpv so subtitles appear on the video surface.
   useEffect(() => {
-    if (!mediaReady || !choiceId) return;
+    if (!mediaReady || !choiceId || asrTranscript) return;
     const choice = choicesQuery.data?.find((c) => c.id === choiceId);
     void applyChoiceToPlayer(choice, setSubtitle);
-  }, [mediaReady, choiceId, choicesQuery.data, setSubtitle]);
+  }, [mediaReady, choiceId, choicesQuery.data, setSubtitle, asrTranscript]);
 
-  const canLoadTranscript = Boolean(choiceId && selected?.supported);
+  const canLoadTranscript = Boolean(choiceId && selected?.supported && !asrTranscript);
 
   const transcriptQuery = useQuery({
     queryKey: ["transcript", path, choiceId],
@@ -93,18 +109,46 @@ export function TranscriptPanel() {
     retry: false,
   });
 
-  const transcript = transcriptQuery.data ?? null;
+  const transcript = asrTranscript ?? transcriptQuery.data ?? null;
   const activeIndex = useMemo(
     () => (transcript ? activeCueIndex(transcript.cues, currentTimeMs) : -1),
     [transcript, currentTimeMs],
   );
 
-  // Keep active cue visible while playing.
   useEffect(() => {
     if (activeIndex < 0) return;
     const el = document.getElementById(`cue-${activeIndex}`);
     el?.scrollIntoView({ block: "nearest", behavior: "smooth" });
   }, [activeIndex]);
+
+  async function handleAsr() {
+    if (!path || asrBusy) return;
+    setAsrBusy(true);
+    setAsrError(null);
+    setAsrProgress("准备按需 ASR…");
+    try {
+      const result = await transcribeOnDemand(path, (event) => {
+        if (event.type === "Progress") {
+          setAsrProgress(event.payload.message);
+        } else if (event.type === "Started") {
+          setAsrProgress("已开始（首次才会启动 whisper-cli）…");
+        } else if (event.type === "Failed") {
+          setAsrError(event.payload.message);
+        }
+      });
+      setAsrTranscript(result);
+      setAsrProgress(null);
+    } catch (error) {
+      const message =
+        typeof error === "object" && error && "message" in error
+          ? String((error as { message: string }).message)
+          : String(error);
+      setAsrError(message);
+      setAsrProgress(null);
+    } finally {
+      setAsrBusy(false);
+    }
+  }
 
   if (!mediaReady) {
     return (
@@ -115,30 +159,36 @@ export function TranscriptPanel() {
   }
 
   const choices = choicesQuery.data ?? [];
-  const errorText = transcriptQuery.isError
-    ? String(
-        (transcriptQuery.error as { message?: string }).message ??
-          transcriptQuery.error,
-      )
-    : choicesQuery.isError
+  const asrAvailable = asrStatusQuery.data?.available === true;
+  const errorText = asrError
+    ? asrError
+    : transcriptQuery.isError && !asrTranscript
       ? String(
-          (choicesQuery.error as { message?: string }).message ??
-            choicesQuery.error,
+          (transcriptQuery.error as { message?: string }).message ??
+            transcriptQuery.error,
         )
-      : selected && !selected.supported
-        ? "已在画面显示位图字幕；文稿需文本轨或同名外挂 .srt"
-        : null;
+      : choicesQuery.isError
+        ? String(
+            (choicesQuery.error as { message?: string }).message ??
+              choicesQuery.error,
+          )
+        : selected && !selected.supported && !asrTranscript
+          ? "已在画面显示位图字幕；文稿可点下方按需 ASR，或换文本轨/外挂 .srt"
+          : null;
 
   return (
-    <section className="flex max-h-64 flex-col border-t border-border">
+    <section className="flex max-h-72 flex-col border-t border-border">
       <div className="flex flex-wrap items-center gap-3 px-6 py-2 text-sm">
         <label className="flex items-center gap-2">
           <span className="font-medium">字幕</span>
           <select
             className="min-w-[16rem] rounded border border-border bg-background px-2 py-1"
             value={choiceId ?? ""}
-            disabled={choices.length === 0}
-            onChange={(e) => setChoiceId(e.target.value || null)}
+            disabled={choices.length === 0 || Boolean(asrTranscript)}
+            onChange={(e) => {
+              setAsrTranscript(null);
+              setChoiceId(e.target.value || null);
+            }}
             aria-label="Subtitle track"
           >
             {choices.length === 0 ? (
@@ -152,10 +202,45 @@ export function TranscriptPanel() {
             )}
           </select>
         </label>
+
+        <Button
+          type="button"
+          variant="outline"
+          disabled={asrBusy}
+          onClick={() => void handleAsr()}
+          title={
+            asrAvailable
+              ? "按需启动本地 whisper-cli（不预加载）"
+              : "未配置 ASR 也可点，会提示如何放置 whisper-cli"
+          }
+        >
+          {asrBusy ? "生成中…" : "生成文稿 (ASR)"}
+        </Button>
+
+        {asrTranscript ? (
+          <button
+            type="button"
+            className="text-muted-foreground underline"
+            onClick={() => setAsrTranscript(null)}
+          >
+            回到字幕文稿
+          </button>
+        ) : null}
+
         {choicesQuery.isLoading ? (
           <span className="text-muted-foreground">扫描字幕…</span>
         ) : null}
       </div>
+
+      {asrProgress ? (
+        <p className="px-6 pb-1 text-sm text-muted-foreground">{asrProgress}</p>
+      ) : null}
+
+      {!asrAvailable && asrStatusQuery.data ? (
+        <p className="px-6 pb-1 text-xs text-muted-foreground">
+          ASR 可选未配置：{asrStatusQuery.data.message}
+        </p>
+      ) : null}
 
       {transcriptQuery.isLoading && canLoadTranscript ? (
         <p className="px-6 pb-3 text-sm text-muted-foreground">加载文稿…</p>
@@ -165,9 +250,12 @@ export function TranscriptPanel() {
         <p className="px-6 pb-3 text-sm text-muted-foreground">{errorText}</p>
       ) : null}
 
-      {!errorText && choices.length === 0 && !choicesQuery.isLoading ? (
+      {!errorText &&
+      choices.length === 0 &&
+      !choicesQuery.isLoading &&
+      !asrTranscript ? (
         <p className="px-6 pb-3 text-sm text-muted-foreground">
-          未找到内嵌字幕，也没有同名外挂（如 video.srt / video.en.srt）。
+          无文本字幕时，可按需使用「生成文稿 (ASR)」（需本地 whisper-cli）。
         </p>
       ) : null}
 
@@ -176,7 +264,7 @@ export function TranscriptPanel() {
           {transcript.cues.map((cue, i) => {
             const active = i === activeIndex;
             return (
-              <li key={cue.index} id={`cue-${i}`}>
+              <li key={`${transcript.choiceId}-${cue.index}`} id={`cue-${i}`}>
                 <button
                   type="button"
                   className={`w-full rounded px-2 py-1.5 text-left text-sm ${

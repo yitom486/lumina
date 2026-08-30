@@ -1,0 +1,12 @@
+---
+description: Phase 4 — 按需 ASR，非打开视频必经路径
+alwaysApply: true
+---
+
+# Phase 4
+
+ASR **可选、按需**。
+
+- 禁止：启动预热 Whisper、Open 时自动转写、把大模型打进默认安装包
+- 允许：用户点击后懒加载本地 `whisper-cli` + model；ffmpeg 抽音频；进度推送
+- 有文本字幕时优先 Phase 3 文稿，不强迫走 ASR

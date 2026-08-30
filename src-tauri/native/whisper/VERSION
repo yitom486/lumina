@@ -1,0 +1,4 @@
+optional=true
+engine=whisper.cpp-cli
+note=place whisper-cli.exe and ggml-*.bin here for on-demand ASR
+updated=2026-08-31

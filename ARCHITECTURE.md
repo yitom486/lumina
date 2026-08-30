@@ -89,6 +89,18 @@ subtitle_list_tracks / subtitle_load_transcript
 ```
 
 - 字幕下拉：内嵌轨 + 同名/同 stem 外挂（`video.srt`、`video.en.srt`）自动发现
-- 用户只做选择题；位图轨显示为不可选
+- 用户只做选择题；位图轨可上画面，文稿需文本或按需 ASR
 - 文稿：当前句高亮、点击 seek
+
+### ASR (Phase 4, on-demand)
+
+```
+asr_transcribe(path)  // only when user clicks
+  → ffmpeg wav 16k mono
+  → whisper-cli (native/whisper/, optional)
+  → Transcript
+```
+
+- 启动 / Open **不**加载模型
+- 未放置 whisper-cli 时返回 `NotConfigured`，不影响播放
 

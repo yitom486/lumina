@@ -1,12 +1,13 @@
 //! Tauri State for Player Runtime + native video surface + event Channel.
 
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use tauri::ipc::Channel;
 use tauri::{AppHandle, Manager};
 
+use crate::asr::AsrService;
 use crate::player::error::PlayerError;
 use crate::player::model::PlayerEvent;
 use crate::player::mpv::window::VideoSurface;
@@ -18,6 +19,7 @@ pub struct AppState {
     player: Mutex<PlayerService>,
     surface: Mutex<Option<VideoSurface>>,
     events: Mutex<Option<Channel<PlayerEvent>>>,
+    pub asr: Arc<AsrService>,
     ticker_started: AtomicBool,
     shutdown: AtomicBool,
 }
@@ -28,6 +30,7 @@ impl AppState {
             player: Mutex::new(PlayerService::new()),
             surface: Mutex::new(None),
             events: Mutex::new(None),
+            asr: Arc::new(AsrService::new()),
             ticker_started: AtomicBool::new(false),
             shutdown: AtomicBool::new(false),
         }
