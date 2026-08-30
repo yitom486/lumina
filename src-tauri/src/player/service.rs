@@ -1,7 +1,7 @@
 //! PlayerService — domain API. Does not depend on libmpv FFI types.
 
 use crate::player::error::PlayerError;
-use crate::player::model::{PlayerSnapshot, PlayerState};
+use crate::player::model::{PlayerEvent, PlayerSnapshot, PlayerState};
 use crate::player::mpv::LibMpvPlayer;
 
 const VOLUME_MIN: f64 = 0.0;
@@ -59,6 +59,10 @@ impl PlayerService {
         }
     }
 
+    pub fn is_shutdown(&self) -> bool {
+        self.shutdown
+    }
+
     pub fn snapshot(&self) -> PlayerSnapshot {
         self.snapshot.clone()
     }
@@ -75,7 +79,7 @@ impl PlayerService {
         self.snapshot.duration_ms
     }
 
-    pub fn open(&mut self, path: String) -> Result<PlayerSnapshot, PlayerError> {
+    pub fn open(&mut self, path: String) -> Result<(PlayerSnapshot, Vec<PlayerEvent>), PlayerError> {
         if self.snapshot.status == PlayerState::Loading {
             return Err(PlayerError::invalid_state("open", self.snapshot.status));
         }
@@ -87,11 +91,27 @@ impl PlayerService {
             return Err(err);
         }
 
+        // Replace previous file on the same mpv instance — no second backend.
+        if matches!(
+            self.snapshot.status,
+            PlayerState::Ready
+                | PlayerState::Playing
+                | PlayerState::Paused
+                | PlayerState::Ended
+        ) {
+            if let Some(backend) = self.backend.as_ref() {
+                if let Err(error) = backend.stop() {
+                    tracing::warn!(%error, "stop before open failed; continuing");
+                }
+            }
+        }
+
         self.snapshot.status = PlayerState::Loading;
         self.snapshot.current_file = Some(path.clone());
         self.snapshot.current_time_ms = 0;
         self.snapshot.duration_ms = 0;
         self.snapshot.error = None;
+        tracing::info!(path = %path, "open");
 
         let open_result = self
             .backend
@@ -104,8 +124,10 @@ impl PlayerService {
             return Err(error);
         }
 
+        let mut duration_ms = 0;
         if let Some(backend) = self.backend.as_ref() {
             if let Ok(duration) = backend.duration_ms() {
+                duration_ms = duration;
                 self.snapshot.duration_ms = duration;
             }
             let _ = backend.set_volume(self.snapshot.volume);
@@ -113,15 +135,27 @@ impl PlayerService {
         }
 
         self.snapshot.status = PlayerState::Playing;
-        tracing::info!(path = %path, "file opened");
-        Ok(self.snapshot())
+        tracing::info!(path = %path, duration_ms, "file opened → Playing");
+
+        let events = vec![
+            PlayerEvent::FileLoaded {
+                path: path.clone(),
+                duration_ms,
+            },
+            PlayerEvent::DurationChanged { duration_ms },
+            PlayerEvent::StateChanged {
+                status: PlayerState::Playing,
+            },
+        ];
+        Ok((self.snapshot(), events))
     }
 
-    pub fn play(&mut self) -> Result<PlayerSnapshot, PlayerError> {
+    pub fn play(&mut self) -> Result<(PlayerSnapshot, Vec<PlayerEvent>), PlayerError> {
         self.require(
             &[PlayerState::Ready, PlayerState::Paused, PlayerState::Ended],
             "play",
         )?;
+        tracing::info!("play");
         let result = self
             .backend
             .as_ref()
@@ -132,11 +166,17 @@ impl PlayerService {
             return Err(error);
         }
         self.snapshot.status = PlayerState::Playing;
-        Ok(self.snapshot())
+        Ok((
+            self.snapshot(),
+            vec![PlayerEvent::StateChanged {
+                status: PlayerState::Playing,
+            }],
+        ))
     }
 
-    pub fn pause(&mut self) -> Result<PlayerSnapshot, PlayerError> {
+    pub fn pause(&mut self) -> Result<(PlayerSnapshot, Vec<PlayerEvent>), PlayerError> {
         self.require(&[PlayerState::Playing], "pause")?;
+        tracing::info!("pause");
         let result = self
             .backend
             .as_ref()
@@ -147,10 +187,15 @@ impl PlayerService {
             return Err(error);
         }
         self.snapshot.status = PlayerState::Paused;
-        Ok(self.snapshot())
+        Ok((
+            self.snapshot(),
+            vec![PlayerEvent::StateChanged {
+                status: PlayerState::Paused,
+            }],
+        ))
     }
 
-    pub fn stop(&mut self) -> Result<PlayerSnapshot, PlayerError> {
+    pub fn stop(&mut self) -> Result<(PlayerSnapshot, Vec<PlayerEvent>), PlayerError> {
         self.require(
             &[
                 PlayerState::Ready,
@@ -160,6 +205,7 @@ impl PlayerService {
             ],
             "stop",
         )?;
+        tracing::info!("stop");
         let result = self
             .backend
             .as_ref()
@@ -171,14 +217,20 @@ impl PlayerService {
         }
         self.snapshot.status = PlayerState::Idle;
         self.snapshot.current_time_ms = 0;
-        Ok(self.snapshot())
+        Ok((
+            self.snapshot(),
+            vec![PlayerEvent::StateChanged {
+                status: PlayerState::Idle,
+            }],
+        ))
     }
 
-    pub fn seek(&mut self, position_ms: u64) -> Result<PlayerSnapshot, PlayerError> {
+    pub fn seek(&mut self, position_ms: u64) -> Result<(PlayerSnapshot, Vec<PlayerEvent>), PlayerError> {
         self.require(
             &[PlayerState::Ready, PlayerState::Playing, PlayerState::Paused],
             "seek",
         )?;
+        tracing::info!(position_ms, "seek");
         let result = self
             .backend
             .as_ref()
@@ -189,7 +241,10 @@ impl PlayerService {
             return Err(error);
         }
         self.snapshot.current_time_ms = position_ms;
-        Ok(self.snapshot())
+        Ok((
+            self.snapshot(),
+            vec![PlayerEvent::PositionChanged { position_ms }],
+        ))
     }
 
     pub fn set_volume(&mut self, volume: f64) -> Result<PlayerSnapshot, PlayerError> {
@@ -198,6 +253,7 @@ impl PlayerService {
                 "volume must be {VOLUME_MIN}..={VOLUME_MAX}"
             )));
         }
+        tracing::info!(volume, "set_volume");
         self.snapshot.volume = volume;
         if let Some(backend) = self.backend.as_ref() {
             backend.set_volume(volume)?;
@@ -211,11 +267,61 @@ impl PlayerService {
                 "rate must be {RATE_MIN}..={RATE_MAX}"
             )));
         }
+        tracing::info!(rate, "set_rate");
         self.snapshot.rate = rate;
         if let Some(backend) = self.backend.as_ref() {
             backend.set_rate(rate)?;
         }
         Ok(self.snapshot())
+    }
+
+    /// Periodic poll from the event ticker (~100–250ms). Does not log position.
+    pub fn poll_tick(&mut self) -> Vec<PlayerEvent> {
+        let mut events = Vec::new();
+        let Some(backend) = self.backend.as_ref() else {
+            return events;
+        };
+
+        if matches!(
+            self.snapshot.status,
+            PlayerState::Loading | PlayerState::Ready | PlayerState::Playing | PlayerState::Paused
+        ) {
+            if let Ok(duration_ms) = backend.duration_ms() {
+                if duration_ms > 0 && duration_ms != self.snapshot.duration_ms {
+                    self.snapshot.duration_ms = duration_ms;
+                    events.push(PlayerEvent::DurationChanged { duration_ms });
+                }
+            }
+        }
+
+        if matches!(
+            self.snapshot.status,
+            PlayerState::Playing | PlayerState::Paused
+        ) {
+            if let Ok(position_ms) = backend.position_ms() {
+                if position_ms != self.snapshot.current_time_ms {
+                    self.snapshot.current_time_ms = position_ms;
+                    events.push(PlayerEvent::PositionChanged { position_ms });
+                }
+            }
+        }
+
+        if self.snapshot.status == PlayerState::Playing {
+            match backend.eof_reached() {
+                Ok(true) => {
+                    self.snapshot.status = PlayerState::Ended;
+                    tracing::info!("playback ended");
+                    events.push(PlayerEvent::StateChanged {
+                        status: PlayerState::Ended,
+                    });
+                    events.push(PlayerEvent::Ended);
+                }
+                Ok(false) => {}
+                Err(_) => {}
+            }
+        }
+
+        events
     }
 
     /// Reserved for later phases. Not implemented in Phase 1.
@@ -243,6 +349,7 @@ impl PlayerService {
     }
 
     fn fail(&mut self, error: PlayerError) {
+        tracing::error!(code = ?error.code, message = %error.message, "player error");
         self.snapshot.status = PlayerState::Error;
         self.snapshot.error = Some(error);
     }

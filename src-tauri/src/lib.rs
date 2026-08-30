@@ -8,7 +8,7 @@ pub use player::{
 
 use commands::player::{
     player_get_state, player_open, player_pause, player_play, player_seek, player_set_rate,
-    player_set_surface_bounds, player_set_volume, player_stop,
+    player_set_surface_bounds, player_set_volume, player_stop, player_subscribe,
 };
 use player::mpv::window::{hwnd_from_webview_window, VideoSurface};
 use state::AppState;
@@ -23,6 +23,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .manage(AppState::new())
         .invoke_handler(tauri::generate_handler![
+            player_subscribe,
             player_get_state,
             player_open,
             player_play,
@@ -84,6 +85,7 @@ fn attach_native_surface(app: &mut tauri::App) -> Result<(), Box<dyn std::error:
 
 fn shutdown_backend(app: &tauri::AppHandle) {
     if let Some(state) = app.try_state::<AppState>() {
+        state.mark_shutdown();
         let _ = state.with_player(|player| {
             player.shutdown();
             Ok(())

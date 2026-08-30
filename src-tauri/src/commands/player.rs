@@ -1,10 +1,22 @@
 //! Player Tauri commands. React talks to PlayerService only.
 
-use tauri::{State, WebviewWindow};
+use tauri::ipc::Channel;
+use tauri::{AppHandle, State, WebviewWindow};
 
 use crate::player::error::PlayerError;
-use crate::player::model::PlayerSnapshot;
+use crate::player::model::{PlayerEvent, PlayerSnapshot};
 use crate::state::AppState;
+
+#[tauri::command]
+pub fn player_subscribe(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    on_event: Channel<PlayerEvent>,
+) -> Result<(), PlayerError> {
+    state.set_event_channel(on_event)?;
+    state.ensure_event_ticker(app);
+    Ok(())
+}
 
 #[tauri::command]
 pub fn player_get_state(state: State<'_, AppState>) -> Result<PlayerSnapshot, PlayerError> {
@@ -13,22 +25,42 @@ pub fn player_get_state(state: State<'_, AppState>) -> Result<PlayerSnapshot, Pl
 
 #[tauri::command]
 pub fn player_open(state: State<'_, AppState>, path: String) -> Result<PlayerSnapshot, PlayerError> {
-    state.with_player(|player| player.open(path))
+    match state.with_player(|player| player.open(path)) {
+        Ok((snapshot, events)) => {
+            state.emit_all(events);
+            Ok(snapshot)
+        }
+        Err(error) => {
+            state.emit(PlayerEvent::Error {
+                error: error.clone(),
+            });
+            state.emit(PlayerEvent::StateChanged {
+                status: crate::player::PlayerState::Error,
+            });
+            Err(error)
+        }
+    }
 }
 
 #[tauri::command]
 pub fn player_play(state: State<'_, AppState>) -> Result<PlayerSnapshot, PlayerError> {
-    state.with_player(|player| player.play())
+    let (snapshot, events) = state.with_player(|player| player.play())?;
+    state.emit_all(events);
+    Ok(snapshot)
 }
 
 #[tauri::command]
 pub fn player_pause(state: State<'_, AppState>) -> Result<PlayerSnapshot, PlayerError> {
-    state.with_player(|player| player.pause())
+    let (snapshot, events) = state.with_player(|player| player.pause())?;
+    state.emit_all(events);
+    Ok(snapshot)
 }
 
 #[tauri::command]
 pub fn player_stop(state: State<'_, AppState>) -> Result<PlayerSnapshot, PlayerError> {
-    state.with_player(|player| player.stop())
+    let (snapshot, events) = state.with_player(|player| player.stop())?;
+    state.emit_all(events);
+    Ok(snapshot)
 }
 
 #[tauri::command]
@@ -36,7 +68,9 @@ pub fn player_seek(
     state: State<'_, AppState>,
     position_ms: u64,
 ) -> Result<PlayerSnapshot, PlayerError> {
-    state.with_player(|player| player.seek(position_ms))
+    let (snapshot, events) = state.with_player(|player| player.seek(position_ms))?;
+    state.emit_all(events);
+    Ok(snapshot)
 }
 
 #[tauri::command]

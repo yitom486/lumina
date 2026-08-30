@@ -101,6 +101,12 @@ impl LibMpvPlayer {
             .map_err(map_playback_error)?;
         Ok((position.max(0.0) * 1000.0) as u64)
     }
+
+    pub fn eof_reached(&self) -> Result<bool, PlayerError> {
+        self.mpv
+            .get_property("eof-reached")
+            .map_err(map_playback_error)
+    }
 }
 
 impl Drop for LibMpvPlayer {

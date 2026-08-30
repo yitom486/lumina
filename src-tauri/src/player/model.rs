@@ -42,9 +42,14 @@ impl PlayerSnapshot {
     }
 }
 
-/// Rust → React stream events. Channel wiring is M6.
+/// Rust → React stream events (Tauri Channel).
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(tag = "type", content = "payload")]
+#[serde(
+    tag = "type",
+    content = "payload",
+    rename_all = "PascalCase",
+    rename_all_fields = "camelCase"
+)]
 pub enum PlayerEvent {
     StateChanged { status: PlayerState },
     PositionChanged { position_ms: u64 },
