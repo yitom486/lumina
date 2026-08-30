@@ -33,6 +33,7 @@ impl LibMpvPlayer {
             init.set_option("keep-open", "yes")?;
             // Prefer hardware decode; mpv falls back to software if needed.
             init.set_option("hwdec", "auto")?;
+            init.set_option("sub-visibility", "yes")?;
             Ok(())
         })
         .map_err(map_init_error)?;
@@ -106,6 +107,39 @@ impl LibMpvPlayer {
         self.mpv
             .get_property("eof-reached")
             .map_err(map_playback_error)
+    }
+
+    /// Select embedded subtitle by FFmpeg/ffprobe stream index (`ff-sid`).
+    pub fn set_embedded_subtitle(&self, ff_stream_index: i64) -> Result<(), PlayerError> {
+        tracing::info!(ff_stream_index, "set embedded subtitle (ff-sid)");
+        self.mpv
+            .set_property("sub-visibility", true)
+            .map_err(map_playback_error)?;
+        self.mpv
+            .set_property("ff-sid", ff_stream_index)
+            .map_err(map_playback_error)?;
+        Ok(())
+    }
+
+    /// Load and select an external subtitle file.
+    pub fn set_external_subtitle(&self, path: &str) -> Result<(), PlayerError> {
+        tracing::info!(path, "set external subtitle (sub-add)");
+        self.mpv
+            .set_property("sub-visibility", true)
+            .map_err(map_playback_error)?;
+        self.mpv
+            .command("sub-add", &[path, "select"])
+            .map_err(map_playback_error)?;
+        Ok(())
+    }
+
+    pub fn clear_subtitle(&self) -> Result<(), PlayerError> {
+        tracing::info!("clear subtitle");
+        let _ = self.mpv.set_property("ff-sid", "no");
+        self.mpv
+            .set_property("sid", "no")
+            .map_err(map_playback_error)?;
+        Ok(())
     }
 }
 

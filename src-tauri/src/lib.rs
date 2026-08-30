@@ -16,7 +16,8 @@ pub use subtitle::{
 use commands::media::media_inspect;
 use commands::player::{
     player_get_state, player_open, player_pause, player_play, player_seek, player_set_rate,
-    player_set_surface_bounds, player_set_volume, player_stop, player_subscribe,
+    player_set_subtitle, player_set_surface_bounds, player_set_volume, player_stop,
+    player_subscribe,
 };
 use commands::subtitle::{subtitle_list_choices, subtitle_load_choice};
 use player::mpv::window::{hwnd_from_webview_window, VideoSurface};
@@ -41,6 +42,7 @@ pub fn run() {
             player_seek,
             player_set_volume,
             player_set_rate,
+            player_set_subtitle,
             player_set_surface_bounds,
             media_inspect,
             subtitle_list_choices,

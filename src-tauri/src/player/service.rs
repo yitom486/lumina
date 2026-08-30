@@ -335,20 +335,55 @@ impl PlayerService {
         events
     }
 
-    /// Reserved for later phases. Not implemented in Phase 1.
+    /// Show subtitle on the native video surface (mpv overlay).
+    /// `source`: "Embedded" | "Sidecar" | "None"
+    pub fn set_subtitle(
+        &mut self,
+        source: &str,
+        stream_index: Option<u32>,
+        external_path: Option<&str>,
+    ) -> Result<PlayerSnapshot, PlayerError> {
+        let backend = self
+            .backend
+            .as_ref()
+            .ok_or_else(PlayerError::backend_missing)?;
+
+        match source {
+            "None" => {
+                backend.clear_subtitle()?;
+            }
+            "Embedded" => {
+                let index = stream_index.ok_or_else(|| {
+                    PlayerError::playback("embedded subtitle requires streamIndex")
+                })?;
+                backend.set_embedded_subtitle(i64::from(index))?;
+            }
+            "Sidecar" => {
+                let path = external_path.ok_or_else(|| {
+                    PlayerError::playback("sidecar subtitle requires externalPath")
+                })?;
+                backend.set_external_subtitle(path)?;
+            }
+            other => {
+                return Err(PlayerError::playback(format!(
+                    "unknown subtitle source: {other}"
+                )));
+            }
+        }
+
+        Ok(self.snapshot())
+    }
+
+    /// Reserved for later phases.
     pub fn set_audio_track(&mut self, _id: i64) -> Result<PlayerSnapshot, PlayerError> {
         Err(PlayerError::internal(
-            "set_audio_track is not implemented in Phase 1",
+            "set_audio_track is not implemented yet",
             None,
         ))
     }
 
-    /// Reserved for later phases. Not implemented in Phase 1.
-    pub fn set_subtitle_track(&mut self, _id: i64) -> Result<PlayerSnapshot, PlayerError> {
-        Err(PlayerError::internal(
-            "set_subtitle_track is not implemented in Phase 1",
-            None,
-        ))
+    pub fn set_subtitle_track(&mut self, id: i64) -> Result<PlayerSnapshot, PlayerError> {
+        self.set_subtitle("Embedded", Some(id as u32), None)
     }
 
     fn require(&self, allowed: &[PlayerState], operation: &str) -> Result<(), PlayerError> {
@@ -473,8 +508,12 @@ mod tests {
             player.set_audio_track(0).unwrap_err().code,
             PlayerErrorCode::InternalError
         );
+        // Without backend, subtitle apply fails as InternalError (backend missing).
         assert_eq!(
-            player.set_subtitle_track(0).unwrap_err().code,
+            player
+                .set_subtitle("Embedded", Some(0), None)
+                .unwrap_err()
+                .code,
             PlayerErrorCode::InternalError
         );
     }

@@ -13,7 +13,34 @@ function activeCueIndex(cues: Cue[], timeMs: number): number {
 
 function pickDefaultChoice(choices: SubtitleChoice[]): string | null {
   const text = choices.find((c) => c.supported);
-  return text?.id ?? null;
+  if (text) return text.id;
+  // Bitmap-only: still selectable for on-video display via mpv.
+  return choices[0]?.id ?? null;
+}
+
+async function applyChoiceToPlayer(
+  choice: SubtitleChoice | undefined,
+  setSubtitle: (args: {
+    source: "Embedded" | "Sidecar" | "None";
+    streamIndex?: number | null;
+    externalPath?: string | null;
+  }) => Promise<void>,
+) {
+  if (!choice) {
+    await setSubtitle({ source: "None" });
+    return;
+  }
+  if (choice.source === "Embedded") {
+    await setSubtitle({
+      source: "Embedded",
+      streamIndex: choice.streamIndex,
+    });
+    return;
+  }
+  await setSubtitle({
+    source: "Sidecar",
+    externalPath: choice.externalPath,
+  });
 }
 
 export function TranscriptPanel() {
@@ -21,6 +48,7 @@ export function TranscriptPanel() {
   const status = usePlayerStore((s) => s.status);
   const currentTimeMs = usePlayerStore((s) => s.currentTimeMs);
   const seek = usePlayerStore((s) => s.seek);
+  const setSubtitle = usePlayerStore((s) => s.setSubtitle);
 
   const mediaReady =
     Boolean(path) &&
@@ -48,12 +76,20 @@ export function TranscriptPanel() {
   }, [choicesQuery.data, choiceId]);
 
   const selected = choicesQuery.data?.find((c) => c.id === choiceId);
-  const canLoad = Boolean(choiceId && selected?.supported);
+
+  // Always push selection to mpv so subtitles appear on the video surface.
+  useEffect(() => {
+    if (!mediaReady || !choiceId) return;
+    const choice = choicesQuery.data?.find((c) => c.id === choiceId);
+    void applyChoiceToPlayer(choice, setSubtitle);
+  }, [mediaReady, choiceId, choicesQuery.data, setSubtitle]);
+
+  const canLoadTranscript = Boolean(choiceId && selected?.supported);
 
   const transcriptQuery = useQuery({
     queryKey: ["transcript", path, choiceId],
     queryFn: () => loadSubtitleChoice(path as string, choiceId as string),
-    enabled: mediaReady && canLoad,
+    enabled: mediaReady && canLoadTranscript,
     retry: false,
   });
 
@@ -62,6 +98,13 @@ export function TranscriptPanel() {
     () => (transcript ? activeCueIndex(transcript.cues, currentTimeMs) : -1),
     [transcript, currentTimeMs],
   );
+
+  // Keep active cue visible while playing.
+  useEffect(() => {
+    if (activeIndex < 0) return;
+    const el = document.getElementById(`cue-${activeIndex}`);
+    el?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+  }, [activeIndex]);
 
   if (!mediaReady) {
     return (
@@ -83,7 +126,7 @@ export function TranscriptPanel() {
             choicesQuery.error,
         )
       : selected && !selected.supported
-        ? "该轨是位图字幕，暂不能转成文稿（可换外挂 .srt 或等 ASR）"
+        ? "已在画面显示位图字幕；文稿需文本轨或同名外挂 .srt"
         : null;
 
   return (
@@ -102,11 +145,7 @@ export function TranscriptPanel() {
               <option value="">无可用字幕</option>
             ) : (
               choices.map((choice) => (
-                <option
-                  key={choice.id}
-                  value={choice.id}
-                  disabled={!choice.supported}
-                >
+                <option key={choice.id} value={choice.id}>
                   {choice.label}
                 </option>
               ))
@@ -118,17 +157,17 @@ export function TranscriptPanel() {
         ) : null}
       </div>
 
-      {transcriptQuery.isLoading && canLoad ? (
+      {transcriptQuery.isLoading && canLoadTranscript ? (
         <p className="px-6 pb-3 text-sm text-muted-foreground">加载文稿…</p>
       ) : null}
 
       {errorText && !transcript ? (
-        <p className="px-6 pb-3 text-sm text-red-600">{errorText}</p>
+        <p className="px-6 pb-3 text-sm text-muted-foreground">{errorText}</p>
       ) : null}
 
       {!errorText && choices.length === 0 && !choicesQuery.isLoading ? (
         <p className="px-6 pb-3 text-sm text-muted-foreground">
-          未找到内嵌文本字幕，也没有同名外挂（如 video.srt / video.en.srt）。
+          未找到内嵌字幕，也没有同名外挂（如 video.srt / video.en.srt）。
         </p>
       ) : null}
 
@@ -137,7 +176,7 @@ export function TranscriptPanel() {
           {transcript.cues.map((cue, i) => {
             const active = i === activeIndex;
             return (
-              <li key={cue.index}>
+              <li key={cue.index} id={`cue-${i}`}>
                 <button
                   type="button"
                   className={`w-full rounded px-2 py-1.5 text-left text-sm ${

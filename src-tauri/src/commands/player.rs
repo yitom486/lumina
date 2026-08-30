@@ -90,6 +90,18 @@ pub fn player_set_rate(
 }
 
 #[tauri::command]
+pub fn player_set_subtitle(
+    state: State<'_, AppState>,
+    source: String,
+    stream_index: Option<u32>,
+    external_path: Option<String>,
+) -> Result<PlayerSnapshot, PlayerError> {
+    state.with_player(|player| {
+        player.set_subtitle(&source, stream_index, external_path.as_deref())
+    })
+}
+
+#[tauri::command]
 pub fn player_set_surface_bounds(
     state: State<'_, AppState>,
     window: WebviewWindow,

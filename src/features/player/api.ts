@@ -61,6 +61,18 @@ export function setPlayerRate(rate: number): Promise<PlayerSnapshot> {
   return invoke<PlayerSnapshot>("player_set_rate", { rate });
 }
 
+export function setPlayerSubtitle(args: {
+  source: "Embedded" | "Sidecar" | "None";
+  streamIndex?: number | null;
+  externalPath?: string | null;
+}): Promise<PlayerSnapshot> {
+  return invoke<PlayerSnapshot>("player_set_subtitle", {
+    source: args.source,
+    streamIndex: args.streamIndex ?? null,
+    externalPath: args.externalPath ?? null,
+  });
+}
+
 export function setSurfaceBounds(bounds: {
   x: number;
   y: number;

@@ -337,11 +337,27 @@ fn strip_tags(line: &str) -> String {
 }
 
 fn renumber(mut cues: Vec<Cue>) -> Result<Vec<Cue>, SubtitleError> {
+    for cue in &mut cues {
+        cue.text = clean_cue_text(&cue.text);
+    }
+    cues.retain(|c| !c.text.is_empty());
     cues.sort_by_key(|c| c.start_ms);
     for (i, cue) in cues.iter_mut().enumerate() {
         cue.index = i as u32;
     }
+    if cues.is_empty() {
+        return Err(SubtitleError::parse_failed("no cues left after cleanup", None));
+    }
     Ok(cues)
+}
+
+fn clean_cue_text(text: &str) -> String {
+    strip_ass_overrides(&strip_tags(text))
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty())
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 #[cfg(test)]

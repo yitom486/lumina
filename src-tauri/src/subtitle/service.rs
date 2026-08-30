@@ -31,7 +31,7 @@ impl SubtitleService {
                     let label = if supported {
                         format!("内嵌 · {lang} · {codec}")
                     } else {
-                        format!("内嵌 · {lang} · {codec}（位图不可用）")
+                        format!("内嵌 · {lang} · {codec}（仅画面）")
                     };
                     choices.push(SubtitleChoice {
                         id: format!("embedded:{}", stream.index),

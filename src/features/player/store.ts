@@ -31,6 +31,11 @@ type PlayerStore = PlayerSnapshot & {
   seek: (positionMs: number) => Promise<void>;
   setVolume: (volume: number) => Promise<void>;
   setRate: (rate: number) => Promise<void>;
+  setSubtitle: (args: {
+    source: "Embedded" | "Sidecar" | "None";
+    streamIndex?: number | null;
+    externalPath?: string | null;
+  }) => Promise<void>;
 };
 
 function fileName(path: string | null): string | null {
@@ -170,6 +175,14 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
   setRate: async (rate) => {
     try {
       get().applySnapshot(await api.setPlayerRate(rate));
+    } catch (error) {
+      set({ statusMessage: errorMessage(error) });
+    }
+  },
+
+  setSubtitle: async (args) => {
+    try {
+      get().applySnapshot(await api.setPlayerSubtitle(args));
     } catch (error) {
       set({ statusMessage: errorMessage(error) });
     }
