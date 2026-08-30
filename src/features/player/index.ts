@@ -2,6 +2,7 @@ export type { PlayerErrorDto, PlayerEvent, PlayerSnapshot } from "./types";
 export { usePlayerStore } from "./store";
 export { useProgressStore } from "./progressStore";
 export { useUiStore } from "./uiStore";
+export { useTrackStore } from "./trackStore";
 export { usePlayerEvents } from "./hooks/usePlayerEvents";
 export { usePlayerHotkeys } from "./hooks/usePlayerHotkeys";
 export { useProgressPersistence } from "./hooks/useProgressPersistence";

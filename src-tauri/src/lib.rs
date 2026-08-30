@@ -18,8 +18,8 @@ pub use subtitle::{
 use commands::asr::{asr_status, asr_transcribe};
 use commands::media::{media_inspect, media_list_siblings};
 use commands::player::{
-    player_get_state, player_open, player_pause, player_play, player_seek, player_set_rate,
-    player_set_subtitle, player_set_surface_bounds, player_set_volume, player_stop,
+    player_get_state, player_open, player_pause, player_play, player_seek, player_set_audio,
+    player_set_rate, player_set_subtitle, player_set_surface_bounds, player_set_volume, player_stop,
     player_subscribe,
 };
 use commands::subtitle::{subtitle_list_choices, subtitle_load_choice};
@@ -46,6 +46,7 @@ pub fn run() {
             player_set_volume,
             player_set_rate,
             player_set_subtitle,
+            player_set_audio,
             player_set_surface_bounds,
             media_inspect,
             media_list_siblings,

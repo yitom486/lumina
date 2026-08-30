@@ -3,6 +3,7 @@ import { FullscreenToggleButton } from "@/layouts/AppShell";
 import { RateSelect } from "./RateSelect";
 import { ResumeChip } from "./ResumeChip";
 import { SeekBar } from "./SeekBar";
+import { TrackMenus } from "./TrackMenus";
 import { TransportControls } from "./TransportControls";
 import { VolumeControl } from "./VolumeControl";
 import { useUiStore } from "../uiStore";
@@ -19,9 +20,9 @@ export function PlayerBar() {
           <ResumeChip />
           <SeekBar />
         </div>
+        <TrackMenus />
         <VolumeControl />
         <RateSelect />
-        {/* In fullscreen the title bar is hidden; keep exit control outside HWND. */}
         {fullscreen ? <FullscreenToggleButton /> : null}
       </div>
       <p className="text-[11px] text-muted-foreground">

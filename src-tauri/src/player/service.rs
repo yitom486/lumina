@@ -385,12 +385,14 @@ impl PlayerService {
         Ok(self.snapshot())
     }
 
-    /// Reserved for later phases.
-    pub fn set_audio_track(&mut self, _id: i64) -> Result<PlayerSnapshot, PlayerError> {
-        Err(PlayerError::internal(
-            "set_audio_track is not implemented yet",
-            None,
-        ))
+    /// Select embedded audio by ffprobe stream index.
+    pub fn set_audio_track(&mut self, stream_index: u32) -> Result<PlayerSnapshot, PlayerError> {
+        let backend = self
+            .backend
+            .as_ref()
+            .ok_or_else(PlayerError::backend_missing)?;
+        backend.set_embedded_audio(i64::from(stream_index))?;
+        Ok(self.snapshot())
     }
 
     pub fn set_subtitle_track(&mut self, id: i64) -> Result<PlayerSnapshot, PlayerError> {
@@ -515,11 +517,11 @@ mod tests {
         let mut player = PlayerService::new();
         assert_eq!(player.get_position(), 0);
         assert_eq!(player.get_duration(), 0);
+        // Without backend, audio/subtitle apply fail as InternalError (backend missing).
         assert_eq!(
             player.set_audio_track(0).unwrap_err().code,
             PlayerErrorCode::InternalError
         );
-        // Without backend, subtitle apply fails as InternalError (backend missing).
         assert_eq!(
             player
                 .set_subtitle("Embedded", Some(0), None)

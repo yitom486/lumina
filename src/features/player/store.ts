@@ -59,6 +59,7 @@ type PlayerStore = PlayerSnapshot & {
     streamIndex?: number | null;
     externalPath?: string | null;
   }) => Promise<void>;
+  setAudio: (streamIndex: number) => Promise<void>;
 };
 
 function fileName(path: string | null): string | null {
@@ -364,6 +365,14 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
       get().applySnapshot(await api.setPlayerSubtitle(args));
     } catch (error) {
       console.error("set subtitle failed", error);
+    }
+  },
+
+  setAudio: async (streamIndex) => {
+    try {
+      get().applySnapshot(await api.setPlayerAudio(streamIndex));
+    } catch (error) {
+      set({ statusMessage: errorMessage(error) });
     }
   },
 }));

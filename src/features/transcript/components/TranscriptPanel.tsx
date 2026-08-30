@@ -5,45 +5,15 @@ import { getAsrStatus, transcribeOnDemand } from "@/features/asr";
 import type { Transcript } from "@/features/transcript";
 import { formatTime } from "@/lib/format";
 import { usePlayerStore } from "@/features/player";
+import { useTrackStore } from "@/features/player/trackStore";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 
 import { listSubtitleChoices, loadSubtitleChoice } from "../api";
-import type { Cue, SubtitleChoice } from "../types";
+import type { Cue } from "../types";
 
 function activeCueIndex(cues: Cue[], timeMs: number): number {
   return cues.findIndex((c) => timeMs >= c.startMs && timeMs < c.endMs);
-}
-
-function pickDefaultChoice(choices: SubtitleChoice[]): string | null {
-  const text = choices.find((c) => c.supported);
-  if (text) return text.id;
-  return choices[0]?.id ?? null;
-}
-
-async function applyChoiceToPlayer(
-  choice: SubtitleChoice | undefined,
-  setSubtitle: (args: {
-    source: "Embedded" | "Sidecar" | "None";
-    streamIndex?: number | null;
-    externalPath?: string | null;
-  }) => Promise<void>,
-) {
-  if (!choice) {
-    await setSubtitle({ source: "None" });
-    return;
-  }
-  if (choice.source === "Embedded") {
-    await setSubtitle({
-      source: "Embedded",
-      streamIndex: choice.streamIndex,
-    });
-    return;
-  }
-  await setSubtitle({
-    source: "Sidecar",
-    externalPath: choice.externalPath,
-  });
 }
 
 export function TranscriptPanel() {
@@ -51,7 +21,9 @@ export function TranscriptPanel() {
   const status = usePlayerStore((s) => s.status);
   const currentTimeMs = usePlayerStore((s) => s.currentTimeMs);
   const seek = usePlayerStore((s) => s.seek);
-  const setSubtitle = usePlayerStore((s) => s.setSubtitle);
+
+  const choiceId = useTrackStore((s) => s.subtitleChoiceId);
+  const setSubtitleChoiceId = useTrackStore((s) => s.setSubtitleChoiceId);
 
   const mediaReady =
     Boolean(path) &&
@@ -73,40 +45,22 @@ export function TranscriptPanel() {
     retry: false,
   });
 
-  const [choiceId, setChoiceId] = useState<string | null>(null);
   const [asrTranscript, setAsrTranscript] = useState<Transcript | null>(null);
   const [asrBusy, setAsrBusy] = useState(false);
   const [asrProgress, setAsrProgress] = useState<string | null>(null);
   const [asrError, setAsrError] = useState<string | null>(null);
 
   useEffect(() => {
-    setChoiceId(null);
     setAsrTranscript(null);
     setAsrProgress(null);
     setAsrError(null);
   }, [path]);
 
   useEffect(() => {
-    if (!choicesQuery.data?.length) return;
-    if (choiceId != null) return;
-    setChoiceId(pickDefaultChoice(choicesQuery.data));
-  }, [choicesQuery.data, choiceId]);
+    setAsrTranscript(null);
+  }, [choiceId]);
 
   const selected = choicesQuery.data?.find((c) => c.id === choiceId);
-
-  // On-video subtitle: fire-and-forget; never block the select.
-  useEffect(() => {
-    if (!mediaReady || !choiceId || asrTranscript) return;
-    const choice = choicesQuery.data?.find((c) => c.id === choiceId);
-    let cancelled = false;
-    void (async () => {
-      await applyChoiceToPlayer(choice, setSubtitle);
-      if (cancelled) return;
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [mediaReady, choiceId, choicesQuery.data, setSubtitle, asrTranscript]);
 
   const canLoadTranscript = Boolean(
     choiceId && selected?.supported && !asrTranscript,
@@ -171,7 +125,7 @@ export function TranscriptPanel() {
     return (
       <section className="flex min-h-0 flex-1 flex-col px-3 py-3 text-sm text-muted-foreground">
         <p className="mt-1 text-xs leading-relaxed">
-          打开视频后，可在此选择字幕轨、浏览时间轴文稿，或按需生成 ASR。
+          打开视频后，可在播放条右侧切换音轨/字幕，并在此浏览文稿或按需 ASR。
         </p>
       </section>
     );
@@ -192,32 +146,35 @@ export function TranscriptPanel() {
               choicesQuery.error,
           )
         : selected && !selected.supported && !asrTranscript
-          ? "已在画面显示位图字幕；文稿可点 ASR，或换文本轨/外挂 .srt"
+          ? "已在画面显示位图字幕；文稿可点 ASR，或在播放条换文本轨"
           : null;
 
   return (
     <section className="flex min-h-0 flex-1 flex-col">
       <div className="flex shrink-0 flex-col gap-2 border-b border-border px-3 py-2">
         <div className="flex items-center justify-between gap-2">
-          <p className="text-sm font-medium">字幕 / 文稿</p>
+          <p className="text-sm font-medium">文稿</p>
           {transcriptQuery.isFetching || choicesQuery.isFetching ? (
             <span className="text-xs text-muted-foreground">加载中…</span>
           ) : null}
         </div>
 
+        <p className="text-[11px] text-muted-foreground">
+          音轨/字幕请用播放条右侧菜单切换
+          {selected ? ` · 当前：${selected.label}` : ""}
+        </p>
+
         <label className="flex flex-col gap-1 text-xs">
-          <span className="text-muted-foreground">字幕轨（可随时切换）</span>
+          <span className="text-muted-foreground">文稿对应字幕轨</span>
           <select
             className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm disabled:opacity-50"
             value={choiceId ?? ""}
             disabled={choices.length === 0}
             onChange={(e) => {
-              // Immediate local update — do not wait for extract/ffmpeg.
-              setAsrTranscript(null);
               setAsrError(null);
-              setChoiceId(e.target.value || null);
+              setSubtitleChoiceId(e.target.value || null);
             }}
-            aria-label="Subtitle track"
+            aria-label="Subtitle track for transcript"
           >
             {choices.length === 0 ? (
               <option value="">无可用字幕</option>

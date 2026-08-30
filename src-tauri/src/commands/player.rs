@@ -131,6 +131,17 @@ pub async fn player_set_subtitle(
     .await
 }
 
+#[tauri::command]
+pub async fn player_set_audio(
+    app: AppHandle,
+    stream_index: u32,
+) -> Result<PlayerSnapshot, PlayerError> {
+    on_worker(app, move |state| {
+        state.with_player(|player| player.set_audio_track(stream_index))
+    })
+    .await
+}
+
 /// HWND layout must stay on the UI thread (Win32 parenting).
 #[tauri::command]
 pub fn player_set_surface_bounds(

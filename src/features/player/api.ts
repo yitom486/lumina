@@ -73,6 +73,10 @@ export function setPlayerSubtitle(args: {
   });
 }
 
+export function setPlayerAudio(streamIndex: number): Promise<PlayerSnapshot> {
+  return invoke<PlayerSnapshot>("player_set_audio", { streamIndex });
+}
+
 export function setSurfaceBounds(bounds: {
   x: number;
   y: number;

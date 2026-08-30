@@ -154,6 +154,28 @@ impl LibMpvPlayer {
             .map_err(map_playback_error)?;
         Ok(())
     }
+
+    /// Select embedded audio by FFmpeg/ffprobe stream index.
+    pub fn set_embedded_audio(&self, ff_stream_index: i64) -> Result<(), PlayerError> {
+        tracing::info!(ff_stream_index, "set embedded audio");
+        if let Some(aid) = find_aid_by_ff_index(&self.mpv, ff_stream_index)? {
+            tracing::info!(aid, ff_stream_index, "matched mpv aid via track-list");
+            return self
+                .mpv
+                .set_property("aid", aid)
+                .map_err(map_playback_error);
+        }
+        if let Some(aid) = find_aid_by_audio_ordinal(&self.mpv, ff_stream_index)? {
+            tracing::info!(aid, ff_stream_index, "matched mpv aid via audio ordinal fallback");
+            return self
+                .mpv
+                .set_property("aid", aid)
+                .map_err(map_playback_error);
+        }
+        Err(PlayerError::playback(format!(
+            "no mpv audio track matches ff-index {ff_stream_index}"
+        )))
+    }
 }
 
 impl Drop for LibMpvPlayer {
@@ -173,25 +195,72 @@ fn track_list_count(mpv: &Mpv) -> Result<i64, PlayerError> {
 }
 
 fn find_sid_by_ff_index(mpv: &Mpv, ff_stream_index: i64) -> Result<Option<i64>, PlayerError> {
+    find_track_id_by_ff_index(mpv, "sub", ff_stream_index)
+}
+
+fn find_aid_by_ff_index(mpv: &Mpv, ff_stream_index: i64) -> Result<Option<i64>, PlayerError> {
+    find_track_id_by_ff_index(mpv, "audio", ff_stream_index)
+}
+
+fn find_track_id_by_ff_index(
+    mpv: &Mpv,
+    track_type: &str,
+    ff_stream_index: i64,
+) -> Result<Option<i64>, PlayerError> {
     let count = track_list_count(mpv)?;
     for i in 0..count {
         let typ: String = mpv
             .get_property(&format!("track-list/{i}/type"))
             .map_err(map_playback_error)?;
-        if typ != "sub" {
+        if typ != track_type {
             continue;
         }
         let ff_index: i64 = mpv
             .get_property(&format!("track-list/{i}/ff-index"))
             .map_err(map_playback_error)?;
         if ff_index == ff_stream_index {
-            let sid: i64 = mpv
+            let id: i64 = mpv
                 .get_property(&format!("track-list/{i}/id"))
                 .map_err(map_playback_error)?;
-            return Ok(Some(sid));
+            return Ok(Some(id));
         }
     }
     Ok(None)
+}
+
+fn find_aid_by_audio_ordinal(
+    mpv: &Mpv,
+    ff_stream_index: i64,
+) -> Result<Option<i64>, PlayerError> {
+    let count = track_list_count(mpv)?;
+    let mut aids: Vec<i64> = Vec::new();
+    for i in 0..count {
+        let typ: String = match mpv.get_property(&format!("track-list/{i}/type")) {
+            Ok(value) => value,
+            Err(_) => continue,
+        };
+        if typ != "audio" {
+            continue;
+        }
+        let id: i64 = match mpv.get_property(&format!("track-list/{i}/id")) {
+            Ok(value) => value,
+            Err(_) => continue,
+        };
+        aids.push(id);
+    }
+    if aids.is_empty() {
+        return Ok(None);
+    }
+    if ff_stream_index >= 1 {
+        let idx = (ff_stream_index as usize).saturating_sub(1);
+        if let Some(aid) = aids.get(idx) {
+            return Ok(Some(*aid));
+        }
+        if aids.contains(&ff_stream_index) {
+            return Ok(Some(ff_stream_index));
+        }
+    }
+    Ok(aids.first().copied())
 }
 
 fn find_sid_by_subtitle_ordinal(
