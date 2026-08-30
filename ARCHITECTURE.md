@@ -81,3 +81,13 @@ media_inspect(path) → MediaInspector → ffprobe (native/ffmpeg/) → MediaInf
 - 与 Player / libmpv 解耦；只读探测，不转码
 - 前端 `features/media` + TanStack Query；打开文件后底部面板展示
 
+### Subtitle / Transcript (Phase 3)
+
+```
+subtitle_list_tracks / subtitle_load_transcript
+  → SubtitleService → ffmpeg 抽出 → SRT/ASS/VTT 解析 → Transcript
+```
+
+- 文稿面板：轨选择、当前句高亮、点击 seek；可打开外挂字幕
+- 位图字幕（PGS 等）→ `UnsupportedSubtitle`（留给后续 OCR/ASR）
+

@@ -1,4 +1,5 @@
 source=gyan.dev
 package=ffmpeg-release-essentials
-ffprobe_version=9.0.1-essentials_build
+version=9.0.1-essentials_build
+tools=ffprobe.exe,ffmpeg.exe
 fetched=2026-08-31

@@ -1,12 +1,13 @@
 //! Resolve and run project-local ffprobe.
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::Command;
 
 use serde::Deserialize;
 
 use crate::media::error::MediaError;
 use crate::media::model::{MediaInfo, MediaStream, StreamKind};
+use crate::media::tools::resolve_ffprobe;
 
 #[derive(Debug, Deserialize)]
 struct ProbeJson {
@@ -45,40 +46,6 @@ struct ProbeTags {
     language: Option<String>,
 }
 
-pub fn resolve_ffprobe() -> Result<PathBuf, MediaError> {
-    let candidates = ffprobe_candidates();
-    for path in &candidates {
-        if path.is_file() {
-            tracing::debug!(path = %path.display(), "resolved ffprobe");
-            return Ok(path.clone());
-        }
-    }
-    Err(MediaError::probe_not_found(Some(
-        "place ffprobe.exe under src-tauri/native/ffmpeg/ (see README)",
-    )))
-}
-
-fn ffprobe_candidates() -> Vec<PathBuf> {
-    let mut paths = Vec::new();
-
-    // Dev: next to Cargo.toml
-    let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    paths.push(manifest.join("native").join("ffmpeg").join("ffprobe.exe"));
-    paths.push(manifest.join("native").join("ffmpeg").join("ffprobe"));
-
-    // Packaged: beside the executable
-    if let Ok(exe) = std::env::current_exe() {
-        if let Some(dir) = exe.parent() {
-            paths.push(dir.join("ffprobe.exe"));
-            paths.push(dir.join("ffprobe"));
-            paths.push(dir.join("ffmpeg").join("ffprobe.exe"));
-            paths.push(dir.join("ffmpeg").join("ffprobe"));
-        }
-    }
-
-    paths
-}
-
 pub fn probe_file(path: &Path) -> Result<MediaInfo, MediaError> {
     if !path.is_file() {
         return Err(MediaError::file_not_found(&path.to_string_lossy()));
@@ -103,10 +70,7 @@ pub fn probe_file(path: &Path) -> Result<MediaInfo, MediaError> {
         ])
         .output()
         .map_err(|error| {
-            MediaError::probe_failed(
-                "failed to spawn ffprobe",
-                Some(&error.to_string()),
-            )
+            MediaError::probe_failed("failed to spawn ffprobe", Some(&error.to_string()))
         })?;
 
     if !output.status.success() {
@@ -122,15 +86,12 @@ pub fn probe_file(path: &Path) -> Result<MediaInfo, MediaError> {
     }
 
     let parsed: ProbeJson = serde_json::from_slice(&output.stdout).map_err(|error| {
-        MediaError::probe_failed(
-            "failed to parse ffprobe JSON",
-            Some(&error.to_string()),
-        )
+        MediaError::probe_failed("failed to parse ffprobe JSON", Some(&error.to_string()))
     })?;
 
-    let format = parsed.format.ok_or_else(|| {
-        MediaError::invalid_media("ffprobe returned no format section", None)
-    })?;
+    let format = parsed
+        .format
+        .ok_or_else(|| MediaError::invalid_media("ffprobe returned no format section", None))?;
 
     let streams = parsed
         .streams
@@ -183,10 +144,7 @@ fn map_stream(stream: ProbeStream) -> MediaStream {
         width: stream.width,
         height: stream.height,
         frame_rate,
-        sample_rate: stream
-            .sample_rate
-            .as_deref()
-            .and_then(|s| s.parse().ok()),
+        sample_rate: stream.sample_rate.as_deref().and_then(|s| s.parse().ok()),
         channels: stream.channels,
         bit_rate: parse_u64(stream.bit_rate.as_deref()),
         language: stream.tags.and_then(|t| t.language),
@@ -227,6 +185,7 @@ fn parse_frame_rate(value: &str) -> Option<f64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::media::tools::resolve_ffprobe;
 
     #[test]
     fn frame_rate_fraction() {

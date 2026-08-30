@@ -233,7 +233,12 @@ impl PlayerService {
 
     pub fn seek(&mut self, position_ms: u64) -> Result<(PlayerSnapshot, Vec<PlayerEvent>), PlayerError> {
         self.require(
-            &[PlayerState::Ready, PlayerState::Playing, PlayerState::Paused],
+            &[
+                PlayerState::Ready,
+                PlayerState::Playing,
+                PlayerState::Paused,
+                PlayerState::Ended,
+            ],
             "seek",
         )?;
         tracing::info!(position_ms, "seek");

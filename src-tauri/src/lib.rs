@@ -1,17 +1,24 @@
 mod commands;
 pub mod media;
 pub mod player;
+pub mod subtitle;
 mod state;
 
 pub use media::{MediaError, MediaErrorCode, MediaInfo, MediaInspector, MediaStream, StreamKind};
 pub use player::{
     PlayerError, PlayerErrorCode, PlayerEvent, PlayerService, PlayerSnapshot, PlayerState,
 };
+pub use subtitle::{
+    Cue, SubtitleError, SubtitleErrorCode, SubtitleService, SubtitleTrackInfo, Transcript,
+};
 
 use commands::media::media_inspect;
 use commands::player::{
     player_get_state, player_open, player_pause, player_play, player_seek, player_set_rate,
     player_set_surface_bounds, player_set_volume, player_stop, player_subscribe,
+};
+use commands::subtitle::{
+    subtitle_list_tracks, subtitle_load_external, subtitle_load_transcript,
 };
 use player::mpv::window::{hwnd_from_webview_window, VideoSurface};
 use state::AppState;
@@ -37,6 +44,9 @@ pub fn run() {
             player_set_rate,
             player_set_surface_bounds,
             media_inspect,
+            subtitle_list_tracks,
+            subtitle_load_transcript,
+            subtitle_load_external,
         ])
         .setup(|app| {
             attach_native_surface(app)?;

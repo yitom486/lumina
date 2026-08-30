@@ -5,6 +5,7 @@ import {
   usePlayerEvents,
   VideoSurface,
 } from "@/features/player";
+import { TranscriptPanel } from "@/features/transcript";
 
 export default function App() {
   usePlayerEvents();
@@ -14,6 +15,7 @@ export default function App() {
       <VideoSurface />
       <PlayerBar />
       <MediaInfoPanel />
+      <TranscriptPanel />
     </AppShell>
   );
 }

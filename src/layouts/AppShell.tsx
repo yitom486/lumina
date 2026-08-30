@@ -11,7 +11,7 @@ export function AppShell({ children }: AppShellProps) {
       <header className="border-b border-border px-6 py-3">
         <p className="text-lg font-semibold tracking-tight">Lumina</p>
         <p className="mt-1 text-sm text-muted-foreground">
-          Phase 1 — Native Playback Spike
+          AI Video Reader — Subtitle / Transcript
         </p>
       </header>
       <main className="flex flex-1 flex-col">{children}</main>
