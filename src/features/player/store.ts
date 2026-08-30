@@ -184,7 +184,8 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
     try {
       get().applySnapshot(await api.setPlayerSubtitle(args));
     } catch (error) {
-      set({ statusMessage: errorMessage(error) });
+      // Don't overwrite the main playback status line with subtitle apply errors.
+      console.error("set subtitle failed", error);
     }
   },
 }));

@@ -109,24 +109,37 @@ impl LibMpvPlayer {
             .map_err(map_playback_error)
     }
 
-    /// Select embedded subtitle by FFmpeg/ffprobe stream index (`ff-sid`).
+    /// Select embedded subtitle by FFmpeg/ffprobe stream index.
     pub fn set_embedded_subtitle(&self, ff_stream_index: i64) -> Result<(), PlayerError> {
-        tracing::info!(ff_stream_index, "set embedded subtitle (ff-sid)");
-        self.mpv
-            .set_property("sub-visibility", true)
-            .map_err(map_playback_error)?;
-        self.mpv
-            .set_property("ff-sid", ff_stream_index)
-            .map_err(map_playback_error)?;
-        Ok(())
+        tracing::info!(ff_stream_index, "set embedded subtitle");
+        set_sub_visibility(&self.mpv, true)?;
+
+        if let Some(sid) = find_sid_by_ff_index(&self.mpv, ff_stream_index)? {
+            tracing::info!(sid, ff_stream_index, "matched mpv sid via track-list");
+            return self
+                .mpv
+                .set_property("sid", sid)
+                .map_err(map_playback_error);
+        }
+
+        // Fallback: Nth subtitle track (0-based among sub tracks → mpv sid).
+        if let Some(sid) = find_sid_by_subtitle_ordinal(&self.mpv, ff_stream_index)? {
+            tracing::info!(sid, ff_stream_index, "matched mpv sid via subtitle ordinal fallback");
+            return self
+                .mpv
+                .set_property("sid", sid)
+                .map_err(map_playback_error);
+        }
+
+        Err(PlayerError::playback(format!(
+            "no mpv subtitle track matches ff-index {ff_stream_index}"
+        )))
     }
 
     /// Load and select an external subtitle file.
     pub fn set_external_subtitle(&self, path: &str) -> Result<(), PlayerError> {
         tracing::info!(path, "set external subtitle (sub-add)");
-        self.mpv
-            .set_property("sub-visibility", true)
-            .map_err(map_playback_error)?;
+        set_sub_visibility(&self.mpv, true)?;
         self.mpv
             .command("sub-add", &[path, "select"])
             .map_err(map_playback_error)?;
@@ -135,7 +148,7 @@ impl LibMpvPlayer {
 
     pub fn clear_subtitle(&self) -> Result<(), PlayerError> {
         tracing::info!("clear subtitle");
-        let _ = self.mpv.set_property("ff-sid", "no");
+        set_sub_visibility(&self.mpv, false)?;
         self.mpv
             .set_property("sid", "no")
             .map_err(map_playback_error)?;
@@ -147,6 +160,75 @@ impl Drop for LibMpvPlayer {
     fn drop(&mut self) {
         tracing::info!("libmpv shutting down");
     }
+}
+
+fn set_sub_visibility(mpv: &Mpv, visible: bool) -> Result<(), PlayerError> {
+    let value = if visible { "yes" } else { "no" };
+    mpv.set_property("sub-visibility", value)
+        .map_err(map_playback_error)
+}
+
+fn track_list_count(mpv: &Mpv) -> Result<i64, PlayerError> {
+    mpv.get_property("track-list/count").map_err(map_playback_error)
+}
+
+fn find_sid_by_ff_index(mpv: &Mpv, ff_stream_index: i64) -> Result<Option<i64>, PlayerError> {
+    let count = track_list_count(mpv)?;
+    for i in 0..count {
+        let typ: String = mpv
+            .get_property(&format!("track-list/{i}/type"))
+            .map_err(map_playback_error)?;
+        if typ != "sub" {
+            continue;
+        }
+        let ff_index: i64 = mpv
+            .get_property(&format!("track-list/{i}/ff-index"))
+            .map_err(map_playback_error)?;
+        if ff_index == ff_stream_index {
+            let sid: i64 = mpv
+                .get_property(&format!("track-list/{i}/id"))
+                .map_err(map_playback_error)?;
+            return Ok(Some(sid));
+        }
+    }
+    Ok(None)
+}
+
+fn find_sid_by_subtitle_ordinal(
+    mpv: &Mpv,
+    ff_stream_index: i64,
+) -> Result<Option<i64>, PlayerError> {
+    let count = track_list_count(mpv)?;
+    let mut sub_sids: Vec<i64> = Vec::new();
+    for i in 0..count {
+        let typ: String = match mpv.get_property(&format!("track-list/{i}/type")) {
+            Ok(value) => value,
+            Err(_) => continue,
+        };
+        if typ != "sub" {
+            continue;
+        }
+        let sid: i64 = match mpv.get_property(&format!("track-list/{i}/id")) {
+            Ok(value) => value,
+            Err(_) => continue,
+        };
+        sub_sids.push(sid);
+    }
+    if sub_sids.is_empty() {
+        return Ok(None);
+    }
+    // If caller passed a 1-based subtitle ordinal (or mpv sid), try it.
+    if ff_stream_index >= 1 {
+        let idx = (ff_stream_index as usize).saturating_sub(1);
+        if let Some(sid) = sub_sids.get(idx) {
+            return Ok(Some(*sid));
+        }
+        if sub_sids.contains(&ff_stream_index) {
+            return Ok(Some(ff_stream_index));
+        }
+    }
+    // Last resort: first subtitle track.
+    Ok(sub_sids.first().copied())
 }
 
 fn log_version(mpv: &Mpv) {
