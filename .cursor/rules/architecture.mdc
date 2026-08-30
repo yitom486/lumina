@@ -18,6 +18,8 @@ React 不允许知道 mpv handle、native window handle、FFI pointer、libmpv l
 ```
 src-tauri/src/player/          # service / model / error
 src-tauri/src/player/mpv/      # player / events / window
+src-tauri/src/acp/             # 按需 Codex ACP
+src-tauri/src/notes/           # 本地时间戳笔记
 src-tauri/src/commands/player.rs
 src-tauri/src/state/app_state.rs
 ```

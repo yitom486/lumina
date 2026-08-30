@@ -20,6 +20,13 @@ export type MediaStream = {
   language?: string | null;
 };
 
+export type MediaChapter = {
+  id: number;
+  startMs: number;
+  endMs?: number | null;
+  title?: string | null;
+};
+
 export type MediaInfo = {
   path: string;
   formatName?: string | null;
@@ -28,6 +35,7 @@ export type MediaInfo = {
   sizeBytes?: number | null;
   bitRate?: number | null;
   streams: MediaStream[];
+  chapters?: MediaChapter[];
 };
 
 export type MediaErrorDto = {

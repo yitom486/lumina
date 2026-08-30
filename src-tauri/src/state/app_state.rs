@@ -8,6 +8,8 @@ use tauri::ipc::Channel;
 use tauri::{AppHandle, Manager};
 
 use crate::asr::AsrService;
+use crate::acp::AcpService;
+use crate::notes::NoteService;
 use crate::player::error::PlayerError;
 use crate::player::model::PlayerEvent;
 use crate::player::mpv::window::VideoSurface;
@@ -20,6 +22,8 @@ pub struct AppState {
     surface: Mutex<Option<VideoSurface>>,
     events: Mutex<Option<Channel<PlayerEvent>>>,
     pub asr: Arc<AsrService>,
+    pub acp: Arc<AcpService>,
+    pub notes: Arc<NoteService>,
     ticker_started: AtomicBool,
     shutdown: AtomicBool,
 }
@@ -31,6 +35,8 @@ impl AppState {
             surface: Mutex::new(None),
             events: Mutex::new(None),
             asr: Arc::new(AsrService::new()),
+            acp: Arc::new(AcpService::new()),
+            notes: Arc::new(NoteService::new()),
             ticker_started: AtomicBool::new(false),
             shutdown: AtomicBool::new(false),
         }

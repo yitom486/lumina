@@ -1,0 +1,14 @@
+---
+description: Phase 5 — 按需 Codex ACP，非打开视频必经路径
+alwaysApply: true
+---
+
+# Phase 5
+
+Codex ACP **可选、按需**。
+
+- 禁止：启动预连 Agent、Open 时自动开会话、把 Codex / Node / pnpm 打进默认安装包
+- 允许：用户发起后检测本机 `codex-acp`（及可选 `codex`）；stdio JSON-RPC；进度/消息经 Channel 推送
+- 未配置 → `NotConfigured`；播放、字幕、笔记仍可用
+- React 不知子进程 / FFI；Rust 管 spawn 与生命周期
+- **pnpm 仅开发构建**；与另一产品是否用 bun 无关，不必统一包管理器

@@ -36,6 +36,8 @@ Domain (Player / Media / Subtitle / Asr)
 | Media | ProbeNotFound / FileNotFound / ProbeFailed / InvalidMedia / InternalError |
 | Subtitle | ToolNotFound / FileNotFound / ExtractFailed / ParseFailed / UnsupportedSubtitle / NoSubtitleTrack / InternalError |
 | Asr | NotConfigured / Busy / ExtractFailed / TranscribeFailed / Cancelled / InternalError |
+| Acp | NotConfigured / Busy / SpawnFailed / ProtocolError / Cancelled / InternalError |
+| Note | IoError / NotFound / InvalidNote / InternalError |
 
 ## 硬性规则
 

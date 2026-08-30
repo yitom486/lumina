@@ -31,9 +31,16 @@ const ERROR_FALLBACK: Record<string, string> = {
   NoSubtitleTrack: "没有可用字幕轨",
   // Asr
   NotConfigured: "未配置 ASR（可选）",
-  Busy: "已有 ASR 任务在运行",
+  Busy: "已有任务在运行",
   TranscribeFailed: "语音转写失败",
   Cancelled: "已取消",
+  // Acp
+  SpawnFailed: "无法启动 ACP 进程",
+  ProtocolError: "ACP 协议错误",
+  // Note
+  IoError: "笔记读写失败",
+  NotFound: "找不到该笔记",
+  InvalidNote: "笔记无效",
 };
 
 function hasCjk(text: string): boolean {

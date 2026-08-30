@@ -6,11 +6,12 @@ alwaysApply: true
 # Tech Stack
 
 - Tauri 2 + Rust + React + TypeScript + Vite
-- 包管理器：pnpm（不要用 npm / yarn 作为默认）
+- 包管理器：pnpm（**仅开发/CI**；不要用 npm / yarn 作为默认。终端用户安装包不需要 pnpm）
 - UI：Tailwind CSS + shadcn/ui
 - 状态：Zustand（播放器 UI 镜像）+ TanStack Query（异步请求）
 - 播放器：libmpv；Rust 优先 `libmpv2`（当前维护版本）
 - 窗口：Tauri Window + `HasWindowHandle` / `raw-window-handle`（不要用已废弃 API）
+- ACP（可选）：本机 `codex-acp`，按需；不捆绑 Node/pnpm
 
 禁止 HTML `<video>` 作为播放实现。视频必须由 native player 输出到 native window / rendering surface。React 只负责周围 UI。
 

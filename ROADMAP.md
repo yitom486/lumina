@@ -6,7 +6,9 @@
 | 2 | FFmpeg Media Inspection（**完成** — 项目本地 ffprobe + MediaInfo UI） |
 | 3 | Subtitle / Transcript（**完成** — 文本字幕文稿 + 点击 seek） |
 | 4 | ASR（**完成** — 按需 whisper-cli，不预加载） |
-| 5 | Codex ACP |
+| 5 | Codex ACP（按需本机 CLI；未配置不影响播放） |
+| 5b | 笔记 + Markdown 导出（时间戳锚点） |
+| 5c | 容器章节导航（仅元数据；无则静默） |
 | 6 | AI Video Reader |
 | 7 | Multimodal Video Understanding |
 
@@ -29,3 +31,31 @@
 - ASR **非必须**；`asr_status` / `asr_transcribe` 仅按需
 - 启动不加载模型；点击按钮才 spawn whisper-cli
 - 未配置时播放/字幕仍可用
+
+## Phase 5 — Codex ACP
+
+- **按需**：检测本机 `codex-acp`（及可选 `codex`）；启动不预热 Agent
+- React 只做 Client UI；Rust 负责 paths / spawn / JSON-RPC / 生命周期
+- 未配置 → `NotConfigured`；播放、字幕、笔记仍可用
+- **pnpm 仅开发/CI**；打包后的应用与终端用户都不需要安装 pnpm / bun / Node 才能播放
+- 不把 Codex / Node 打进默认安装包
+
+## 笔记 + 导出
+
+- `Note { id, mediaPath, positionMs, body, createdAt, updatedAt }`
+- 本地 JSON 存储；侧栏列表；点击 seek
+- 导出 Markdown（`[mm:ss] body`）
+
+## 章节（仅元数据）
+
+- ffprobe `-show_chapters`；有 chapters 才显示导航
+- 一般无章节视频：**不**自动生成断点/主旨（留给更晚 AI Reader）
+
+## 包管理器说明
+
+| 场景 | 工具 |
+|------|------|
+| 开发 Lumina 前端 | **pnpm**（仓库约定） |
+| 终端用户运行安装包 | 无需 pnpm / bun |
+| 可选 ACP | 本机已安装的 `codex-acp` / Codex CLI |
+| 另一款 bun 阅读器 | 可继续用 bun；不必与本仓库统一 lockfile |

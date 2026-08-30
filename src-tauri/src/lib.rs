@@ -1,12 +1,18 @@
 mod commands;
+pub mod acp;
 pub mod asr;
 pub mod media;
+pub mod notes;
 pub mod player;
 pub mod subtitle;
 mod state;
 
+pub use acp::{AcpError, AcpErrorCode, AcpEvent, AcpService, AcpStatus};
 pub use asr::{AsrError, AsrErrorCode, AsrEvent, AsrService, AsrStatus};
-pub use media::{MediaError, MediaErrorCode, MediaInfo, MediaInspector, MediaStream, StreamKind};
+pub use media::{
+    MediaChapter, MediaError, MediaErrorCode, MediaInfo, MediaInspector, MediaStream, StreamKind,
+};
+pub use notes::{Note, NoteError, NoteErrorCode, NoteService};
 pub use player::{
     PlayerError, PlayerErrorCode, PlayerEvent, PlayerService, PlayerSnapshot, PlayerState,
 };
@@ -15,8 +21,12 @@ pub use subtitle::{
     Transcript,
 };
 
+use commands::acp::{acp_cancel, acp_prompt, acp_status};
 use commands::asr::{asr_status, asr_transcribe};
 use commands::media::{media_inspect, media_list_siblings};
+use commands::notes::{
+    notes_create, notes_delete, notes_export_markdown, notes_list, notes_update,
+};
 use commands::player::{
     player_get_state, player_open, player_pause, player_play, player_seek, player_set_audio,
     player_set_rate, player_set_subtitle, player_set_surface_bounds, player_set_volume, player_stop,
@@ -54,6 +64,14 @@ pub fn run() {
             subtitle_load_choice,
             asr_status,
             asr_transcribe,
+            acp_status,
+            acp_prompt,
+            acp_cancel,
+            notes_list,
+            notes_create,
+            notes_update,
+            notes_delete,
+            notes_export_markdown,
         ])
         .setup(|app| {
             attach_native_surface(app)?;
@@ -109,6 +127,7 @@ fn attach_native_surface(app: &mut tauri::App) -> Result<(), Box<dyn std::error:
 fn shutdown_backend(app: &tauri::AppHandle) {
     if let Some(state) = app.try_state::<AppState>() {
         state.mark_shutdown();
+        state.acp.request_cancel();
         let _ = state.with_player(|player| {
             player.shutdown();
             Ok(())

@@ -52,3 +52,6 @@ src-tauri/native/ffmpeg/*
 src-tauri/native/whisper/*
 !src-tauri/native/whisper/README.md
 !src-tauri/native/whisper/VERSION
+
+src-tauri/native/acp/*
+!src-tauri/native/acp/README.md

@@ -5,10 +5,17 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 
 import { ensureSurfaceBounds } from "./surfaceBridge";
 
+export type SidebarTab =
+  | "playlist"
+  | "transcript"
+  | "notes"
+  | "chapters"
+  | "acp";
+
 type UiState = {
   fullscreen: boolean;
-  sidebarTab: "playlist" | "transcript";
-  setSidebarTab: (tab: "playlist" | "transcript") => void;
+  sidebarTab: SidebarTab;
+  setSidebarTab: (tab: SidebarTab) => void;
   setFullscreen: (value: boolean) => Promise<void>;
   toggleFullscreen: () => Promise<void>;
 };

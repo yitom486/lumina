@@ -34,11 +34,13 @@ describe("formatPlayerError", () => {
     expect(formatPlayerError({})).toBe("发生未知错误");
   });
 
-  it("covers player and asr codes", () => {
+  it("covers player, asr, acp and note codes", () => {
     expect(formatPlayerError({ code: "NotConfigured" })).toBe("未配置 ASR（可选）");
     expect(formatPlayerError({ code: "InvalidState" })).toBe(
       "当前状态无法执行该操作",
     );
+    expect(formatPlayerError({ code: "SpawnFailed" })).toBe("无法启动 ACP 进程");
+    expect(formatPlayerError({ code: "InvalidNote" })).toBe("笔记无效");
   });
 });
 

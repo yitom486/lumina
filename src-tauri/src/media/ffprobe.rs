@@ -6,13 +6,14 @@ use std::process::Command;
 use serde::Deserialize;
 
 use crate::media::error::MediaError;
-use crate::media::model::{MediaInfo, MediaStream, StreamKind};
+use crate::media::model::{MediaChapter, MediaInfo, MediaStream, StreamKind};
 use crate::media::tools::resolve_ffprobe;
 
 #[derive(Debug, Deserialize)]
 struct ProbeJson {
     format: Option<ProbeFormat>,
     streams: Option<Vec<ProbeStream>>,
+    chapters: Option<Vec<ProbeChapter>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -44,6 +45,15 @@ struct ProbeStream {
 #[derive(Debug, Deserialize)]
 struct ProbeTags {
     language: Option<String>,
+    title: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ProbeChapter {
+    id: Option<u32>,
+    start_time: Option<String>,
+    end_time: Option<String>,
+    tags: Option<ProbeTags>,
 }
 
 pub fn probe_file(path: &Path) -> Result<MediaInfo, MediaError> {
@@ -66,6 +76,7 @@ pub fn probe_file(path: &Path) -> Result<MediaInfo, MediaError> {
             "json",
             "-show_format",
             "-show_streams",
+            "-show_chapters",
             &path.to_string_lossy(),
         ])
         .output()
@@ -104,6 +115,14 @@ pub fn probe_file(path: &Path) -> Result<MediaInfo, MediaError> {
         return Err(MediaError::invalid_media("媒体文件中没有可用流", None));
     }
 
+    let chapters = parsed
+        .chapters
+        .unwrap_or_default()
+        .into_iter()
+        .enumerate()
+        .filter_map(|(i, chapter)| map_chapter(i as u32, chapter))
+        .collect::<Vec<_>>();
+
     Ok(MediaInfo {
         path: format
             .filename
@@ -114,6 +133,19 @@ pub fn probe_file(path: &Path) -> Result<MediaInfo, MediaError> {
         size_bytes: parse_u64(format.size.as_deref()),
         bit_rate: parse_u64(format.bit_rate.as_deref()),
         streams,
+        chapters,
+    })
+}
+
+fn map_chapter(fallback_id: u32, chapter: ProbeChapter) -> Option<MediaChapter> {
+    let start_ms = parse_secs_to_ms(chapter.start_time.as_deref())?;
+    let end_ms = parse_secs_to_ms(chapter.end_time.as_deref());
+    let title = chapter.tags.and_then(|t| t.title);
+    Some(MediaChapter {
+        id: chapter.id.unwrap_or(fallback_id),
+        start_ms,
+        end_ms,
+        title,
     })
 }
 

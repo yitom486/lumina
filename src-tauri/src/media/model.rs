@@ -12,6 +12,17 @@ pub struct MediaInfo {
     pub size_bytes: Option<u64>,
     pub bit_rate: Option<u64>,
     pub streams: Vec<MediaStream>,
+    #[serde(default)]
+    pub chapters: Vec<MediaChapter>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MediaChapter {
+    pub id: u32,
+    pub start_ms: u64,
+    pub end_ms: Option<u64>,
+    pub title: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

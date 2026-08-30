@@ -1,0 +1,283 @@
+//! AcpService — optional on-demand Codex ACP session over stdio JSON-RPC.
+
+use std::io::{BufRead, BufReader, Write};
+use std::process::{Command, Stdio};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Mutex;
+use std::time::{Duration, Instant};
+
+use serde_json::Value;
+
+use crate::acp::error::AcpError;
+use crate::acp::model::{AcpEvent, AcpStatus};
+use crate::acp::paths::{self, resolve_acp_paths};
+use crate::acp::protocol::{
+    encode_line, extract_agent_text, initialize_params, is_error_response, parse_session_id,
+    request, session_new_params, session_prompt_params,
+};
+
+pub struct AcpService {
+    busy: AtomicBool,
+    cancel: AtomicBool,
+    child: Mutex<Option<std::process::Child>>,
+}
+
+impl AcpService {
+    pub fn new() -> Self {
+        Self {
+            busy: AtomicBool::new(false),
+            cancel: AtomicBool::new(false),
+            child: Mutex::new(None),
+        }
+    }
+
+    pub fn status(&self) -> AcpStatus {
+        paths::status()
+    }
+
+    pub fn is_busy(&self) -> bool {
+        self.busy.load(Ordering::SeqCst)
+    }
+
+    pub fn request_cancel(&self) {
+        self.cancel.store(true, Ordering::SeqCst);
+        if let Ok(mut slot) = self.child.lock() {
+            if let Some(child) = slot.as_mut() {
+                let _ = child.kill();
+            }
+        }
+    }
+
+    /// Minimal ACP prompt session. Emits progress via callback.
+    pub fn prompt<F>(
+        &self,
+        text: impl AsRef<str>,
+        cwd: Option<String>,
+        mut on_event: F,
+    ) -> Result<String, AcpError>
+    where
+        F: FnMut(AcpEvent),
+    {
+        if self
+            .busy
+            .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+            .is_err()
+        {
+            return Err(AcpError::busy());
+        }
+        self.cancel.store(false, Ordering::SeqCst);
+
+        let outcome = self.run_prompt_inner(text.as_ref(), cwd.as_deref(), &mut on_event);
+
+        self.busy.store(false, Ordering::SeqCst);
+        if let Ok(mut slot) = self.child.lock() {
+            if let Some(mut child) = slot.take() {
+                let _ = child.kill();
+                let _ = child.wait();
+            }
+        }
+
+        match &outcome {
+            Ok(text) => on_event(AcpEvent::Finished {
+                text: text.clone(),
+            }),
+            Err(error) if error.code == crate::acp::AcpErrorCode::Cancelled => {
+                on_event(AcpEvent::Failed {
+                    code: "Cancelled".into(),
+                    message: error.message.clone(),
+                });
+            }
+            Err(error) => on_event(AcpEvent::Failed {
+                code: format!("{:?}", error.code),
+                message: error.message.clone(),
+            }),
+        }
+
+        outcome
+    }
+
+    fn run_prompt_inner(
+        &self,
+        prompt_text: &str,
+        cwd: Option<&str>,
+        on_event: &mut dyn FnMut(AcpEvent),
+    ) -> Result<String, AcpError> {
+        let prompt_text = prompt_text.trim();
+        if prompt_text.is_empty() {
+            return Err(AcpError::protocol("提问内容不能为空", None));
+        }
+
+        let acp_paths = resolve_acp_paths()?;
+        on_event(AcpEvent::Started);
+        on_event(AcpEvent::Progress {
+            message: "正在启动 codex-acp…".into(),
+        });
+
+        let mut command = Command::new(&acp_paths.cli);
+        command
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        if let Some(codex) = &acp_paths.codex {
+            command.env("CODEX_PATH", codex);
+        }
+        if let Some(dir) = cwd {
+            command.current_dir(dir);
+        }
+
+        let mut child = command
+            .spawn()
+            .map_err(|error| AcpError::spawn_failed(Some(&error.to_string())))?;
+
+        let mut stdin = child
+            .stdin
+            .take()
+            .ok_or_else(|| AcpError::spawn_failed(Some("stdin pipe missing")))?;
+        let stdout = child
+            .stdout
+            .take()
+            .ok_or_else(|| AcpError::spawn_failed(Some("stdout pipe missing")))?;
+
+        {
+            let mut slot = self
+                .child
+                .lock()
+                .map_err(|_| AcpError::internal("ACP 内部锁异常", None))?;
+            *slot = Some(child);
+        }
+
+        let write_req =
+            |stdin: &mut std::process::ChildStdin, id: u64, method: &str, params: Value| {
+                let line = encode_line(&request(id, method, params))?;
+                writeln!(stdin, "{line}").map_err(|error| {
+                    AcpError::protocol("写入 ACP 请求失败", Some(&error.to_string()))
+                })?;
+                stdin.flush().map_err(|error| {
+                    AcpError::protocol("刷新 ACP stdin 失败", Some(&error.to_string()))
+                })?;
+                Ok::<(), AcpError>(())
+            };
+
+        let mut reader = BufReader::new(stdout);
+        let mut line_buf = String::new();
+
+        let mut read_until_id = |target_id: u64| -> Result<Value, AcpError> {
+            loop {
+                if self.cancel.load(Ordering::SeqCst) {
+                    return Err(AcpError::cancelled());
+                }
+                line_buf.clear();
+                let bytes = reader.read_line(&mut line_buf).map_err(|error| {
+                    AcpError::protocol("读取 ACP 输出失败", Some(&error.to_string()))
+                })?;
+                if bytes == 0 {
+                    return Err(AcpError::protocol(
+                        "ACP 进程已结束（无响应）",
+                        Some("EOF on stdout"),
+                    ));
+                }
+                let trimmed = line_buf.trim();
+                if trimmed.is_empty() {
+                    continue;
+                }
+                let value: Value = serde_json::from_str(trimmed).map_err(|error| {
+                    AcpError::protocol("无法解析 ACP JSON", Some(&error.to_string()))
+                })?;
+
+                if value.get("id").and_then(|v| v.as_u64()) == Some(target_id) {
+                    if let Some(msg) = is_error_response(&value) {
+                        return Err(AcpError::protocol("ACP 返回错误", Some(&msg)));
+                    }
+                    return Ok(value);
+                }
+            }
+        };
+
+        on_event(AcpEvent::Progress {
+            message: "正在初始化会话…".into(),
+        });
+        write_req(&mut stdin, 1, "initialize", initialize_params())?;
+        let _init = read_until_id(1)?;
+
+        on_event(AcpEvent::Progress {
+            message: "正在创建会话…".into(),
+        });
+        write_req(
+            &mut stdin,
+            2,
+            "session/new",
+            session_new_params(cwd),
+        )?;
+        let session_resp = read_until_id(2)?;
+        let session_id = parse_session_id(&session_resp).ok_or_else(|| {
+            AcpError::protocol("ACP 未返回 sessionId", Some(&session_resp.to_string()))
+        })?;
+
+        on_event(AcpEvent::Progress {
+            message: "正在发送问题…".into(),
+        });
+        write_req(
+            &mut stdin,
+            3,
+            "session/prompt",
+            session_prompt_params(&session_id, prompt_text),
+        )?;
+
+        let mut collected = String::new();
+        let deadline = Instant::now() + Duration::from_secs(600);
+
+        loop {
+            if self.cancel.load(Ordering::SeqCst) {
+                return Err(AcpError::cancelled());
+            }
+            if Instant::now() > deadline {
+                return Err(AcpError::protocol("ACP 等待回复超时", None));
+            }
+
+            line_buf.clear();
+            let bytes = reader.read_line(&mut line_buf).map_err(|error| {
+                AcpError::protocol("读取 ACP 输出失败", Some(&error.to_string()))
+            })?;
+            if bytes == 0 {
+                break;
+            }
+            let trimmed = line_buf.trim();
+            if trimmed.is_empty() {
+                continue;
+            }
+            let value: Value = match serde_json::from_str(trimmed) {
+                Ok(v) => v,
+                Err(error) => {
+                    tracing::warn!(%error, line = trimmed, "skip non-json ACP line");
+                    continue;
+                }
+            };
+
+            if let Some(text) = extract_agent_text(&value) {
+                if !text.is_empty() {
+                    collected.push_str(&text);
+                    on_event(AcpEvent::AgentMessage { text });
+                }
+            }
+
+            if value.get("id").and_then(|v| v.as_u64()) == Some(3) {
+                if let Some(msg) = is_error_response(&value) {
+                    return Err(AcpError::protocol("ACP 提问失败", Some(&msg)));
+                }
+                break;
+            }
+        }
+
+        if collected.is_empty() {
+            collected =
+                "（会话结束，未解析到文本回复；请确认 Codex 已安装并完成登录）".into();
+        }
+        Ok(collected)
+    }
+}
+
+impl Default for AcpService {
+    fn default() -> Self {
+        Self::new()
+    }
+}
