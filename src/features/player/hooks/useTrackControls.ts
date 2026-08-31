@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { useQuery } from "@tanstack/react-query";
 
 import { useMediaInfoQuery } from "@/features/media";
@@ -6,12 +6,12 @@ import { listSubtitleChoices } from "@/features/transcript/api";
 import type { SubtitleChoice } from "@/features/transcript/types";
 
 import { usePlayerStore } from "../store";
+import {
+  mediaDirectoryKey,
+  resolveDirectoryTrackSelection,
+  pickDefaultSubtitleId,
+} from "../trackPreferences";
 import { useTrackStore } from "../trackStore";
-
-function pickDefaultSubtitle(choices: SubtitleChoice[]): string | null {
-  const text = choices.find((c) => c.supported);
-  return text?.id ?? choices[0]?.id ?? null;
-}
 
 export async function applySubtitleChoice(
   choice: SubtitleChoice | undefined,
@@ -60,17 +60,19 @@ export function useTrackControls() {
   const setSubtitleChoiceId = useTrackStore((s) => s.setSubtitleChoiceId);
   const audioStreamIndex = useTrackStore((s) => s.audioStreamIndex);
   const setAudioStreamIndex = useTrackStore((s) => s.setAudioStreamIndex);
-  const resetForFile = useTrackStore((s) => s.resetForFile);
+  const rememberSubtitleForMedia = useTrackStore(
+    (s) => s.rememberSubtitleForMedia,
+  );
+  const rememberAudioForMedia = useTrackStore((s) => s.rememberAudioForMedia);
+  const directoryPrefs = useTrackStore((s) => s.directoryPrefs);
+
+  const initRef = useRef<string | null>(null);
 
   const mediaReady =
     Boolean(path) &&
     status !== "Idle" &&
     status !== "Loading" &&
     status !== "Error";
-
-  useEffect(() => {
-    resetForFile();
-  }, [path, resetForFile]);
 
   const choicesQuery = useQuery({
     queryKey: ["subtitleChoices", path],
@@ -83,25 +85,93 @@ export function useTrackControls() {
   const audioTracks =
     mediaQuery.data?.streams.filter((s) => s.kind === "Audio") ?? [];
 
-  useEffect(() => {
-    if (!choicesQuery.data?.length) return;
-    if (subtitleChoiceId != null) return;
-    setSubtitleChoiceId(pickDefaultSubtitle(choicesQuery.data));
-  }, [choicesQuery.data, subtitleChoiceId, setSubtitleChoiceId]);
-
-  useEffect(() => {
-    if (audioTracks.length === 0) return;
-    if (audioStreamIndex != null) return;
-    setAudioStreamIndex(audioTracks[0]?.index ?? null);
-  }, [audioTracks, audioStreamIndex, setAudioStreamIndex]);
-
-  useEffect(() => {
-    if (!mediaReady || !subtitleChoiceId) return;
-    const choice = choicesQuery.data?.find((c) => c.id === subtitleChoiceId);
-    void applySubtitleChoice(choice, setSubtitle);
-  }, [mediaReady, subtitleChoiceId, choicesQuery.data, setSubtitle]);
-
   const choices = choicesQuery.data ?? [];
+
+  useEffect(() => {
+    initRef.current = null;
+  }, [path]);
+
+  useEffect(() => {
+    if (!mediaReady || !path) return;
+    if (!choicesQuery.isFetched && !mediaQuery.isFetched) return;
+
+    const dirKey = mediaDirectoryKey(path);
+    const dirPref = dirKey ? directoryPrefs[dirKey] : undefined;
+    const initKey = `${path}:${choices.length}:${audioTracks.length}:${JSON.stringify(dirPref ?? null)}`;
+    if (initRef.current === initKey) return;
+
+    const resolved = resolveDirectoryTrackSelection(
+      path,
+      choices,
+      audioTracks,
+      directoryPrefs,
+    );
+
+    setSubtitleChoiceId(resolved.subtitleChoiceId);
+    setAudioStreamIndex(resolved.audioStreamIndex);
+    initRef.current = initKey;
+  }, [
+    audioTracks,
+    choices,
+    choicesQuery.isFetched,
+    directoryPrefs,
+    mediaQuery.isFetched,
+    mediaReady,
+    path,
+    setAudioStreamIndex,
+    setSubtitleChoiceId,
+  ]);
+
+  useEffect(() => {
+    if (!mediaReady) return;
+    if (subtitleChoiceId === null) {
+      void setSubtitle({ source: "None" });
+      return;
+    }
+    const choice = choices.find((c) => c.id === subtitleChoiceId);
+    if (!choice) {
+      const fallback = pickDefaultSubtitleId(choices);
+      if (fallback !== subtitleChoiceId) {
+        setSubtitleChoiceId(fallback);
+      }
+      return;
+    }
+    void applySubtitleChoice(choice, setSubtitle);
+  }, [
+    choices,
+    mediaReady,
+    setSubtitle,
+    setSubtitleChoiceId,
+    subtitleChoiceId,
+  ]);
+
+  useEffect(() => {
+    if (!mediaReady || audioStreamIndex == null) return;
+    void setAudio(audioStreamIndex);
+  }, [audioStreamIndex, mediaReady, setAudio]);
+
+  const selectSubtitleChoiceId = (id: string | null) => {
+    if (!path) {
+      setSubtitleChoiceId(id);
+      return;
+    }
+    const choice = id ? choices.find((c) => c.id === id) : null;
+    setSubtitleChoiceId(id);
+    rememberSubtitleForMedia(path, choice ?? null);
+  };
+
+  const selectAudioStreamIndex = (index: number) => {
+    if (!path) {
+      setAudioStreamIndex(index);
+      void setAudio(index);
+      return;
+    }
+    const track = audioTracks.find((t) => t.index === index);
+    setAudioStreamIndex(index);
+    if (track) rememberAudioForMedia(path, track);
+    void setAudio(index);
+  };
+
   const selectedSub = choices.find((c) => c.id === subtitleChoiceId);
   const selectedAudio = audioTracks.find((t) => t.index === audioStreamIndex);
 
@@ -110,9 +180,9 @@ export function useTrackControls() {
     choices,
     audioTracks,
     subtitleChoiceId,
-    setSubtitleChoiceId,
+    setSubtitleChoiceId: selectSubtitleChoiceId,
     audioStreamIndex,
-    setAudioStreamIndex,
+    setAudioStreamIndex: selectAudioStreamIndex,
     setSubtitle,
     setAudio,
     selectedSub,

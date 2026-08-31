@@ -40,8 +40,6 @@ export function TrackControlButtons({
     setSubtitleChoiceId,
     audioStreamIndex,
     setAudioStreamIndex,
-    setSubtitle,
-    setAudio,
     selectedSub,
     selectedAudio,
   } = useTrackControls();
@@ -165,7 +163,6 @@ export function TrackControlButtons({
                     checked={audioStreamIndex === track.index}
                     onCheckedChange={() => {
                       setAudioStreamIndex(track.index);
-                      void setAudio(track.index);
                     }}
                   >
                     {audioTrackLabel(track)}
@@ -188,7 +185,6 @@ export function TrackControlButtons({
                   checked={subtitleChoiceId === null}
                   onCheckedChange={() => {
                     setSubtitleChoiceId(null);
-                    void setSubtitle({ source: "None" });
                   }}
                 >
                   关闭字幕
@@ -223,7 +219,6 @@ export function TrackControlButtons({
                   className="h-7 text-xs"
                   onClick={() => {
                     setAudioStreamIndex(track.index);
-                    void setAudio(track.index);
                     closeInline();
                   }}
                 >
@@ -240,7 +235,6 @@ export function TrackControlButtons({
                 className="h-7 text-xs"
                 onClick={() => {
                   setSubtitleChoiceId(null);
-                  void setSubtitle({ source: "None" });
                   closeInline();
                 }}
               >
