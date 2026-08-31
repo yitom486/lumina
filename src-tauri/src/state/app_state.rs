@@ -9,6 +9,7 @@ use tauri::{AppHandle, Manager};
 
 use crate::acp::AcpService;
 use crate::asr::AsrService;
+use crate::library::MediaLibraryService;
 use crate::notes::NoteService;
 use crate::player::error::PlayerError;
 use crate::player::model::PlayerEvent;
@@ -23,6 +24,7 @@ pub struct AppState {
     events: Mutex<Option<Channel<PlayerEvent>>>,
     pub asr: Arc<AsrService>,
     pub acp: Arc<AcpService>,
+    pub library: Arc<MediaLibraryService>,
     pub notes: Arc<NoteService>,
     ticker_started: AtomicBool,
     shutdown: AtomicBool,
@@ -36,6 +38,7 @@ impl AppState {
             events: Mutex::new(None),
             asr: Arc::new(AsrService::new()),
             acp: Arc::new(AcpService::new()),
+            library: Arc::new(MediaLibraryService::new()),
             notes: Arc::new(NoteService::new()),
             ticker_started: AtomicBool::new(false),
             shutdown: AtomicBool::new(false),

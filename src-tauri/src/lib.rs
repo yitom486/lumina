@@ -1,6 +1,7 @@
 pub mod acp;
 pub mod asr;
 mod commands;
+pub mod library;
 pub mod media;
 pub mod notes;
 pub mod player;
@@ -13,6 +14,11 @@ pub use acp::{
     SavedSessionHint, ThinkingLevel, VideoPromptContext,
 };
 pub use asr::{AsrError, AsrErrorCode, AsrEvent, AsrService, AsrStatus};
+pub use library::{
+    GroupResolution, LibraryError, LibraryErrorCode, LibraryIndex, LibraryStatus,
+    LibraryWatchConfig, MediaGroup, MediaGroupKind, MediaLibraryService, MetadataMediaType,
+    PendingMediaGroup, ResolverIntent, ResolverSelection, TmdbCandidate,
+};
 pub use media::{
     MediaChapter, MediaError, MediaErrorCode, MediaInfo, MediaInspector, MediaStream, StreamKind,
 };
@@ -29,6 +35,10 @@ use commands::acp::{
     acp_cancel, acp_close, acp_connect, acp_prompt, acp_respond_permission, acp_status,
 };
 use commands::asr::{asr_status, asr_transcribe};
+use commands::library::{
+    library_pending_groups, library_scan_now, library_status, library_watch_start,
+    library_watch_stop,
+};
 use commands::media::{media_inspect, media_list_siblings};
 use commands::notes::{
     notes_create, notes_delete, notes_export_markdown, notes_list, notes_update,
@@ -70,6 +80,11 @@ pub fn run() {
             subtitle_load_choice,
             asr_status,
             asr_transcribe,
+            library_watch_start,
+            library_watch_stop,
+            library_status,
+            library_scan_now,
+            library_pending_groups,
             acp_status,
             acp_respond_permission,
             acp_connect,
@@ -137,6 +152,7 @@ fn shutdown_backend(app: &tauri::AppHandle) {
     if let Some(state) = app.try_state::<AppState>() {
         state.mark_shutdown();
         state.acp.request_cancel();
+        let _ = state.library.stop();
         let _ = state.with_player(|player| {
             player.shutdown();
             Ok(())
