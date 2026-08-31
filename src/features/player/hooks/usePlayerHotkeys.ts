@@ -2,6 +2,7 @@
 
 import { useEffect, useRef } from "react";
 
+import { useChatUiStore } from "@/features/acp/chatUiStore";
 import { usePlayerStore } from "../store";
 import { useUiStore } from "../uiStore";
 
@@ -24,10 +25,18 @@ export function usePlayerHotkeys() {
       const store = usePlayerStore.getState();
       const ui = useUiStore.getState();
 
-      if (event.key === "Escape" && ui.fullscreen) {
-        event.preventDefault();
-        void ui.setFullscreen(false);
-        return;
+      if (event.key === "Escape") {
+        const chat = useChatUiStore.getState();
+        if (chat.chatOpen) {
+          event.preventDefault();
+          chat.closeChat();
+          return;
+        }
+        if (ui.fullscreen) {
+          event.preventDefault();
+          void ui.setFullscreen(false);
+          return;
+        }
       }
 
       const busy = store.busy;

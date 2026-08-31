@@ -8,6 +8,7 @@
  *      │   ├─ column (min-w-0 flex-1)
  *      │   │   ├─ VideoSurface  ← ONLY this rect maps to libmpv HWND
  *      │   │   └─ PlayerBar     ← HTML only (transport / seek / volume)
+ *      │   │   (fullscreen: pt-12 top strip + hover chrome above HWND)
  *      │   └─ aside (sidebar)   ← playlist / transcript / notes / chapters only
  *      └─ ChatDock (fixed, sibling) ← ACP chat; long-lived, not inside aside
  *
@@ -16,7 +17,9 @@
 
 import { PanelErrorBoundary } from "@/components/PanelErrorBoundary";
 import { AppShell } from "@/layouts/AppShell";
+import { FullscreenTopChrome } from "@/layouts/FullscreenTopChrome";
 import { ChatDock } from "@/features/acp/components/ChatDock";
+import { useChatUiStore } from "@/features/acp/chatUiStore";
 import { ChaptersPanel } from "@/features/chapters";
 import { MediaInfoPanel } from "@/features/media";
 import { NotesPanel } from "@/features/notes";
@@ -65,6 +68,7 @@ export default function App() {
   const fullscreen = useUiStore((s) => s.fullscreen);
   const sidebarTab = useUiStore((s) => s.sidebarTab);
   const setSidebarTab = useUiStore((s) => s.setSidebarTab);
+  const chatOpen = useChatUiStore((s) => s.chatOpen);
   const activeTab = TABS.find((tab) => tab.id === sidebarTab);
 
   return (
@@ -77,7 +81,16 @@ export default function App() {
               panelLabel="播放区域"
               className="relative z-0 flex min-h-0 min-w-0 flex-1 flex-col"
             >
-              <div className="relative z-0 flex min-h-0 min-w-0 flex-1 flex-col">
+              <div
+                className={cn(
+                  "relative flex min-h-0 min-w-0 flex-1 flex-col",
+                  fullscreen && "pt-12",
+                  fullscreen &&
+                    chatOpen &&
+                    "mr-[min(100vw,420px)] transition-[margin] duration-200",
+                )}
+              >
+                {fullscreen ? <FullscreenTopChrome /> : null}
                 <VideoSurface />
                 <PlayerBar />
               </div>

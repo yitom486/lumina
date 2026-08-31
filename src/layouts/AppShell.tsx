@@ -80,14 +80,7 @@ export function AppShell({ children }: AppShellProps) {
             <FullscreenToggleButton />
           </div>
         </header>
-      ) : (
-        <div className="pointer-events-none fixed right-3 top-3 z-[60] flex items-center">
-          <div className="pointer-events-auto flex items-center gap-0.5 rounded-md border border-border/60 bg-card/90 p-0.5 shadow-lg backdrop-blur-sm">
-            <ChatToggleButton />
-            <FullscreenToggleButton />
-          </div>
-        </div>
-      )}
+      ) : null}
       <main className="flex min-h-0 flex-1 flex-col">{children}</main>
     </div>
   );

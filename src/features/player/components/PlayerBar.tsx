@@ -26,7 +26,7 @@ export function PlayerBar() {
       </div>
       <p className="text-[11px] text-muted-foreground">
         空格 播放/暂停 · 单击画面 播停 · 双击全屏 · ←→ 5 秒 · ↑↓ 音量 · M 静音 · F / Esc 全屏
-        {fullscreen ? " · 音轨/字幕请先退出全屏，在右侧选择" : ""}
+        {fullscreen ? " · 鼠标移到顶部可打开 AI 对话" : ""}
       </p>
     </div>
   );
