@@ -62,15 +62,7 @@ pub fn session_new_params(cwd: &str) -> Value {
 }
 
 pub fn session_prompt_params(session_id: &str, text: &str) -> Value {
-    json!({
-        "sessionId": session_id,
-        "prompt": [
-            {
-                "type": "text",
-                "text": text,
-            }
-        ],
-    })
+    crate::acp::context::session_prompt_params(session_id, text, None)
 }
 
 pub fn session_cancel_params(session_id: &str) -> Value {

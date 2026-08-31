@@ -11,7 +11,7 @@ type Props = {
 
 export function ChatMessageList({
   messages,
-  emptyHint = "向 AI Agent 提问。视频上下文联动稍后接入。",
+  emptyHint = "向 AI Agent 提问。打开视频后会自动附带播放进度、章节、字幕与笔记上下文。",
 }: Props) {
   const endRef = useRef<HTMLDivElement>(null);
 

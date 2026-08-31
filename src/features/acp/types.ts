@@ -35,6 +35,16 @@ export type AgentProfileInput = {
   env?: Record<string, string>;
 };
 
+export type VideoPromptContext = {
+  mediaPath?: string | null;
+  mediaTitle?: string | null;
+  positionMs?: number | null;
+  durationMs?: number | null;
+  chapterTitle?: string | null;
+  transcriptExcerpt?: string | null;
+  notesExcerpt?: string | null;
+};
+
 export type AcpEvent =
   | { type: "started" }
   | { type: "progress"; message: string }
@@ -62,7 +72,7 @@ export type AcpEvent =
   | { type: "finished"; text: string; stopReason?: string | null }
   | { type: "failed"; code: string; message: string };
 
-/** UI chat shell — video context linkage comes later. */
+/** UI chat shell — playback context is attached per prompt when a video is open. */
 export type ChatRole = "user" | "assistant" | "system";
 
 export type ChatMessageStatus = "streaming" | "done" | "error";

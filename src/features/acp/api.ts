@@ -1,6 +1,6 @@
 import { Channel, invoke } from "@tauri-apps/api/core";
 
-import type { AcpEvent, AcpStatus, AgentProfileInput } from "./types";
+import type { AcpEvent, AcpStatus, AgentProfileInput, VideoPromptContext } from "./types";
 
 export function getAcpStatus(): Promise<AcpStatus> {
   return invoke("acp_status");
@@ -17,7 +17,7 @@ export function upsertAcpProfile(profile: AgentProfileInput): Promise<unknown> {
 export async function acpPrompt(
   text: string,
   onEvent?: (event: AcpEvent) => void,
-  options?: { cwd?: string; profileId?: string },
+  options?: { cwd?: string; profileId?: string; context?: VideoPromptContext },
 ): Promise<string> {
   const channel = new Channel<AcpEvent>();
   if (onEvent) {
@@ -27,6 +27,7 @@ export async function acpPrompt(
     text,
     cwd: options?.cwd ?? null,
     profileId: options?.profileId ?? null,
+    context: options?.context ?? null,
     onEvent: channel,
   });
 }

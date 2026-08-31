@@ -12,6 +12,7 @@ use std::time::{Duration, Instant};
 
 use serde_json::Value;
 
+use crate::acp::context::{self, VideoPromptContext};
 use crate::acp::error::AcpError;
 use crate::acp::host::AcpHost;
 use crate::acp::model::{AcpEvent, AcpStatus, AgentProfileInput};
@@ -21,7 +22,7 @@ use crate::acp::protocol::{
     authenticate_params, classify_inbound, encode_line, extract_agent_text, extract_plan_summary,
     extract_thought_text, extract_tool_call, initialize_params, is_error_response, notification,
     parse_initialize_result, parse_session_id, parse_stop_reason, request, session_cancel_params,
-    session_close_params, session_new_params, session_prompt_params, Inbound, InitializeResult,
+    session_close_params, session_new_params, Inbound, InitializeResult,
 };
 
 struct LiveSession {
@@ -136,6 +137,7 @@ impl AcpService {
         text: impl AsRef<str>,
         cwd: Option<String>,
         profile_id: Option<String>,
+        context: Option<VideoPromptContext>,
         mut on_event: F,
     ) -> Result<String, AcpError>
     where
@@ -150,8 +152,13 @@ impl AcpService {
         }
         self.cancel.store(false, Ordering::SeqCst);
 
-        let outcome =
-            self.run_prompt_inner(text.as_ref(), cwd.as_deref(), profile_id.as_deref(), &mut on_event);
+        let outcome = self.run_prompt_inner(
+            text.as_ref(),
+            cwd.as_deref(),
+            profile_id.as_deref(),
+            context.as_ref(),
+            &mut on_event,
+        );
 
         self.busy.store(false, Ordering::SeqCst);
 
@@ -180,6 +187,7 @@ impl AcpService {
         prompt_text: &str,
         cwd: Option<&str>,
         profile_id: Option<&str>,
+        context: Option<&VideoPromptContext>,
         on_event: &mut dyn FnMut(AcpEvent),
     ) -> Result<(String, Option<String>), AcpError> {
         let prompt_text = prompt_text.trim();
@@ -220,7 +228,7 @@ impl AcpService {
             &mut session.stdin,
             prompt_id,
             "session/prompt",
-            session_prompt_params(&session.session_id, prompt_text),
+            context::session_prompt_params(&session.session_id, prompt_text, context),
         )?;
 
         let empty_hint = match session.profile_kind {

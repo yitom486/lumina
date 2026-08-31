@@ -5,7 +5,7 @@ use tauri::{AppHandle, Manager, State};
 
 use crate::acp::model::AgentProfileInput;
 use crate::acp::profile::AgentProfile;
-use crate::acp::{AcpError, AcpEvent, AcpStatus};
+use crate::acp::{AcpError, AcpEvent, AcpStatus, VideoPromptContext};
 use crate::state::AppState;
 
 #[tauri::command]
@@ -54,11 +54,12 @@ pub async fn acp_prompt(
     text: String,
     cwd: Option<String>,
     profile_id: Option<String>,
+    context: Option<VideoPromptContext>,
     on_event: Channel<AcpEvent>,
 ) -> Result<String, AcpError> {
     let acp = state.acp.clone();
     tauri::async_runtime::spawn_blocking(move || {
-        acp.prompt(text, cwd, profile_id, |event| {
+        acp.prompt(text, cwd, profile_id, context, |event| {
             if let Err(error) = on_event.send(event) {
                 tracing::warn!(%error, "failed to send ACP event");
             }

@@ -8,6 +8,7 @@ import { errorMessage } from "@/lib/format";
 import { acpCancel, acpClose, acpPrompt, getAcpStatus } from "../api";
 import { workspaceCwdFromMedia } from "../cwd";
 import type { AcpEvent, ChatMessage } from "../types";
+import { useVideoPromptContext } from "../useVideoPromptContext";
 import { AgentSetupBar } from "./AgentSetupBar";
 import { ChatComposer } from "./ChatComposer";
 import { ChatMessageList } from "./ChatMessageList";
@@ -38,6 +39,7 @@ export function AcpPanel() {
   const sessionActive = statusQuery.data?.sessionActive ?? false;
   const activeProfileId = statusQuery.data?.activeProfileId ?? "codex";
   const sessionCwd = workspaceCwdFromMedia(currentFile);
+  const videoContext = useVideoPromptContext();
 
   const pushSystem = (content: string) => {
     setMessages((prev) => [
@@ -152,7 +154,7 @@ export function AcpPanel() {
                 break;
             }
           },
-          { profileId: activeProfileId, cwd: sessionCwd },
+          { profileId: activeProfileId, cwd: sessionCwd, context: videoContext },
         );
       } catch (error) {
         patchAssistant({
