@@ -40,7 +40,7 @@ const TABS: { id: SidebarTab; label: string }[] = [
   { id: "acp", label: "对话" },
 ];
 
-function SidebarTabPanel({ tab }: { tab: SidebarTab }) {
+function SidebarTabPanel({ tab }: { tab: Exclude<SidebarTab, "acp"> }) {
   switch (tab) {
     case "playlist":
       return <PlaylistPanel />;
@@ -50,8 +50,6 @@ function SidebarTabPanel({ tab }: { tab: SidebarTab }) {
       return <NotesPanel />;
     case "chapters":
       return <ChaptersPanel />;
-    case "acp":
-      return <AcpPanel />;
     default:
       return null;
   }
@@ -64,8 +62,10 @@ export default function App() {
 
   const fullscreen = useUiStore((s) => s.fullscreen);
   const sidebarTab = useUiStore((s) => s.sidebarTab);
+  const acpPanelAlive = useUiStore((s) => s.acpPanelAlive);
   const setSidebarTab = useUiStore((s) => s.setSidebarTab);
   const activeTab = TABS.find((tab) => tab.id === sidebarTab);
+  const nonAcpTab = sidebarTab === "acp" ? null : sidebarTab;
 
   return (
     <TooltipProvider>
@@ -116,14 +116,30 @@ export default function App() {
                   </button>
                 ))}
               </div>
-              <PanelErrorBoundary
-                scope={`sidebar:${sidebarTab}`}
-                resetKey={sidebarTab}
-                panelLabel={activeTab?.label ?? "面板"}
-                className="flex min-h-0 flex-1 flex-col overflow-hidden"
-              >
-                <SidebarTabPanel tab={sidebarTab} />
-              </PanelErrorBoundary>
+              <div className="relative flex min-h-0 flex-1 flex-col overflow-hidden">
+                {nonAcpTab ? (
+                  <PanelErrorBoundary
+                    scope={`sidebar:${nonAcpTab}`}
+                    resetKey={nonAcpTab}
+                    panelLabel={activeTab?.label ?? "面板"}
+                    className="flex min-h-0 flex-1 flex-col overflow-hidden"
+                  >
+                    <SidebarTabPanel tab={nonAcpTab} />
+                  </PanelErrorBoundary>
+                ) : null}
+                {acpPanelAlive ? (
+                  <PanelErrorBoundary
+                    scope="sidebar:acp"
+                    panelLabel="对话"
+                    className={cn(
+                      "flex min-h-0 flex-1 flex-col overflow-hidden",
+                      sidebarTab !== "acp" && "hidden",
+                    )}
+                  >
+                    <AcpPanel />
+                  </PanelErrorBoundary>
+                ) : null}
+              </div>
             </aside>
           ) : null}
         </div>
