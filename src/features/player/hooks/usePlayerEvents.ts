@@ -77,6 +77,7 @@ export function usePlayerEvents(): void {
             statusMessage:
               snapshot.currentFile.split(/[/\\]/).pop() ?? snapshot.currentFile,
           });
+          void usePlayerStore.getState().syncPlaylistForPath(snapshot.currentFile);
         }
         requestAnimationFrame(() => {
           void ensureSurfaceBounds();

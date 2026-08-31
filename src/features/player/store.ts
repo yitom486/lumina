@@ -48,6 +48,8 @@ type PlayerStore = PlayerSnapshot & {
 
   openFile: () => Promise<void>;
   openPath: (path: string, options?: { rebuildPlaylist?: boolean }) => Promise<void>;
+  /** Rebuild same-folder playlist when UI resyncs but list was lost (HMR / remount). */
+  syncPlaylistForPath: (path: string) => Promise<void>;
   playNext: () => Promise<void>;
   playPrev: () => Promise<void>;
   play: () => Promise<void>;
@@ -173,6 +175,9 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
           statusMessage: fileName(path) ?? path,
           playlistIndex: idx >= 0 ? idx : get().playlistIndex,
         });
+        if (get().playlist.length === 0 || idx < 0) {
+          void get().syncPlaylistForPath(path);
+        }
         maybeResume(path, durationMs, get, set);
         break;
       }
@@ -226,6 +231,28 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
     }
   },
 
+  syncPlaylistForPath: async (path) => {
+    const idx = indexOfPath(get().playlist, path);
+    if (get().playlist.length > 0 && idx >= 0) {
+      if (get().playlistIndex !== idx) {
+        set({ playlistIndex: idx });
+      }
+      return;
+    }
+
+    try {
+      const siblings = await api.listSiblingVideos(path);
+      const nextIdx = indexOfPath(siblings, path);
+      set({
+        playlist: siblings.length > 0 ? siblings : [path],
+        playlistIndex: nextIdx >= 0 ? nextIdx : 0,
+      });
+    } catch (error) {
+      console.error("list siblings failed", error);
+      set({ playlist: [path], playlistIndex: 0 });
+    }
+  },
+
   openPath: async (path, options) => {
     const rebuild = options?.rebuildPlaylist ?? false;
     set({
@@ -234,21 +261,13 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
     });
 
     if (rebuild) {
-      try {
-        const siblings = await api.listSiblingVideos(path);
-        const idx = indexOfPath(siblings, path);
-        set({
-          playlist: siblings.length > 0 ? siblings : [path],
-          playlistIndex: idx >= 0 ? idx : 0,
-        });
-      } catch (error) {
-        console.error("list siblings failed", error);
-        set({ playlist: [path], playlistIndex: 0 });
-      }
+      await get().syncPlaylistForPath(path);
     } else {
       const idx = indexOfPath(get().playlist, path);
       if (idx >= 0) {
         set({ playlistIndex: idx });
+      } else if (get().playlist.length === 0) {
+        await get().syncPlaylistForPath(path);
       }
     }
 

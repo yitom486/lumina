@@ -11,6 +11,7 @@ function fileName(path: string): string {
 export function PlaylistPanel() {
   const playlist = usePlayerStore((s) => s.playlist);
   const playlistIndex = usePlayerStore((s) => s.playlistIndex);
+  const currentFile = usePlayerStore((s) => s.currentFile);
   const busy = usePlayerStore((s) => s.busy);
   const openPath = usePlayerStore((s) => s.openPath);
 
@@ -18,7 +19,9 @@ export function PlaylistPanel() {
     return (
       <div className="flex min-h-0 flex-1 flex-col px-3 py-3 text-sm text-muted-foreground">
         <p className="text-xs leading-relaxed">
-          打开任意视频后，会自动把同目录下的视频列成播放列表。
+          {currentFile
+            ? "正在加载同目录视频列表…"
+            : "打开任意视频后，会自动把同目录下的视频列成播放列表。"}
         </p>
       </div>
     );
