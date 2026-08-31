@@ -5,8 +5,8 @@ use std::process::Command;
 
 use crate::asr::error::AsrError;
 use crate::asr::paths::AsrPaths;
-use crate::subtitle::parse::parse_subtitle_text;
 use crate::subtitle::model::Transcript;
+use crate::subtitle::parse::parse_subtitle_text;
 
 pub fn transcribe_wav(
     paths: &AsrPaths,
@@ -64,11 +64,13 @@ pub fn transcribe_wav(
     ];
     let content = candidates
         .iter()
-        .find_map(|p| std::fs::read_to_string(p).ok().filter(|c| !c.trim().is_empty()))
+        .find_map(|p| {
+            std::fs::read_to_string(p)
+                .ok()
+                .filter(|c| !c.trim().is_empty())
+        })
         .ok_or_else(|| {
-            AsrError::transcribe_failed(Some(
-                "expected asr.srt in the temp job directory",
-            ))
+            AsrError::transcribe_failed(Some("expected asr.srt in the temp job directory"))
         })?;
 
     let cues = parse_subtitle_text(&content).map_err(|error| {

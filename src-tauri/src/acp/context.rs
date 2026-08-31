@@ -20,12 +20,24 @@ pub struct VideoPromptContext {
 impl VideoPromptContext {
     pub fn is_empty(&self) -> bool {
         self.media_path.as_ref().is_none_or(|s| s.trim().is_empty())
-            && self.media_title.as_ref().is_none_or(|s| s.trim().is_empty())
+            && self
+                .media_title
+                .as_ref()
+                .is_none_or(|s| s.trim().is_empty())
             && self.position_ms.is_none()
             && self.duration_ms.is_none()
-            && self.chapter_title.as_ref().is_none_or(|s| s.trim().is_empty())
-            && self.transcript_excerpt.as_ref().is_none_or(|s| s.trim().is_empty())
-            && self.notes_excerpt.as_ref().is_none_or(|s| s.trim().is_empty())
+            && self
+                .chapter_title
+                .as_ref()
+                .is_none_or(|s| s.trim().is_empty())
+            && self
+                .transcript_excerpt
+                .as_ref()
+                .is_none_or(|s| s.trim().is_empty())
+            && self
+                .notes_excerpt
+                .as_ref()
+                .is_none_or(|s| s.trim().is_empty())
     }
 }
 
@@ -89,14 +101,26 @@ fn build_context_summary(ctx: &VideoPromptContext) -> Option<String> {
             .unwrap_or_else(|| "?".into());
         lines.push(format!("进度：{pos} / {dur}"));
     }
-    if let Some(ch) = ctx.chapter_title.as_deref().filter(|s| !s.trim().is_empty()) {
+    if let Some(ch) = ctx
+        .chapter_title
+        .as_deref()
+        .filter(|s| !s.trim().is_empty())
+    {
         lines.push(format!("章节：{ch}"));
     }
-    if let Some(excerpt) = ctx.transcript_excerpt.as_deref().filter(|s| !s.trim().is_empty()) {
+    if let Some(excerpt) = ctx
+        .transcript_excerpt
+        .as_deref()
+        .filter(|s| !s.trim().is_empty())
+    {
         lines.push("字幕摘录：".into());
         lines.push(excerpt.to_string());
     }
-    if let Some(notes) = ctx.notes_excerpt.as_deref().filter(|s| !s.trim().is_empty()) {
+    if let Some(notes) = ctx
+        .notes_excerpt
+        .as_deref()
+        .filter(|s| !s.trim().is_empty())
+    {
         lines.push("笔记摘录：".into());
         lines.push(notes.to_string());
     }
@@ -153,16 +177,20 @@ mod tests {
             ..Default::default()
         };
         let params = session_prompt_params("sess_1", "这段讲了什么？", Some(&ctx));
-        let prompt = params.get("prompt").and_then(Value::as_array).expect("prompt");
+        let prompt = params
+            .get("prompt")
+            .and_then(Value::as_array)
+            .expect("prompt");
         assert_eq!(prompt.len(), 3);
-        assert_eq!(prompt[0].get("type").and_then(Value::as_str), Some("resource_link"));
-        assert!(
-            prompt[0]
-                .get("uri")
-                .and_then(Value::as_str)
-                .unwrap_or("")
-                .contains("demo.mp4")
+        assert_eq!(
+            prompt[0].get("type").and_then(Value::as_str),
+            Some("resource_link")
         );
+        assert!(prompt[0]
+            .get("uri")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .contains("demo.mp4"));
         let summary = prompt[1].get("text").and_then(Value::as_str).unwrap_or("");
         assert!(summary.contains("Lumina"));
         assert!(summary.contains("开场"));
@@ -175,7 +203,10 @@ mod tests {
     #[test]
     fn prompt_without_context_is_user_text_only() {
         let params = session_prompt_params("sess_1", "你好", None);
-        let prompt = params.get("prompt").and_then(Value::as_array).expect("prompt");
+        let prompt = params
+            .get("prompt")
+            .and_then(Value::as_array)
+            .expect("prompt");
         assert_eq!(prompt.len(), 1);
         assert_eq!(prompt[0].get("text").and_then(Value::as_str), Some("你好"));
     }

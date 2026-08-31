@@ -4,7 +4,9 @@ use tauri::ipc::Channel;
 use tauri::{AppHandle, Manager, State};
 
 use crate::acp::settings::AcpClientSettings;
-use crate::acp::{AcpError, AcpEvent, AcpStatus, AgentProfilesHint, SavedSessionHint, VideoPromptContext};
+use crate::acp::{
+    AcpError, AcpEvent, AcpStatus, AgentProfilesHint, SavedSessionHint, VideoPromptContext,
+};
 use crate::state::AppState;
 
 #[tauri::command]
@@ -69,6 +71,8 @@ pub async fn acp_connect(
 }
 
 #[tauri::command]
+// Tauri maps IPC payload fields to command arguments directly.
+#[allow(clippy::too_many_arguments)]
 pub async fn acp_prompt(
     state: State<'_, AppState>,
     text: String,

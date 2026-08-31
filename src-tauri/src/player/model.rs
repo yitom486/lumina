@@ -51,12 +51,23 @@ impl PlayerSnapshot {
     rename_all_fields = "camelCase"
 )]
 pub enum PlayerEvent {
-    StateChanged { status: PlayerState },
-    PositionChanged { position_ms: u64 },
-    DurationChanged { duration_ms: u64 },
-    FileLoaded { path: String, duration_ms: u64 },
+    StateChanged {
+        status: PlayerState,
+    },
+    PositionChanged {
+        position_ms: u64,
+    },
+    DurationChanged {
+        duration_ms: u64,
+    },
+    FileLoaded {
+        path: String,
+        duration_ms: u64,
+    },
     Ended,
-    Error { error: PlayerError },
+    Error {
+        error: PlayerError,
+    },
     /// Left-click on the native video surface (after click/dblclick discrimination on UI).
     SurfaceClick,
     /// Double-click on the native video surface.

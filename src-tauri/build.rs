@@ -48,10 +48,7 @@ fn place_dll(src: &Path, dest: &Path) {
 
     if let Some(parent) = dest.parent() {
         if let Err(error) = fs::create_dir_all(parent) {
-            println!(
-                "cargo:warning=cannot create {}: {error}",
-                parent.display()
-            );
+            println!("cargo:warning=cannot create {}: {error}", parent.display());
             return;
         }
     }

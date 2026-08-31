@@ -6,9 +6,7 @@ use crate::media::{list_sibling_videos, MediaError, MediaInfo, MediaInspector};
 pub async fn media_inspect(path: String) -> Result<MediaInfo, MediaError> {
     tauri::async_runtime::spawn_blocking(move || MediaInspector::inspect(path))
         .await
-        .map_err(|error| {
-            MediaError::internal(Some(&format!("media inspect join: {error}")))
-        })?
+        .map_err(|error| MediaError::internal(Some(&format!("media inspect join: {error}"))))?
 }
 
 /// Videos in the same folder as `path` (sorted), for building a playlist.

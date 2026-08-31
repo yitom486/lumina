@@ -26,11 +26,7 @@ pub struct AcpError {
 }
 
 impl AcpError {
-    pub fn new(
-        code: AcpErrorCode,
-        message: impl Into<String>,
-        details: Option<String>,
-    ) -> Self {
+    pub fn new(code: AcpErrorCode, message: impl Into<String>, details: Option<String>) -> Self {
         Self {
             code,
             message: message.into(),
@@ -124,7 +120,10 @@ mod tests {
         let p = AcpError::protocol(Some("json parse failed"));
         assert_eq!(p.message, "与 Agent 通信失败");
         assert_eq!(p.details.as_deref(), Some("json parse failed"));
-        assert_eq!(AcpError::bad_request("提问内容不能为空").message, "提问内容不能为空");
+        assert_eq!(
+            AcpError::bad_request("提问内容不能为空").message,
+            "提问内容不能为空"
+        );
         let auth = AcpError::codex_auth_required(Some("authenticate failed"));
         assert!(has_cjk(&auth.message));
         assert!(!auth.message.contains("authenticate"));

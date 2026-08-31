@@ -1,0 +1,68 @@
+name: Private release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Draft Windows release
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Install fixed libmpv development package
+        shell: pwsh
+        run: |
+          $mpvDir = 'src-tauri/native/mpv'
+          $metadata = @{}
+          Get-Content "$mpvDir/VERSION" | ForEach-Object {
+            if ($_ -match '^([^=]+)=(.*)$') { $metadata[$matches[1]] = $matches[2] }
+          }
+          $archive = Join-Path $env:RUNNER_TEMP $metadata['archive']
+          curl.exe -L --fail --retry 3 -o $archive $metadata['url']
+          tar.exe -xf $archive -C $mpvDir
+          & lib.exe "/def:$mpvDir/mpv.def" /machine:x64 "/out:$mpvDir/mpv.lib"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Install frontend dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Run release quality gates
+        run: |
+          bun run lint
+          bun run test
+          bun run build
+          Push-Location src-tauri
+          cargo fmt --check
+          cargo test --lib
+          cargo clippy --all-targets -- -D warnings
+          Pop-Location
+
+      - name: Create private draft release and upload installers
+        uses: tauri-apps/tauri-action@v0.6.2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tauriScript: bun run tauri
+          tagName: v__VERSION__
+          releaseName: Lumina v__VERSION__
+          releaseBody: |
+            Private preview release. See CHANGELOG.md in this tag for features, constraints and validation steps.
+          releaseDraft: true
+          prerelease: false
+          uploadWorkflowArtifacts: true
+          workflowArtifactNamePattern: Lumina-[platform]-[arch]-[bundle]

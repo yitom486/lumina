@@ -24,11 +24,7 @@ pub struct MediaError {
 }
 
 impl MediaError {
-    pub fn new(
-        code: MediaErrorCode,
-        message: impl Into<String>,
-        details: Option<String>,
-    ) -> Self {
+    pub fn new(code: MediaErrorCode, message: impl Into<String>, details: Option<String>) -> Self {
         Self {
             code,
             message: message.into(),
@@ -102,12 +98,16 @@ mod tests {
     #[test]
     fn constructors_use_chinese_business_messages() {
         assert!(has_cjk(&MediaError::probe_not_found(None).message));
-        assert!(!MediaError::probe_not_found(None).message.contains("ffprobe"));
+        assert!(!MediaError::probe_not_found(None)
+            .message
+            .contains("ffprobe"));
         assert!(has_cjk(&MediaError::file_not_found("x").message));
         let probe = MediaError::probe_failed(Some("serde boom"));
         assert_eq!(probe.code, MediaErrorCode::ProbeFailed);
         assert_eq!(probe.message, "无法读取该视频的媒体信息");
         assert_eq!(probe.details.as_deref(), Some("serde boom"));
-        assert!(!MediaError::invalid_media(Some("no format")).message.contains("format"));
+        assert!(!MediaError::invalid_media(Some("no format"))
+            .message
+            .contains("format"));
     }
 }

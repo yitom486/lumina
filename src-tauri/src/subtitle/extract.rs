@@ -7,7 +7,13 @@ use std::process::Command;
 use crate::media::tools::resolve_ffmpeg;
 use crate::subtitle::error::SubtitleError;
 
-const BITMAP_CODECS: &[&str] = &["hdmv_pgs_subtitle", "pgssub", "dvd_subtitle", "dvb_subtitle", "xsub"];
+const BITMAP_CODECS: &[&str] = &[
+    "hdmv_pgs_subtitle",
+    "pgssub",
+    "dvd_subtitle",
+    "dvb_subtitle",
+    "xsub",
+];
 
 pub fn is_bitmap_codec(codec: Option<&str>) -> bool {
     codec
@@ -21,9 +27,9 @@ pub fn extract_text_subtitle(
     codec_name: Option<&str>,
 ) -> Result<(String, &'static str), SubtitleError> {
     if is_bitmap_codec(codec_name) {
-        return Err(SubtitleError::unsupported(codec_name.or(Some(
-            "bitmap subtitle (no OCR)",
-        ))));
+        return Err(SubtitleError::unsupported(
+            codec_name.or(Some("bitmap subtitle (no OCR)")),
+        ));
     }
 
     let ffmpeg = resolve_ffmpeg().map_err(SubtitleError::from)?;
@@ -71,9 +77,7 @@ pub fn extract_text_subtitle(
         if output.status.success() && out.is_file() {
             let content = fs::read_to_string(&out).map_err(|error| {
                 tracing::warn!(%error, "failed to read extracted subtitle");
-                SubtitleError::extract_failed(Some(&format!(
-                    "read extracted subtitle: {error}"
-                )))
+                SubtitleError::extract_failed(Some(&format!("read extracted subtitle: {error}")))
             })?;
             let _ = fs::remove_file(&out);
             if content.trim().is_empty() {

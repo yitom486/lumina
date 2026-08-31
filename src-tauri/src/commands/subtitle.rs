@@ -1,6 +1,8 @@
 //! Subtitle / transcript Tauri commands.
 
-use crate::subtitle::{SubtitleChoice, SubtitleError, SubtitleErrorCode, SubtitleService, Transcript};
+use crate::subtitle::{
+    SubtitleChoice, SubtitleError, SubtitleErrorCode, SubtitleService, Transcript,
+};
 
 #[tauri::command]
 pub async fn subtitle_list_choices(path: String) -> Result<Vec<SubtitleChoice>, SubtitleError> {

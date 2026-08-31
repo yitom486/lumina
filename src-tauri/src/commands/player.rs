@@ -22,9 +22,7 @@ where
         work(state.inner())
     })
     .await
-    .map_err(|error| {
-        PlayerError::internal(Some(&format!("player task join: {error}")))
-    })?
+    .map_err(|error| PlayerError::internal(Some(&format!("player task join: {error}"))))?
 }
 
 #[tauri::command]
@@ -40,24 +38,29 @@ pub fn player_subscribe(
 
 #[tauri::command]
 pub async fn player_get_state(app: AppHandle) -> Result<PlayerSnapshot, PlayerError> {
-    on_worker(app, |state| state.with_player(|player| Ok(player.snapshot()))).await
+    on_worker(app, |state| {
+        state.with_player(|player| Ok(player.snapshot()))
+    })
+    .await
 }
 
 #[tauri::command]
 pub async fn player_open(app: AppHandle, path: String) -> Result<PlayerSnapshot, PlayerError> {
-    on_worker(app, move |state| match state.with_player(|player| player.open(path)) {
-        Ok((snapshot, events)) => {
-            state.emit_all(events);
-            Ok(snapshot)
-        }
-        Err(error) => {
-            state.emit(PlayerEvent::Error {
-                error: error.clone(),
-            });
-            state.emit(PlayerEvent::StateChanged {
-                status: crate::player::PlayerState::Error,
-            });
-            Err(error)
+    on_worker(app, move |state| {
+        match state.with_player(|player| player.open(path)) {
+            Ok((snapshot, events)) => {
+                state.emit_all(events);
+                Ok(snapshot)
+            }
+            Err(error) => {
+                state.emit(PlayerEvent::Error {
+                    error: error.clone(),
+                });
+                state.emit(PlayerEvent::StateChanged {
+                    status: crate::player::PlayerState::Error,
+                });
+                Err(error)
+            }
         }
     })
     .await
@@ -113,7 +116,10 @@ pub async fn player_set_volume(app: AppHandle, volume: f64) -> Result<PlayerSnap
 
 #[tauri::command]
 pub async fn player_set_rate(app: AppHandle, rate: f64) -> Result<PlayerSnapshot, PlayerError> {
-    on_worker(app, move |state| state.with_player(|player| player.set_rate(rate))).await
+    on_worker(app, move |state| {
+        state.with_player(|player| player.set_rate(rate))
+    })
+    .await
 }
 
 #[tauri::command]
@@ -161,7 +167,6 @@ pub fn player_set_surface_bounds(
     })?;
 
     let to_px = |value: f64| (value * scale).round() as i32;
-    state.with_surface(|surface| {
-        surface.set_bounds(to_px(x), to_px(y), to_px(width), to_px(height))
-    })
+    state
+        .with_surface(|surface| surface.set_bounds(to_px(x), to_px(y), to_px(width), to_px(height)))
 }

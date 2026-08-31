@@ -4,7 +4,9 @@ use std::path::{Path, PathBuf};
 
 use crate::media::error::MediaError;
 
-const VIDEO_EXTS: &[&str] = &["mp4", "mkv", "webm", "avi", "mov", "m4v", "wmv", "flv", "ts", "m2ts"];
+const VIDEO_EXTS: &[&str] = &[
+    "mp4", "mkv", "webm", "avi", "mov", "m4v", "wmv", "flv", "ts", "m2ts",
+];
 
 pub fn list_sibling_videos(file_path: impl AsRef<Path>) -> Result<Vec<String>, MediaError> {
     let path = file_path.as_ref();
@@ -31,8 +33,7 @@ pub fn list_sibling_videos(file_path: impl AsRef<Path>) -> Result<Vec<String>, M
     items.sort_by(|a, b| {
         let an = a.file_name().and_then(|n| n.to_str()).unwrap_or("");
         let bn = b.file_name().and_then(|n| n.to_str()).unwrap_or("");
-        an.to_ascii_lowercase()
-            .cmp(&bn.to_ascii_lowercase())
+        an.to_ascii_lowercase().cmp(&bn.to_ascii_lowercase())
     });
 
     Ok(items

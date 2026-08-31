@@ -115,8 +115,15 @@ impl AcpHost {
 
     fn read_text_file(&self, params: &Value) -> Result<Value, AcpError> {
         let path = self.resolve_path(params, "path")?;
-        let line = params.get("line").and_then(Value::as_u64).unwrap_or(1).max(1) as usize;
-        let limit = params.get("limit").and_then(Value::as_u64).map(|v| v as usize);
+        let line = params
+            .get("line")
+            .and_then(Value::as_u64)
+            .unwrap_or(1)
+            .max(1) as usize;
+        let limit = params
+            .get("limit")
+            .and_then(Value::as_u64)
+            .map(|v| v as usize);
 
         let raw = fs::read_to_string(&path).map_err(|error| {
             tracing::warn!(path = %path.display(), %error, "ACP fs read failed");
@@ -282,11 +289,10 @@ impl AcpHost {
             .clone();
         let truncated = term.truncated.load(Ordering::SeqCst);
         let exit_status = if term.exited.load(Ordering::SeqCst) {
-            let code = term
+            let code = *term
                 .exit_code
                 .lock()
-                .map_err(|_| AcpError::internal(Some("exit code lock poisoned")))?
-                .clone();
+                .map_err(|_| AcpError::internal(Some("exit code lock poisoned")))?;
             let signal = term
                 .signal
                 .lock()
@@ -316,16 +322,15 @@ impl AcpHost {
                     .terminals
                     .lock()
                     .map_err(|_| AcpError::internal(Some("terminal map poisoned")))?;
-                let term = map
-                    .get_mut(id)
-                    .ok_or_else(|| AcpError::protocol(Some(&format!("unknown terminalId: {id}"))))?;
+                let term = map.get_mut(id).ok_or_else(|| {
+                    AcpError::protocol(Some(&format!("unknown terminalId: {id}")))
+                })?;
                 refresh_exit_status(term);
                 if term.exited.load(Ordering::SeqCst) {
-                    let code = term
+                    let code = *term
                         .exit_code
                         .lock()
-                        .map_err(|_| AcpError::internal(Some("exit code lock poisoned")))?
-                        .clone();
+                        .map_err(|_| AcpError::internal(Some("exit code lock poisoned")))?;
                     let signal = term
                         .signal
                         .lock()

@@ -21,9 +21,11 @@ where
 
 #[tauri::command]
 pub async fn notes_list(app: AppHandle, media_path: String) -> Result<Vec<Note>, NoteError> {
-    tauri::async_runtime::spawn_blocking(move || with_notes(app, move |notes| notes.list_for_media(&media_path)))
-        .await
-        .map_err(|error| NoteError::internal(Some(&format!("notes list join: {error}"))))?
+    tauri::async_runtime::spawn_blocking(move || {
+        with_notes(app, move |notes| notes.list_for_media(&media_path))
+    })
+    .await
+    .map_err(|error| NoteError::internal(Some(&format!("notes list join: {error}"))))?
 }
 
 #[tauri::command]

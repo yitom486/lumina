@@ -6,7 +6,10 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-use crate::acp::discover::{find_acp_adapter, find_bun, find_bunx, find_codex, find_command, find_dev_codex_acp_entry, native_acp_dir, codex_home_dir};
+use crate::acp::discover::{
+    codex_home_dir, find_acp_adapter, find_bun, find_bunx, find_codex, find_command,
+    find_dev_codex_acp_entry, native_acp_dir,
+};
 use crate::acp::error::AcpError;
 use crate::acp::model::{AgentProfileInput, AgentProfilesHint};
 
@@ -146,11 +149,9 @@ pub fn resolve_launch(profile: &AgentProfile) -> Result<LaunchSpec, AcpError> {
     };
 
     let mut env = profile.env.clone();
-    if profile.kind == AgentKind::Codex {
-        if !env.contains_key("CODEX_PATH") {
-            if let Some(codex) = find_codex() {
-                env.insert("CODEX_PATH".into(), codex.to_string_lossy().to_string());
-            }
+    if profile.kind == AgentKind::Codex && !env.contains_key("CODEX_PATH") {
+        if let Some(codex) = find_codex() {
+            env.insert("CODEX_PATH".into(), codex.to_string_lossy().to_string());
         }
     }
     augment_spawn_env(profile.kind, &mut env);
@@ -273,19 +274,13 @@ fn resolve_builtin_codex_launch(
     }
     if let Some(entry) = find_dev_codex_acp_entry() {
         if let Some(bun) = find_bun() {
-            return Ok((
-                bun,
-                vec!["run".into(), entry.to_string_lossy().to_string()],
-            ));
+            return Ok((bun, vec!["run".into(), entry.to_string_lossy().to_string()]));
         }
     }
     // Windows: `bun x pkg` is more reliable than `bunx pkg` when stdio is piped.
     if cfg!(windows) {
         if let Some(bun) = find_bun() {
-            return Ok((
-                bun,
-                vec!["x".into(), CODEX_ACP_PACKAGE.into()],
-            ));
+            return Ok((bun, vec!["x".into(), CODEX_ACP_PACKAGE.into()]));
         }
     }
     if let Some(bunx) = find_bunx() {
@@ -317,12 +312,13 @@ fn augment_spawn_env(kind: AgentKind, env: &mut HashMap<String, String>) {
         env.entry("CODEX_HOME".into())
             .or_insert(home.to_string_lossy().to_string());
     }
-    env.entry("TERM".into())
-        .or_insert("xterm-256color".into());
+    env.entry("TERM".into()).or_insert("xterm-256color".into());
 
-    if let Some(codex_path) = env.get("CODEX_PATH").cloned().or_else(|| {
-        find_codex().map(|path| path.to_string_lossy().to_string())
-    }) {
+    if let Some(codex_path) = env
+        .get("CODEX_PATH")
+        .cloned()
+        .or_else(|| find_codex().map(|path| path.to_string_lossy().to_string()))
+    {
         if let Some(bin) = PathBuf::from(&codex_path).parent() {
             prepend_path_dir(env, bin);
         }
@@ -357,7 +353,11 @@ fn augment_spawn_env(kind: AgentKind, env: &mut HashMap<String, String>) {
 fn prepend_path_dir(env: &mut HashMap<String, String>, dir: &Path) {
     let path_key = if cfg!(windows) { "Path" } else { "PATH" };
     let mut merged = vec![dir.to_path_buf()];
-    if let Some(existing) = env.get(path_key).cloned().or_else(|| std::env::var(path_key).ok()) {
+    if let Some(existing) = env
+        .get(path_key)
+        .cloned()
+        .or_else(|| std::env::var(path_key).ok())
+    {
         merged.extend(std::env::split_paths(&existing));
     }
     if let Ok(joined) = std::env::join_paths(merged) {

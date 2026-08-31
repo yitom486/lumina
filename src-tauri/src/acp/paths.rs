@@ -6,11 +6,13 @@ use std::process::Command;
 use crate::acp::discover::{codex_config_present, find_acp_adapter, find_bunx, find_codex};
 use crate::acp::error::AcpError;
 use crate::acp::model::AcpStatus;
-use crate::acp::profile::{
-    default_profiles_hint, install_hint, prepare_profiles, list_status, AgentKind,
-    RESPONSES_ONLY_NOTE,
-};
 use crate::acp::model::AgentProfilesHint;
+use crate::acp::profile::{
+    install_hint, list_status, prepare_profiles, AgentKind, RESPONSES_ONLY_NOTE,
+};
+
+#[cfg(test)]
+use crate::acp::profile::default_profiles_hint;
 
 /// Resolve an absolute session `cwd` for ACP.
 ///
@@ -43,9 +45,8 @@ pub fn resolve_session_cwd(hint: Option<&str>) -> Result<PathBuf, AcpError> {
         return Err(AcpError::bad_request("工作目录必须是绝对路径"));
     }
 
-    let cwd = std::env::current_dir().map_err(|error| {
-        AcpError::internal(Some(&format!("current_dir failed: {error}")))
-    })?;
+    let cwd = std::env::current_dir()
+        .map_err(|error| AcpError::internal(Some(&format!("current_dir failed: {error}"))))?;
     Ok(normalize_abs(cwd))
 }
 
@@ -192,7 +193,13 @@ mod tests {
         let tmp = std::env::temp_dir().join("lumina-acp-cwd-file.mp4");
         let _ = std::fs::write(&tmp, b"x");
         let cwd = resolve_session_cwd(Some(tmp.to_str().expect("utf8"))).expect("cwd");
-        assert_eq!(cwd, tmp.parent().expect("parent").canonicalize().unwrap_or_else(|_| tmp.parent().unwrap().to_path_buf()));
+        assert_eq!(
+            cwd,
+            tmp.parent()
+                .expect("parent")
+                .canonicalize()
+                .unwrap_or_else(|_| tmp.parent().unwrap().to_path_buf())
+        );
         let _ = std::fs::remove_file(&tmp);
     }
 }

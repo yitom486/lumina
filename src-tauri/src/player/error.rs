@@ -28,11 +28,7 @@ pub struct PlayerError {
 }
 
 impl PlayerError {
-    pub fn new(
-        code: PlayerErrorCode,
-        message: impl Into<String>,
-        details: Option<String>,
-    ) -> Self {
+    pub fn new(code: PlayerErrorCode, message: impl Into<String>, details: Option<String>) -> Self {
         Self {
             code,
             message: message.into(),
@@ -109,7 +105,12 @@ impl fmt::Display for PlayerError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match &self.details {
             Some(details) => {
-                write!(f, "{}: {} ({details})", format_code(self.code), self.message)
+                write!(
+                    f,
+                    "{}: {} ({details})",
+                    format_code(self.code),
+                    self.message
+                )
             }
             None => write!(f, "{}: {}", format_code(self.code), self.message),
         }
@@ -160,7 +161,10 @@ mod tests {
     #[test]
     fn user_messages_are_chinese() {
         let err = PlayerError::backend_missing();
-        assert!(err.message.chars().any(|c| ('\u{4e00}'..='\u{9fff}').contains(&c)));
+        assert!(err
+            .message
+            .chars()
+            .any(|c| ('\u{4e00}'..='\u{9fff}').contains(&c)));
         assert_eq!(err.code, PlayerErrorCode::InternalError);
         assert_eq!(err.message, "内部错误，请重试");
 
@@ -174,7 +178,10 @@ mod tests {
         for op in ["open", "pause", "stop", "seek"] {
             let err = PlayerError::invalid_state(op, PlayerState::Idle);
             assert_eq!(err.code, PlayerErrorCode::InvalidState);
-            assert!(err.message.chars().any(|c| ('\u{4e00}'..='\u{9fff}').contains(&c)));
+            assert!(err
+                .message
+                .chars()
+                .any(|c| ('\u{4e00}'..='\u{9fff}').contains(&c)));
         }
     }
 

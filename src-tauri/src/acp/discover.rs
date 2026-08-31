@@ -60,21 +60,15 @@ pub fn find_codex() -> Option<PathBuf> {
         return Some(path);
     }
 
-    for candidate in codex_fallback_candidates() {
-        if candidate.is_file() {
-            return Some(candidate);
-        }
-    }
-
-    None
+    codex_fallback_candidates()
+        .into_iter()
+        .find(|candidate| candidate.is_file())
 }
 
 /// Whether `~/.codex/config.toml` (or auth) exists — Codex reads this at runtime.
 pub fn codex_config_present() -> bool {
     codex_home_dir()
-        .map(|home| {
-            home.join("config.toml").is_file() || home.join("auth.json").is_file()
-        })
+        .map(|home| home.join("config.toml").is_file() || home.join("auth.json").is_file())
         .unwrap_or(false)
 }
 

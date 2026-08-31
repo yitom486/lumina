@@ -15,16 +15,21 @@ use serde_json::Value;
 use crate::acp::context::{self, VideoPromptContext};
 use crate::acp::error::AcpError;
 use crate::acp::host::AcpHost;
-use crate::acp::model::{AcpEvent, AcpStatus, AgentProfilesHint, PermissionOption, SavedSessionHint};
+use crate::acp::model::{
+    AcpEvent, AcpStatus, AgentProfilesHint, PermissionOption, SavedSessionHint,
+};
 use crate::acp::paths::{resolve_session_cwd, status_from_profiles};
-use crate::acp::profile::{prepare_profiles, resolve_active_profile, resolve_launch, AgentKind, PreparedProfiles};
+use crate::acp::profile::{
+    prepare_profiles, resolve_active_profile, resolve_launch, AgentKind, PreparedProfiles,
+};
 use crate::acp::protocol::{
-    authenticate_params, classify_inbound, encode_line, extract_agent_text, extract_plan_summary,
-    extract_permission_options, extract_thought_text, extract_tool_call, initialize_params,
-    is_error_response, notification, parse_initialize_result, parse_session_id, parse_stop_reason,
-    permission_auto_result, permission_cancelled_result, permission_selected_result, request,
-    session_cancel_params, session_close_params,     session_new_params, session_resume_params,
-    success_response, pick_auth_method, Inbound, InitializeResult,
+    authenticate_params, classify_inbound, encode_line, extract_agent_text,
+    extract_permission_options, extract_plan_summary, extract_thought_text, extract_tool_call,
+    initialize_params, is_error_response, notification, parse_initialize_result, parse_session_id,
+    parse_stop_reason, permission_auto_result, permission_cancelled_result,
+    permission_selected_result, pick_auth_method, request, session_cancel_params,
+    session_close_params, session_new_params, session_resume_params, success_response, Inbound,
+    InitializeResult,
 };
 use crate::acp::settings::{AcpClientSettings, PermissionMode};
 
@@ -81,11 +86,7 @@ impl AcpService {
     pub fn status(&self, profiles: &AgentProfilesHint) -> AcpStatus {
         let mut status = status_from_profiles(profiles);
         status.busy = self.busy.load(Ordering::SeqCst);
-        status.session_active = self
-            .session
-            .lock()
-            .map(|g| g.is_some())
-            .unwrap_or(false);
+        status.session_active = self.session.lock().map(|g| g.is_some()).unwrap_or(false);
         status
     }
 
@@ -192,6 +193,8 @@ impl AcpService {
         self.host.release_all();
     }
 
+    // This public boundary mirrors the explicit ACP/Tauri request fields.
+    #[allow(clippy::too_many_arguments)]
     pub fn prompt<F>(
         &self,
         text: impl AsRef<str>,
@@ -255,6 +258,8 @@ impl AcpService {
         outcome.map(|(text, _)| text)
     }
 
+    // Kept explicit so session lifecycle fields remain visible at the protocol boundary.
+    #[allow(clippy::too_many_arguments)]
     fn run_prompt_inner(
         &self,
         prompt_text: &str,
@@ -362,7 +367,6 @@ impl AcpService {
                 &self.host,
                 &mut on_event_collect,
             )? {
-                ReadOne::TimedOut => continue,
                 ReadOne::Eof => {
                     let _ = guard.take();
                     if self.cancel.load(Ordering::SeqCst) {
@@ -376,8 +380,7 @@ impl AcpService {
                         return Err(AcpError::protocol(Some(&msg)));
                     }
                     let stop = parse_stop_reason(&value);
-                    if stop.as_deref() == Some("cancelled") || self.cancel.load(Ordering::SeqCst)
-                    {
+                    if stop.as_deref() == Some("cancelled") || self.cancel.load(Ordering::SeqCst) {
                         return Err(AcpError::cancelled());
                     }
                     if collected.is_empty() {
@@ -723,9 +726,7 @@ impl AcpService {
             *guard = Some(tx);
         }
 
-        let selected = rx
-            .recv_timeout(Duration::from_secs(120))
-            .unwrap_or(None);
+        let selected = rx.recv_timeout(Duration::from_secs(120)).unwrap_or(None);
         let _ = self.permission_replies.lock().map(|mut g| {
             g.take();
         });
@@ -777,20 +778,19 @@ impl AcpService {
             tracing::warn!(%error, method, "ACP notification write failed");
             AcpError::protocol(Some(&format!("write ACP notification: {error}")))
         })?;
-        stdin.flush().map_err(|error| {
-            AcpError::protocol(Some(&format!("flush ACP stdin: {error}")))
-        })?;
+        stdin
+            .flush()
+            .map_err(|error| AcpError::protocol(Some(&format!("flush ACP stdin: {error}"))))?;
         Ok(())
     }
 
     fn write_raw(stdin: &mut ChildStdin, value: &Value) -> Result<(), AcpError> {
         let line = encode_line(value)?;
-        writeln!(stdin, "{line}").map_err(|error| {
-            AcpError::protocol(Some(&format!("write ACP response: {error}")))
-        })?;
-        stdin.flush().map_err(|error| {
-            AcpError::protocol(Some(&format!("flush ACP stdin: {error}")))
-        })?;
+        writeln!(stdin, "{line}")
+            .map_err(|error| AcpError::protocol(Some(&format!("write ACP response: {error}"))))?;
+        stdin
+            .flush()
+            .map_err(|error| AcpError::protocol(Some(&format!("flush ACP stdin: {error}"))))?;
         Ok(())
     }
 
@@ -899,7 +899,6 @@ impl AcpService {
                 host,
                 on_event,
             )? {
-                ReadOne::TimedOut => continue,
                 ReadOne::Eof => return Err(AcpError::protocol(Some("EOF on stdout"))),
                 ReadOne::Response { id, value } if id == target_id => {
                     if let Some(msg) = is_error_response(&value) {
@@ -915,12 +914,11 @@ impl AcpService {
     fn read_one(
         &self,
         session: &mut LiveSession,
-        wait: Duration,
+        _wait: Duration,
         cancel: &AtomicBool,
         host: &AcpHost,
         on_event: &mut dyn FnMut(AcpEvent),
     ) -> Result<ReadOne, AcpError> {
-        let _ = wait;
         let mut line_buf = String::new();
         loop {
             line_buf.clear();
@@ -958,7 +956,6 @@ impl AcpService {
 }
 
 enum ReadOne {
-    TimedOut,
     Eof,
     Response { id: u64, value: Value },
 }

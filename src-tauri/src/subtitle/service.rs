@@ -24,7 +24,11 @@ impl SubtitleService {
 
         match MediaInspector::inspect(path) {
             Ok(info) => {
-                for stream in info.streams.iter().filter(|s| s.kind == StreamKind::Subtitle) {
+                for stream in info
+                    .streams
+                    .iter()
+                    .filter(|s| s.kind == StreamKind::Subtitle)
+                {
                     let supported = !is_bitmap_codec(stream.codec_name.as_deref());
                     let lang = stream.language.as_deref().unwrap_or("und");
                     let codec = stream.codec_name.as_deref().unwrap_or("sub");
@@ -87,14 +91,9 @@ impl SubtitleService {
         let media_path = media_path.as_ref();
         let choice_id = choice_id.as_ref();
         let choices = Self::list_choices(media_path)?;
-        let choice = choices
-            .iter()
-            .find(|c| c.id == choice_id)
-            .ok_or_else(|| {
-                SubtitleError::extract_failed(Some(&format!(
-                    "subtitle choice not found: {choice_id}"
-                )))
-            })?;
+        let choice = choices.iter().find(|c| c.id == choice_id).ok_or_else(|| {
+            SubtitleError::extract_failed(Some(&format!("subtitle choice not found: {choice_id}")))
+        })?;
 
         if !choice.supported {
             return Err(SubtitleError::unsupported(
@@ -176,9 +175,7 @@ fn discover_sidecars(media_path: &Path) -> Vec<PathBuf> {
         let file_stem_lower = file_stem.to_ascii_lowercase();
         // Exact: video.srt
         // Prefixed: video.en.srt / video.zh-CN.ass
-        if file_stem_lower == stem_lower
-            || file_stem_lower.starts_with(&format!("{stem_lower}."))
-        {
+        if file_stem_lower == stem_lower || file_stem_lower.starts_with(&format!("{stem_lower}.")) {
             found.push(path);
         }
     }

@@ -131,7 +131,11 @@ impl LibMpvPlayer {
 
         // Fallback: Nth subtitle track (0-based among sub tracks → mpv sid).
         if let Some(sid) = find_sid_by_subtitle_ordinal(&self.mpv, ff_stream_index)? {
-            tracing::info!(sid, ff_stream_index, "matched mpv sid via subtitle ordinal fallback");
+            tracing::info!(
+                sid,
+                ff_stream_index,
+                "matched mpv sid via subtitle ordinal fallback"
+            );
             return self
                 .mpv
                 .set_property("sid", sid)
@@ -173,7 +177,11 @@ impl LibMpvPlayer {
                 .map_err(map_playback_error);
         }
         if let Some(aid) = find_aid_by_audio_ordinal(&self.mpv, ff_stream_index)? {
-            tracing::info!(aid, ff_stream_index, "matched mpv aid via audio ordinal fallback");
+            tracing::info!(
+                aid,
+                ff_stream_index,
+                "matched mpv aid via audio ordinal fallback"
+            );
             return self
                 .mpv
                 .set_property("aid", aid)
@@ -198,7 +206,8 @@ fn set_sub_visibility(mpv: &Mpv, visible: bool) -> Result<(), PlayerError> {
 }
 
 fn track_list_count(mpv: &Mpv) -> Result<i64, PlayerError> {
-    mpv.get_property("track-list/count").map_err(map_playback_error)
+    mpv.get_property("track-list/count")
+        .map_err(map_playback_error)
 }
 
 fn find_sid_by_ff_index(mpv: &Mpv, ff_stream_index: i64) -> Result<Option<i64>, PlayerError> {
@@ -235,10 +244,7 @@ fn find_track_id_by_ff_index(
     Ok(None)
 }
 
-fn find_aid_by_audio_ordinal(
-    mpv: &Mpv,
-    ff_stream_index: i64,
-) -> Result<Option<i64>, PlayerError> {
+fn find_aid_by_audio_ordinal(mpv: &Mpv, ff_stream_index: i64) -> Result<Option<i64>, PlayerError> {
     let count = track_list_count(mpv)?;
     let mut aids: Vec<i64> = Vec::new();
     for i in 0..count {
@@ -345,11 +351,7 @@ fn map_playback_error(error: libmpv2::Error) -> PlayerError {
     } else {
         "播放操作失败，请重试"
     };
-    PlayerError::new(
-        PlayerErrorCode::PlaybackError,
-        message,
-        Some(details),
-    )
+    PlayerError::new(PlayerErrorCode::PlaybackError, message, Some(details))
 }
 
 #[cfg(test)]
@@ -365,7 +367,9 @@ mod tests {
         // Construct via Display-like string path used in production mapping.
         let err = super::map_playback_error(libmpv2::Error::Raw(1));
         assert!(
-            err.message.chars().any(|c| ('\u{4e00}'..='\u{9fff}').contains(&c)),
+            err.message
+                .chars()
+                .any(|c| ('\u{4e00}'..='\u{9fff}').contains(&c)),
             "message should be Chinese: {}",
             err.message
         );

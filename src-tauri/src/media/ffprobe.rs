@@ -266,17 +266,17 @@ mod tests {
     #[test]
     fn resolve_finds_project_ffprobe() {
         let path = resolve_ffprobe();
-        assert!(
-            path.is_ok(),
-            "expected native/ffmpeg/ffprobe.exe: {path:?}"
-        );
+        assert!(path.is_ok(), "expected native/ffmpeg/ffprobe.exe: {path:?}");
     }
 
     #[test]
     fn missing_file_is_chinese_not_found() {
         let err = probe_file(Path::new("Z:\\lumina-missing-media-xyz.mp4")).expect_err("missing");
         assert_eq!(err.code, crate::media::error::MediaErrorCode::FileNotFound);
-        assert!(err.message.chars().any(|c| ('\u{4e00}'..='\u{9fff}').contains(&c)));
+        assert!(err
+            .message
+            .chars()
+            .any(|c| ('\u{4e00}'..='\u{9fff}').contains(&c)));
     }
 
     #[test]

@@ -24,11 +24,7 @@ pub struct NoteError {
 }
 
 impl NoteError {
-    pub fn new(
-        code: NoteErrorCode,
-        message: impl Into<String>,
-        details: Option<String>,
-    ) -> Self {
+    pub fn new(code: NoteErrorCode, message: impl Into<String>, details: Option<String>) -> Self {
         Self {
             code,
             message: message.into(),
@@ -92,6 +88,9 @@ mod tests {
         assert!(NoteError::invalid("笔记内容不能为空")
             .message
             .contains("空"));
-        assert_eq!(NoteError::internal(Some("lock")).message, "内部错误，请重试");
+        assert_eq!(
+            NoteError::internal(Some("lock")).message,
+            "内部错误，请重试"
+        );
     }
 }

@@ -36,10 +36,7 @@ impl PlayerService {
         match LibMpvPlayer::initialize_with_wid(wid) {
             Ok(backend) => {
                 self.backend = Some(backend);
-                if matches!(
-                    self.snapshot.status,
-                    PlayerState::Error | PlayerState::Idle
-                ) {
+                if matches!(self.snapshot.status, PlayerState::Error | PlayerState::Idle) {
                     self.snapshot.status = PlayerState::Idle;
                     self.snapshot.error = None;
                 }
@@ -79,7 +76,10 @@ impl PlayerService {
         self.snapshot.duration_ms
     }
 
-    pub fn open(&mut self, path: String) -> Result<(PlayerSnapshot, Vec<PlayerEvent>), PlayerError> {
+    pub fn open(
+        &mut self,
+        path: String,
+    ) -> Result<(PlayerSnapshot, Vec<PlayerEvent>), PlayerError> {
         if self.snapshot.status == PlayerState::Loading {
             return Err(PlayerError::invalid_state("open", self.snapshot.status));
         }
@@ -100,10 +100,7 @@ impl PlayerService {
         // Replace previous file on the same mpv instance — no second backend.
         if matches!(
             self.snapshot.status,
-            PlayerState::Ready
-                | PlayerState::Playing
-                | PlayerState::Paused
-                | PlayerState::Ended
+            PlayerState::Ready | PlayerState::Playing | PlayerState::Paused | PlayerState::Ended
         ) {
             if let Some(backend) = self.backend.as_ref() {
                 if let Err(error) = backend.stop() {
@@ -234,7 +231,10 @@ impl PlayerService {
         ))
     }
 
-    pub fn seek(&mut self, position_ms: u64) -> Result<(PlayerSnapshot, Vec<PlayerEvent>), PlayerError> {
+    pub fn seek(
+        &mut self,
+        position_ms: u64,
+    ) -> Result<(PlayerSnapshot, Vec<PlayerEvent>), PlayerError> {
         self.require(
             &[
                 PlayerState::Ready,
@@ -419,16 +419,19 @@ fn validate_media_path(path: &str) -> Result<(), PlayerError> {
         return Err(PlayerError::load(Some("empty media path")));
     }
 
-    let meta = std::fs::metadata(trimmed).map_err(|error| {
-        PlayerError::load(Some(&format!("path not accessible: {error}")))
-    })?;
+    let meta = std::fs::metadata(trimmed)
+        .map_err(|error| PlayerError::load(Some(&format!("path not accessible: {error}"))))?;
 
     if !meta.is_file() {
-        return Err(PlayerError::load(Some(&format!("not a regular file: {trimmed}"))));
+        return Err(PlayerError::load(Some(&format!(
+            "not a regular file: {trimmed}"
+        ))));
     }
 
     if meta.len() == 0 {
-        return Err(PlayerError::unsupported(Some(&format!("empty file: {trimmed}"))));
+        return Err(PlayerError::unsupported(Some(&format!(
+            "empty file: {trimmed}"
+        ))));
     }
 
     Ok(())
@@ -462,7 +465,10 @@ mod tests {
             .open(r"C:\video.mp4".into())
             .expect_err("missing path");
         assert_eq!(err.code, PlayerErrorCode::LoadError);
-        assert!(err.message.chars().any(|c| ('\u{4e00}'..='\u{9fff}').contains(&c)));
+        assert!(err
+            .message
+            .chars()
+            .any(|c| ('\u{4e00}'..='\u{9fff}').contains(&c)));
         assert_eq!(player.get_state(), PlayerState::Error);
         assert_eq!(
             player.snapshot().current_file.as_deref(),
@@ -484,7 +490,10 @@ mod tests {
         assert_eq!(err.code, PlayerErrorCode::InternalError);
         assert_eq!(err.message, "内部错误，请重试");
         assert_eq!(player.get_state(), PlayerState::Error);
-        assert_eq!(player.snapshot().current_file.as_deref(), Some(path_str.as_str()));
+        assert_eq!(
+            player.snapshot().current_file.as_deref(),
+            Some(path_str.as_str())
+        );
     }
 
     #[test]
@@ -502,11 +511,17 @@ mod tests {
         let mut player = PlayerService::new();
         let vol_err = player.set_volume(101.0).expect_err("over max");
         assert_eq!(vol_err.code, PlayerErrorCode::PlaybackError);
-        assert!(vol_err.details.as_deref().is_some_and(|d| d.contains("volume")));
+        assert!(vol_err
+            .details
+            .as_deref()
+            .is_some_and(|d| d.contains("volume")));
         assert!(player.set_volume(40.0).is_ok());
         let rate_err = player.set_rate(0.1).expect_err("under min");
         assert_eq!(rate_err.code, PlayerErrorCode::PlaybackError);
-        assert!(rate_err.details.as_deref().is_some_and(|d| d.contains("rate")));
+        assert!(rate_err
+            .details
+            .as_deref()
+            .is_some_and(|d| d.contains("rate")));
         assert!(player.set_rate(1.25).is_ok());
         assert_eq!(player.snapshot().volume, 40.0);
         assert_eq!(player.snapshot().rate, 1.25);
@@ -515,9 +530,18 @@ mod tests {
     #[test]
     fn pause_stop_seek_from_idle_are_invalid() {
         let mut player = PlayerService::new();
-        assert_eq!(player.pause().unwrap_err().code, PlayerErrorCode::InvalidState);
-        assert_eq!(player.stop().unwrap_err().code, PlayerErrorCode::InvalidState);
-        assert_eq!(player.seek(1000).unwrap_err().code, PlayerErrorCode::InvalidState);
+        assert_eq!(
+            player.pause().unwrap_err().code,
+            PlayerErrorCode::InvalidState
+        );
+        assert_eq!(
+            player.stop().unwrap_err().code,
+            PlayerErrorCode::InvalidState
+        );
+        assert_eq!(
+            player.seek(1000).unwrap_err().code,
+            PlayerErrorCode::InvalidState
+        );
     }
 
     #[test]

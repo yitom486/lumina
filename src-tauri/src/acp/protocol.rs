@@ -87,7 +87,7 @@ pub fn authenticate_params(method_id: &str) -> Value {
 }
 
 /// Pick an auth method compatible with local Codex setup (ChatGPT login vs API key).
-pub fn pick_auth_method<'a>(init: &'a InitializeResult) -> Option<&'a AuthMethod> {
+pub fn pick_auth_method(init: &InitializeResult) -> Option<&AuthMethod> {
     if init.auth_methods.is_empty() {
         return None;
     }
@@ -142,7 +142,12 @@ pub fn parse_initialize_result(value: &Value) -> InitializeResult {
     let protocol_version = result
         .get("protocolVersion")
         .and_then(Value::as_u64)
-        .or_else(|| result.get("protocolVersion").and_then(Value::as_i64).map(|v| v as u64));
+        .or_else(|| {
+            result
+                .get("protocolVersion")
+                .and_then(Value::as_i64)
+                .map(|v| v as u64)
+        });
 
     let agent_name = result
         .pointer("/agentInfo/name")
@@ -170,13 +175,12 @@ pub fn parse_initialize_result(value: &Value) -> InitializeResult {
     }
 
     // Spec: advertising `sessionCapabilities.close` as `{}` (or true) means supported.
-    let supports_session_close = capability_present(result, "/agentCapabilities/sessionCapabilities/close")
-        || capability_present(result, "/agentCapabilities/session/close");
+    let supports_session_close =
+        capability_present(result, "/agentCapabilities/sessionCapabilities/close")
+            || capability_present(result, "/agentCapabilities/session/close");
 
-    let supports_session_resume = capability_present(
-        result,
-        "/agentCapabilities/sessionCapabilities/resume",
-    );
+    let supports_session_resume =
+        capability_present(result, "/agentCapabilities/sessionCapabilities/resume");
 
     let load_session = result
         .pointer("/agentCapabilities/loadSession")
@@ -227,7 +231,10 @@ pub fn is_error_response(value: &Value) -> Option<String> {
 #[derive(Debug)]
 pub enum Inbound {
     /// JSON-RPC response to our request (`id` present, no `method`).
-    Response { id: u64, value: Value },
+    Response {
+        id: u64,
+        value: Value,
+    },
     /// Agent→Client request (`method` + `id`).
     AgentRequest {
         id: Value,
@@ -235,7 +242,10 @@ pub enum Inbound {
         params: Value,
     },
     /// Notification (`method`, no `id`).
-    Notification { method: String, params: Value },
+    Notification {
+        method: String,
+        params: Value,
+    },
     Other(Value),
 }
 
@@ -257,11 +267,11 @@ pub fn classify_inbound(value: Value) -> Inbound {
             params: value.get("params").cloned().unwrap_or(json!({})),
         },
         (None, Some(id)) => {
-            let id_u = id.as_u64().or_else(|| id.as_i64().map(|v| v as u64)).unwrap_or(0);
-            Inbound::Response {
-                id: id_u,
-                value,
-            }
+            let id_u = id
+                .as_u64()
+                .or_else(|| id.as_i64().map(|v| v as u64))
+                .unwrap_or(0);
+            Inbound::Response { id: id_u, value }
         }
         _ => Inbound::Other(value),
     }
@@ -501,7 +511,10 @@ mod tests {
     fn cancel_notification_shape() {
         let n = notification("session/cancel", session_cancel_params("s1"));
         assert!(n.get("id").is_none());
-        assert_eq!(n.get("method").and_then(Value::as_str), Some("session/cancel"));
+        assert_eq!(
+            n.get("method").and_then(Value::as_str),
+            Some("session/cancel")
+        );
     }
 
     #[test]

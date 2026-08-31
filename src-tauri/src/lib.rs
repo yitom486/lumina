@@ -1,11 +1,11 @@
-mod commands;
 pub mod acp;
 pub mod asr;
+mod commands;
 pub mod media;
 pub mod notes;
 pub mod player;
-pub mod subtitle;
 mod state;
+pub mod subtitle;
 
 pub use acp::{
     AcpClientSettings, AcpError, AcpErrorCode, AcpEvent, AcpService, AcpStatus, AgentKind,
@@ -35,8 +35,8 @@ use commands::notes::{
 };
 use commands::player::{
     player_get_state, player_open, player_pause, player_play, player_seek, player_set_audio,
-    player_set_rate, player_set_subtitle, player_set_surface_bounds, player_set_volume, player_stop,
-    player_subscribe,
+    player_set_rate, player_set_subtitle, player_set_surface_bounds, player_set_volume,
+    player_stop, player_subscribe,
 };
 use commands::subtitle::{subtitle_list_choices, subtitle_load_choice};
 use player::mpv::window::{hwnd_from_webview_window, register_surface_app, VideoSurface};

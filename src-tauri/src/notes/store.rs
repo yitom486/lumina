@@ -26,13 +26,16 @@ fn dirs_next_data() -> Option<PathBuf> {
     }
     #[cfg(target_os = "macos")]
     {
-        std::env::var_os("HOME").map(|h| PathBuf::from(h).join("Library").join("Application Support"))
+        std::env::var_os("HOME")
+            .map(|h| PathBuf::from(h).join("Library").join("Application Support"))
     }
     #[cfg(all(unix, not(target_os = "macos")))]
     {
         std::env::var_os("XDG_DATA_HOME")
             .map(PathBuf::from)
-            .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local").join("share")))
+            .or_else(|| {
+                std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local").join("share"))
+            })
     }
 }
 
@@ -64,9 +67,8 @@ pub fn save(path: &Path, notes: &[Note]) -> Result<(), NoteError> {
     let payload = NotesFile {
         notes: notes.to_vec(),
     };
-    let raw = serde_json::to_string_pretty(&payload).map_err(|error| {
-        NoteError::internal(Some(&format!("serialize notes: {error}")))
-    })?;
+    let raw = serde_json::to_string_pretty(&payload)
+        .map_err(|error| NoteError::internal(Some(&format!("serialize notes: {error}"))))?;
     fs::write(path, raw).map_err(|error| {
         tracing::warn!(%error, "failed to write notes file");
         NoteError::io(Some(&format!("write notes file: {error}")))

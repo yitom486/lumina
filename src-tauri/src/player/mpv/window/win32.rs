@@ -15,8 +15,8 @@ use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, DestroyWindow, LoadCursorW, MoveWindow, RegisterClassW,
     SetWindowPos, ShowWindow, CS_DBLCLKS, CS_HREDRAW, CS_OWNDC, CS_VREDRAW, HWND_TOP, IDC_ARROW,
-    SWP_NOACTIVATE, SWP_SHOWWINDOW, SW_HIDE, WM_DESTROY, WM_LBUTTONDBLCLK, WM_LBUTTONUP,
-    WNDCLASSW, WS_CHILD, WS_CLIPSIBLINGS,
+    SWP_NOACTIVATE, SWP_SHOWWINDOW, SW_HIDE, WM_DESTROY, WM_LBUTTONDBLCLK, WM_LBUTTONUP, WNDCLASSW,
+    WS_CHILD, WS_CLIPSIBLINGS,
 };
 
 use crate::player::error::{PlayerError, PlayerErrorCode};
@@ -126,10 +126,7 @@ impl VideoSurface {
 
         unsafe {
             MoveWindow(hwnd, x, y, width, height, true).map_err(|error| {
-                native_error(
-                    "无法调整视频窗口位置",
-                    Some(format!("MoveWindow: {error}")),
-                )
+                native_error("无法调整视频窗口位置", Some(format!("MoveWindow: {error}")))
             })?;
             SetWindowPos(
                 hwnd,
@@ -170,12 +167,9 @@ unsafe impl Send for VideoSurface {}
 unsafe impl Sync for VideoSurface {}
 
 pub fn hwnd_from_webview_window(window: &WebviewWindow) -> Result<isize, PlayerError> {
-    let handle = window.window_handle().map_err(|error| {
-        native_error(
-            "无法获取窗口句柄",
-            Some(error.to_string()),
-        )
-    })?;
+    let handle = window
+        .window_handle()
+        .map_err(|error| native_error("无法获取窗口句柄", Some(error.to_string())))?;
 
     match handle.as_raw() {
         RawWindowHandle::Win32(win32) => Ok(win32.hwnd.get()),
@@ -202,10 +196,7 @@ fn ensure_window_class() -> Result<(), PlayerError> {
 
     let cursor = unsafe {
         LoadCursorW(None, IDC_ARROW).map_err(|error| {
-            native_error(
-                "无法加载鼠标光标",
-                Some(format!("LoadCursorW: {error}")),
-            )
+            native_error("无法加载鼠标光标", Some(format!("LoadCursorW: {error}")))
         })?
     };
 

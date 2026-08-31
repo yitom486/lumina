@@ -21,9 +21,9 @@ pub fn parse_subtitle_text(content: &str) -> Result<Vec<Cue>, SubtitleError> {
 }
 
 fn looks_like_vtt(content: &str) -> bool {
-    content.lines().any(|line| {
-        line.contains("-->") && line.contains('.') && !line.contains(',')
-    })
+    content
+        .lines()
+        .any(|line| line.contains("-->") && line.contains('.') && !line.contains(','))
 }
 
 pub fn parse_srt(content: &str) -> Result<Vec<Cue>, SubtitleError> {
@@ -51,9 +51,7 @@ pub fn parse_srt(content: &str) -> Result<Vec<Cue>, SubtitleError> {
     }
 
     if cues.is_empty() {
-        return Err(SubtitleError::parse_failed(Some(
-            "no valid SRT cues found",
-        )));
+        return Err(SubtitleError::parse_failed(Some("no valid SRT cues found")));
     }
 
     renumber(cues)
@@ -77,13 +75,11 @@ fn parse_srt_block(lines: &[&str]) -> Result<Option<Cue>, SubtitleError> {
     let Some((start_raw, end_raw)) = timing.split_once("-->") else {
         return Ok(None);
     };
-    let start_ms = parse_srt_time(start_raw.trim()).ok_or_else(|| {
-        SubtitleError::parse_failed(Some(start_raw.trim()))
-    })?;
+    let start_ms = parse_srt_time(start_raw.trim())
+        .ok_or_else(|| SubtitleError::parse_failed(Some(start_raw.trim())))?;
     let end_part = end_raw.split_whitespace().next().unwrap_or("");
-    let end_ms = parse_srt_time(end_part).ok_or_else(|| {
-        SubtitleError::parse_failed(Some(end_part))
-    })?;
+    let end_ms =
+        parse_srt_time(end_part).ok_or_else(|| SubtitleError::parse_failed(Some(end_part)))?;
 
     let text = lines[idx + 1..]
         .iter()
@@ -149,12 +145,10 @@ pub fn parse_vtt(content: &str) -> Result<Vec<Cue>, SubtitleError> {
             continue;
         };
         let end_raw = rest.split_whitespace().next().unwrap_or("");
-        let start_ms = parse_vtt_time(start_raw.trim()).ok_or_else(|| {
-            SubtitleError::parse_failed(Some(start_raw.trim()))
-        })?;
-        let end_ms = parse_vtt_time(end_raw).ok_or_else(|| {
-            SubtitleError::parse_failed(Some(end_raw))
-        })?;
+        let start_ms = parse_vtt_time(start_raw.trim())
+            .ok_or_else(|| SubtitleError::parse_failed(Some(start_raw.trim())))?;
+        let end_ms =
+            parse_vtt_time(end_raw).ok_or_else(|| SubtitleError::parse_failed(Some(end_raw)))?;
 
         let mut text_lines = Vec::new();
         while let Some(next) = lines.peek() {
@@ -230,12 +224,10 @@ pub fn parse_ass(content: &str) -> Result<Vec<Cue>, SubtitleError> {
         if parts.len() < 10 {
             continue;
         }
-        let start_ms = parse_ass_time(parts[1]).ok_or_else(|| {
-            SubtitleError::parse_failed(Some(parts[1]))
-        })?;
-        let end_ms = parse_ass_time(parts[2]).ok_or_else(|| {
-            SubtitleError::parse_failed(Some(parts[2]))
-        })?;
+        let start_ms =
+            parse_ass_time(parts[1]).ok_or_else(|| SubtitleError::parse_failed(Some(parts[1])))?;
+        let end_ms =
+            parse_ass_time(parts[2]).ok_or_else(|| SubtitleError::parse_failed(Some(parts[2])))?;
         let text = strip_ass_overrides(parts[9..].join(",").trim());
         if text.is_empty() {
             continue;
@@ -385,8 +377,14 @@ mod tests {
     #[test]
     fn empty_content_is_chinese_parse_error() {
         let err = parse_subtitle_text("").expect_err("empty");
-        assert_eq!(err.code, crate::subtitle::error::SubtitleErrorCode::ParseFailed);
-        assert!(err.message.chars().any(|c| ('\u{4e00}'..='\u{9fff}').contains(&c)));
+        assert_eq!(
+            err.code,
+            crate::subtitle::error::SubtitleErrorCode::ParseFailed
+        );
+        assert!(err
+            .message
+            .chars()
+            .any(|c| ('\u{4e00}'..='\u{9fff}').contains(&c)));
     }
 
     #[test]
@@ -402,6 +400,9 @@ mod tests {
     fn invalid_srt_body_is_parse_failed() {
         let err = parse_srt("not a subtitle").expect_err("bad");
         assert_eq!(err.message, "无法解析字幕");
-        assert!(err.details.as_deref().is_some_and(|d| d.contains("SRT") || d.contains("cue")));
+        assert!(err
+            .details
+            .as_deref()
+            .is_some_and(|d| d.contains("SRT") || d.contains("cue")));
     }
 }

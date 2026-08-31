@@ -25,11 +25,7 @@ pub struct AsrError {
 }
 
 impl AsrError {
-    pub fn new(
-        code: AsrErrorCode,
-        message: impl Into<String>,
-        details: Option<String>,
-    ) -> Self {
+    pub fn new(code: AsrErrorCode, message: impl Into<String>, details: Option<String>) -> Self {
         Self {
             code,
             message: message.into(),

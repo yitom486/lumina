@@ -114,9 +114,7 @@ impl From<crate::media::MediaError> for SubtitleError {
         let details = value.details.as_deref();
         match value.code {
             MediaErrorCode::ProbeNotFound => Self::tool_not_found(details),
-            MediaErrorCode::FileNotFound => {
-                Self::file_not_found(details.unwrap_or("unknown path"))
-            }
+            MediaErrorCode::FileNotFound => Self::file_not_found(details.unwrap_or("unknown path")),
             MediaErrorCode::InvalidMedia => Self::unsupported(details),
             _ => Self::extract_failed(details),
         }
@@ -134,13 +132,18 @@ mod tests {
     #[test]
     fn constructors_use_chinese_business_messages() {
         assert!(has_cjk(&SubtitleError::tool_not_found(None).message));
-        assert!(!SubtitleError::tool_not_found(None).message.contains("ffmpeg"));
+        assert!(!SubtitleError::tool_not_found(None)
+            .message
+            .contains("ffmpeg"));
         assert!(has_cjk(&SubtitleError::file_not_found("x").message));
         assert!(has_cjk(&SubtitleError::no_track().message));
         let extract = SubtitleError::extract_failed(Some("ffmpeg spawn failed"));
         assert_eq!(extract.message, "无法提取字幕");
         assert_eq!(extract.details.as_deref(), Some("ffmpeg spawn failed"));
-        assert_eq!(SubtitleError::no_track().code, SubtitleErrorCode::NoSubtitleTrack);
+        assert_eq!(
+            SubtitleError::no_track().code,
+            SubtitleErrorCode::NoSubtitleTrack
+        );
     }
 
     #[test]
