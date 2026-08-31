@@ -8,9 +8,10 @@ import { cn } from "@/lib/utils";
 import { useChatUiStore } from "../chatUiStore";
 import { AcpPanel } from "./AcpPanel";
 
-/**
- * Floating chat dock — sibling to playback/sidebar layout, not a sidebar tab.
- * Stays mounted when hidden; survives fullscreen and sidebar tab switches.
+/** Layout dock, not a WebView overlay.
+ * The libmpv HWND owns its rectangle, so chat must claim a sibling layout
+ * column instead of visually floating over video pixels. It stays mounted
+ * when hidden so an active ACP session survives close/reopen.
  */
 export function ChatDock() {
   const chatMounted = useChatUiStore((s) => s.chatMounted);
@@ -29,24 +30,17 @@ export function ChatDock() {
   if (!chatMounted) return null;
 
   return (
-    <>
-      {chatOpen ? (
-        <button
-          type="button"
-          className="fixed inset-0 z-40 bg-black/20 backdrop-blur-[1px] md:bg-black/10"
-          aria-label="关闭对话面板"
-          onClick={closeChat}
-        />
-      ) : null}
-
-      <aside
-        aria-hidden={!chatOpen}
-        className={cn(
-          "fixed inset-y-0 right-0 z-50 flex w-[min(100vw,420px)] flex-col border-l border-border bg-card shadow-2xl",
-          "transition-transform duration-200 ease-out",
-          chatOpen ? "translate-x-0" : "pointer-events-none translate-x-full",
-        )}
-      >
+    <aside
+      aria-hidden={!chatOpen}
+      className={cn(
+        "relative z-10 flex min-h-0 shrink-0 flex-col overflow-hidden bg-card",
+        "transition-[width,border-color] duration-200 ease-out",
+        chatOpen
+          ? "w-[min(100vw,420px)] border-l border-border"
+          : "w-0 pointer-events-none border-l-0",
+      )}
+    >
+      <div className="flex min-h-0 w-[min(100vw,420px)] flex-1 flex-col">
         <div className="flex h-10 shrink-0 items-center justify-between border-b border-border px-3">
           <div className="flex min-w-0 items-center gap-1.5 text-xs font-medium">
             <Sparkles className="size-3.5 shrink-0 text-amber-400/90" />
@@ -70,7 +64,7 @@ export function ChatDock() {
         >
           <AcpPanel />
         </PanelErrorBoundary>
-      </aside>
-    </>
+      </div>
+    </aside>
   );
 }

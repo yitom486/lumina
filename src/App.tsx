@@ -10,7 +10,7 @@
  *      │   │   └─ PlayerBar     ← HTML only (transport / seek / volume)
  *      │   │   (fullscreen: pt-12 top strip + hover chrome above HWND)
  *      │   └─ aside (sidebar)   ← playlist / transcript / notes / chapters only
- *      └─ ChatDock (fixed, sibling) ← ACP chat; long-lived, not inside aside
+ *      │   └─ ChatDock           ← layout sibling; never overlays the HWND
  *
  * Never put upward-opening menus on PlayerBar — HWND always paints above WebView.
  */
@@ -31,6 +31,7 @@ import {
   usePlayerHotkeys,
   useProgressPersistence,
   useUiStore,
+  useWindowFullscreenSync,
   type SidebarTab,
   VideoSurface,
 } from "@/features/player";
@@ -64,6 +65,7 @@ export default function App() {
   usePlayerEvents();
   usePlayerHotkeys();
   useProgressPersistence();
+  useWindowFullscreenSync();
 
   const fullscreen = useUiStore((s) => s.fullscreen);
   const sidebarTab = useUiStore((s) => s.sidebarTab);
@@ -85,9 +87,6 @@ export default function App() {
                 className={cn(
                   "relative flex min-h-0 min-w-0 flex-1 flex-col",
                   fullscreen && "pt-12",
-                  fullscreen &&
-                    chatOpen &&
-                    "mr-[min(100vw,420px)] transition-[margin] duration-200",
                 )}
               >
                 {fullscreen ? <FullscreenTopChrome /> : null}
@@ -96,7 +95,7 @@ export default function App() {
               </div>
             </PanelErrorBoundary>
 
-            {!fullscreen ? (
+            {!fullscreen && !chatOpen ? (
               <aside className="relative z-10 flex w-[380px] shrink-0 flex-col border-l border-border bg-card">
                 <PanelErrorBoundary
                   scope="sidebar:media"
@@ -139,9 +138,9 @@ export default function App() {
                 </PanelErrorBoundary>
               </aside>
             ) : null}
-          </div>
 
-          <ChatDock />
+            <ChatDock />
+          </div>
         </div>
       </AppShell>
     </TooltipProvider>

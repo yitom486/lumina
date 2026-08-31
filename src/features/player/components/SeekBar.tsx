@@ -3,6 +3,7 @@ import { Slider } from "@/components/ui/slider";
 import { useMediaInfoQuery } from "@/features/media";
 
 import { usePlayerStore } from "../store";
+import { ResumeChip } from "./ResumeChip";
 
 export function SeekBar() {
   const status = usePlayerStore((s) => s.status);
@@ -30,22 +31,25 @@ export function SeekBar() {
       <span className="w-11 shrink-0 tabular-nums text-xs text-muted-foreground">
         {formatTime(currentTimeMs)}
       </span>
-      <Slider
-        className="min-w-0 flex-1"
-        min={0}
-        max={Math.max(effectiveDuration, 1)}
-        step={100}
-        value={[value]}
-        disabled={!ready}
-        onValueChange={(vals) => {
-          setSeeking(true);
-          setPreviewTime(vals[0] ?? 0);
-        }}
-        onValueCommit={(vals) => {
-          void seek(vals[0] ?? 0);
-        }}
-        aria-label="进度"
-      />
+      <div className="relative min-w-0 flex-1">
+        <ResumeChip />
+        <Slider
+          className="min-w-0 w-full"
+          min={0}
+          max={Math.max(effectiveDuration, 1)}
+          step={100}
+          value={[value]}
+          disabled={!ready}
+          onValueChange={(vals) => {
+            setSeeking(true);
+            setPreviewTime(vals[0] ?? 0);
+          }}
+          onValueCommit={(vals) => {
+            void seek(vals[0] ?? 0);
+          }}
+          aria-label="进度"
+        />
+      </div>
       <span className="w-11 shrink-0 tabular-nums text-xs text-muted-foreground">
         {formatTime(effectiveDuration)}
       </span>

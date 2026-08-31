@@ -5,6 +5,7 @@ export { useUiStore, type SidebarTab } from "./uiStore";
 export { useTrackStore } from "./trackStore";
 export { usePlayerEvents } from "./hooks/usePlayerEvents";
 export { usePlayerHotkeys } from "./hooks/usePlayerHotkeys";
+export { useWindowFullscreenSync } from "./hooks/useWindowFullscreenSync";
 export { useProgressPersistence } from "./hooks/useProgressPersistence";
 export { VideoSurface } from "./components/VideoSurface";
 export { PlayerBar } from "./components/PlayerBar";

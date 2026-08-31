@@ -5,7 +5,6 @@ import { cn } from "@/lib/utils";
 
 import { usePlaybackChromeReveal } from "../hooks/usePlaybackChromeReveal";
 import { useUiStore } from "../uiStore";
-import { ResumeChip } from "./ResumeChip";
 import { SeekBar } from "./SeekBar";
 import { TrackControlButtons } from "./TrackControlButtons";
 import { TransportControls } from "./TransportControls";
@@ -74,18 +73,15 @@ export function PlayerBar() {
   }
 
   return (
-    <div className="relative z-20 flex shrink-0 flex-col gap-2 border-t border-border bg-card px-3 py-2.5">
-      <div className="flex items-center gap-3">
+    <div className="relative z-20 shrink-0 border-t border-border bg-card px-3 py-2.5">
+      <div className="grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-x-3">
         <TransportControls />
-        <div className="min-w-0 flex-1 flex-col">
-          <ResumeChip />
-          <SeekBar />
-        </div>
+        <SeekBar />
         <VolumeControl />
+        <p className="col-span-full text-[11px] text-muted-foreground">
+          空格 播放/暂停 · 单击画面 播停 · 双击全屏 · ←→ 5 秒 · ↑↓ 音量 · M 静音 · F / Esc 全屏
+        </p>
       </div>
-      <p className="text-[11px] text-muted-foreground">
-        空格 播放/暂停 · 单击画面 播停 · 双击全屏 · ←→ 5 秒 · ↑↓ 音量 · M 静音 · F / Esc 全屏
-      </p>
     </div>
   );
 }

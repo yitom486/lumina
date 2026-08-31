@@ -9,6 +9,7 @@ import {
   shouldOfferResume,
   useProgressStore,
 } from "./progressStore";
+import { planResumeToast, seekForResume } from "./resumePlayback";
 import {
   IDLE_SNAPSHOT,
   type PlayerErrorDto,
@@ -80,7 +81,7 @@ function indexOfPath(playlist: string[], path: string): number {
   );
 }
 
-/** MX Player style: seek+play immediately; show dismissible toast (no modal). */
+/** MX Player style: seek first, show chip only when position actually resumed. */
 function maybeResume(
   path: string,
   durationMs: number,
@@ -92,27 +93,40 @@ function maybeResume(
   ) => void,
 ) {
   if (get().resumeHandledForPath === path) return;
+
   const saved = useProgressStore.getState().getProgress(path);
+  set({ resumeHandledForPath: path });
+
   if (!saved || !shouldOfferResume(saved.positionMs, durationMs)) {
-    set({ resumeHandledForPath: path, resumeToast: null });
+    set({ resumeToast: null });
     return;
   }
 
-  const positionMs = saved.positionMs;
-  set({
-    resumeHandledForPath: path,
-    resumeToast: { path, positionMs },
-  });
+  const targetMs = saved.positionMs;
 
   void (async () => {
     try {
-      await get().seek(positionMs);
-      // open() already leaves the backend in Playing — only play if not.
-      if (get().status !== "Playing") {
-        await get().play();
+      const actualMs = await seekForResume(targetMs, async (positionMs) => {
+        const snapshot = await api.seekPlayer(positionMs);
+        get().applySnapshot(snapshot);
+        return snapshot;
+      });
+      const resolvedDurationMs = get().durationMs || durationMs;
+      const planned = planResumeToast(
+        targetMs,
+        resolvedDurationMs,
+        actualMs ?? 0,
+      );
+      if (planned.kind === "toast") {
+        set({ resumeToast: { path, positionMs: planned.positionMs } });
+        if (get().status !== "Playing") {
+          await get().play();
+        }
+      } else {
+        set({ resumeToast: null });
       }
     } catch (error) {
-      set({ statusMessage: errorMessage(error) });
+      set({ resumeToast: null, statusMessage: errorMessage(error) });
     }
   })();
 }
@@ -167,18 +181,17 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
         const path = event.payload.path;
         const durationMs = event.payload.durationMs;
         const idx = indexOfPath(get().playlist, path);
-        set({
+        set((state) => ({
           currentFile: path,
-          durationMs,
-          currentTimeMs: 0,
+          durationMs:
+            durationMs > 0 ? durationMs : state.durationMs,
           error: null,
           statusMessage: fileName(path) ?? path,
-          playlistIndex: idx >= 0 ? idx : get().playlistIndex,
-        });
+          playlistIndex: idx >= 0 ? idx : state.playlistIndex,
+        }));
         if (get().playlist.length === 0 || idx < 0) {
           void get().syncPlaylistForPath(path);
         }
-        maybeResume(path, durationMs, get, set);
         break;
       }
       case "Ended":
@@ -283,7 +296,7 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
       if (snapshot.currentFile) {
         maybeResume(
           snapshot.currentFile,
-          snapshot.durationMs,
+          get().durationMs || snapshot.durationMs,
           get,
           set,
         );
