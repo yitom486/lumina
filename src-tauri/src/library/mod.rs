@@ -5,6 +5,7 @@
 //! and write confirmed TMDb metadata into the existing `.lumina` group folder.
 
 mod error;
+mod metadata;
 pub mod model;
 mod resolver;
 mod scanner;
@@ -14,8 +15,9 @@ mod store;
 pub use error::{LibraryError, LibraryErrorCode};
 pub use model::{
     GroupResolution, LibraryIndex, LibraryStatus, LibraryWatchConfig, MediaGroup, MediaGroupKind,
-    MetadataMediaType, ModelResolverConfig, PendingMediaGroup, ResolverIntent, ResolverPreview,
-    ResolverRunConfig, ResolverSelection, TmdbCandidate, TmdbConfig,
+    MetadataMediaType, MetadataWriteResult, ModelResolverConfig, PendingMediaGroup, ResolverIntent,
+    ResolverPreview, ResolverRunConfig, ResolverSelection, StoredMetadata, StoredMetadataKind,
+    TmdbCandidate, TmdbConfig,
 };
 pub use resolver::RemoteResolver;
 pub use service::MediaLibraryService;

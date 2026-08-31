@@ -174,3 +174,41 @@ pub struct ResolverPreview {
     pub selection: Option<ResolverSelection>,
     pub can_auto_match: bool,
 }
+
+/// One durable TMDb-derived document. `kind` distinguishes series overview,
+/// episode, and movie files while keeping future context loading uniform.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct StoredMetadata {
+    pub schema_version: u32,
+    pub kind: StoredMetadataKind,
+    pub tmdb_id: u64,
+    pub series_tmdb_id: Option<u64>,
+    pub title: String,
+    pub original_title: Option<String>,
+    pub overview: Option<String>,
+    pub year: Option<u16>,
+    pub season: Option<u32>,
+    pub episode: Option<u32>,
+    #[serde(default)]
+    pub genres: Vec<String>,
+    pub updated_at_ms: u128,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum StoredMetadataKind {
+    Series,
+    Episode,
+    Movie,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct MetadataWriteResult {
+    pub root: String,
+    pub group_key: String,
+    pub tmdb_id: u64,
+    pub media_type: MetadataMediaType,
+    pub written_files: Vec<String>,
+}

@@ -113,6 +113,54 @@ fn replace_file(temp: &Path, destination: &Path) -> Result<(), LibraryError> {
     }
 }
 
+pub fn group_dir(root: &Path, group_key: &str) -> PathBuf {
+    let readable: String = group_key
+        .chars()
+        .map(|ch| match ch {
+            '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*' => '_',
+            control if control.is_control() => '_',
+            other => other,
+        })
+        .collect();
+    let readable = readable.trim_matches(['.', ' ']);
+    let readable = if readable.is_empty() {
+        "untitled"
+    } else {
+        readable
+    };
+    root.join(".lumina")
+        .join("groups")
+        .join(format!("{readable}-{:08x}", stable_hash(group_key)))
+}
+
+pub fn save_group_json<T: serde::Serialize>(
+    root: &Path,
+    group_key: &str,
+    file_name: &str,
+    value: &T,
+) -> Result<PathBuf, LibraryError> {
+    let dir = group_dir(root, group_key);
+    fs::create_dir_all(&dir).map_err(|error| {
+        LibraryError::storage_failed(Some(&format!("mkdir {}: {error}", dir.display())))
+    })?;
+    let destination = dir.join(file_name);
+    let temp = dir.join(format!(".{file_name}-{}.tmp", unique_suffix()));
+    let encoded = serde_json::to_vec_pretty(value).map_err(|error| {
+        LibraryError::storage_failed(Some(&format!("encode group JSON: {error}")))
+    })?;
+    fs::write(&temp, encoded).map_err(|error| {
+        LibraryError::storage_failed(Some(&format!("write {}: {error}", temp.display())))
+    })?;
+    replace_file(&temp, &destination)?;
+    Ok(destination)
+}
+
+fn stable_hash(value: &str) -> u32 {
+    value.bytes().fold(0x811c9dc5, |hash, byte| {
+        (hash ^ u32::from(byte)).wrapping_mul(0x01000193)
+    })
+}
+
 fn same_content(left: &LibraryIndex, right: &LibraryIndex) -> bool {
     left.root == right.root && left.files == right.files && left.groups == right.groups
 }

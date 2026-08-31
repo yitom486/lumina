@@ -103,3 +103,11 @@ export type ResolverPreview = {
   selection?: ResolverSelection | null;
   canAutoMatch: boolean;
 };
+
+export type MetadataWriteResult = {
+  root: string;
+  groupKey: string;
+  tmdbId: number;
+  mediaType: MetadataMediaType;
+  writtenFiles: string[];
+};

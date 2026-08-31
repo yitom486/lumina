@@ -4,8 +4,8 @@
 use tauri::State;
 
 use crate::library::{
-    LibraryError, LibraryIndex, LibraryStatus, LibraryWatchConfig, PendingMediaGroup,
-    ResolverPreview, ResolverRunConfig,
+    LibraryError, LibraryIndex, LibraryStatus, LibraryWatchConfig, MetadataMediaType,
+    MetadataWriteResult, PendingMediaGroup, ResolverPreview, ResolverRunConfig, TmdbConfig,
 };
 use crate::state::AppState;
 
@@ -77,4 +77,21 @@ pub async fn library_resolve_preview(
     tauri::async_runtime::spawn_blocking(move || service.resolve_preview(root, group_key, config))
         .await
         .map_err(|error| LibraryError::internal(Some(&format!("library resolver join: {error}"))))?
+}
+
+#[tauri::command]
+pub async fn library_apply_tmdb_match(
+    state: State<'_, AppState>,
+    root: String,
+    group_key: String,
+    tmdb_id: u64,
+    media_type: MetadataMediaType,
+    tmdb: TmdbConfig,
+) -> Result<MetadataWriteResult, LibraryError> {
+    let service = state.library.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        service.apply_tmdb_match(root, group_key, tmdb_id, media_type, tmdb)
+    })
+    .await
+    .map_err(|error| LibraryError::internal(Some(&format!("library metadata join: {error}"))))?
 }

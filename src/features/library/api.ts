@@ -4,9 +4,12 @@ import type {
   LibraryIndex,
   LibraryStatus,
   LibraryWatchConfig,
+  MetadataMediaType,
+  MetadataWriteResult,
   PendingMediaGroup,
   ResolverPreview,
   ResolverRunConfig,
+  TmdbConfig,
 } from "./types";
 
 export function startLibraryWatch(config: LibraryWatchConfig): Promise<LibraryStatus> {
@@ -43,4 +46,14 @@ export function previewMediaMatch(input: {
   config: ResolverRunConfig;
 }): Promise<ResolverPreview> {
   return invoke<ResolverPreview>("library_resolve_preview", input);
+}
+
+export function applyTmdbMediaMatch(input: {
+  root: string;
+  groupKey: string;
+  tmdbId: number;
+  mediaType: MetadataMediaType;
+  tmdb: TmdbConfig;
+}): Promise<MetadataWriteResult> {
+  return invoke<MetadataWriteResult>("library_apply_tmdb_match", input);
 }

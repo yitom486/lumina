@@ -6,10 +6,10 @@ use std::time::Duration;
 
 use crate::library::error::LibraryError;
 use crate::library::model::{
-    GroupResolution, LibraryIndex, LibraryStatus, LibraryWatchConfig, PendingMediaGroup,
-    ResolverPreview, ResolverRunConfig,
+    GroupResolution, LibraryIndex, LibraryStatus, LibraryWatchConfig, MetadataMediaType,
+    MetadataWriteResult, PendingMediaGroup, ResolverPreview, ResolverRunConfig, TmdbConfig,
 };
-use crate::library::{scanner, store, RemoteResolver};
+use crate::library::{metadata, scanner, store, RemoteResolver};
 
 struct WatchWorker {
     cancel: Arc<AtomicBool>,
@@ -214,6 +214,44 @@ impl MediaLibraryService {
             .find(|group| group.key == group_key)
             .ok_or_else(|| LibraryError::group_not_found(Some(&group_key)))?;
         RemoteResolver::new(config)?.preview(&group)
+    }
+
+    pub fn apply_tmdb_match(
+        &self,
+        root: String,
+        group_key: String,
+        tmdb_id: u64,
+        media_type: MetadataMediaType,
+        tmdb: TmdbConfig,
+    ) -> Result<MetadataWriteResult, LibraryError> {
+        self.ensure_configured_root(&root)?;
+        let _guard = self
+            .scan_lock
+            .lock()
+            .map_err(|_| LibraryError::internal(Some("library scan mutex poisoned")))?;
+        let path = PathBuf::from(&root);
+        let mut index = store::load(&path)?.ok_or_else(|| {
+            LibraryError::group_not_found(Some("library index is not available for root"))
+        })?;
+        let group = index
+            .groups
+            .iter()
+            .find(|group| group.key == group_key)
+            .cloned()
+            .ok_or_else(|| LibraryError::group_not_found(Some(&group_key)))?;
+        let result =
+            metadata::write_confirmed_metadata(&path, &index, &group, tmdb_id, media_type, &tmdb)?;
+        let stored = index
+            .groups
+            .iter_mut()
+            .find(|item| item.key == group_key)
+            .ok_or_else(|| LibraryError::group_not_found(Some(&group_key)))?;
+        stored.resolution = GroupResolution::Matched {
+            tmdb_id,
+            media_type,
+        };
+        store::save_if_changed(&path, &index)?;
+        Ok(result)
     }
 
     fn ensure_configured_root(&self, root: &str) -> Result<(), LibraryError> {
