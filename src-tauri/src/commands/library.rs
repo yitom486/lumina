@@ -4,8 +4,9 @@
 use tauri::State;
 
 use crate::library::{
-    LibraryError, LibraryIndex, LibraryStatus, LibraryWatchConfig, MetadataMediaType,
-    MetadataWriteResult, PendingMediaGroup, ResolverPreview, ResolverRunConfig, TmdbConfig,
+    LibraryError, LibraryIndex, LibraryStatus, LibraryWatchConfig, MediaMetadataContext,
+    MetadataMediaType, MetadataWriteResult, PendingMediaGroup, ResolverPreview, ResolverRunConfig,
+    TmdbConfig,
 };
 use crate::state::AppState;
 
@@ -94,4 +95,15 @@ pub async fn library_apply_tmdb_match(
     })
     .await
     .map_err(|error| LibraryError::internal(Some(&format!("library metadata join: {error}"))))?
+}
+
+#[tauri::command]
+pub async fn library_context_for_media(
+    state: State<'_, AppState>,
+    media_path: String,
+) -> Result<Option<MediaMetadataContext>, LibraryError> {
+    let service = state.library.clone();
+    tauri::async_runtime::spawn_blocking(move || service.context_for_media(media_path))
+        .await
+        .map_err(|error| LibraryError::internal(Some(&format!("library context join: {error}"))))?
 }

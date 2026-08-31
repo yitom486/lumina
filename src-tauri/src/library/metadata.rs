@@ -7,8 +7,8 @@ use serde_json::Value;
 
 use crate::library::error::LibraryError;
 use crate::library::model::{
-    IndexedMediaFile, LibraryIndex, MediaGroup, MetadataMediaType, MetadataWriteResult,
-    StoredMetadata, StoredMetadataKind, TmdbConfig,
+    IndexedMediaFile, LibraryIndex, MediaGroup, MediaMetadataContext, MetadataMediaType,
+    MetadataWriteResult, StoredMetadata, StoredMetadataKind, TmdbConfig,
 };
 use crate::library::{resolver, store};
 
@@ -85,6 +85,53 @@ pub fn write_confirmed_metadata(
         media_type,
         written_files,
     })
+}
+
+pub fn load_context(
+    root: &Path,
+    index: &LibraryIndex,
+    media_path: &Path,
+) -> Result<Option<MediaMetadataContext>, LibraryError> {
+    let relative = media_path
+        .strip_prefix(root)
+        .map_err(|_error| LibraryError::invalid_input("当前媒体不在已启用目录中"))?;
+    let relative = relative.to_string_lossy().replace('\\', "/");
+    let Some(file) = index
+        .files
+        .iter()
+        .find(|file| file.relative_path == relative)
+    else {
+        return Ok(None);
+    };
+    let Some(group) = index
+        .groups
+        .iter()
+        .find(|group| group.key == file.group_key)
+    else {
+        return Ok(None);
+    };
+    let media_type = match group.resolution {
+        crate::library::model::GroupResolution::Matched { media_type, .. } => media_type,
+        _ => return Ok(None),
+    };
+    let overview_name = match media_type {
+        MetadataMediaType::Movie => "movie.json",
+        MetadataMediaType::Tv => "series.json",
+    };
+    let Some(group_document) = store::load_group_json(root, &group.key, overview_name)? else {
+        return Ok(None);
+    };
+    let item = match (media_type, file.season, file.episode) {
+        (MetadataMediaType::Tv, Some(season), Some(episode)) => {
+            store::load_group_json(root, &group.key, &format!("S{season:02}E{episode:02}.json"))?
+        }
+        _ => None,
+    };
+    Ok(Some(MediaMetadataContext {
+        media_path: media_path.to_string_lossy().to_string(),
+        group: group_document,
+        item,
+    }))
 }
 
 fn group_files<'a>(index: &'a LibraryIndex, group: &MediaGroup) -> Vec<&'a IndexedMediaFile> {

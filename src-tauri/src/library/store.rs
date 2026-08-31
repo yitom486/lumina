@@ -155,6 +155,23 @@ pub fn save_group_json<T: serde::Serialize>(
     Ok(destination)
 }
 
+pub fn load_group_json<T: serde::de::DeserializeOwned>(
+    root: &Path,
+    group_key: &str,
+    file_name: &str,
+) -> Result<Option<T>, LibraryError> {
+    let path = group_dir(root, group_key).join(file_name);
+    if !path.exists() {
+        return Ok(None);
+    }
+    let text = fs::read_to_string(&path).map_err(|error| {
+        LibraryError::storage_failed(Some(&format!("read {}: {error}", path.display())))
+    })?;
+    serde_json::from_str(&text).map(Some).map_err(|error| {
+        LibraryError::storage_failed(Some(&format!("parse {}: {error}", path.display())))
+    })
+}
+
 fn stable_hash(value: &str) -> u32 {
     value.bytes().fold(0x811c9dc5, |hash, byte| {
         (hash ^ u32::from(byte)).wrapping_mul(0x01000193)

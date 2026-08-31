@@ -4,6 +4,7 @@ import type {
   LibraryIndex,
   LibraryStatus,
   LibraryWatchConfig,
+  MediaMetadataContext,
   MetadataMediaType,
   MetadataWriteResult,
   PendingMediaGroup,
@@ -56,4 +57,12 @@ export function applyTmdbMediaMatch(input: {
   tmdb: TmdbConfig;
 }): Promise<MetadataWriteResult> {
   return invoke<MetadataWriteResult>("library_apply_tmdb_match", input);
+}
+
+export function getMediaMetadataContext(
+  mediaPath: string,
+): Promise<MediaMetadataContext | null> {
+  return invoke<MediaMetadataContext | null>("library_context_for_media", {
+    mediaPath,
+  });
 }

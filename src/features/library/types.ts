@@ -111,3 +111,26 @@ export type MetadataWriteResult = {
   mediaType: MetadataMediaType;
   writtenFiles: string[];
 };
+
+export type StoredMetadataKind = "series" | "episode" | "movie";
+
+export type StoredMetadata = {
+  schemaVersion: number;
+  kind: StoredMetadataKind;
+  tmdbId: number;
+  seriesTmdbId?: number | null;
+  title: string;
+  originalTitle?: string | null;
+  overview?: string | null;
+  year?: number | null;
+  season?: number | null;
+  episode?: number | null;
+  genres: string[];
+  updatedAtMs: number;
+};
+
+export type MediaMetadataContext = {
+  mediaPath: string;
+  group: StoredMetadata;
+  item?: StoredMetadata | null;
+};

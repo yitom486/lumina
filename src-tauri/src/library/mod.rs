@@ -15,9 +15,9 @@ mod store;
 pub use error::{LibraryError, LibraryErrorCode};
 pub use model::{
     GroupResolution, LibraryIndex, LibraryStatus, LibraryWatchConfig, MediaGroup, MediaGroupKind,
-    MetadataMediaType, MetadataWriteResult, ModelResolverConfig, PendingMediaGroup, ResolverIntent,
-    ResolverPreview, ResolverRunConfig, ResolverSelection, StoredMetadata, StoredMetadataKind,
-    TmdbCandidate, TmdbConfig,
+    MediaMetadataContext, MetadataMediaType, MetadataWriteResult, ModelResolverConfig,
+    PendingMediaGroup, ResolverIntent, ResolverPreview, ResolverRunConfig, ResolverSelection,
+    StoredMetadata, StoredMetadataKind, TmdbCandidate, TmdbConfig,
 };
 pub use resolver::RemoteResolver;
 pub use service::MediaLibraryService;

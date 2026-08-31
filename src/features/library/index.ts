@@ -1,5 +1,6 @@
 export {
   applyTmdbMediaMatch,
+  getMediaMetadataContext,
   getLibraryStatus,
   listPendingMediaGroups,
   previewMediaMatch,
@@ -19,6 +20,7 @@ export type {
   MediaGroupKind,
   MetadataMediaType,
   MetadataWriteResult,
+  MediaMetadataContext,
   ModelResolverConfig,
   PendingMediaGroup,
   ResolverIntent,
@@ -27,4 +29,6 @@ export type {
   ResolverSelection,
   TmdbCandidate,
   TmdbConfig,
+  StoredMetadata,
+  StoredMetadataKind,
 } from "./types";

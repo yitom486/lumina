@@ -6,8 +6,9 @@ use std::time::Duration;
 
 use crate::library::error::LibraryError;
 use crate::library::model::{
-    GroupResolution, LibraryIndex, LibraryStatus, LibraryWatchConfig, MetadataMediaType,
-    MetadataWriteResult, PendingMediaGroup, ResolverPreview, ResolverRunConfig, TmdbConfig,
+    GroupResolution, LibraryIndex, LibraryStatus, LibraryWatchConfig, MediaMetadataContext,
+    MetadataMediaType, MetadataWriteResult, PendingMediaGroup, ResolverPreview, ResolverRunConfig,
+    TmdbConfig,
 };
 use crate::library::{metadata, scanner, store, RemoteResolver};
 
@@ -252,6 +253,32 @@ impl MediaLibraryService {
         };
         store::save_if_changed(&path, &index)?;
         Ok(result)
+    }
+
+    pub fn context_for_media(
+        &self,
+        media_path: String,
+    ) -> Result<Option<MediaMetadataContext>, LibraryError> {
+        let media_path = PathBuf::from(&media_path);
+        let roots = self
+            .runtime
+            .lock()
+            .map_err(|_| LibraryError::internal(Some("library runtime mutex poisoned")))?
+            .config
+            .roots
+            .clone();
+        let root = roots
+            .into_iter()
+            .map(PathBuf::from)
+            .filter(|root| media_path.strip_prefix(root).is_ok())
+            .max_by_key(|root| root.as_os_str().len());
+        let Some(root) = root else {
+            return Ok(None);
+        };
+        let Some(index) = store::load(&root)? else {
+            return Ok(None);
+        };
+        metadata::load_context(&root, &index, &media_path)
     }
 
     fn ensure_configured_root(&self, root: &str) -> Result<(), LibraryError> {

@@ -212,3 +212,13 @@ pub struct MetadataWriteResult {
     pub media_type: MetadataMediaType,
     pub written_files: Vec<String>,
 }
+
+/// Trusted-by-app structure containing untrusted remote reference data. Future
+/// Agent prompts must attach this as media context, never as system text.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct MediaMetadataContext {
+    pub media_path: String,
+    pub group: StoredMetadata,
+    pub item: Option<StoredMetadata>,
+}
