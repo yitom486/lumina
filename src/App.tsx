@@ -22,6 +22,7 @@ import { ChatDock } from "@/features/acp/components/ChatDock";
 import { useChatUiStore } from "@/features/acp/chatUiStore";
 import { ChaptersPanel } from "@/features/chapters";
 import { MediaInfoPanel } from "@/features/media";
+import { MediaLibraryPanel } from "@/features/library";
 import { NotesPanel } from "@/features/notes";
 import {
   PlayerBar,
@@ -44,6 +45,7 @@ const TABS: { id: SidebarTab; label: string }[] = [
   { id: "transcript", label: "文稿" },
   { id: "notes", label: "笔记" },
   { id: "chapters", label: "章节" },
+  { id: "library", label: "媒体库" },
 ];
 
 function SidebarTabPanel({ tab }: { tab: SidebarTab }) {
@@ -56,6 +58,8 @@ function SidebarTabPanel({ tab }: { tab: SidebarTab }) {
       return <NotesPanel />;
     case "chapters":
       return <ChaptersPanel />;
+    case "library":
+      return <MediaLibraryPanel />;
     default:
       return null;
   }

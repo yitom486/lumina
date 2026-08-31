@@ -9,7 +9,8 @@ export type SidebarTab =
   | "playlist"
   | "transcript"
   | "notes"
-  | "chapters";
+  | "chapters"
+  | "library";
 
 type UiState = {
   fullscreen: boolean;

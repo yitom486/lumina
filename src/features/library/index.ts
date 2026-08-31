@@ -32,3 +32,4 @@ export type {
   StoredMetadata,
   StoredMetadataKind,
 } from "./types";
+export { MediaLibraryPanel } from "./components/MediaLibraryPanel";
