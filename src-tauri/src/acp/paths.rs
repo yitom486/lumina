@@ -3,7 +3,7 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use crate::acp::discover::{find_acp_adapter, find_bunx, find_codex};
+use crate::acp::discover::{codex_config_present, find_acp_adapter, find_bunx, find_codex};
 use crate::acp::error::AcpError;
 use crate::acp::model::AcpStatus;
 use crate::acp::profile::{
@@ -80,6 +80,7 @@ pub fn status_from_profiles(hint: &AgentProfilesHint) -> AcpStatus {
     let adapter_found = find_acp_adapter().is_some();
     let bunx_found = find_bunx().is_some();
     let codex_found = find_codex().is_some();
+    let codex_config_found = codex_config_present();
     let prepared = prepare_profiles(hint);
     let (active_id, profiles) = list_status(&prepared);
 
@@ -93,7 +94,17 @@ pub fn status_from_profiles(hint: &AgentProfilesHint) -> AcpStatus {
 
     let message = if available {
         let name = active.map(|p| p.name.as_str()).unwrap_or("Agent");
-        format!("{name} 已就绪（仅在你发起会话时启动）")
+        let is_codex = active.map(|p| p.kind == AgentKind::Codex).unwrap_or(false);
+        let codex_home = codex_home_label();
+        if is_codex && codex_found && codex_config_found {
+            format!("{name} 已检测到本机配置，发起提问时将验证连接")
+        } else if is_codex && codex_found {
+            format!("{name} 已找到，但未检测到 {codex_home} 登录配置")
+        } else if is_codex && bunx_found {
+            format!("{name} 启动器已找到，首次提问将下载并验证 Agent")
+        } else {
+            format!("{name} 已就绪（仅在你发起会话时启动）")
+        }
     } else if let Some(p) = active {
         if p.kind == AgentKind::Custom && p.command.is_empty() {
             "自定义 Agent 尚未填写启动命令".into()
@@ -108,15 +119,24 @@ pub fn status_from_profiles(hint: &AgentProfilesHint) -> AcpStatus {
         available,
         adapter_found,
         codex_found,
+        codex_config_found,
         active_profile_id: active_id,
         profiles,
         cli_path,
         codex_path: find_codex().map(|p| p.to_string_lossy().to_string()),
         message,
-        hint: install_hint(adapter_found, codex_found, bunx_found),
+        hint: install_hint(adapter_found, codex_found, bunx_found, codex_config_found),
         responses_only_note: RESPONSES_ONLY_NOTE.into(),
         session_active: false,
         busy: false,
+    }
+}
+
+fn codex_home_label() -> &'static str {
+    if cfg!(windows) {
+        "%USERPROFILE%\\.codex"
+    } else {
+        "~/.codex"
     }
 }
 

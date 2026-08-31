@@ -60,6 +60,14 @@ impl AcpError {
         )
     }
 
+    pub fn codex_auth_required(details: Option<&str>) -> Self {
+        Self::new(
+            AcpErrorCode::NotConfigured,
+            "Codex 尚未登录或 API 未配置，请在终端运行 codex login 后重试",
+            details.map(str::to_string),
+        )
+    }
+
     /// Wire / protocol / I/O failures against the Agent process.
     pub fn protocol(details: Option<&str>) -> Self {
         Self::new(
@@ -117,5 +125,8 @@ mod tests {
         assert_eq!(p.message, "与 Agent 通信失败");
         assert_eq!(p.details.as_deref(), Some("json parse failed"));
         assert_eq!(AcpError::bad_request("提问内容不能为空").message, "提问内容不能为空");
+        let auth = AcpError::codex_auth_required(Some("authenticate failed"));
+        assert!(has_cjk(&auth.message));
+        assert!(!auth.message.contains("authenticate"));
     }
 }

@@ -24,27 +24,30 @@ export function ChatComposer({
 }: Props) {
   return (
     <ChatColumn className="shrink-0 space-y-2 border-t border-border py-3">
-      <textarea
-        className={cn(
-          "min-h-[72px] w-full resize-none rounded-md border border-border bg-background px-3 py-2 text-sm",
-          "outline-none focus-visible:ring-1 focus-visible:ring-ring",
-          "disabled:opacity-60",
-        )}
-        placeholder={placeholder}
-        value={value}
-        disabled={disabled || busy}
-        onChange={(e) => onChange(e.target.value)}
-        onKeyDown={(e) => {
-          if (e.key === "Enter" && !e.shiftKey) {
-            e.preventDefault();
-            if (!disabled && !busy && value.trim()) onSend();
-          }
-        }}
-      />
+      <div className={cn(busy && "chat-composer-active p-px")}>
+        <textarea
+          className={cn(
+            "min-h-[72px] w-full resize-none rounded-md border border-border bg-background px-3 py-2 text-sm",
+            "outline-none focus-visible:ring-1 focus-visible:ring-ring",
+            "disabled:opacity-60",
+            busy && "bg-muted/20",
+          )}
+          placeholder={placeholder}
+          value={value}
+          disabled={disabled || busy}
+          onChange={(e) => onChange(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && !e.shiftKey) {
+              e.preventDefault();
+              if (!disabled && !busy && value.trim()) onSend();
+            }
+          }}
+        />
+      </div>
       <div className="flex gap-2">
         <Button
           size="sm"
-          className="flex-1"
+          className={cn("flex-1", busy && "animate-pulse")}
           disabled={disabled || busy || !value.trim()}
           onClick={onSend}
         >

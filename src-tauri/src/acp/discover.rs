@@ -48,13 +48,91 @@ pub fn find_command(name: &str) -> Option<PathBuf> {
 
 pub fn find_codex() -> Option<PathBuf> {
     if let Ok(override_path) = std::env::var("CODEX_PATH") {
-        let p = PathBuf::from(override_path);
-        if p.is_file() {
-            return Some(p);
+        let path = PathBuf::from(override_path);
+        if path.is_file() {
+            return Some(path);
         }
     }
-    find_command(if cfg!(windows) { "codex.exe" } else { "codex" })
+
+    if let Some(path) = find_command(if cfg!(windows) { "codex.exe" } else { "codex" })
         .or_else(|| find_command("codex"))
+    {
+        return Some(path);
+    }
+
+    for candidate in codex_fallback_candidates() {
+        if candidate.is_file() {
+            return Some(candidate);
+        }
+    }
+
+    None
+}
+
+/// Whether `~/.codex/config.toml` (or auth) exists — Codex reads this at runtime.
+pub fn codex_config_present() -> bool {
+    codex_home_dir()
+        .map(|home| {
+            home.join("config.toml").is_file() || home.join("auth.json").is_file()
+        })
+        .unwrap_or(false)
+}
+
+pub fn codex_home_dir() -> Option<PathBuf> {
+    if let Ok(dir) = std::env::var("CODEX_HOME") {
+        let path = PathBuf::from(dir);
+        if path.is_dir() {
+            return Some(path);
+        }
+    }
+    let home = std::env::var_os("USERPROFILE").or_else(|| std::env::var_os("HOME"))?;
+    Some(PathBuf::from(home).join(".codex"))
+}
+
+fn codex_fallback_candidates() -> Vec<PathBuf> {
+    let mut out = Vec::new();
+
+    if let Some(bunx) = find_bunx() {
+        if let Some(bin) = bunx.parent() {
+            out.push(bin.join(if cfg!(windows) { "codex.exe" } else { "codex" }));
+        }
+    }
+
+    if let Some(home) = std::env::var_os("USERPROFILE") {
+        let home = PathBuf::from(home);
+        out.push(home.join(".bun").join("bin").join("codex.exe"));
+        out.push(
+            home.join("AppData")
+                .join("Roaming")
+                .join("npm")
+                .join("codex.cmd"),
+        );
+        out.push(
+            home.join("AppData")
+                .join("Roaming")
+                .join("npm")
+                .join("codex"),
+        );
+    }
+
+    if let Some(local) = std::env::var_os("LOCALAPPDATA") {
+        out.push(
+            PathBuf::from(local)
+                .join("Programs")
+                .join("OpenAI")
+                .join("Codex")
+                .join("bin")
+                .join("codex.exe"),
+        );
+    }
+
+    if let Some(home) = std::env::var_os("HOME") {
+        let home = PathBuf::from(home);
+        out.push(home.join(".local").join("bin").join("codex"));
+        out.push(home.join(".bun").join("bin").join("codex"));
+    }
+
+    out
 }
 
 pub fn find_acp_adapter() -> Option<PathBuf> {
@@ -95,4 +173,43 @@ pub fn find_bunx() -> Option<PathBuf> {
     }
 
     None
+}
+
+pub fn find_bun() -> Option<PathBuf> {
+    if let Some(bunx) = find_bunx() {
+        if let Some(dir) = bunx.parent() {
+            let bun = dir.join(if cfg!(windows) { "bun.exe" } else { "bun" });
+            if bun.is_file() {
+                return Some(bun);
+            }
+        }
+    }
+    find_command(if cfg!(windows) { "bun.exe" } else { "bun" })
+}
+
+/// Dev tree: `node_modules/@agentclientprotocol/codex-acp` (avoids flaky `bun x` on Windows).
+pub fn find_dev_codex_acp_entry() -> Option<PathBuf> {
+    let entry = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join("node_modules")
+        .join("@agentclientprotocol")
+        .join("codex-acp")
+        .join("dist")
+        .join("index.js");
+    if !entry.is_file() {
+        return None;
+    }
+    Some(entry.canonicalize().unwrap_or(entry))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn codex_config_helpers_do_not_panic() {
+        let _ = codex_config_present();
+        let _ = codex_home_dir();
+        let _ = codex_fallback_candidates();
+    }
 }

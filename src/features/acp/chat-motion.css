@@ -1,0 +1,177 @@
+/* ACP chat waiting / streaming motion — scoped utility classes */
+
+@keyframes chat-dot-bounce {
+  0%,
+  70%,
+  100% {
+    transform: translateY(0);
+    opacity: 0.35;
+  }
+  35% {
+    transform: translateY(-5px);
+    opacity: 1;
+  }
+}
+
+@keyframes chat-composer-glow {
+  0%,
+  100% {
+    box-shadow:
+      0 0 0 1px color-mix(in srgb, var(--ring) 28%, transparent),
+      0 0 18px -6px color-mix(in srgb, #6b8cce 22%, transparent);
+  }
+  50% {
+    box-shadow:
+      0 0 0 1px color-mix(in srgb, #8aa4d8 45%, transparent),
+      0 0 28px -2px color-mix(in srgb, #6b8cce 38%, transparent);
+  }
+}
+
+@keyframes chat-reply-glow {
+  0%,
+  100% {
+    box-shadow:
+      inset 0 0 0 1px color-mix(in srgb, var(--border) 80%, transparent),
+      0 0 16px -8px color-mix(in srgb, #6b8cce 18%, transparent);
+  }
+  50% {
+    box-shadow:
+      inset 0 0 0 1px color-mix(in srgb, #7a94cc 35%, transparent),
+      0 0 22px -4px color-mix(in srgb, #6b8cce 32%, transparent);
+  }
+}
+
+@keyframes chat-activity-shimmer {
+  0% {
+    background-position: 200% 0;
+  }
+  100% {
+    background-position: -200% 0;
+  }
+}
+
+@keyframes chat-tool-scan {
+  0% {
+    transform: translateX(-120%);
+    opacity: 0;
+  }
+  20% {
+    opacity: 0.85;
+  }
+  100% {
+    transform: translateX(320%);
+    opacity: 0;
+  }
+}
+
+@keyframes chat-tool-orbit {
+  0% {
+    transform: rotate(0deg);
+  }
+  100% {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes chat-caret-blink {
+  0%,
+  45% {
+    opacity: 1;
+  }
+  50%,
+  100% {
+    opacity: 0.15;
+  }
+}
+
+.chat-wait-dot {
+  display: inline-block;
+  width: 0.4rem;
+  height: 0.4rem;
+  border-radius: 9999px;
+  background: color-mix(in srgb, var(--foreground) 62%, transparent);
+  animation: chat-dot-bounce 1.15s ease-in-out infinite;
+}
+
+.chat-composer-active {
+  border-radius: 0.5rem;
+  animation: chat-composer-glow 2.6s ease-in-out infinite;
+}
+
+.chat-composer-active textarea {
+  border-color: color-mix(in srgb, #7a94cc 45%, var(--border));
+}
+
+.chat-reply-streaming {
+  animation: chat-reply-glow 2.4s ease-in-out infinite;
+}
+
+.chat-activity-live {
+  position: relative;
+  overflow: hidden;
+  border-color: color-mix(in srgb, #6b8cce 35%, var(--border)) !important;
+  background-image: linear-gradient(
+    105deg,
+    transparent 0%,
+    color-mix(in srgb, #6b8cce 8%, transparent) 45%,
+    color-mix(in srgb, #8aa4d8 14%, transparent) 50%,
+    color-mix(in srgb, #6b8cce 8%, transparent) 55%,
+    transparent 100%
+  );
+  background-size: 220% 100%;
+  animation: chat-activity-shimmer 2.8s linear infinite;
+}
+
+.chat-tool-row-active {
+  position: relative;
+  overflow: hidden;
+  border-radius: 0.375rem;
+  background: color-mix(in srgb, var(--muted) 55%, transparent);
+}
+
+.chat-tool-scan-line {
+  pointer-events: none;
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+}
+
+.chat-tool-scan-line::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 38%;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    color-mix(in srgb, #8aa4d8 28%, transparent),
+    transparent
+  );
+  animation: chat-tool-scan 1.8s ease-in-out infinite;
+}
+
+.chat-tool-orbit {
+  position: relative;
+  display: inline-flex;
+  width: 0.875rem;
+  height: 0.875rem;
+  align-items: center;
+  justify-content: center;
+}
+
+.chat-tool-orbit::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 9999px;
+  border: 1.5px solid transparent;
+  border-top-color: color-mix(in srgb, #8aa4d8 85%, transparent);
+  border-right-color: color-mix(in srgb, #6b8cce 35%, transparent);
+  animation: chat-tool-orbit 1.1s linear infinite;
+}
+
+.chat-stream-caret {
+  animation: chat-caret-blink 1s step-end infinite;
+}

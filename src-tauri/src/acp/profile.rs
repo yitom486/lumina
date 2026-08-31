@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-use crate::acp::discover::{find_acp_adapter, find_bunx, find_codex, find_command, native_acp_dir};
+use crate::acp::discover::{find_acp_adapter, find_bun, find_bunx, find_codex, find_command, find_dev_codex_acp_entry, native_acp_dir, codex_home_dir};
 use crate::acp::error::AcpError;
 use crate::acp::model::{AgentProfileInput, AgentProfilesHint};
 
@@ -134,15 +134,7 @@ pub struct LaunchSpec {
 
 pub fn resolve_launch(profile: &AgentProfile) -> Result<LaunchSpec, AcpError> {
     let (program, args) = if is_builtin_codex(profile) {
-        if let Some(bunx) = find_bunx() {
-            (bunx, profile.args.clone())
-        } else if let Some(adapter) = find_acp_adapter() {
-            (adapter, Vec::new())
-        } else {
-            return Err(AcpError::not_configured(Some(
-                "codex profile requires bunx or a standalone codex-acp adapter",
-            )));
-        }
+        resolve_builtin_codex_launch(profile)?
     } else {
         let program = resolve_program(&profile.command).ok_or_else(|| {
             AcpError::not_configured(Some(&format!(
@@ -161,6 +153,7 @@ pub fn resolve_launch(profile: &AgentProfile) -> Result<LaunchSpec, AcpError> {
             }
         }
     }
+    augment_spawn_env(profile.kind, &mut env);
 
     Ok(LaunchSpec {
         program,
@@ -272,11 +265,119 @@ fn merge_builtin_profiles(profiles: &mut Vec<AgentProfile>) {
     }
 }
 
+fn resolve_builtin_codex_launch(
+    profile: &AgentProfile,
+) -> Result<(PathBuf, Vec<String>), AcpError> {
+    if let Some(adapter) = find_acp_adapter() {
+        return Ok((adapter, Vec::new()));
+    }
+    if let Some(entry) = find_dev_codex_acp_entry() {
+        if let Some(bun) = find_bun() {
+            return Ok((
+                bun,
+                vec!["run".into(), entry.to_string_lossy().to_string()],
+            ));
+        }
+    }
+    // Windows: `bun x pkg` is more reliable than `bunx pkg` when stdio is piped.
+    if cfg!(windows) {
+        if let Some(bun) = find_bun() {
+            return Ok((
+                bun,
+                vec!["x".into(), CODEX_ACP_PACKAGE.into()],
+            ));
+        }
+    }
+    if let Some(bunx) = find_bunx() {
+        return Ok((bunx, profile.args.clone()));
+    }
+    Err(AcpError::not_configured(Some(
+        "codex profile requires bun, bunx, or a standalone codex-acp adapter",
+    )))
+}
+
+fn augment_spawn_env(kind: AgentKind, env: &mut HashMap<String, String>) {
+    if cfg!(windows) {
+        if !env.contains_key("USERPROFILE") {
+            if let Ok(value) = std::env::var("USERPROFILE") {
+                env.insert("USERPROFILE".into(), value);
+            }
+        }
+    } else if !env.contains_key("HOME") {
+        if let Ok(value) = std::env::var("HOME") {
+            env.insert("HOME".into(), value);
+        }
+    }
+
+    if kind != AgentKind::Codex {
+        return;
+    }
+
+    if let Some(home) = codex_home_dir() {
+        env.entry("CODEX_HOME".into())
+            .or_insert(home.to_string_lossy().to_string());
+    }
+    env.entry("TERM".into())
+        .or_insert("xterm-256color".into());
+
+    if let Some(codex_path) = env.get("CODEX_PATH").cloned().or_else(|| {
+        find_codex().map(|path| path.to_string_lossy().to_string())
+    }) {
+        if let Some(bin) = PathBuf::from(&codex_path).parent() {
+            prepend_path_dir(env, bin);
+        }
+    }
+
+    let path_key = if cfg!(windows) { "Path" } else { "PATH" };
+    let mut extra = Vec::new();
+    if let Some(bunx) = find_bunx() {
+        if let Some(bin) = bunx.parent() {
+            extra.push(bin.to_path_buf());
+        }
+    }
+    #[cfg(windows)]
+    if let Some(home) = std::env::var_os("USERPROFILE") {
+        let home = PathBuf::from(home);
+        extra.push(home.join(".bun").join("bin"));
+        extra.push(home.join("AppData").join("Roaming").join("npm"));
+    }
+    if let Ok(existing) = std::env::var(path_key) {
+        let mut merged: Vec<PathBuf> = extra;
+        merged.extend(std::env::split_paths(&existing));
+        if let Ok(joined) = std::env::join_paths(merged) {
+            env.insert(path_key.into(), joined.to_string_lossy().to_string());
+        }
+    } else if !extra.is_empty() {
+        if let Ok(joined) = std::env::join_paths(extra) {
+            env.insert(path_key.into(), joined.to_string_lossy().to_string());
+        }
+    }
+}
+
+fn prepend_path_dir(env: &mut HashMap<String, String>, dir: &Path) {
+    let path_key = if cfg!(windows) { "Path" } else { "PATH" };
+    let mut merged = vec![dir.to_path_buf()];
+    if let Some(existing) = env.get(path_key).cloned().or_else(|| std::env::var(path_key).ok()) {
+        merged.extend(std::env::split_paths(&existing));
+    }
+    if let Ok(joined) = std::env::join_paths(merged) {
+        env.insert(path_key.into(), joined.to_string_lossy().to_string());
+    }
+}
+
 /// Hint text: install guidance without requiring bun for end users.
-pub fn install_hint(adapter_found: bool, codex_found: bool, bunx_found: bool) -> String {
+pub fn install_hint(
+    adapter_found: bool,
+    codex_found: bool,
+    bunx_found: bool,
+    codex_config_found: bool,
+) -> String {
     if bunx_found {
+        if codex_found && codex_config_found {
+            return "已找到本机 Codex 与 ~/.codex 配置；首次提问可能仍需下载 ACP 适配器。".into();
+        }
         return if codex_found {
-            "将通过 Bun 按需获取并启动 Codex ACP；已找到本机 Codex，也可通过 CODEX_PATH 指定版本。首次使用可能需要下载适配器。".into()
+            "已找到本机 Codex；若提问失败，请在终端运行 codex login 完成登录。".into()
         } else {
             "将通过 Bun 按需获取并启动 Codex ACP；发布包自带兼容的 Codex。首次使用可能需要下载适配器。".into()
         };
@@ -335,16 +436,21 @@ mod tests {
 
     #[test]
     fn install_hint_is_chinese() {
-        let hint = install_hint(false, false, false);
+        let hint = install_hint(false, false, false, false);
         assert!(hint.chars().any(|c| ('\u{4e00}'..='\u{9fff}').contains(&c)));
         assert!(!hint.to_ascii_lowercase().contains("must install bun"));
     }
 
     #[test]
     fn bunx_hint_describes_on_demand_launch() {
-        let hint = install_hint(false, true, true);
-        assert!(hint.contains("Bun"));
-        assert!(hint.contains("按需"));
+        let hint = install_hint(false, true, true, false);
+        assert!(hint.contains("Bun") || hint.contains("Codex"));
         assert!(!hint.contains("未找到可用"));
+    }
+
+    #[test]
+    fn config_found_hint_mentions_codex_home() {
+        let hint = install_hint(false, true, true, true);
+        assert!(hint.contains("配置") || hint.contains("Codex"));
     }
 }

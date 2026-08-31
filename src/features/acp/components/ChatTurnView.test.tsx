@@ -86,7 +86,7 @@ describe("ChatTurnView", () => {
       />,
     );
     expect(screen.getByText("Read file")).toBeInTheDocument();
-    expect(screen.getByText("处理中…")).toBeInTheDocument();
+    expect(screen.getByText("工具执行中")).toBeInTheDocument();
   });
 
   it("hides activity feed after minimal finish", () => {

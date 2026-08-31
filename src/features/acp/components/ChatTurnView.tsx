@@ -1,8 +1,10 @@
 import { cn } from "@/lib/utils";
 
+import { waitingLabel } from "../activityStatus";
 import type { ChatTurn } from "../types";
 import { ChatActivityFeed } from "./ChatActivityFeed";
 import { ChatColumn } from "./ChatShell";
+import { ChatWaitingDots } from "./ChatWaitingDots";
 
 type Props = {
   turn: ChatTurn;
@@ -11,6 +13,9 @@ type Props = {
 export function ChatTurnView({ turn }: Props) {
   const isError = turn.status === "error";
   const isStreaming = turn.status === "streaming";
+  const waitingForText = isStreaming && !turn.answer.trim();
+  const showWaitingDots =
+    waitingForText && !(turn.showActivities && turn.activities.length > 0);
 
   return (
     <ChatColumn className="space-y-2">
@@ -30,15 +35,28 @@ export function ChatTurnView({ turn }: Props) {
             "w-full rounded-lg px-3 py-2 text-sm whitespace-pre-wrap break-words",
             !isError && "bg-muted/40 text-foreground",
             isError && "bg-destructive/10 text-destructive",
+            isStreaming && !isError && "chat-reply-streaming",
           )}
+          data-turn-id={turn.id}
         >
-          {turn.answer || (isStreaming ? "…" : "")}
-          {isStreaming ? (
-            <span className="ml-0.5 inline-block animate-pulse text-muted-foreground">
+          {turn.answer ? (
+            turn.answer
+          ) : showWaitingDots ? (
+            <ChatWaitingDots label={waitingLabel(turn.activities)} />
+          ) : waitingForText ? null : (
+            ""
+          )}
+          {turn.answer && isStreaming ? (
+            <span className="chat-stream-caret ml-0.5 inline-block text-muted-foreground">
               ▍
             </span>
           ) : null}
         </div>
+        {isError && turn.errorHint ? (
+          <p className="mt-1 text-[11px] leading-relaxed text-muted-foreground">
+            {turn.errorHint}
+          </p>
+        ) : null}
       </div>
     </ChatColumn>
   );

@@ -23,8 +23,8 @@ use crate::acp::protocol::{
     extract_permission_options, extract_thought_text, extract_tool_call, initialize_params,
     is_error_response, notification, parse_initialize_result, parse_session_id, parse_stop_reason,
     permission_auto_result, permission_cancelled_result, permission_selected_result, request,
-    session_cancel_params, session_close_params, session_new_params, session_resume_params,
-    success_response, Inbound, InitializeResult,
+    session_cancel_params, session_close_params,     session_new_params, session_resume_params,
+    success_response, pick_auth_method, Inbound, InitializeResult,
 };
 use crate::acp::settings::{AcpClientSettings, PermissionMode};
 
@@ -110,36 +110,86 @@ impl AcpService {
     /// Close live session (`session/close` when supported) and kill process.
     pub fn close_session(&self) -> Result<(), AcpError> {
         self.cancel.store(true, Ordering::SeqCst);
+        self.drop_live_session();
+        self.cancel.store(false, Ordering::SeqCst);
+        Ok(())
+    }
+
+    /// Warm up Agent process + session without sending a prompt (user opened chat tab).
+    pub fn connect<F>(
+        &self,
+        cwd: Option<String>,
+        profile_id: Option<String>,
+        saved_session: Option<SavedSessionHint>,
+        client_settings: AcpClientSettings,
+        profiles: AgentProfilesHint,
+        mut on_event: F,
+    ) -> Result<(), AcpError>
+    where
+        F: FnMut(AcpEvent),
+    {
+        if self.is_busy() {
+            return Err(AcpError::busy());
+        }
+
+        self.cancel.store(false, Ordering::SeqCst);
+        if let Ok(mut guard) = self.permission_mode.lock() {
+            *guard = client_settings.permission_mode;
+        }
+
+        let prepared = prepare_profiles(&profiles);
         let mut guard = self
             .session
             .lock()
             .map_err(|_| AcpError::internal(Some("ACP session mutex poisoned")))?;
-        if let Some(mut session) = guard.take() {
-            if session.init.supports_session_close {
-                let id = session.next_id;
-                session.next_id += 1;
-                let _ = Self::write_request(
-                    &mut session.stdin,
-                    id,
-                    "session/close",
-                    session_close_params(&session.session_id),
-                );
-                let _ = Self::read_until_id_raw(
-                    self,
-                    &mut session,
-                    id,
-                    Duration::from_secs(2),
-                    &AtomicBool::new(false),
-                    &self.host,
-                    &mut |_| {},
-                );
+
+        if guard.is_some() {
+            on_event(AcpEvent::Progress {
+                message: "Agent 已连接".into(),
+            });
+            return Ok(());
+        }
+
+        match self.spawn_session(
+            cwd.as_deref(),
+            saved_session.as_ref(),
+            &prepared,
+            profile_id.as_deref(),
+            &mut on_event,
+        ) {
+            Ok(session) => {
+                *guard = Some(session);
+                on_event(AcpEvent::Progress {
+                    message: "Agent 已就绪".into(),
+                });
+                Ok(())
             }
-            let _ = session.child.kill();
-            let _ = session.child.wait();
+            Err(error) => {
+                drop(guard);
+                self.drop_live_session();
+                Err(error)
+            }
+        }
+    }
+
+    fn drop_live_session(&self) {
+        if let Ok(mut guard) = self.session.lock() {
+            if let Some(mut session) = guard.take() {
+                if session.init.supports_session_close {
+                    let id = session.next_id;
+                    session.next_id += 1;
+                    let _ = Self::write_request(
+                        &mut session.stdin,
+                        id,
+                        "session/close",
+                        session_close_params(&session.session_id),
+                    );
+                }
+                let _ = session.child.kill();
+                let _ = session.child.wait();
+            }
         }
         self.host.release_all();
-        self.cancel.store(false, Ordering::SeqCst);
-        Ok(())
     }
 
     pub fn prompt<F>(
@@ -178,6 +228,10 @@ impl AcpService {
             &prepared,
             &mut on_event,
         );
+
+        if outcome.is_err() {
+            self.drop_live_session();
+        }
 
         self.busy.store(false, Ordering::SeqCst);
 
@@ -393,6 +447,13 @@ impl AcpService {
             command.env(key, value);
         }
 
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+            command.creation_flags(CREATE_NO_WINDOW);
+        }
+
         let mut child = command.spawn().map_err(|error| {
             tracing::warn!(%error, cwd = %cwd, "ACP spawn failed");
             AcpError::spawn_failed(Some(&error.to_string()))
@@ -451,7 +512,7 @@ impl AcpService {
             self,
             &mut session,
             init_id,
-            Duration::from_secs(60),
+            initialize_timeout(),
             &self.cancel,
             &self.host,
             on_event,
@@ -468,9 +529,8 @@ impl AcpService {
             });
         }
 
-        // Authenticate when Agent requires it (first advertised method).
-        if !init.auth_methods.is_empty() {
-            let method = &init.auth_methods[0];
+        // Authenticate when Agent advertises methods — prefer ChatGPT when ~/.codex exists.
+        if let Some(method) = pick_auth_method(&init) {
             on_event(AcpEvent::Progress {
                 message: format!("正在认证（{}）…", method.name),
             });
@@ -493,7 +553,14 @@ impl AcpService {
             )?;
             if let Some(msg) = is_error_response(&auth_resp) {
                 let _ = session.child.kill();
-                return Err(AcpError::protocol(Some(&format!("authenticate failed: {msg}"))));
+                if profile.kind == AgentKind::Codex {
+                    return Err(AcpError::codex_auth_required(Some(&format!(
+                        "authenticate failed: {msg}"
+                    ))));
+                }
+                return Err(AcpError::protocol(Some(&format!(
+                    "authenticate failed: {msg}"
+                ))));
             }
         }
 
@@ -855,31 +922,37 @@ impl AcpService {
     ) -> Result<ReadOne, AcpError> {
         let _ = wait;
         let mut line_buf = String::new();
-        let bytes = session.reader.read_line(&mut line_buf).map_err(|error| {
-            tracing::warn!(%error, "ACP read failed");
-            AcpError::protocol(Some(&format!("read ACP stdout: {error}")))
-        })?;
-        if bytes == 0 {
-            return Ok(ReadOne::Eof);
-        }
-        let trimmed = line_buf.trim();
-        if trimmed.is_empty() {
-            return Ok(ReadOne::TimedOut);
-        }
-        let value: Value = serde_json::from_str(trimmed).map_err(|error| {
-            tracing::warn!(%error, line = trimmed, "ACP JSON parse failed");
-            AcpError::protocol(Some(&format!("parse ACP JSON: {error}")))
-        })?;
+        loop {
+            line_buf.clear();
+            let bytes = session.reader.read_line(&mut line_buf).map_err(|error| {
+                tracing::warn!(%error, "ACP read failed");
+                AcpError::protocol(Some(&format!("read ACP stdout: {error}")))
+            })?;
+            if bytes == 0 {
+                return Ok(ReadOne::Eof);
+            }
+            let trimmed = line_buf.trim();
+            if trimmed.is_empty() {
+                continue;
+            }
+            let value: Value = match serde_json::from_str(trimmed) {
+                Ok(value) => value,
+                Err(error) => {
+                    tracing::debug!(line = trimmed, %error, "ACP skipping non-JSON stdout line");
+                    continue;
+                }
+            };
 
-        match self.handle_inbound_side_effects(
-            session,
-            host,
-            classify_inbound(value),
-            cancel,
-            on_event,
-        )? {
-            Some((id, value)) => Ok(ReadOne::Response { id, value }),
-            None => Ok(ReadOne::TimedOut),
+            match self.handle_inbound_side_effects(
+                session,
+                host,
+                classify_inbound(value),
+                cancel,
+                on_event,
+            )? {
+                Some((id, value)) => return Ok(ReadOne::Response { id, value }),
+                None => continue,
+            }
         }
     }
 }
@@ -888,6 +961,14 @@ enum ReadOne {
     TimedOut,
     Eof,
     Response { id: u64, value: Value },
+}
+
+fn initialize_timeout() -> Duration {
+    if cfg!(windows) {
+        Duration::from_secs(180)
+    } else {
+        Duration::from_secs(60)
+    }
 }
 
 impl Default for AcpService {

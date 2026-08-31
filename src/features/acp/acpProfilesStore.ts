@@ -58,11 +58,12 @@ export const useAcpProfilesStore = create<AcpProfilesStore>()(
         profiles: state.profiles,
       }),
       merge: (persisted, current) => {
-        const saved = (persisted ?? {}) as Partial<AcpProfilesStore>;
+        const saved = (persisted ?? {}) as Partial<
+          Pick<AcpProfilesStore, "activeProfileId" | "profiles">
+        >;
         return {
           ...current,
-          ...saved,
-          activeProfileId: saved.activeProfileId || current.activeProfileId,
+          activeProfileId: saved.activeProfileId ?? current.activeProfileId,
           profiles: mergeProfiles(saved.profiles, current.profiles),
         };
       },

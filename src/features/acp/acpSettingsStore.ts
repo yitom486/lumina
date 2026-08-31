@@ -27,11 +27,17 @@ export const useAcpSettingsStore = create<AcpSettingsStore>()(
         thinkingLevel: state.thinkingLevel,
         agentMode: state.agentMode,
       }),
-      merge: (persisted, current) => ({
-        ...current,
-        ...DEFAULT_SETTINGS,
-        ...(persisted as Partial<AcpClientSettings>),
-      }),
+      merge: (persisted, current) => {
+        const saved = (persisted ?? {}) as Partial<AcpClientSettings>;
+        return {
+          ...current,
+          permissionMode:
+            saved.permissionMode ?? current.permissionMode ?? DEFAULT_SETTINGS.permissionMode,
+          thinkingLevel:
+            saved.thinkingLevel ?? current.thinkingLevel ?? DEFAULT_SETTINGS.thinkingLevel,
+          agentMode: saved.agentMode ?? current.agentMode ?? DEFAULT_SETTINGS.agentMode,
+        };
+      },
     },
   ),
 );

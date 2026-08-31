@@ -3,6 +3,7 @@
 
 use serde_json::{json, Value};
 
+use crate::acp::discover::codex_config_present;
 use crate::acp::error::AcpError;
 
 pub fn request(id: u64, method: &str, params: Value) -> Value {
@@ -83,6 +84,26 @@ pub fn session_close_params(session_id: &str) -> Value {
 
 pub fn authenticate_params(method_id: &str) -> Value {
     json!({ "methodId": method_id })
+}
+
+/// Pick an auth method compatible with local Codex setup (ChatGPT login vs API key).
+pub fn pick_auth_method<'a>(init: &'a InitializeResult) -> Option<&'a AuthMethod> {
+    if init.auth_methods.is_empty() {
+        return None;
+    }
+    let order: &[&str] = if codex_config_present() {
+        &["chat-gpt", "chat-gpt-device-code", "gateway", "api-key"]
+    } else if std::env::var("OPENAI_API_KEY").is_ok() {
+        &["api-key", "chat-gpt", "chat-gpt-device-code", "gateway"]
+    } else {
+        &["chat-gpt", "chat-gpt-device-code", "api-key", "gateway"]
+    };
+    for id in order {
+        if let Some(method) = init.auth_methods.iter().find(|method| method.id == *id) {
+            return Some(method);
+        }
+    }
+    init.auth_methods.first()
 }
 
 fn capability_present(value: &Value, pointer: &str) -> bool {
@@ -518,5 +539,24 @@ mod tests {
         });
         let init = parse_initialize_result(&value);
         assert!(init.supports_session_close);
+    }
+
+    #[test]
+    fn pick_auth_prefers_chatgpt_when_config_present() {
+        let init = InitializeResult {
+            auth_methods: vec![
+                AuthMethod {
+                    id: "api-key".into(),
+                    name: "API Key".into(),
+                },
+                AuthMethod {
+                    id: "chat-gpt".into(),
+                    name: "ChatGPT".into(),
+                },
+            ],
+            ..InitializeResult::default()
+        };
+        let picked = pick_auth_method(&init).expect("method");
+        assert_eq!(picked.id, "chat-gpt");
     }
 }

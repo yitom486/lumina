@@ -1,4 +1,5 @@
 import type { AcpEvent, ChatActivity, ChatTurn, ThinkingLevel } from "./types";
+import { hintForAcpFailure } from "./failureHints";
 
 function nextSeq(seq: { n: number }): string {
   seq.n += 1;
@@ -86,6 +87,7 @@ export function applyAcpEventToTurn(
       return {
         ...turn,
         answer: event.message,
+        errorHint: hintForAcpFailure(event.code),
         status: "error",
         showActivities: false,
         activities: [],

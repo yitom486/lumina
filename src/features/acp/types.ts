@@ -21,6 +21,7 @@ export type AcpStatus = {
   available: boolean;
   adapterFound: boolean;
   codexFound: boolean;
+  codexConfigFound?: boolean;
   activeProfileId: string;
   profiles: AgentProfileStatus[];
   cliPath?: string | null;
@@ -58,6 +59,14 @@ export type VideoPromptContext = {
 
 export type PermissionMode = "auto" | "ask";
 export type ThinkingLevel = "hidden" | "minimal" | "verbose";
+
+/** Agent warm-up state when the chat tab is open. */
+export type AcpConnectionState =
+  | "unavailable"
+  | "idle"
+  | "connecting"
+  | "connected"
+  | "error";
 
 export type AcpClientSettings = {
   permissionMode: PermissionMode;
@@ -131,6 +140,8 @@ export type ChatTurn = {
   status: ChatMessageStatus;
   activities: ChatActivity[];
   showActivities: boolean;
+  /** Shown under error answer — fixed business copy, not technical details. */
+  errorHint?: string;
 };
 
 export type PendingPermission = {

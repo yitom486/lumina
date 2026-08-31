@@ -20,6 +20,8 @@ pub struct AcpStatus {
     pub available: bool,
     pub adapter_found: bool,
     pub codex_found: bool,
+    #[serde(default)]
+    pub codex_config_found: bool,
     pub active_profile_id: String,
     pub profiles: Vec<AgentProfileStatus>,
     pub cli_path: Option<String>,

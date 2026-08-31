@@ -18,12 +18,13 @@ describe("PanelErrorBoundary", () => {
     const spy = vi.spyOn(console, "error").mockImplementation(() => {});
 
     render(
-      <PanelErrorBoundary title="测试面板加载失败" scope="test">
+      <PanelErrorBoundary panelLabel="测试面板" scope="test">
         <BrokenChild />
       </PanelErrorBoundary>,
     );
 
     expect(screen.getByText("测试面板加载失败")).toBeInTheDocument();
+    expect(screen.getByText(/该功能暂时不可用/)).toBeInTheDocument();
     expect(screen.queryByText("boom")).not.toBeInTheDocument();
     expect(spy).toHaveBeenCalled();
   });
@@ -38,12 +39,12 @@ describe("PanelErrorBoundary", () => {
     }
 
     render(
-      <PanelErrorBoundary title="失败" scope="test-retry">
+      <PanelErrorBoundary panelLabel="面板" scope="test-retry">
         <MaybeBroken />
       </PanelErrorBoundary>,
     );
 
-    expect(screen.getByText("失败")).toBeInTheDocument();
+    expect(screen.getByText("面板加载失败")).toBeInTheDocument();
     shouldThrow = false;
     await userEvent.click(screen.getByRole("button", { name: "重试" }));
     expect(screen.getByText("恢复成功")).toBeInTheDocument();
@@ -59,15 +60,15 @@ describe("PanelErrorBoundary", () => {
     }
 
     const { rerender } = render(
-      <PanelErrorBoundary title="失败" scope="test-key" resetKey="a">
+      <PanelErrorBoundary panelLabel="面板" scope="test-key" resetKey="a">
         <MaybeBroken />
       </PanelErrorBoundary>,
     );
 
-    expect(screen.getByText("失败")).toBeInTheDocument();
+    expect(screen.getByText("面板加载失败")).toBeInTheDocument();
     shouldThrow = false;
     rerender(
-      <PanelErrorBoundary title="失败" scope="test-key" resetKey="b">
+      <PanelErrorBoundary panelLabel="面板" scope="test-key" resetKey="b">
         <MaybeBroken />
       </PanelErrorBoundary>,
     );

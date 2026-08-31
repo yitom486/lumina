@@ -1,15 +1,16 @@
 import { Component, type ErrorInfo, type ReactNode } from "react";
 
+import { formatRenderError } from "@/lib/formatRenderError";
 import { reportRenderError } from "@/lib/reportRenderError";
 
 export type PanelErrorBoundaryProps = {
   children: ReactNode;
-  /** User-visible title (Chinese, no stack traces). */
-  title: string;
+  /** Short panel label, e.g. 对话 / 播放区域 */
+  panelLabel?: string;
+  /** Optional override when no error yet (unused in fallback). */
+  title?: string;
   hint?: string;
-  /** Logging scope, e.g. sidebar:acp */
   scope?: string;
-  /** Changing this clears the error and retries children. */
   resetKey?: string | number;
   className?: string;
 };
@@ -17,9 +18,6 @@ export type PanelErrorBoundaryProps = {
 type State = {
   error: Error | null;
 };
-
-const DEFAULT_HINT =
-  "播放与其它面板仍可使用。可点击重试；若反复失败，请重启应用或清除站点存储。";
 
 /** Isolates a feature panel so render errors do not blank the WebView. */
 export class PanelErrorBoundary extends Component<PanelErrorBoundaryProps, State> {
@@ -34,10 +32,7 @@ export class PanelErrorBoundary extends Component<PanelErrorBoundaryProps, State
   }
 
   componentDidUpdate(prevProps: PanelErrorBoundaryProps) {
-    if (
-      this.state.error &&
-      prevProps.resetKey !== this.props.resetKey
-    ) {
+    if (this.state.error && prevProps.resetKey !== this.props.resetKey) {
       this.setState({ error: null });
     }
   }
@@ -48,20 +43,28 @@ export class PanelErrorBoundary extends Component<PanelErrorBoundaryProps, State
 
   render() {
     if (this.state.error) {
+      const copy = formatRenderError(
+        this.state.error,
+        this.props.panelLabel ?? "面板",
+      );
       return (
         <div
           className={
             this.props.className ??
-            "flex min-h-0 flex-1 flex-col items-center justify-center gap-2 px-4 py-8 text-center"
+            "flex min-h-0 flex-1 flex-col items-center justify-center gap-3 px-4 py-8 text-center"
           }
+          role="alert"
         >
-          <p className="text-sm font-medium text-foreground">{this.props.title}</p>
-          <p className="max-w-sm text-xs leading-relaxed text-muted-foreground">
-            {this.props.hint ?? DEFAULT_HINT}
+          <p className="text-sm font-medium text-foreground">{copy.title}</p>
+          <p className="max-w-sm text-xs leading-relaxed text-foreground/90">
+            {copy.message}
+          </p>
+          <p className="max-w-sm text-[11px] leading-relaxed text-muted-foreground">
+            {this.props.hint ?? copy.hint}
           </p>
           <button
             type="button"
-            className="mt-2 rounded-md border border-border px-3 py-1.5 text-xs text-foreground hover:bg-muted"
+            className="mt-1 rounded-md border border-border px-3 py-1.5 text-xs text-foreground hover:bg-muted"
             onClick={this.retry}
           >
             重试
@@ -78,8 +81,7 @@ export function AppErrorBoundary({ children }: { children: ReactNode }) {
   return (
     <PanelErrorBoundary
       scope="app-root"
-      title="应用界面出现问题"
-      hint="请尝试重试或重启 Lumina。若仅某个侧边栏标签页出错，可先切换到其它标签。"
+      panelLabel="应用"
       className="flex min-h-svh flex-col items-center justify-center gap-3 bg-background px-6 py-12 text-center text-foreground"
     >
       {children}

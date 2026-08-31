@@ -39,6 +39,36 @@ pub async fn acp_respond_permission(
 }
 
 #[tauri::command]
+pub async fn acp_connect(
+    state: State<'_, AppState>,
+    cwd: Option<String>,
+    profile_id: Option<String>,
+    saved_session: Option<SavedSessionHint>,
+    client_settings: Option<AcpClientSettings>,
+    profiles: AgentProfilesHint,
+    on_event: Channel<AcpEvent>,
+) -> Result<(), AcpError> {
+    let acp = state.acp.clone();
+    let settings = client_settings.unwrap_or_default();
+    tauri::async_runtime::spawn_blocking(move || {
+        acp.connect(
+            cwd,
+            profile_id,
+            saved_session,
+            settings,
+            profiles,
+            |event| {
+                if let Err(error) = on_event.send(event) {
+                    tracing::warn!(%error, "failed to send ACP connect event");
+                }
+            },
+        )
+    })
+    .await
+    .map_err(|error| AcpError::internal(Some(&format!("acp connect join: {error}"))))?
+}
+
+#[tauri::command]
 pub async fn acp_prompt(
     state: State<'_, AppState>,
     text: String,

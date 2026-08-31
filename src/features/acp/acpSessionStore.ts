@@ -22,12 +22,15 @@ export const useAcpSessionStore = create<AcpSessionStore>()(
       partialize: (state) => ({
         savedSession: state.savedSession,
       }),
-      merge: (persisted, current) => ({
-        ...current,
-        ...(persisted as Partial<AcpSessionStore>),
-        savedSession:
-          (persisted as Partial<AcpSessionStore>)?.savedSession ?? null,
-      }),
+      merge: (persisted, current) => {
+        const saved = (persisted ?? {}) as Partial<
+          Pick<AcpSessionStore, "savedSession">
+        >;
+        return {
+          ...current,
+          savedSession: saved.savedSession ?? current.savedSession ?? null,
+        };
+      },
     },
   ),
 );
