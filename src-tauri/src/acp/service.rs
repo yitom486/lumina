@@ -1,10 +1,7 @@
 //! AcpService — optional on-demand ACP Client over stdio JSON-RPC.
 //!
-//! Implements baseline Client→Agent: initialize, authenticate (if required),
-//! session/new, session/prompt, session/cancel, session/close (when advertised).
-//! Handles Agent→Client: session/update (+ variants), session/request_permission,
-//! and rejects fs/terminal/elicitation with protocol errors.
-//! Keeps one live session for multi-turn until close/cancel-kill.
+//! Baseline Client→Agent: initialize, authenticate, session/new|prompt|cancel|close.
+//! Agent→Client: session/update, session/request_permission, fs/*, terminal/*.
 
 use std::io::{BufRead, BufReader, Write};
 use std::process::{Child, ChildStdin, Command, Stdio};
@@ -16,15 +13,15 @@ use std::time::{Duration, Instant};
 use serde_json::Value;
 
 use crate::acp::error::AcpError;
+use crate::acp::host::AcpHost;
 use crate::acp::model::{AcpEvent, AcpStatus, AgentProfileInput};
-use crate::acp::paths::status_from_store;
+use crate::acp::paths::{resolve_session_cwd, status_from_store};
 use crate::acp::profile::{resolve_launch, AgentKind, AgentProfile, ProfileStore};
 use crate::acp::protocol::{
     authenticate_params, classify_inbound, encode_line, extract_agent_text, extract_plan_summary,
-    extract_thought_text, extract_tool_call, handle_agent_request, initialize_params,
-    is_error_response, notification, parse_initialize_result, parse_session_id, parse_stop_reason,
-    request, session_cancel_params, session_close_params, session_new_params,
-    session_prompt_params, Inbound, InitializeResult,
+    extract_thought_text, extract_tool_call, initialize_params, is_error_response, notification,
+    parse_initialize_result, parse_session_id, parse_stop_reason, request, session_cancel_params,
+    session_close_params, session_new_params, session_prompt_params, Inbound, InitializeResult,
 };
 
 struct LiveSession {
@@ -42,6 +39,7 @@ pub struct AcpService {
     cancel: AtomicBool,
     session: Mutex<Option<LiveSession>>,
     profiles: ProfileStore,
+    host: AcpHost,
 }
 
 impl AcpService {
@@ -51,6 +49,7 @@ impl AcpService {
             cancel: AtomicBool::new(false),
             session: Mutex::new(None),
             profiles: ProfileStore::new(),
+            host: AcpHost::new(),
         }
     }
 
@@ -115,12 +114,19 @@ impl AcpService {
                     "session/close",
                     session_close_params(&session.session_id),
                 );
-                // Best-effort brief drain; then kill.
-                let _ = Self::read_until_id_raw(&mut session, id, Duration::from_secs(2), &AtomicBool::new(false), &mut |_| {});
+                let _ = Self::read_until_id_raw(
+                    &mut session,
+                    id,
+                    Duration::from_secs(2),
+                    &AtomicBool::new(false),
+                    &self.host,
+                    &mut |_| {},
+                );
             }
             let _ = session.child.kill();
             let _ = session.child.wait();
         }
+        self.host.release_all();
         self.cancel.store(false, Ordering::SeqCst);
         Ok(())
     }
@@ -265,6 +271,7 @@ impl AcpService {
                 session,
                 Duration::from_millis(250),
                 &self.cancel,
+                &self.host,
                 &mut on_event_collect,
             )? {
                 ReadOne::TimedOut => continue,
@@ -306,9 +313,23 @@ impl AcpService {
 
     fn spawn_session(
         &self,
-        cwd: Option<&str>,
+        cwd_hint: Option<&str>,
         on_event: &mut dyn FnMut(AcpEvent),
     ) -> Result<LiveSession, AcpError> {
+        let workspace = resolve_session_cwd(cwd_hint)?;
+        let cwd = workspace.to_string_lossy().to_string();
+        self.host.set_workspace(workspace.clone());
+        // Clear workspace if session setup fails after this point.
+        struct ClearWorkspaceOnDrop<'a>(&'a AcpHost, bool);
+        impl Drop for ClearWorkspaceOnDrop<'_> {
+            fn drop(&mut self) {
+                if self.1 {
+                    self.0.clear_workspace();
+                }
+            }
+        }
+        let mut workspace_guard = ClearWorkspaceOnDrop(&self.host, true);
+
         let profile = self.profiles.active_profile()?;
         if profile.command.trim().is_empty() {
             return Err(AcpError::not_configured(Some(
@@ -320,26 +341,25 @@ impl AcpService {
         on_event(AcpEvent::Progress {
             message: format!("正在启动 {}…", launch.display_name),
         });
+        on_event(AcpEvent::Progress {
+            message: format!("工作目录：{cwd}"),
+        });
 
         let mut command = Command::new(&launch.program);
         command
             .args(&launch.args)
+            .current_dir(&workspace)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
         for (key, value) in &launch.env {
             command.env(key, value);
         }
-        if let Some(dir) = cwd {
-            command.current_dir(dir);
-        }
 
-        let mut child = command
-            .spawn()
-            .map_err(|error| {
-                tracing::warn!(%error, "ACP spawn failed");
-                AcpError::spawn_failed(Some(&error.to_string()))
-            })?;
+        let mut child = command.spawn().map_err(|error| {
+            tracing::warn!(%error, cwd = %cwd, "ACP spawn failed");
+            AcpError::spawn_failed(Some(&error.to_string()))
+        })?;
 
         // Drain stderr so the pipe never blocks the agent.
         if let Some(stderr) = child.stderr.take() {
@@ -395,6 +415,7 @@ impl AcpService {
             init_id,
             Duration::from_secs(60),
             &self.cancel,
+            &self.host,
             on_event,
         )?;
         let init = parse_initialize_result(&init_resp);
@@ -428,6 +449,7 @@ impl AcpService {
                 auth_id,
                 Duration::from_secs(120),
                 &self.cancel,
+                &self.host,
                 on_event,
             )?;
             if let Some(msg) = is_error_response(&auth_resp) {
@@ -447,19 +469,22 @@ impl AcpService {
             &mut session.stdin,
             new_id,
             "session/new",
-            session_new_params(cwd),
+            session_new_params(&cwd),
         )?;
         let session_resp = Self::read_until_id_raw(
             &mut session,
             new_id,
             Duration::from_secs(60),
             &self.cancel,
+            &self.host,
             on_event,
         )?;
         let session_id = parse_session_id(&session_resp).ok_or_else(|| {
+            let _ = session.child.kill();
             AcpError::protocol(Some(&format!("missing sessionId: {session_resp}")))
         })?;
         session.session_id = session_id;
+        workspace_guard.1 = false;
         Ok(session)
     }
 
@@ -542,6 +567,7 @@ impl AcpService {
 
     fn handle_inbound_side_effects(
         session: &mut LiveSession,
+        host: &AcpHost,
         inbound: Inbound,
         cancel: &AtomicBool,
         on_event: &mut dyn FnMut(AcpEvent),
@@ -576,8 +602,16 @@ impl AcpService {
                         tool_call_id: tool_id,
                         decision: decision.into(),
                     });
+                } else if method.starts_with("fs/") {
+                    on_event(AcpEvent::Progress {
+                        message: format!("文件系统：{method}"),
+                    });
+                } else if method.starts_with("terminal/") {
+                    on_event(AcpEvent::Progress {
+                        message: format!("终端：{method}"),
+                    });
                 }
-                let response = handle_agent_request(&method, id, &params, canceling);
+                let response = host.handle_request(&method, id, &params, canceling);
                 Self::write_raw(&mut session.stdin, &response)?;
                 Ok(None)
             }
@@ -593,6 +627,7 @@ impl AcpService {
         target_id: u64,
         timeout: Duration,
         cancel: &AtomicBool,
+        host: &AcpHost,
         on_event: &mut dyn FnMut(AcpEvent),
     ) -> Result<Value, AcpError> {
         let deadline = Instant::now() + timeout;
@@ -603,7 +638,7 @@ impl AcpService {
             if Instant::now() > deadline {
                 return Err(AcpError::protocol(Some("ACP read timed out")));
             }
-            match Self::read_one(session, Duration::from_millis(200), cancel, on_event)? {
+            match Self::read_one(session, Duration::from_millis(200), cancel, host, on_event)? {
                 ReadOne::TimedOut => continue,
                 ReadOne::Eof => return Err(AcpError::protocol(Some("EOF on stdout"))),
                 ReadOne::Response { id, value } if id == target_id => {
@@ -621,22 +656,11 @@ impl AcpService {
         session: &mut LiveSession,
         wait: Duration,
         cancel: &AtomicBool,
+        host: &AcpHost,
         on_event: &mut dyn FnMut(AcpEvent),
     ) -> Result<ReadOne, AcpError> {
-        // Non-blocking-ish: use set_read_timeout when available.
-        #[cfg(unix)]
-        {
-            use std::os::unix::io::AsRawFd;
-            // fall through to blocking read with short patience — Windows path below
-            let _ = wait;
-        }
         let _ = wait;
-
-        // Blocking read_line; cancel is checked between lines by callers using short loops.
-        // To honor timeout better on Windows, we rely on caller slice loops + cancel.
         let mut line_buf = String::new();
-        // Peek with a short sleep if no data — actually BufReader doesn't support easily.
-        // Use read_line blocking; outer loop checks cancel/deadline.
         let bytes = session.reader.read_line(&mut line_buf).map_err(|error| {
             tracing::warn!(%error, "ACP read failed");
             AcpError::protocol(Some(&format!("read ACP stdout: {error}")))
@@ -655,6 +679,7 @@ impl AcpService {
 
         match Self::handle_inbound_side_effects(
             session,
+            host,
             classify_inbound(value),
             cancel,
             on_event,

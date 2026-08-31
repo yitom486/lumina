@@ -43,18 +43,20 @@ pub fn initialize_params() -> Value {
         "protocolVersion": 1,
         "clientInfo": {
             "name": "lumina",
+            "title": "Lumina",
             "version": env!("CARGO_PKG_VERSION"),
         },
         "clientCapabilities": {
-            "fs": { "readTextFile": false, "writeTextFile": false },
-            "terminal": false,
+            "fs": { "readTextFile": true, "writeTextFile": true },
+            "terminal": true,
         },
     })
 }
 
-pub fn session_new_params(cwd: Option<&str>) -> Value {
+/// `cwd` MUST be an absolute path (ACP session-setup).
+pub fn session_new_params(cwd: &str) -> Value {
     json!({
-        "cwd": cwd.unwrap_or("."),
+        "cwd": cwd,
         "mcpServers": [],
     })
 }
@@ -81,6 +83,14 @@ pub fn session_close_params(session_id: &str) -> Value {
 
 pub fn authenticate_params(method_id: &str) -> Value {
     json!({ "methodId": method_id })
+}
+
+fn capability_present(value: &Value, pointer: &str) -> bool {
+    match value.pointer(pointer) {
+        None | Some(Value::Null) => false,
+        Some(Value::Bool(flag)) => *flag,
+        Some(_) => true,
+    }
 }
 
 pub fn encode_line(value: &Value) -> Result<String, AcpError> {
@@ -137,14 +147,9 @@ pub fn parse_initialize_result(value: &Value) -> InitializeResult {
         }
     }
 
-    let supports_session_close = result
-        .pointer("/agentCapabilities/sessionCapabilities/close")
-        .and_then(Value::as_bool)
-        .unwrap_or(false)
-        || result
-            .pointer("/agentCapabilities/session/close")
-            .and_then(Value::as_bool)
-            .unwrap_or(false);
+    // Spec: advertising `sessionCapabilities.close` as `{}` (or true) means supported.
+    let supports_session_close = capability_present(result, "/agentCapabilities/sessionCapabilities/close")
+        || capability_present(result, "/agentCapabilities/session/close");
 
     let load_session = result
         .pointer("/agentCapabilities/loadSession")
@@ -375,36 +380,6 @@ pub fn permission_auto_result(params: &Value, canceling: bool) -> Value {
     json!({ "outcome": { "outcome": "cancelled" } })
 }
 
-/// Build JSON-RPC response for an Agent→Client request.
-pub fn handle_agent_request(method: &str, id: Value, params: &Value, canceling: bool) -> Value {
-    match method {
-        "session/request_permission" => {
-            success_response(id, permission_auto_result(params, canceling))
-        }
-        "fs/read_text_file" | "fs/write_text_file" => error_response(
-            id,
-            -32601,
-            "Lumina ACP client does not expose filesystem methods",
-        ),
-        "terminal/create"
-        | "terminal/output"
-        | "terminal/release"
-        | "terminal/wait_for_exit"
-        | "terminal/kill" => error_response(
-            id,
-            -32601,
-            "Lumina ACP client does not expose terminal methods",
-        ),
-        "elicitation/create" => {
-            success_response(id, json!({ "outcome": { "outcome": "cancelled" } }))
-        }
-        other => {
-            tracing::warn!(method = other, "unsupported Agent→Client ACP method");
-            error_response(id, -32601, &format!("Method not found: {other}"))
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -415,6 +390,9 @@ mod tests {
         let line = encode_line(&req).expect("encode");
         assert!(line.contains("initialize"));
         assert!(line.contains("lumina"));
+        assert!(line.contains("readTextFile"));
+        assert!(line.contains("writeTextFile"));
+        assert!(line.contains("\"terminal\":true") || line.contains("\"terminal\": true"));
     }
 
     #[test]
@@ -477,5 +455,26 @@ mod tests {
             }
             other => panic!("unexpected {other:?}"),
         }
+    }
+
+    #[test]
+    fn session_new_requires_absolute_cwd() {
+        let params = session_new_params("D:/videos");
+        assert_eq!(params.get("cwd").and_then(Value::as_str), Some("D:/videos"));
+        assert!(params.get("mcpServers").and_then(Value::as_array).is_some());
+    }
+
+    #[test]
+    fn close_capability_object_counts_as_supported() {
+        let value = json!({
+            "result": {
+                "protocolVersion": 1,
+                "agentCapabilities": {
+                    "sessionCapabilities": { "close": {} }
+                }
+            }
+        });
+        let init = parse_initialize_result(&value);
+        assert!(init.supports_session_close);
     }
 }

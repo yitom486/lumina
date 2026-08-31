@@ -1,12 +1,57 @@
 //! Status aggregation for ACP (uses profiles + discovery).
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use crate::acp::discover::{find_acp_adapter, find_bunx, find_codex};
 use crate::acp::error::AcpError;
 use crate::acp::model::AcpStatus;
 use crate::acp::profile::{install_hint, AgentKind, ProfileStore, RESPONSES_ONLY_NOTE};
+
+/// Resolve an absolute session `cwd` for ACP.
+///
+/// Preference: explicit hint (directory, or parent of a media file) → process cwd.
+/// Relative hints are joined with the process cwd. ACP requires an absolute path.
+pub fn resolve_session_cwd(hint: Option<&str>) -> Result<PathBuf, AcpError> {
+    if let Some(raw) = hint.map(str::trim).filter(|s| !s.is_empty()) {
+        let path = PathBuf::from(raw);
+        let absolute = if path.is_absolute() {
+            path
+        } else {
+            let base = std::env::current_dir().map_err(|error| {
+                AcpError::internal(Some(&format!("current_dir failed: {error}")))
+            })?;
+            base.join(path)
+        };
+
+        if absolute.is_dir() {
+            return Ok(normalize_abs(absolute));
+        }
+        if let Some(parent) = absolute.parent() {
+            if parent.as_os_str().is_empty() {
+                return Err(AcpError::bad_request("工作目录无效"));
+            }
+            if parent.is_dir() || !parent.exists() {
+                // Parent of a media file is the workspace even if we cannot verify yet.
+                return Ok(normalize_abs(parent.to_path_buf()));
+            }
+        }
+        return Err(AcpError::bad_request("工作目录必须是绝对路径"));
+    }
+
+    let cwd = std::env::current_dir().map_err(|error| {
+        AcpError::internal(Some(&format!("current_dir failed: {error}")))
+    })?;
+    Ok(normalize_abs(cwd))
+}
+
+fn normalize_abs(path: PathBuf) -> PathBuf {
+    // Best-effort canonicalize; fall back to the absolute path we already have.
+    match path.canonicalize() {
+        Ok(canonical) => canonical,
+        Err(_) => path,
+    }
+}
 
 #[derive(Debug, Clone)]
 pub struct AcpPaths {
@@ -127,5 +172,20 @@ mod tests {
             status.hint
         );
         assert!(status.responses_only_note.contains("Responses"));
+    }
+
+    #[test]
+    fn resolve_cwd_uses_process_dir_when_hint_missing() {
+        let cwd = resolve_session_cwd(None).expect("cwd");
+        assert!(cwd.is_absolute());
+    }
+
+    #[test]
+    fn resolve_cwd_takes_parent_of_file_hint() {
+        let tmp = std::env::temp_dir().join("lumina-acp-cwd-file.mp4");
+        let _ = std::fs::write(&tmp, b"x");
+        let cwd = resolve_session_cwd(Some(tmp.to_str().expect("utf8"))).expect("cwd");
+        assert_eq!(cwd, tmp.parent().expect("parent").canonicalize().unwrap_or_else(|_| tmp.parent().unwrap().to_path_buf()));
+        let _ = std::fs::remove_file(&tmp);
     }
 }

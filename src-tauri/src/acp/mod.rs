@@ -2,6 +2,7 @@
 
 pub mod discover;
 pub mod error;
+pub mod host;
 pub mod model;
 pub mod paths;
 pub mod profile;

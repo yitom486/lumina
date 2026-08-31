@@ -2,9 +2,11 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useId, useState } from "react";
 
 import { Button } from "@/components/ui/button";
+import { usePlayerStore } from "@/features/player";
 import { errorMessage } from "@/lib/format";
 
 import { acpCancel, acpClose, acpPrompt, getAcpStatus } from "../api";
+import { workspaceCwdFromMedia } from "../cwd";
 import type { AcpEvent, ChatMessage } from "../types";
 import { AgentSetupBar } from "./AgentSetupBar";
 import { ChatComposer } from "./ChatComposer";
@@ -15,9 +17,10 @@ function nextId(prefix: string, seq: { n: number }): string {
   return `${prefix}-${seq.n}`;
 }
 
-/** ACP chat shell. Video context linkage is intentionally deferred. */
+/** ACP chat shell. Session cwd defaults to the open media file's directory. */
 export function AcpPanel() {
   const queryClient = useQueryClient();
+  const currentFile = usePlayerStore((s) => s.currentFile);
   const statusQuery = useQuery({
     queryKey: ["acp-status"],
     queryFn: getAcpStatus,
@@ -34,6 +37,7 @@ export function AcpPanel() {
   const available = statusQuery.data?.available ?? false;
   const sessionActive = statusQuery.data?.sessionActive ?? false;
   const activeProfileId = statusQuery.data?.activeProfileId ?? "codex";
+  const sessionCwd = workspaceCwdFromMedia(currentFile);
 
   const pushSystem = (content: string) => {
     setMessages((prev) => [
@@ -148,7 +152,7 @@ export function AcpPanel() {
                 break;
             }
           },
-          { profileId: activeProfileId },
+          { profileId: activeProfileId, cwd: sessionCwd },
         );
       } catch (error) {
         patchAssistant({
@@ -183,13 +187,14 @@ export function AcpPanel() {
 
       {(sessionActive || busy) && (
         <div className="flex shrink-0 items-center justify-between gap-2 border-b border-border px-3 py-1">
-          <span className="text-[11px] text-muted-foreground">
+          <span className="min-w-0 truncate text-[11px] text-muted-foreground">
             {busy ? "回合进行中" : "会话保持中（可继续提问）"}
+            {sessionCwd ? ` · ${sessionCwd}` : ""}
           </span>
           <Button
             size="sm"
             variant="ghost"
-            className="h-7 text-[11px]"
+            className="h-7 shrink-0 text-[11px]"
             disabled={busy || closeMutation.isPending}
             onClick={() => closeMutation.mutate()}
           >
