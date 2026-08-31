@@ -8,6 +8,14 @@ use crate::acp::profile::{AgentKind, AgentProfileStatus};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct SavedSessionHint {
+    pub session_id: String,
+    pub profile_id: String,
+    pub cwd: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct AcpStatus {
     pub available: bool,
     pub adapter_found: bool,
@@ -35,6 +43,14 @@ pub struct AgentProfileInput {
     pub args: Vec<String>,
     #[serde(default)]
     pub env: HashMap<String, String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PermissionOption {
+    pub option_id: String,
+    pub name: String,
+    pub kind: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -69,6 +85,19 @@ pub enum AcpEvent {
     #[serde(rename_all = "camelCase")]
     Plan {
         text: String,
+    },
+    #[serde(rename_all = "camelCase")]
+    SessionSaved {
+        session_id: String,
+        profile_id: String,
+        cwd: String,
+    },
+    #[serde(rename_all = "camelCase")]
+    PermissionRequest {
+        request_id: String,
+        tool_call_id: Option<String>,
+        title: Option<String>,
+        options: Vec<PermissionOption>,
     },
     #[serde(rename_all = "camelCase")]
     PermissionResolved {

@@ -8,8 +8,9 @@ pub mod subtitle;
 mod state;
 
 pub use acp::{
-    AcpError, AcpErrorCode, AcpEvent, AcpService, AcpStatus, AgentKind, AgentProfile,
-    AgentProfileInput, AgentProfileStatus,
+    AcpClientSettings, AcpError, AcpErrorCode, AcpEvent, AcpService, AcpStatus, AgentKind,
+    AgentProfile, AgentProfileInput, AgentProfileStatus, PermissionMode, PermissionOption,
+    SavedSessionHint, ThinkingLevel, VideoPromptContext,
 };
 pub use asr::{AsrError, AsrErrorCode, AsrEvent, AsrService, AsrStatus};
 pub use media::{
@@ -25,7 +26,8 @@ pub use subtitle::{
 };
 
 use commands::acp::{
-    acp_cancel, acp_close, acp_prompt, acp_set_active_profile, acp_status, acp_upsert_profile,
+    acp_cancel, acp_close, acp_prompt, acp_respond_permission, acp_set_active_profile,
+    acp_status, acp_upsert_profile,
 };
 use commands::asr::{asr_status, asr_transcribe};
 use commands::media::{media_inspect, media_list_siblings};
@@ -70,6 +72,7 @@ pub fn run() {
             asr_status,
             asr_transcribe,
             acp_status,
+            acp_respond_permission,
             acp_prompt,
             acp_cancel,
             acp_close,

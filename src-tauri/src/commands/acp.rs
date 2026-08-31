@@ -5,7 +5,8 @@ use tauri::{AppHandle, Manager, State};
 
 use crate::acp::model::AgentProfileInput;
 use crate::acp::profile::AgentProfile;
-use crate::acp::{AcpError, AcpEvent, AcpStatus, VideoPromptContext};
+use crate::acp::settings::AcpClientSettings;
+use crate::acp::{AcpError, AcpEvent, AcpStatus, SavedSessionHint, VideoPromptContext};
 use crate::state::AppState;
 
 #[tauri::command]
@@ -49,21 +50,48 @@ pub async fn acp_upsert_profile(
 }
 
 #[tauri::command]
+pub async fn acp_respond_permission(
+    app: AppHandle,
+    request_id: String,
+    option_id: Option<String>,
+) -> Result<(), AcpError> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let Some(state) = app.try_state::<AppState>() else {
+            return Err(AcpError::internal(Some("app state unavailable")));
+        };
+        state.acp.respond_permission(&request_id, option_id)
+    })
+    .await
+    .map_err(|error| AcpError::internal(Some(&format!("acp respond permission join: {error}"))))?
+}
+
+#[tauri::command]
 pub async fn acp_prompt(
     state: State<'_, AppState>,
     text: String,
     cwd: Option<String>,
     profile_id: Option<String>,
     context: Option<VideoPromptContext>,
+    saved_session: Option<SavedSessionHint>,
+    client_settings: Option<AcpClientSettings>,
     on_event: Channel<AcpEvent>,
 ) -> Result<String, AcpError> {
     let acp = state.acp.clone();
+    let settings = client_settings.unwrap_or_default();
     tauri::async_runtime::spawn_blocking(move || {
-        acp.prompt(text, cwd, profile_id, context, |event| {
-            if let Err(error) = on_event.send(event) {
-                tracing::warn!(%error, "failed to send ACP event");
-            }
-        })
+        acp.prompt(
+            text,
+            cwd,
+            profile_id,
+            context,
+            saved_session,
+            settings,
+            |event| {
+                if let Err(error) = on_event.send(event) {
+                    tracing::warn!(%error, "failed to send ACP event");
+                }
+            },
+        )
     })
     .await
     .map_err(|error| AcpError::internal(Some(&format!("acp prompt join: {error}"))))?

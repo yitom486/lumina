@@ -65,6 +65,14 @@ pub fn session_prompt_params(session_id: &str, text: &str) -> Value {
     crate::acp::context::session_prompt_params(session_id, text, None)
 }
 
+pub fn session_resume_params(session_id: &str, cwd: &str) -> Value {
+    json!({
+        "sessionId": session_id,
+        "cwd": cwd,
+        "mcpServers": [],
+    })
+}
+
 pub fn session_cancel_params(session_id: &str) -> Value {
     json!({ "sessionId": session_id })
 }
@@ -98,6 +106,7 @@ pub struct InitializeResult {
     pub agent_name: Option<String>,
     pub auth_methods: Vec<AuthMethod>,
     pub supports_session_close: bool,
+    pub supports_session_resume: bool,
     pub load_session: bool,
 }
 
@@ -143,6 +152,11 @@ pub fn parse_initialize_result(value: &Value) -> InitializeResult {
     let supports_session_close = capability_present(result, "/agentCapabilities/sessionCapabilities/close")
         || capability_present(result, "/agentCapabilities/session/close");
 
+    let supports_session_resume = capability_present(
+        result,
+        "/agentCapabilities/sessionCapabilities/resume",
+    );
+
     let load_session = result
         .pointer("/agentCapabilities/loadSession")
         .and_then(Value::as_bool)
@@ -153,6 +167,7 @@ pub fn parse_initialize_result(value: &Value) -> InitializeResult {
         agent_name,
         auth_methods,
         supports_session_close,
+        supports_session_resume,
         load_session,
     }
 }
@@ -347,6 +362,41 @@ fn content_blocks_text(content: Option<&Value>) -> Option<String> {
     } else {
         Some(parts.join(""))
     }
+}
+
+/// Build permission response from user-selected option id.
+pub fn permission_selected_result(option_id: &str) -> Value {
+    json!({
+        "outcome": { "outcome": "selected", "optionId": option_id }
+    })
+}
+
+pub fn permission_cancelled_result() -> Value {
+    json!({ "outcome": { "outcome": "cancelled" } })
+}
+
+pub fn extract_permission_options(params: &Value) -> Vec<(String, String, Option<String>)> {
+    let mut out = Vec::new();
+    if let Some(arr) = params.get("options").and_then(Value::as_array) {
+        for opt in arr {
+            let option_id = opt
+                .get("optionId")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_string();
+            if option_id.is_empty() {
+                continue;
+            }
+            let name = opt
+                .get("name")
+                .and_then(Value::as_str)
+                .unwrap_or(option_id.as_str())
+                .to_string();
+            let kind = opt.get("kind").and_then(Value::as_str).map(str::to_string);
+            out.push((option_id, name, kind));
+        }
+    }
+    out
 }
 
 /// Auto-resolve permission: prefer allow_* option, else cancelled.

@@ -11,6 +11,12 @@ export type AgentProfileStatus = {
   resolvedCommand?: string | null;
 };
 
+export type SavedSessionHint = {
+  sessionId: string;
+  profileId: string;
+  cwd: string;
+};
+
 export type AcpStatus = {
   available: boolean;
   adapterFound: boolean;
@@ -45,6 +51,21 @@ export type VideoPromptContext = {
   notesExcerpt?: string | null;
 };
 
+export type PermissionMode = "auto" | "ask";
+export type ThinkingLevel = "hidden" | "minimal" | "verbose";
+
+export type AcpClientSettings = {
+  permissionMode: PermissionMode;
+  thinkingLevel: ThinkingLevel;
+  agentMode: string;
+};
+
+export type PermissionOption = {
+  optionId: string;
+  name: string;
+  kind?: string | null;
+};
+
 export type AcpEvent =
   | { type: "started" }
   | { type: "progress"; message: string }
@@ -65,21 +86,51 @@ export type AcpEvent =
     }
   | { type: "plan"; text: string }
   | {
+      type: "permissionRequest";
+      requestId: string;
+      toolCallId?: string | null;
+      title?: string | null;
+      options: PermissionOption[];
+    }
+  | {
       type: "permissionResolved";
       toolCallId?: string | null;
       decision: string;
     }
+  | {
+      type: "sessionSaved";
+      sessionId: string;
+      profileId: string;
+      cwd: string;
+    }
   | { type: "finished"; text: string; stopReason?: string | null }
   | { type: "failed"; code: string; message: string };
 
-/** UI chat shell — playback context is attached per prompt when a video is open. */
-export type ChatRole = "user" | "assistant" | "system";
+export type ChatActivityKind = "thought" | "tool" | "plan";
+
+export type ChatActivity = {
+  id: string;
+  kind: ChatActivityKind;
+  toolCallId?: string;
+  title?: string;
+  status?: string;
+  text?: string;
+};
 
 export type ChatMessageStatus = "streaming" | "done" | "error";
 
-export type ChatMessage = {
+export type ChatTurn = {
   id: string;
-  role: ChatRole;
-  content: string;
-  status?: ChatMessageStatus;
+  userText: string;
+  answer: string;
+  status: ChatMessageStatus;
+  activities: ChatActivity[];
+  showActivities: boolean;
+};
+
+export type PendingPermission = {
+  requestId: string;
+  toolCallId?: string | null;
+  title?: string | null;
+  options: PermissionOption[];
 };

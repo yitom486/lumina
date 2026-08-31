@@ -1,0 +1,45 @@
+import { useEffect, useRef } from "react";
+
+import type { ChatTurn } from "../types";
+import { ChatColumn } from "./ChatShell";
+import { ChatTurnView } from "./ChatTurnView";
+
+type Props = {
+  turns: ChatTurn[];
+  notices: { id: string; content: string }[];
+  emptyHint?: string;
+};
+
+export function ChatTurnList({
+  turns,
+  notices,
+  emptyHint = "向 AI Agent 提问。打开视频后会附带播放上下文。",
+}: Props) {
+  const endRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    endRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
+  }, [turns, notices]);
+
+  if (turns.length === 0 && notices.length === 0) {
+    return (
+      <ChatColumn className="flex min-h-0 flex-1 items-center justify-center py-8 text-center text-xs text-muted-foreground">
+        {emptyHint}
+      </ChatColumn>
+    );
+  }
+
+  return (
+    <ChatColumn className="min-h-0 flex-1 space-y-4 overflow-auto py-3">
+      {notices.map((n) => (
+        <p key={n.id} className="text-center text-[11px] text-muted-foreground">
+          {n.content}
+        </p>
+      ))}
+      {turns.map((turn) => (
+        <ChatTurnView key={turn.id} turn={turn} />
+      ))}
+      <div ref={endRef} />
+    </ChatColumn>
+  );
+}

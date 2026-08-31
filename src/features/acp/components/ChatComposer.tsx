@@ -1,6 +1,8 @@
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
+import { ChatColumn } from "./ChatShell";
+
 type Props = {
   value: string;
   disabled?: boolean;
@@ -21,10 +23,10 @@ export function ChatComposer({
   onCancel,
 }: Props) {
   return (
-    <div className="shrink-0 space-y-2 border-t border-border p-3">
+    <ChatColumn className="shrink-0 space-y-2 border-t border-border py-3">
       <textarea
         className={cn(
-          "min-h-[72px] w-full resize-none rounded-md border border-border bg-background px-2 py-1.5 text-sm",
+          "min-h-[72px] w-full resize-none rounded-md border border-border bg-background px-3 py-2 text-sm",
           "outline-none focus-visible:ring-1 focus-visible:ring-ring",
           "disabled:opacity-60",
         )}
@@ -57,6 +59,6 @@ export function ChatComposer({
           取消
         </Button>
       </div>
-    </div>
+    </ChatColumn>
   );
 }

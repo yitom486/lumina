@@ -319,7 +319,7 @@ fn default_config_path() -> PathBuf {
     std::env::temp_dir().join("lumina-acp-agents.json")
 }
 
-fn data_dir() -> Option<PathBuf> {
+pub(crate) fn data_dir() -> Option<PathBuf> {
     #[cfg(windows)]
     {
         std::env::var_os("APPDATA").map(PathBuf::from)

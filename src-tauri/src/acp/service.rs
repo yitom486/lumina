@@ -5,8 +5,8 @@
 
 use std::io::{BufRead, BufReader, Write};
 use std::process::{Child, ChildStdin, Command, Stdio};
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{mpsc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -15,15 +15,18 @@ use serde_json::Value;
 use crate::acp::context::{self, VideoPromptContext};
 use crate::acp::error::AcpError;
 use crate::acp::host::AcpHost;
-use crate::acp::model::{AcpEvent, AcpStatus, AgentProfileInput};
+use crate::acp::model::{AcpEvent, AcpStatus, AgentProfileInput, PermissionOption, SavedSessionHint};
 use crate::acp::paths::{resolve_session_cwd, status_from_store};
 use crate::acp::profile::{resolve_launch, AgentKind, AgentProfile, ProfileStore};
 use crate::acp::protocol::{
     authenticate_params, classify_inbound, encode_line, extract_agent_text, extract_plan_summary,
-    extract_thought_text, extract_tool_call, initialize_params, is_error_response, notification,
-    parse_initialize_result, parse_session_id, parse_stop_reason, request, session_cancel_params,
-    session_close_params, session_new_params, Inbound, InitializeResult,
+    extract_permission_options, extract_thought_text, extract_tool_call, initialize_params,
+    is_error_response, notification, parse_initialize_result, parse_session_id, parse_stop_reason,
+    permission_auto_result, permission_cancelled_result, permission_selected_result, request,
+    session_cancel_params, session_close_params, session_new_params, session_resume_params,
+    success_response, Inbound, InitializeResult,
 };
+use crate::acp::settings::{AcpClientSettings, PermissionMode};
 
 struct LiveSession {
     child: Child,
@@ -41,6 +44,9 @@ pub struct AcpService {
     session: Mutex<Option<LiveSession>>,
     profiles: ProfileStore,
     host: AcpHost,
+    permission_mode: Mutex<PermissionMode>,
+    permission_replies: Mutex<Option<mpsc::Sender<Option<String>>>>,
+    permission_seq: AtomicU64,
 }
 
 impl AcpService {
@@ -51,6 +57,26 @@ impl AcpService {
             session: Mutex::new(None),
             profiles: ProfileStore::new(),
             host: AcpHost::new(),
+            permission_mode: Mutex::new(PermissionMode::Auto),
+            permission_replies: Mutex::new(None),
+            permission_seq: AtomicU64::new(1),
+        }
+    }
+
+    pub fn respond_permission(
+        &self,
+        _request_id: &str,
+        option_id: Option<String>,
+    ) -> Result<(), AcpError> {
+        let mut guard = self
+            .permission_replies
+            .lock()
+            .map_err(|_| AcpError::internal(Some("permission mutex poisoned")))?;
+        if let Some(tx) = guard.take() {
+            let _ = tx.send(option_id);
+            Ok(())
+        } else {
+            Err(AcpError::protocol(Some("no pending permission request")))
         }
     }
 
@@ -116,6 +142,7 @@ impl AcpService {
                     session_close_params(&session.session_id),
                 );
                 let _ = Self::read_until_id_raw(
+                    self,
                     &mut session,
                     id,
                     Duration::from_secs(2),
@@ -138,6 +165,8 @@ impl AcpService {
         cwd: Option<String>,
         profile_id: Option<String>,
         context: Option<VideoPromptContext>,
+        saved_session: Option<SavedSessionHint>,
+        client_settings: AcpClientSettings,
         mut on_event: F,
     ) -> Result<String, AcpError>
     where
@@ -151,12 +180,16 @@ impl AcpService {
             return Err(AcpError::busy());
         }
         self.cancel.store(false, Ordering::SeqCst);
+        if let Ok(mut guard) = self.permission_mode.lock() {
+            *guard = client_settings.permission_mode;
+        }
 
         let outcome = self.run_prompt_inner(
             text.as_ref(),
             cwd.as_deref(),
             profile_id.as_deref(),
             context.as_ref(),
+            saved_session.as_ref(),
             &mut on_event,
         );
 
@@ -188,6 +221,7 @@ impl AcpService {
         cwd: Option<&str>,
         profile_id: Option<&str>,
         context: Option<&VideoPromptContext>,
+        saved_session: Option<&SavedSessionHint>,
         on_event: &mut dyn FnMut(AcpEvent),
     ) -> Result<(String, Option<String>), AcpError> {
         let prompt_text = prompt_text.trim();
@@ -206,7 +240,7 @@ impl AcpService {
                 .lock()
                 .map_err(|_| AcpError::internal(Some("ACP session mutex poisoned")))?;
             if guard.is_none() {
-                *guard = Some(self.spawn_session(cwd, on_event)?);
+                *guard = Some(self.spawn_session(cwd, saved_session, on_event)?);
             }
         }
 
@@ -276,6 +310,7 @@ impl AcpService {
             }
 
             match Self::read_one(
+                self,
                 session,
                 Duration::from_millis(250),
                 &self.cancel,
@@ -322,6 +357,7 @@ impl AcpService {
     fn spawn_session(
         &self,
         cwd_hint: Option<&str>,
+        saved_session: Option<&SavedSessionHint>,
         on_event: &mut dyn FnMut(AcpEvent),
     ) -> Result<LiveSession, AcpError> {
         let workspace = resolve_session_cwd(cwd_hint)?;
@@ -419,6 +455,7 @@ impl AcpService {
             initialize_params(),
         )?;
         let init_resp = Self::read_until_id_raw(
+            self,
             &mut session,
             init_id,
             Duration::from_secs(60),
@@ -453,6 +490,7 @@ impl AcpService {
                 authenticate_params(&method.id),
             )?;
             let auth_resp = Self::read_until_id_raw(
+                self,
                 &mut session,
                 auth_id,
                 Duration::from_secs(120),
@@ -466,21 +504,85 @@ impl AcpService {
             }
         }
 
-        session.init = init;
+        session.init = init.clone();
+        let supports_resume = init.supports_session_resume;
 
         on_event(AcpEvent::Progress {
             message: "正在创建会话…".into(),
         });
+
+        let saved = saved_session.cloned();
+        let try_resume = supports_resume
+            && saved.as_ref().is_some_and(|s| {
+                s.profile_id == profile.id && s.cwd == cwd && !s.session_id.is_empty()
+            });
+
+        let session_id = if try_resume {
+            let saved = saved.expect("checked above");
+            on_event(AcpEvent::Progress {
+                message: "正在恢复上次会话…".into(),
+            });
+            let resume_id = session.next_id;
+            session.next_id += 1;
+            Self::write_request(
+                &mut session.stdin,
+                resume_id,
+                "session/resume",
+                session_resume_params(&saved.session_id, &cwd),
+            )?;
+            let resume_resp = Self::read_until_id_raw(
+                self,
+                &mut session,
+                resume_id,
+                Duration::from_secs(60),
+                &self.cancel,
+                &self.host,
+                on_event,
+            );
+            match resume_resp {
+                Ok(_) => {
+                    on_event(AcpEvent::Progress {
+                        message: "已恢复上次会话".into(),
+                    });
+                    on_event(AcpEvent::SessionSaved {
+                        session_id: saved.session_id.clone(),
+                        profile_id: profile.id.clone(),
+                        cwd: cwd.clone(),
+                    });
+                    saved.session_id
+                }
+                Err(error) => {
+                    tracing::warn!(%error, "session/resume failed; creating new session");
+                    self.create_new_session(&mut session, &cwd, &profile.id, on_event)?
+                }
+            }
+        } else {
+            self.create_new_session(&mut session, &cwd, &profile.id, on_event)?
+        };
+
+        session.session_id = session_id;
+        workspace_guard.1 = false;
+        Ok(session)
+    }
+
+    fn create_new_session(
+        &self,
+        session: &mut LiveSession,
+        cwd: &str,
+        profile_id: &str,
+        on_event: &mut dyn FnMut(AcpEvent),
+    ) -> Result<String, AcpError> {
         let new_id = session.next_id;
         session.next_id += 1;
         Self::write_request(
             &mut session.stdin,
             new_id,
             "session/new",
-            session_new_params(&cwd),
+            session_new_params(cwd),
         )?;
         let session_resp = Self::read_until_id_raw(
-            &mut session,
+            self,
+            session,
             new_id,
             Duration::from_secs(60),
             &self.cancel,
@@ -491,9 +593,100 @@ impl AcpService {
             let _ = session.child.kill();
             AcpError::protocol(Some(&format!("missing sessionId: {session_resp}")))
         })?;
-        session.session_id = session_id;
-        workspace_guard.1 = false;
-        Ok(session)
+        on_event(AcpEvent::SessionSaved {
+            session_id: session_id.clone(),
+            profile_id: profile_id.to_string(),
+            cwd: cwd.to_string(),
+        });
+        Ok(session_id)
+    }
+
+    fn handle_permission_request(
+        &self,
+        id: Value,
+        params: &Value,
+        canceling: bool,
+        on_event: &mut dyn FnMut(AcpEvent),
+    ) -> Value {
+        let tool_id = params
+            .pointer("/toolCall/toolCallId")
+            .and_then(Value::as_str)
+            .map(str::to_string);
+        let title = params
+            .pointer("/toolCall/title")
+            .and_then(Value::as_str)
+            .map(str::to_string);
+
+        if canceling {
+            on_event(AcpEvent::PermissionResolved {
+                tool_call_id: tool_id.clone(),
+                decision: "cancelled".into(),
+            });
+            return success_response(id, permission_cancelled_result());
+        }
+
+        let permission_mode = self
+            .permission_mode
+            .lock()
+            .map(|guard| *guard)
+            .unwrap_or(PermissionMode::Auto);
+        if permission_mode == PermissionMode::Auto {
+            on_event(AcpEvent::PermissionResolved {
+                tool_call_id: tool_id,
+                decision: "auto".into(),
+            });
+            return success_response(id, permission_auto_result(params, false));
+        }
+
+        let request_id = format!(
+            "perm-{}",
+            self.permission_seq.fetch_add(1, Ordering::SeqCst)
+        );
+        let options: Vec<PermissionOption> = extract_permission_options(params)
+            .into_iter()
+            .map(|(option_id, name, kind)| PermissionOption {
+                option_id,
+                name,
+                kind,
+            })
+            .collect();
+
+        on_event(AcpEvent::PermissionRequest {
+            request_id: request_id.clone(),
+            tool_call_id: tool_id.clone(),
+            title,
+            options: options.clone(),
+        });
+
+        let (tx, rx) = mpsc::channel();
+        if let Ok(mut guard) = self.permission_replies.lock() {
+            *guard = Some(tx);
+        }
+
+        let selected = rx
+            .recv_timeout(Duration::from_secs(120))
+            .unwrap_or(None);
+        let _ = self.permission_replies.lock().map(|mut g| {
+            g.take();
+        });
+
+        let result = match selected {
+            Some(option_id) if !option_id.is_empty() => {
+                on_event(AcpEvent::PermissionResolved {
+                    tool_call_id: tool_id,
+                    decision: "approved".into(),
+                });
+                permission_selected_result(&option_id)
+            }
+            _ => {
+                on_event(AcpEvent::PermissionResolved {
+                    tool_call_id: tool_id,
+                    decision: "denied".into(),
+                });
+                permission_cancelled_result()
+            }
+        };
+        success_response(id, result)
     }
 
     fn write_request(
@@ -574,6 +767,7 @@ impl AcpService {
     }
 
     fn handle_inbound_side_effects(
+        &self,
         session: &mut LiveSession,
         host: &AcpHost,
         inbound: Inbound,
@@ -596,30 +790,20 @@ impl AcpService {
             }
             Inbound::AgentRequest { id, method, params } => {
                 let canceling = cancel.load(Ordering::SeqCst);
-                if method == "session/request_permission" {
-                    let tool_id = params
-                        .pointer("/toolCall/toolCallId")
-                        .and_then(Value::as_str)
-                        .map(str::to_string);
-                    let decision = if canceling {
-                        "cancelled"
-                    } else {
-                        "auto"
-                    };
-                    on_event(AcpEvent::PermissionResolved {
-                        tool_call_id: tool_id,
-                        decision: decision.into(),
-                    });
-                } else if method.starts_with("fs/") {
-                    on_event(AcpEvent::Progress {
-                        message: format!("文件系统：{method}"),
-                    });
-                } else if method.starts_with("terminal/") {
-                    on_event(AcpEvent::Progress {
-                        message: format!("终端：{method}"),
-                    });
-                }
-                let response = host.handle_request(&method, id, &params, canceling);
+                let response = if method == "session/request_permission" {
+                    self.handle_permission_request(id, &params, canceling, on_event)
+                } else {
+                    if method.starts_with("fs/") {
+                        on_event(AcpEvent::Progress {
+                            message: format!("文件系统：{method}"),
+                        });
+                    } else if method.starts_with("terminal/") {
+                        on_event(AcpEvent::Progress {
+                            message: format!("终端：{method}"),
+                        });
+                    }
+                    host.handle_request(&method, id, &params, canceling)
+                };
                 Self::write_raw(&mut session.stdin, &response)?;
                 Ok(None)
             }
@@ -631,6 +815,7 @@ impl AcpService {
     }
 
     fn read_until_id_raw(
+        &self,
         session: &mut LiveSession,
         target_id: u64,
         timeout: Duration,
@@ -646,7 +831,14 @@ impl AcpService {
             if Instant::now() > deadline {
                 return Err(AcpError::protocol(Some("ACP read timed out")));
             }
-            match Self::read_one(session, Duration::from_millis(200), cancel, host, on_event)? {
+            match Self::read_one(
+                self,
+                session,
+                Duration::from_millis(200),
+                cancel,
+                host,
+                on_event,
+            )? {
                 ReadOne::TimedOut => continue,
                 ReadOne::Eof => return Err(AcpError::protocol(Some("EOF on stdout"))),
                 ReadOne::Response { id, value } if id == target_id => {
@@ -661,6 +853,7 @@ impl AcpService {
     }
 
     fn read_one(
+        &self,
         session: &mut LiveSession,
         wait: Duration,
         cancel: &AtomicBool,
@@ -685,7 +878,7 @@ impl AcpService {
             AcpError::protocol(Some(&format!("parse ACP JSON: {error}")))
         })?;
 
-        match Self::handle_inbound_side_effects(
+        match self.handle_inbound_side_effects(
             session,
             host,
             classify_inbound(value),
