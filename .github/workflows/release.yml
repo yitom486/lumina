@@ -33,8 +33,18 @@ jobs:
             if ($_ -match '^([^=]+)=(.*)$') { $metadata[$matches[1]] = $matches[2] }
           }
           $archive = Join-Path $env:RUNNER_TEMP $metadata['archive']
+          $extractDir = Join-Path $env:RUNNER_TEMP 'lumina-mpv-dev'
           curl.exe -L --fail --retry 3 -o $archive $metadata['url']
-          tar.exe -xf $archive -C $mpvDir
+          New-Item -ItemType Directory -Force -Path $extractDir | Out-Null
+          tar.exe -xf $archive -C $extractDir
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $dll = Get-ChildItem -Path $extractDir -Recurse -Filter 'libmpv-2.dll' -File | Select-Object -First 1
+          $definition = Get-ChildItem -Path $extractDir -Recurse -Filter 'mpv.def' -File | Select-Object -First 1
+          if ($null -eq $dll -or $null -eq $definition) {
+            throw 'The libmpv archive did not contain libmpv-2.dll and mpv.def.'
+          }
+          Copy-Item $dll.FullName "$mpvDir/libmpv-2.dll" -Force
+          Copy-Item $definition.FullName "$mpvDir/mpv.def" -Force
           & lib.exe "/def:$mpvDir/mpv.def" /machine:x64 "/out:$mpvDir/mpv.lib"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
