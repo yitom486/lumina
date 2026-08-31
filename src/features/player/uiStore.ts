@@ -9,14 +9,11 @@ export type SidebarTab =
   | "playlist"
   | "transcript"
   | "notes"
-  | "chapters"
-  | "acp";
+  | "chapters";
 
 type UiState = {
   fullscreen: boolean;
   sidebarTab: SidebarTab;
-  /** Once user opens the chat tab, keep AcpPanel mounted (hidden when inactive). */
-  acpPanelAlive: boolean;
   setSidebarTab: (tab: SidebarTab) => void;
   setFullscreen: (value: boolean) => Promise<void>;
   toggleFullscreen: () => Promise<void>;
@@ -25,13 +22,9 @@ type UiState = {
 export const useUiStore = create<UiState>((set, get) => ({
   fullscreen: false,
   sidebarTab: "transcript",
-  acpPanelAlive: false,
 
   setSidebarTab: (sidebarTab) => {
-    set({
-      sidebarTab,
-      ...(sidebarTab === "acp" ? { acpPanelAlive: true } : {}),
-    });
+    set({ sidebarTab });
     requestAnimationFrame(() => {
       void ensureSurfaceBounds();
     });

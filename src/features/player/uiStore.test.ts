@@ -10,22 +10,14 @@ beforeEach(() => {
   useUiStore.setState({
     fullscreen: false,
     sidebarTab: "transcript",
-    acpPanelAlive: false,
   });
 });
 
-describe("useUiStore acpPanelAlive", () => {
-  it("starts false until user opens the chat tab", () => {
-    expect(useUiStore.getState().acpPanelAlive).toBe(false);
+describe("useUiStore sidebar", () => {
+  it("switches sidebar tabs without chat state", () => {
     useUiStore.getState().setSidebarTab("notes");
-    expect(useUiStore.getState().acpPanelAlive).toBe(false);
-  });
-
-  it("stays true after leaving the chat tab", () => {
-    useUiStore.getState().setSidebarTab("acp");
-    expect(useUiStore.getState().acpPanelAlive).toBe(true);
+    expect(useUiStore.getState().sidebarTab).toBe("notes");
     useUiStore.getState().setSidebarTab("transcript");
-    expect(useUiStore.getState().acpPanelAlive).toBe(true);
     expect(useUiStore.getState().sidebarTab).toBe("transcript");
   });
 });

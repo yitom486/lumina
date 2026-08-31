@@ -104,3 +104,17 @@ asr_transcribe(path)  // only when user clicks
 - 启动 / Open **不**加载模型
 - 未放置 whisper-cli 时返回 `NotConfigured`，不影响播放
 
+### ACP Chat (Phase 5)
+
+```
+App (parallel)
+  ├─ playback column + sidebar (列表/文稿/笔记/章节)
+  └─ ChatDock (fixed overlay, long-lived)
+       └─ AcpPanel → Tauri acp_* → AcpService → Agent stdio
+```
+
+- 入口：标题栏 / 全屏浮层 **★ + 聊天** 按钮（`ChatToggleButton`）
+- **不在 sidebar tab 内**；首次打开后 `chatMounted` 直至退出应用
+- `chatOpen` 仅控制显隐；全屏、切 sidebar tab 不 unmount
+- 按需 `acp_connect` / `acp_prompt`；禁止启动预连
+

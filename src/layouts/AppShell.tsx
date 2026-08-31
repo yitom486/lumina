@@ -7,6 +7,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import { ChatToggleButton } from "@/features/acp/components/ChatToggleButton";
 import { usePlayerStore, useUiStore } from "@/features/player";
 
 type AppShellProps = {
@@ -74,11 +75,19 @@ export function AppShell({ children }: AppShellProps) {
               </span>
             ) : null}
           </div>
-          <div className="flex shrink-0 items-center">
+          <div className="flex shrink-0 items-center gap-0.5">
+            <ChatToggleButton />
             <FullscreenToggleButton />
           </div>
         </header>
-      ) : null}
+      ) : (
+        <div className="pointer-events-none fixed right-3 top-3 z-[60] flex items-center">
+          <div className="pointer-events-auto flex items-center gap-0.5 rounded-md border border-border/60 bg-card/90 p-0.5 shadow-lg backdrop-blur-sm">
+            <ChatToggleButton />
+            <FullscreenToggleButton />
+          </div>
+        </div>
+      )}
       <main className="flex min-h-0 flex-1 flex-col">{children}</main>
     </div>
   );

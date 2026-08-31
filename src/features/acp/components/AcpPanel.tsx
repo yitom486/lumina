@@ -41,8 +41,7 @@ import { ChatToolbar } from "./ChatToolbar";
 import { ChatTurnList } from "./ChatTurnList";
 import { PermissionPrompt } from "./PermissionPrompt";
 
-/** ACP chat — toolbar / messages / composer / agent settings (bottom). */
-/** Kept mounted (hidden) after first open; see App.tsx + uiStore.acpPanelAlive. */
+/** Kept mounted in ChatDock after first open; hide ≠ unmount. */
 export function AcpPanel() {
   const queryClient = useQueryClient();
   const currentFile = usePlayerStore((s) => s.currentFile);
