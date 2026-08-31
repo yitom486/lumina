@@ -39,12 +39,19 @@ jobs:
           tar.exe -xf $archive -C $extractDir
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           $dll = Get-ChildItem -Path $extractDir -Recurse -Filter 'libmpv-2.dll' -File | Select-Object -First 1
-          $definition = Get-ChildItem -Path $extractDir -Recurse -Filter 'mpv.def' -File | Select-Object -First 1
-          if ($null -eq $dll -or $null -eq $definition) {
-            throw 'The libmpv archive did not contain libmpv-2.dll and mpv.def.'
+          if ($null -eq $dll) {
+            throw 'The libmpv archive did not contain libmpv-2.dll.'
           }
           Copy-Item $dll.FullName "$mpvDir/libmpv-2.dll" -Force
-          Copy-Item $definition.FullName "$mpvDir/mpv.def" -Force
+          $exportNames = & dumpbin.exe /exports "$mpvDir/libmpv-2.dll" |
+            ForEach-Object {
+              if ($_ -match '^\s*\d+\s+[0-9A-F]+\s+[0-9A-F]+\s+(\S+)$') { $matches[1] }
+            }
+          if ($LASTEXITCODE -ne 0 -or $exportNames.Count -eq 0) {
+            throw 'Could not read libmpv exports to create an MSVC import library.'
+          }
+          @('LIBRARY libmpv-2.dll', 'EXPORTS') + ($exportNames | ForEach-Object { "  $_" }) |
+            Set-Content "$mpvDir/mpv.def" -Encoding ascii
           & lib.exe "/def:$mpvDir/mpv.def" /machine:x64 "/out:$mpvDir/mpv.lib"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
