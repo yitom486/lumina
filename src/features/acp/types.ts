@@ -41,6 +41,11 @@ export type AgentProfileInput = {
   env?: Record<string, string>;
 };
 
+export type AgentProfilesHint = {
+  activeProfileId: string;
+  profiles: AgentProfileInput[];
+};
+
 export type VideoPromptContext = {
   mediaPath?: string | null;
   mediaTitle?: string | null;

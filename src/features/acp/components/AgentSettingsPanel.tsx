@@ -1,12 +1,11 @@
 import { useEffect, useState } from "react";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useQueryClient } from "@tanstack/react-query";
 
 import { Button } from "@/components/ui/button";
-import { errorMessage } from "@/lib/format";
 
-import { useAcpSettingsStore } from "../acpSettingsStore";
+import { useAcpProfilesStore } from "../acpProfilesStore";
 import { useAcpSessionStore } from "../acpSessionStore";
-import { setActiveAcpProfile, upsertAcpProfile } from "../api";
+import { useAcpSettingsStore } from "../acpSettingsStore";
 import type {
   AcpStatus,
   AgentProfileStatus,
@@ -33,13 +32,14 @@ export function AgentSettingsPanel({
   status,
   loading,
   busy,
-  onStatusError,
 }: Props) {
   const queryClient = useQueryClient();
   const [open, setOpen] = useState(false);
-  const [activeId, setActiveId] = useState("codex");
   const [customCommand, setCustomCommand] = useState("");
 
+  const activeProfileId = useAcpProfilesStore((s) => s.activeProfileId);
+  const setActiveProfileId = useAcpProfilesStore((s) => s.setActiveProfileId);
+  const upsertProfile = useAcpProfilesStore((s) => s.upsertProfile);
   const permissionMode = useAcpSettingsStore((s) => s.permissionMode);
   const thinkingLevel = useAcpSettingsStore((s) => s.thinkingLevel);
   const agentMode = useAcpSettingsStore((s) => s.agentMode);
@@ -47,43 +47,33 @@ export function AgentSettingsPanel({
   const savedSession = useAcpSessionStore((s) => s.savedSession);
 
   useEffect(() => {
-    if (!status) return;
-    setActiveId(status.activeProfileId);
-    const custom = status.profiles.find((p) => p.id === "custom");
+    const custom = status?.profiles.find((profile) => profile.id === "custom");
     if (custom) setCustomCommand(custom.command);
-  }, [status]);
-
-  const switchMutation = useMutation({
-    mutationFn: setActiveAcpProfile,
-    onSuccess: (next) => {
-      queryClient.setQueryData(["acp-status"], next);
-      setActiveId(next.activeProfileId);
-    },
-    onError: (error) => onStatusError?.(errorMessage(error)),
-  });
-
-  const saveCustomMutation = useMutation({
-    mutationFn: async (command: string) => {
-      await upsertAcpProfile({
-        id: "custom",
-        name: "自定义 ACP",
-        kind: "Custom",
-        command: command.trim(),
-        args: [],
-        env: {},
-      });
-      return setActiveAcpProfile("custom");
-    },
-    onSuccess: (next) => {
-      queryClient.setQueryData(["acp-status"], next);
-      setActiveId(next.activeProfileId);
-    },
-    onError: (error) => onStatusError?.(errorMessage(error)),
-  });
+  }, [status?.profiles]);
 
   const profiles = status?.profiles ?? [];
-  const active = profiles.find((p) => p.id === activeId);
-  const showResponsesNote = active?.kind === "Codex" || activeId === "codex";
+  const active = profiles.find((profile) => profile.id === activeProfileId);
+  const showResponsesNote =
+    active?.kind === "Codex" || activeProfileId === "codex";
+
+  const refreshStatus = () => {
+    void queryClient.invalidateQueries({ queryKey: ["acp-status"] });
+  };
+
+  const saveCustomProfile = () => {
+    const command = customCommand.trim();
+    if (!command) return;
+    upsertProfile({
+      id: "custom",
+      name: "自定义 ACP",
+      kind: "Custom",
+      command,
+      args: [],
+      env: {},
+    });
+    setActiveProfileId("custom");
+    refreshStatus();
+  };
 
   return (
     <ChatColumn className="shrink-0 border-b border-border py-2">
@@ -113,23 +103,22 @@ export function AgentSettingsPanel({
           <Field label="Agent">
             <select
               className="h-8 w-full rounded-md border border-border bg-background px-2 text-xs"
-              value={activeId}
-              disabled={busy || switchMutation.isPending}
+              value={activeProfileId}
+              disabled={busy}
               onChange={(e) => {
-                const id = e.target.value;
-                setActiveId(id);
-                switchMutation.mutate(id);
+                setActiveProfileId(e.target.value);
+                refreshStatus();
               }}
             >
-              {profiles.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {profileLabel(p)}
+              {profiles.map((profile) => (
+                <option key={profile.id} value={profile.id}>
+                  {profileLabel(profile)}
                 </option>
               ))}
             </select>
           </Field>
 
-          {activeId === "custom" ? (
+          {activeProfileId === "custom" ? (
             <div className="flex gap-2">
               <input
                 className="h-8 min-w-0 flex-1 rounded-md border border-border bg-background px-2 text-xs"
@@ -140,8 +129,8 @@ export function AgentSettingsPanel({
               <Button
                 size="sm"
                 variant="outline"
-                disabled={!customCommand.trim() || saveCustomMutation.isPending}
-                onClick={() => saveCustomMutation.mutate(customCommand)}
+                disabled={!customCommand.trim() || busy}
+                onClick={saveCustomProfile}
               >
                 保存
               </Button>
@@ -155,9 +144,9 @@ export function AgentSettingsPanel({
               disabled={busy}
               onChange={(e) => patchSettings({ agentMode: e.target.value })}
             >
-              {AGENT_MODES.map((m) => (
-                <option key={m.id} value={m.id}>
-                  {m.label}
+              {AGENT_MODES.map((mode) => (
+                <option key={mode.id} value={mode.id}>
+                  {mode.label}
                 </option>
               ))}
             </select>
@@ -230,8 +219,8 @@ function Field({
   );
 }
 
-function profileLabel(p: AgentProfileStatus): string {
-  const mark = p.available ? "✓" : "×";
-  return `${mark} ${p.name}`;
+function profileLabel(profile: AgentProfileStatus): string {
+  const mark = profile.available ? "✓" : "×";
+  return `${mark} ${profile.name}`;
 }
 

@@ -13,7 +13,7 @@ pub mod service;
 
 pub use context::VideoPromptContext;
 pub use error::{AcpError, AcpErrorCode};
-pub use model::{AcpEvent, AcpStatus, AgentProfileInput, PermissionOption, SavedSessionHint};
+pub use model::{AcpEvent, AcpStatus, AgentProfileInput, AgentProfilesHint, PermissionOption, SavedSessionHint};
 pub use profile::{AgentKind, AgentProfile, AgentProfileStatus};
 pub use service::AcpService;
 pub use settings::{AcpClientSettings, PermissionMode, ThinkingLevel};

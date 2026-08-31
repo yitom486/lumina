@@ -15,9 +15,9 @@ use serde_json::Value;
 use crate::acp::context::{self, VideoPromptContext};
 use crate::acp::error::AcpError;
 use crate::acp::host::AcpHost;
-use crate::acp::model::{AcpEvent, AcpStatus, AgentProfileInput, PermissionOption, SavedSessionHint};
-use crate::acp::paths::{resolve_session_cwd, status_from_store};
-use crate::acp::profile::{resolve_launch, AgentKind, AgentProfile, ProfileStore};
+use crate::acp::model::{AcpEvent, AcpStatus, AgentProfilesHint, PermissionOption, SavedSessionHint};
+use crate::acp::paths::{resolve_session_cwd, status_from_profiles};
+use crate::acp::profile::{prepare_profiles, resolve_active_profile, resolve_launch, AgentKind, PreparedProfiles};
 use crate::acp::protocol::{
     authenticate_params, classify_inbound, encode_line, extract_agent_text, extract_plan_summary,
     extract_permission_options, extract_thought_text, extract_tool_call, initialize_params,
@@ -42,7 +42,6 @@ pub struct AcpService {
     busy: AtomicBool,
     cancel: AtomicBool,
     session: Mutex<Option<LiveSession>>,
-    profiles: ProfileStore,
     host: AcpHost,
     permission_mode: Mutex<PermissionMode>,
     permission_replies: Mutex<Option<mpsc::Sender<Option<String>>>>,
@@ -55,7 +54,6 @@ impl AcpService {
             busy: AtomicBool::new(false),
             cancel: AtomicBool::new(false),
             session: Mutex::new(None),
-            profiles: ProfileStore::new(),
             host: AcpHost::new(),
             permission_mode: Mutex::new(PermissionMode::Auto),
             permission_replies: Mutex::new(None),
@@ -80,8 +78,8 @@ impl AcpService {
         }
     }
 
-    pub fn status(&self) -> AcpStatus {
-        let mut status = status_from_store(&self.profiles);
+    pub fn status(&self, profiles: &AgentProfilesHint) -> AcpStatus {
+        let mut status = status_from_profiles(profiles);
         status.busy = self.busy.load(Ordering::SeqCst);
         status.session_active = self
             .session
@@ -89,21 +87,6 @@ impl AcpService {
             .map(|g| g.is_some())
             .unwrap_or(false);
         status
-    }
-
-    pub fn set_active_profile(&self, id: &str) -> Result<(), AcpError> {
-        self.profiles.set_active(id)
-    }
-
-    pub fn upsert_profile(&self, input: AgentProfileInput) -> Result<AgentProfile, AcpError> {
-        self.profiles.upsert(AgentProfile {
-            id: input.id,
-            name: input.name,
-            kind: input.kind,
-            command: input.command,
-            args: input.args,
-            env: input.env,
-        })
     }
 
     pub fn is_busy(&self) -> bool {
@@ -167,6 +150,7 @@ impl AcpService {
         context: Option<VideoPromptContext>,
         saved_session: Option<SavedSessionHint>,
         client_settings: AcpClientSettings,
+        profiles: AgentProfilesHint,
         mut on_event: F,
     ) -> Result<String, AcpError>
     where
@@ -184,12 +168,14 @@ impl AcpService {
             *guard = client_settings.permission_mode;
         }
 
+        let prepared = prepare_profiles(&profiles);
         let outcome = self.run_prompt_inner(
             text.as_ref(),
             cwd.as_deref(),
             profile_id.as_deref(),
             context.as_ref(),
             saved_session.as_ref(),
+            &prepared,
             &mut on_event,
         );
 
@@ -222,6 +208,7 @@ impl AcpService {
         profile_id: Option<&str>,
         context: Option<&VideoPromptContext>,
         saved_session: Option<&SavedSessionHint>,
+        prepared: &PreparedProfiles,
         on_event: &mut dyn FnMut(AcpEvent),
     ) -> Result<(String, Option<String>), AcpError> {
         let prompt_text = prompt_text.trim();
@@ -229,9 +216,7 @@ impl AcpService {
             return Err(AcpError::bad_request("提问内容不能为空"));
         }
 
-        if let Some(id) = profile_id {
-            self.profiles.set_active(id)?;
-        }
+        let profile_override = profile_id;
 
         // Ensure live session (reuse when possible).
         {
@@ -240,7 +225,13 @@ impl AcpService {
                 .lock()
                 .map_err(|_| AcpError::internal(Some("ACP session mutex poisoned")))?;
             if guard.is_none() {
-                *guard = Some(self.spawn_session(cwd, saved_session, on_event)?);
+                *guard = Some(self.spawn_session(
+                    cwd,
+                    saved_session,
+                    prepared,
+                    profile_override,
+                    on_event,
+                )?);
             }
         }
 
@@ -358,6 +349,8 @@ impl AcpService {
         &self,
         cwd_hint: Option<&str>,
         saved_session: Option<&SavedSessionHint>,
+        prepared: &PreparedProfiles,
+        profile_id: Option<&str>,
         on_event: &mut dyn FnMut(AcpEvent),
     ) -> Result<LiveSession, AcpError> {
         let workspace = resolve_session_cwd(cwd_hint)?;
@@ -374,7 +367,7 @@ impl AcpService {
         }
         let mut workspace_guard = ClearWorkspaceOnDrop(&self.host, true);
 
-        let profile = self.profiles.active_profile()?;
+        let profile = resolve_active_profile(prepared, profile_id)?;
         if profile.command.trim().is_empty() {
             return Err(AcpError::not_configured(Some(
                 "active profile has empty command",

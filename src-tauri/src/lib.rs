@@ -9,7 +9,7 @@ mod state;
 
 pub use acp::{
     AcpClientSettings, AcpError, AcpErrorCode, AcpEvent, AcpService, AcpStatus, AgentKind,
-    AgentProfile, AgentProfileInput, AgentProfileStatus, PermissionMode, PermissionOption,
+    AgentProfileInput, AgentProfileStatus, AgentProfilesHint, PermissionMode, PermissionOption,
     SavedSessionHint, ThinkingLevel, VideoPromptContext,
 };
 pub use asr::{AsrError, AsrErrorCode, AsrEvent, AsrService, AsrStatus};
@@ -26,8 +26,7 @@ pub use subtitle::{
 };
 
 use commands::acp::{
-    acp_cancel, acp_close, acp_prompt, acp_respond_permission, acp_set_active_profile,
-    acp_status, acp_upsert_profile,
+    acp_cancel, acp_close, acp_prompt, acp_respond_permission, acp_status,
 };
 use commands::asr::{asr_status, asr_transcribe};
 use commands::media::{media_inspect, media_list_siblings};
@@ -76,8 +75,6 @@ pub fn run() {
             acp_prompt,
             acp_cancel,
             acp_close,
-            acp_set_active_profile,
-            acp_upsert_profile,
             notes_list,
             notes_create,
             notes_update,

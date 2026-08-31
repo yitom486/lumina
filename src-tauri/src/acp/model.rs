@@ -34,6 +34,13 @@ pub struct AcpStatus {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct AgentProfilesHint {
+    pub active_profile_id: String,
+    pub profiles: Vec<AgentProfileInput>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct AgentProfileInput {
     pub id: String,
     pub name: String,

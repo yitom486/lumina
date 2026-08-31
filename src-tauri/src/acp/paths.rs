@@ -6,7 +6,11 @@ use std::process::Command;
 use crate::acp::discover::{find_acp_adapter, find_bunx, find_codex};
 use crate::acp::error::AcpError;
 use crate::acp::model::AcpStatus;
-use crate::acp::profile::{install_hint, AgentKind, ProfileStore, RESPONSES_ONLY_NOTE};
+use crate::acp::profile::{
+    default_profiles_hint, install_hint, prepare_profiles, list_status, AgentKind,
+    RESPONSES_ONLY_NOTE,
+};
+use crate::acp::model::AgentProfilesHint;
 
 /// Resolve an absolute session `cwd` for ACP.
 ///
@@ -72,29 +76,12 @@ pub fn resolve_acp_paths() -> Result<AcpPaths, AcpError> {
     })
 }
 
-pub fn status_from_store(store: &ProfileStore) -> AcpStatus {
+pub fn status_from_profiles(hint: &AgentProfilesHint) -> AcpStatus {
     let adapter_found = find_acp_adapter().is_some();
     let bunx_found = find_bunx().is_some();
     let codex_found = find_codex().is_some();
-    let (active_id, profiles) = match store.list_status() {
-        Ok(v) => v,
-        Err(error) => {
-            return AcpStatus {
-                available: false,
-                adapter_found,
-                codex_found,
-                active_profile_id: "codex".into(),
-                profiles: Vec::new(),
-                cli_path: None,
-                codex_path: find_codex().map(|p| p.to_string_lossy().to_string()),
-                message: error.message,
-                hint: install_hint(adapter_found, codex_found, bunx_found),
-                responses_only_note: RESPONSES_ONLY_NOTE.into(),
-                session_active: false,
-                busy: false,
-            };
-        }
-    };
+    let prepared = prepare_profiles(hint);
+    let (active_id, profiles) = list_status(&prepared);
 
     let active = profiles.iter().find(|p| p.id == active_id);
     let available = active.map(|p| p.available).unwrap_or(false)
@@ -153,8 +140,8 @@ mod tests {
 
     #[test]
     fn status_message_is_chinese_when_missing() {
-        let store = ProfileStore::new();
-        let status = status_from_store(&store);
+        let hint = default_profiles_hint();
+        let status = status_from_profiles(&hint);
         assert!(
             status
                 .message

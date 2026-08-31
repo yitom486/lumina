@@ -1,13 +1,14 @@
 //! Pluggable ACP Agent profiles (default: Codex adapter → App Server).
+//! Profiles are persisted in the frontend (Zustand); Rust only receives hints per invoke.
 
 use std::collections::HashMap;
-use std::fs;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
 use crate::acp::discover::{find_acp_adapter, find_bunx, find_codex, find_command, native_acp_dir};
 use crate::acp::error::AcpError;
+use crate::acp::model::{AgentProfileInput, AgentProfilesHint};
 
 pub const CODEX_ACP_PACKAGE: &str = "@agentclientprotocol/codex-acp";
 
@@ -46,107 +47,80 @@ pub struct AgentProfileStatus {
     pub resolved_command: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct AgentsFile {
-    active_profile_id: String,
-    profiles: Vec<AgentProfile>,
+#[derive(Debug, Clone)]
+pub struct PreparedProfiles {
+    pub active_profile_id: String,
+    pub profiles: Vec<AgentProfile>,
 }
 
-pub struct ProfileStore {
-    path: PathBuf,
-}
-
-impl ProfileStore {
-    pub fn new() -> Self {
-        Self {
-            path: default_config_path(),
-        }
-    }
-
-    #[cfg(test)]
-    pub fn with_path(path: PathBuf) -> Self {
-        Self { path }
-    }
-
-    fn load_or_default(&self) -> Result<AgentsFile, AcpError> {
-        if !self.path.exists() {
-            return Ok(default_agents_file());
-        }
-        let raw = fs::read_to_string(&self.path).map_err(|error| {
-            tracing::warn!(%error, "failed to read agent config");
-            AcpError::internal(Some(&format!("read agent config: {error}")))
-        })?;
-        if raw.trim().is_empty() {
-            return Ok(default_agents_file());
-        }
-        let mut file: AgentsFile = serde_json::from_str(&raw).map_err(|error| {
-            tracing::warn!(%error, "invalid agent config json");
-            AcpError::internal(Some(&format!("parse agent config: {error}")))
-        })?;
-        merge_builtin_profiles(&mut file);
-        Ok(file)
-    }
-
-    fn save(&self, file: &AgentsFile) -> Result<(), AcpError> {
-        if let Some(parent) = self.path.parent() {
-            fs::create_dir_all(parent).map_err(|error| {
-                tracing::warn!(%error, "failed to create agent config dir");
-                AcpError::internal(Some(&format!("create agent config dir: {error}")))
-            })?;
-        }
-        let raw = serde_json::to_string_pretty(file).map_err(|error| {
-            AcpError::internal(Some(&format!("serialize agent config: {error}")))
-        })?;
-        fs::write(&self.path, raw).map_err(|error| {
-            tracing::warn!(%error, "failed to write agent config");
-            AcpError::internal(Some(&format!("write agent config: {error}")))
-        })?;
-        Ok(())
-    }
-
-    pub fn list_status(&self) -> Result<(String, Vec<AgentProfileStatus>), AcpError> {
-        let file = self.load_or_default()?;
-        let statuses = file.profiles.iter().map(profile_status).collect::<Vec<_>>();
-        Ok((file.active_profile_id, statuses))
-    }
-
-    pub fn active_profile(&self) -> Result<AgentProfile, AcpError> {
-        let file = self.load_or_default()?;
-        file.profiles
+pub fn default_profiles_hint() -> AgentProfilesHint {
+    AgentProfilesHint {
+        active_profile_id: "codex".into(),
+        profiles: builtin_profiles()
             .into_iter()
-            .find(|p| p.id == file.active_profile_id)
-            .or_else(|| Some(builtin_codex()))
-            .ok_or_else(|| AcpError::not_configured(Some("no active agent profile")))
-    }
-
-    pub fn set_active(&self, id: &str) -> Result<(), AcpError> {
-        let mut file = self.load_or_default()?;
-        if !file.profiles.iter().any(|p| p.id == id) {
-            return Err(AcpError::bad_request(format!("找不到该 Agent 配置：{id}")));
-        }
-        file.active_profile_id = id.to_string();
-        self.save(&file)
-    }
-
-    pub fn upsert(&self, profile: AgentProfile) -> Result<AgentProfile, AcpError> {
-        if profile.id.trim().is_empty() || profile.command.trim().is_empty() {
-            return Err(AcpError::bad_request("Agent id 与 command 不能为空"));
-        }
-        let mut file = self.load_or_default()?;
-        if let Some(existing) = file.profiles.iter_mut().find(|p| p.id == profile.id) {
-            *existing = profile.clone();
-        } else {
-            file.profiles.push(profile.clone());
-        }
-        self.save(&file)?;
-        Ok(profile)
+            .map(|profile| AgentProfileInput {
+                id: profile.id,
+                name: profile.name,
+                kind: profile.kind,
+                command: profile.command,
+                args: profile.args,
+                env: profile.env,
+            })
+            .collect(),
     }
 }
 
-impl Default for ProfileStore {
-    fn default() -> Self {
-        Self::new()
+pub fn prepare_profiles(hint: &AgentProfilesHint) -> PreparedProfiles {
+    let mut active_id = if hint.active_profile_id.trim().is_empty() {
+        "codex".to_string()
+    } else {
+        hint.active_profile_id.clone()
+    };
+    let mut profiles: Vec<AgentProfile> = if hint.profiles.is_empty() {
+        builtin_profiles()
+    } else {
+        hint.profiles.iter().map(profile_from_input).collect()
+    };
+    merge_builtin_profiles(&mut profiles);
+    if !profiles.iter().any(|p| p.id == active_id) {
+        active_id = "codex".to_string();
+    }
+    PreparedProfiles {
+        active_profile_id: active_id,
+        profiles,
+    }
+}
+
+pub fn list_status(prepared: &PreparedProfiles) -> (String, Vec<AgentProfileStatus>) {
+    let statuses = prepared
+        .profiles
+        .iter()
+        .map(profile_status)
+        .collect::<Vec<_>>();
+    (prepared.active_profile_id.clone(), statuses)
+}
+
+pub fn resolve_active_profile(
+    prepared: &PreparedProfiles,
+    override_id: Option<&str>,
+) -> Result<AgentProfile, AcpError> {
+    let id = override_id.unwrap_or(&prepared.active_profile_id);
+    prepared
+        .profiles
+        .iter()
+        .find(|profile| profile.id == id)
+        .cloned()
+        .ok_or_else(|| AcpError::bad_request(format!("找不到该 Agent 配置：{id}")))
+}
+
+fn profile_from_input(input: &AgentProfileInput) -> AgentProfile {
+    AgentProfile {
+        id: input.id.clone(),
+        name: input.name.clone(),
+        kind: input.kind,
+        command: input.command.clone(),
+        args: input.args.clone(),
+        env: input.env.clone(),
     }
 }
 
@@ -163,7 +137,6 @@ pub fn resolve_launch(profile: &AgentProfile) -> Result<LaunchSpec, AcpError> {
         if let Some(bunx) = find_bunx() {
             (bunx, profile.args.clone())
         } else if let Some(adapter) = find_acp_adapter() {
-            // Packaged installations may ship a standalone adapter and no Bun.
             (adapter, Vec::new())
         } else {
             return Err(AcpError::not_configured(Some(
@@ -226,13 +199,6 @@ fn resolve_program(command: &str) -> Option<PathBuf> {
     find_command(command)
 }
 
-fn default_agents_file() -> AgentsFile {
-    AgentsFile {
-        active_profile_id: "codex".into(),
-        profiles: builtin_profiles(),
-    }
-}
-
 fn builtin_profiles() -> Vec<AgentProfile> {
     vec![builtin_codex(), builtin_claude(), builtin_custom_template()]
 }
@@ -278,19 +244,16 @@ fn builtin_custom_template() -> AgentProfile {
     }
 }
 
-fn merge_builtin_profiles(file: &mut AgentsFile) {
+fn merge_builtin_profiles(profiles: &mut Vec<AgentProfile>) {
     for builtin in builtin_profiles() {
         if builtin.id == "custom" && builtin.command.is_empty() {
-            // Keep user's custom if present; ensure slot exists.
-            if !file.profiles.iter().any(|p| p.id == "custom") {
-                file.profiles.push(builtin);
+            if !profiles.iter().any(|profile| profile.id == "custom") {
+                profiles.push(builtin);
             }
             continue;
         }
         if builtin.id == "codex" {
-            if let Some(existing) = file.profiles.iter_mut().find(|p| p.id == "codex") {
-                // Migrate only the previous untouched built-in profile. User-edited
-                // Codex commands remain authoritative.
+            if let Some(existing) = profiles.iter_mut().find(|profile| profile.id == "codex") {
                 let legacy_command =
                     existing.command == "codex-acp" || existing.command == "codex-acp.exe";
                 if existing.kind == AgentKind::Codex
@@ -303,39 +266,9 @@ fn merge_builtin_profiles(file: &mut AgentsFile) {
                 continue;
             }
         }
-        if !file.profiles.iter().any(|p| p.id == builtin.id) {
-            file.profiles.push(builtin);
+        if !profiles.iter().any(|profile| profile.id == builtin.id) {
+            profiles.push(builtin);
         }
-    }
-    if file.active_profile_id.is_empty() {
-        file.active_profile_id = "codex".into();
-    }
-}
-
-fn default_config_path() -> PathBuf {
-    if let Some(dir) = data_dir() {
-        return dir.join("lumina").join("acp-agents.json");
-    }
-    std::env::temp_dir().join("lumina-acp-agents.json")
-}
-
-pub(crate) fn data_dir() -> Option<PathBuf> {
-    #[cfg(windows)]
-    {
-        std::env::var_os("APPDATA").map(PathBuf::from)
-    }
-    #[cfg(target_os = "macos")]
-    {
-        std::env::var_os("HOME")
-            .map(|h| PathBuf::from(h).join("Library").join("Application Support"))
-    }
-    #[cfg(all(unix, not(target_os = "macos")))]
-    {
-        std::env::var_os("XDG_DATA_HOME")
-            .map(PathBuf::from)
-            .or_else(|| {
-                std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local").join("share"))
-            })
     }
 }
 
@@ -368,31 +301,36 @@ mod tests {
     use super::*;
 
     #[test]
-    fn default_file_has_codex_active() {
-        let file = default_agents_file();
-        assert_eq!(file.active_profile_id, "codex");
-        let codex = file
+    fn default_hint_has_codex_active() {
+        let hint = default_profiles_hint();
+        assert_eq!(hint.active_profile_id, "codex");
+        let codex = hint
             .profiles
             .iter()
-            .find(|p| p.id == "codex")
+            .find(|profile| profile.id == "codex")
             .expect("codex");
         assert!(codex.command.contains("bunx"));
         assert_eq!(codex.args, vec![CODEX_ACP_PACKAGE]);
-        assert!(file.profiles.iter().any(|p| p.id == "claude"));
+        assert!(hint.profiles.iter().any(|profile| profile.id == "claude"));
     }
 
     #[test]
-    fn upsert_and_set_active_roundtrip() {
-        let path = std::env::temp_dir().join("lumina-acp-agents-test.json");
-        let _ = fs::remove_file(&path);
-        let store = ProfileStore::with_path(path.clone());
-        let mut custom = builtin_custom_template();
-        custom.command = "nonexistent-agent-xyz".into();
-        store.upsert(custom).expect("upsert");
-        store.set_active("custom").expect("active");
-        let active = store.active_profile().expect("load");
+    fn prepare_and_resolve_custom_profile() {
+        let mut hint = default_profiles_hint();
+        hint.profiles = hint
+            .profiles
+            .into_iter()
+            .map(|mut profile| {
+                if profile.id == "custom" {
+                    profile.command = "nonexistent-agent-xyz".into();
+                }
+                profile
+            })
+            .collect();
+        hint.active_profile_id = "custom".into();
+        let prepared = prepare_profiles(&hint);
+        let active = resolve_active_profile(&prepared, None).expect("load");
         assert_eq!(active.id, "custom");
-        let _ = fs::remove_file(&path);
     }
 
     #[test]

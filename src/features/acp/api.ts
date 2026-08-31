@@ -4,13 +4,13 @@ import type {
   AcpClientSettings,
   AcpEvent,
   AcpStatus,
-  AgentProfileInput,
+  AgentProfilesHint,
   SavedSessionHint,
   VideoPromptContext,
 } from "./types";
 
-export function getAcpStatus(): Promise<AcpStatus> {
-  return invoke("acp_status");
+export function getAcpStatus(profiles: AgentProfilesHint): Promise<AcpStatus> {
+  return invoke("acp_status", { profiles });
 }
 
 export function respondAcpPermission(
@@ -23,14 +23,6 @@ export function respondAcpPermission(
   });
 }
 
-export function setActiveAcpProfile(id: string): Promise<AcpStatus> {
-  return invoke("acp_set_active_profile", { id });
-}
-
-export function upsertAcpProfile(profile: AgentProfileInput): Promise<unknown> {
-  return invoke("acp_upsert_profile", { profile });
-}
-
 export async function acpPrompt(
   text: string,
   onEvent?: (event: AcpEvent) => void,
@@ -40,6 +32,7 @@ export async function acpPrompt(
     context?: VideoPromptContext;
     savedSession?: SavedSessionHint | null;
     clientSettings?: AcpClientSettings;
+    profiles: AgentProfilesHint;
   },
 ): Promise<string> {
   const channel = new Channel<AcpEvent>();
@@ -53,6 +46,7 @@ export async function acpPrompt(
     context: options?.context ?? null,
     savedSession: options?.savedSession ?? null,
     clientSettings: options?.clientSettings ?? null,
+    profiles: options?.profiles,
     onEvent: channel,
   });
 }
