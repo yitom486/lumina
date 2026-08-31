@@ -24,7 +24,12 @@ export const useUiStore = create<UiState>((set, get) => ({
   fullscreen: false,
   sidebarTab: "transcript",
 
-  setSidebarTab: (sidebarTab) => set({ sidebarTab }),
+  setSidebarTab: (sidebarTab) => {
+    set({ sidebarTab });
+    requestAnimationFrame(() => {
+      void ensureSurfaceBounds();
+    });
+  },
 
   setFullscreen: async (value) => {
     try {

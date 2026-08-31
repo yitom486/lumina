@@ -50,9 +50,13 @@ export function AcpPanel() {
     () => profilesHintFromStore(activeProfileId, profiles),
     [activeProfileId, profiles],
   );
+  const profilesQueryKey = useMemo(
+    () => JSON.stringify(profilesHint),
+    [profilesHint],
+  );
 
   const statusQuery = useQuery({
-    queryKey: ["acp-status", profilesHint],
+    queryKey: ["acp-status", profilesQueryKey],
     queryFn: () => getAcpStatus(profilesHint),
     staleTime: 15_000,
   });

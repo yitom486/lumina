@@ -17,6 +17,17 @@ export const useAcpSessionStore = create<AcpSessionStore>()(
       setSavedSession: (savedSession) => set({ savedSession }),
       clearSavedSession: () => set({ savedSession: null }),
     }),
-    { name: "lumina-acp-session" },
+    {
+      name: "lumina-acp-session",
+      partialize: (state) => ({
+        savedSession: state.savedSession,
+      }),
+      merge: (persisted, current) => ({
+        ...current,
+        ...(persisted as Partial<AcpSessionStore>),
+        savedSession:
+          (persisted as Partial<AcpSessionStore>)?.savedSession ?? null,
+      }),
+    },
   ),
 );

@@ -57,10 +57,14 @@ export function normalizeProfileInput(profile: AgentProfileInput): AgentProfileI
 
 export function profilesHintFromStore(
   activeProfileId: string,
-  profiles: AgentProfileInput[],
+  profiles: AgentProfileInput[] | undefined,
 ): AgentProfilesHint {
+  const safeProfiles =
+    Array.isArray(profiles) && profiles.length > 0
+      ? profiles
+      : defaultAgentProfiles();
   return {
-    activeProfileId,
-    profiles: profiles.map(normalizeProfileInput),
+    activeProfileId: activeProfileId || "codex",
+    profiles: safeProfiles.map(normalizeProfileInput),
   };
 }

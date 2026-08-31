@@ -8,6 +8,18 @@ import {
 } from "./defaultAgentProfiles";
 import type { AgentProfileInput, AgentProfilesHint } from "./types";
 
+function mergeProfiles(
+  persisted: unknown,
+  fallback: AgentProfileInput[],
+): AgentProfileInput[] {
+  if (!Array.isArray(persisted) || persisted.length === 0) {
+    return fallback;
+  }
+  return persisted.map((item) =>
+    normalizeProfileInput(item as AgentProfileInput),
+  );
+}
+
 type AcpProfilesStore = {
   activeProfileId: string;
   profiles: AgentProfileInput[];
@@ -45,6 +57,15 @@ export const useAcpProfilesStore = create<AcpProfilesStore>()(
         activeProfileId: state.activeProfileId,
         profiles: state.profiles,
       }),
+      merge: (persisted, current) => {
+        const saved = (persisted ?? {}) as Partial<AcpProfilesStore>;
+        return {
+          ...current,
+          ...saved,
+          activeProfileId: saved.activeProfileId || current.activeProfileId,
+          profiles: mergeProfiles(saved.profiles, current.profiles),
+        };
+      },
     },
   ),
 );
