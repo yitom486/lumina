@@ -161,6 +161,48 @@ impl MediaLibraryService {
         }
         Ok(pending)
     }
+
+    /// Records the user's fallback title for a group. It intentionally resets
+    /// the group to pending so a later resolver run treats it as a new search.
+    pub fn set_manual_title(
+        &self,
+        root: String,
+        group_key: String,
+        title: String,
+    ) -> Result<PendingMediaGroup, LibraryError> {
+        let title = title.trim().to_string();
+        if title.is_empty() {
+            return Err(LibraryError::invalid_input("请填写要匹配的作品名称"));
+        }
+        let configured = self
+            .runtime
+            .lock()
+            .map_err(|_| LibraryError::internal(Some("library runtime mutex poisoned")))?
+            .config
+            .roots
+            .iter()
+            .any(|configured_root| configured_root == &root);
+        if !configured {
+            return Err(LibraryError::invalid_input("请先启用该媒体目录"));
+        }
+        let path = PathBuf::from(&root);
+        let mut index = store::load(&path)?.ok_or_else(|| {
+            LibraryError::group_not_found(Some("library index is not available for root"))
+        })?;
+        let group = index
+            .groups
+            .iter_mut()
+            .find(|group| group.key == group_key)
+            .ok_or_else(|| LibraryError::group_not_found(Some(&group_key)))?;
+        group.manual_title = Some(title);
+        group.resolution = GroupResolution::Pending;
+        let updated = group.clone();
+        store::save_if_changed(&path, &index)?;
+        Ok(PendingMediaGroup {
+            root,
+            group: updated,
+        })
+    }
 }
 
 fn validate_config(config: &LibraryWatchConfig) -> Result<Vec<PathBuf>, LibraryError> {
@@ -289,6 +331,19 @@ mod tests {
         let pending = service.pending_groups().expect("pending groups");
         assert_eq!(pending.len(), 1);
         assert_eq!(pending[0].group.key, "Example.Show");
+
+        let titled = service
+            .set_manual_title(
+                root.to_string_lossy().to_string(),
+                "Example.Show".into(),
+                "示例剧集".into(),
+            )
+            .expect("manual title");
+        assert_eq!(titled.group.manual_title.as_deref(), Some("示例剧集"));
+        let reloaded = store::load(&root)
+            .expect("reload index")
+            .expect("index exists");
+        assert_eq!(reloaded.groups[0].manual_title.as_deref(), Some("示例剧集"));
 
         let stored = store::load(&root)
             .expect("load index")

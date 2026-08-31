@@ -108,6 +108,7 @@ fn build_groups(files: &[IndexedMediaFile]) -> Vec<MediaGroup> {
                     .into_iter()
                     .map(|file| file.relative_path.clone())
                     .collect(),
+                manual_title: None,
                 resolution: GroupResolution::Pending,
             }
         })

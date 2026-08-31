@@ -2,6 +2,7 @@ export {
   getLibraryStatus,
   listPendingMediaGroups,
   scanLibraryNow,
+  setManualMediaTitle,
   startLibraryWatch,
   stopLibraryWatch,
 } from "./api";

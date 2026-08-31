@@ -26,3 +26,11 @@ export function scanLibraryNow(): Promise<LibraryIndex[]> {
 export function listPendingMediaGroups(): Promise<PendingMediaGroup[]> {
   return invoke<PendingMediaGroup[]>("library_pending_groups");
 }
+
+export function setManualMediaTitle(input: {
+  root: string;
+  groupKey: string;
+  title: string;
+}): Promise<PendingMediaGroup> {
+  return invoke<PendingMediaGroup>("library_set_manual_title", input);
+}

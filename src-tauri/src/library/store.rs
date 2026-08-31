@@ -60,6 +60,7 @@ pub fn preserve_resolutions(
     for group in &mut next.groups {
         if let Some(old) = previous.groups.iter().find(|old| old.key == group.key) {
             group.resolution = old.resolution.clone();
+            group.manual_title = old.manual_title.clone();
         }
     }
     next
@@ -140,6 +141,7 @@ mod tests {
                 display_name: "Example Show".into(),
                 kind: MediaGroupKind::Series,
                 files: Vec::new(),
+                manual_title: None,
                 resolution: GroupResolution::Ignored,
             }],
         };
@@ -153,6 +155,7 @@ mod tests {
                 display_name: "Example Show".into(),
                 kind: MediaGroupKind::Series,
                 files: Vec::new(),
+                manual_title: None,
                 resolution: GroupResolution::Pending,
             }],
         };

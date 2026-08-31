@@ -36,8 +36,8 @@ use commands::acp::{
 };
 use commands::asr::{asr_status, asr_transcribe};
 use commands::library::{
-    library_pending_groups, library_scan_now, library_status, library_watch_start,
-    library_watch_stop,
+    library_pending_groups, library_scan_now, library_set_manual_title, library_status,
+    library_watch_start, library_watch_stop,
 };
 use commands::media::{media_inspect, media_list_siblings};
 use commands::notes::{
@@ -85,6 +85,7 @@ pub fn run() {
             library_status,
             library_scan_now,
             library_pending_groups,
+            library_set_manual_title,
             acp_status,
             acp_respond_permission,
             acp_connect,

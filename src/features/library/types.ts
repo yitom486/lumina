@@ -35,6 +35,7 @@ export type MediaGroup = {
   displayName: string;
   kind: MediaGroupKind;
   files: string[];
+  manualTitle?: string | null;
   resolution: GroupResolution;
 };
 

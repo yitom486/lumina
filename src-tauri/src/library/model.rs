@@ -64,6 +64,10 @@ pub struct MediaGroup {
     pub display_name: String,
     pub kind: MediaGroupKind,
     pub files: Vec<String>,
+    /// User-provided fallback for an ambiguous release-name group. This is
+    /// intentional local state, and must survive subsequent directory scans.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub manual_title: Option<String>,
     pub resolution: GroupResolution,
 }
 

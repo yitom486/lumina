@@ -9,6 +9,8 @@ use serde::{Deserialize, Serialize};
 #[serde(rename_all = "PascalCase")]
 pub enum LibraryErrorCode {
     InvalidDirectory,
+    InvalidInput,
+    GroupNotFound,
     ScanFailed,
     StorageFailed,
     NotRunning,
@@ -44,6 +46,18 @@ impl LibraryError {
         Self::new(
             LibraryErrorCode::ScanFailed,
             "媒体目录扫描失败，请重试",
+            details.map(str::to_string),
+        )
+    }
+
+    pub fn invalid_input(message: &'static str) -> Self {
+        Self::new(LibraryErrorCode::InvalidInput, message, None)
+    }
+
+    pub fn group_not_found(details: Option<&str>) -> Self {
+        Self::new(
+            LibraryErrorCode::GroupNotFound,
+            "找不到待处理的媒体分组",
             details.map(str::to_string),
         )
     }
