@@ -1,6 +1,7 @@
 export {
   getLibraryStatus,
   listPendingMediaGroups,
+  previewMediaMatch,
   scanLibraryNow,
   setManualMediaTitle,
   startLibraryWatch,
@@ -16,5 +17,12 @@ export type {
   MediaGroup,
   MediaGroupKind,
   MetadataMediaType,
+  ModelResolverConfig,
   PendingMediaGroup,
+  ResolverIntent,
+  ResolverPreview,
+  ResolverRunConfig,
+  ResolverSelection,
+  TmdbCandidate,
+  TmdbConfig,
 } from "./types";

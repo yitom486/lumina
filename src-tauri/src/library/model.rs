@@ -135,3 +135,42 @@ pub struct ResolverSelection {
     pub tmdb_id: u64,
     pub confidence_milli: u16,
 }
+
+/// User-configured, OpenAI-compatible endpoint. `api_key_env` is a process
+/// environment-variable name, never the secret value itself.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ModelResolverConfig {
+    pub base_url: String,
+    pub model_id: String,
+    pub api_key_env: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct TmdbConfig {
+    pub access_token_env: String,
+    #[serde(default = "default_tmdb_language")]
+    pub language: String,
+}
+
+fn default_tmdb_language() -> String {
+    "zh-CN".into()
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ResolverRunConfig {
+    pub privacy_acknowledged: bool,
+    pub model: ModelResolverConfig,
+    pub tmdb: TmdbConfig,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ResolverPreview {
+    pub intent: ResolverIntent,
+    pub candidates: Vec<TmdbCandidate>,
+    pub selection: Option<ResolverSelection>,
+    pub can_auto_match: bool,
+}

@@ -6,6 +6,7 @@
 
 mod error;
 pub mod model;
+mod resolver;
 mod scanner;
 mod service;
 mod store;
@@ -13,6 +14,8 @@ mod store;
 pub use error::{LibraryError, LibraryErrorCode};
 pub use model::{
     GroupResolution, LibraryIndex, LibraryStatus, LibraryWatchConfig, MediaGroup, MediaGroupKind,
-    MetadataMediaType, PendingMediaGroup, ResolverIntent, ResolverSelection, TmdbCandidate,
+    MetadataMediaType, ModelResolverConfig, PendingMediaGroup, ResolverIntent, ResolverPreview,
+    ResolverRunConfig, ResolverSelection, TmdbCandidate, TmdbConfig,
 };
+pub use resolver::RemoteResolver;
 pub use service::MediaLibraryService;

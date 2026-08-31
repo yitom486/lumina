@@ -7,8 +7,9 @@ use std::time::Duration;
 use crate::library::error::LibraryError;
 use crate::library::model::{
     GroupResolution, LibraryIndex, LibraryStatus, LibraryWatchConfig, PendingMediaGroup,
+    ResolverPreview, ResolverRunConfig,
 };
-use crate::library::{scanner, store};
+use crate::library::{scanner, store, RemoteResolver};
 
 struct WatchWorker {
     cancel: Arc<AtomicBool>,
@@ -174,17 +175,7 @@ impl MediaLibraryService {
         if title.is_empty() {
             return Err(LibraryError::invalid_input("请填写要匹配的作品名称"));
         }
-        let configured = self
-            .runtime
-            .lock()
-            .map_err(|_| LibraryError::internal(Some("library runtime mutex poisoned")))?
-            .config
-            .roots
-            .iter()
-            .any(|configured_root| configured_root == &root);
-        if !configured {
-            return Err(LibraryError::invalid_input("请先启用该媒体目录"));
-        }
+        self.ensure_configured_root(&root)?;
         let path = PathBuf::from(&root);
         let mut index = store::load(&path)?.ok_or_else(|| {
             LibraryError::group_not_found(Some("library index is not available for root"))
@@ -202,6 +193,42 @@ impl MediaLibraryService {
             root,
             group: updated,
         })
+    }
+
+    /// Runs the optional remote resolver for one group without persisting its
+    /// choice. A later reviewed-match operation owns durable TMDb writes.
+    pub fn resolve_preview(
+        &self,
+        root: String,
+        group_key: String,
+        config: ResolverRunConfig,
+    ) -> Result<ResolverPreview, LibraryError> {
+        self.ensure_configured_root(&root)?;
+        let path = PathBuf::from(&root);
+        let index = store::load(&path)?.ok_or_else(|| {
+            LibraryError::group_not_found(Some("library index is not available for root"))
+        })?;
+        let group = index
+            .groups
+            .into_iter()
+            .find(|group| group.key == group_key)
+            .ok_or_else(|| LibraryError::group_not_found(Some(&group_key)))?;
+        RemoteResolver::new(config)?.preview(&group)
+    }
+
+    fn ensure_configured_root(&self, root: &str) -> Result<(), LibraryError> {
+        let configured = self
+            .runtime
+            .lock()
+            .map_err(|_| LibraryError::internal(Some("library runtime mutex poisoned")))?
+            .config
+            .roots
+            .iter()
+            .any(|configured_root| configured_root == root);
+        if !configured {
+            return Err(LibraryError::invalid_input("请先启用该媒体目录"));
+        }
+        Ok(())
     }
 }
 

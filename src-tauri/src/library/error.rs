@@ -11,6 +11,10 @@ pub enum LibraryErrorCode {
     InvalidDirectory,
     InvalidInput,
     GroupNotFound,
+    PrivacyConsentRequired,
+    ResolverNotConfigured,
+    RemoteRequestFailed,
+    InvalidResolverResponse,
     ScanFailed,
     StorageFailed,
     NotRunning,
@@ -58,6 +62,38 @@ impl LibraryError {
         Self::new(
             LibraryErrorCode::GroupNotFound,
             "找不到待处理的媒体分组",
+            details.map(str::to_string),
+        )
+    }
+
+    pub fn privacy_consent_required() -> Self {
+        Self::new(
+            LibraryErrorCode::PrivacyConsentRequired,
+            "请先确认允许发送文件名用于智能匹配",
+            None,
+        )
+    }
+
+    pub fn resolver_not_configured(details: Option<&str>) -> Self {
+        Self::new(
+            LibraryErrorCode::ResolverNotConfigured,
+            "未配置媒体智能匹配服务",
+            details.map(str::to_string),
+        )
+    }
+
+    pub fn remote_request_failed(details: Option<&str>) -> Self {
+        Self::new(
+            LibraryErrorCode::RemoteRequestFailed,
+            "媒体信息查询失败，请稍后重试",
+            details.map(str::to_string),
+        )
+    }
+
+    pub fn invalid_resolver_response(details: Option<&str>) -> Self {
+        Self::new(
+            LibraryErrorCode::InvalidResolverResponse,
+            "智能匹配结果无效，请改用手动标题",
             details.map(str::to_string),
         )
     }

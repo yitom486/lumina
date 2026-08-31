@@ -57,3 +57,49 @@ export type LibraryErrorDto = {
   message: string;
   details?: string;
 };
+
+export type ModelResolverConfig = {
+  baseUrl: string;
+  modelId: string;
+  apiKeyEnv: string;
+};
+
+export type TmdbConfig = {
+  accessTokenEnv: string;
+  language: string;
+};
+
+export type ResolverRunConfig = {
+  privacyAcknowledged: boolean;
+  model: ModelResolverConfig;
+  tmdb: TmdbConfig;
+};
+
+export type ResolverIntent = {
+  mediaType: MetadataMediaType;
+  title: string;
+  year?: number | null;
+  season?: number | null;
+  episode?: number | null;
+  confidenceMilli: number;
+};
+
+export type TmdbCandidate = {
+  tmdbId: number;
+  mediaType: MetadataMediaType;
+  title: string;
+  year?: number | null;
+  overview?: string | null;
+};
+
+export type ResolverSelection = {
+  tmdbId: number;
+  confidenceMilli: number;
+};
+
+export type ResolverPreview = {
+  intent: ResolverIntent;
+  candidates: TmdbCandidate[];
+  selection?: ResolverSelection | null;
+  canAutoMatch: boolean;
+};

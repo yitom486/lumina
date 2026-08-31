@@ -5,6 +5,7 @@ use tauri::State;
 
 use crate::library::{
     LibraryError, LibraryIndex, LibraryStatus, LibraryWatchConfig, PendingMediaGroup,
+    ResolverPreview, ResolverRunConfig,
 };
 use crate::state::AppState;
 
@@ -63,4 +64,17 @@ pub async fn library_set_manual_title(
     tauri::async_runtime::spawn_blocking(move || service.set_manual_title(root, group_key, title))
         .await
         .map_err(|error| LibraryError::internal(Some(&format!("library title join: {error}"))))?
+}
+
+#[tauri::command]
+pub async fn library_resolve_preview(
+    state: State<'_, AppState>,
+    root: String,
+    group_key: String,
+    config: ResolverRunConfig,
+) -> Result<ResolverPreview, LibraryError> {
+    let service = state.library.clone();
+    tauri::async_runtime::spawn_blocking(move || service.resolve_preview(root, group_key, config))
+        .await
+        .map_err(|error| LibraryError::internal(Some(&format!("library resolver join: {error}"))))?
 }
