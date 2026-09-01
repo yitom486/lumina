@@ -2,13 +2,44 @@
 
 ## Unreleased
 
-- 新增实验性本地媒体库：目录守护扫描、`.lumina` 索引、待匹配分组与人工标题兜底。
-- 新增可配置的 OpenAI-compatible 文件名解析与 TMDb 候选确认；模型密钥与 TMDb Token 可保存到当前 Windows 用户的 Credential Manager，环境变量仅作开发/CI 兼容备用。
-- 新增「验证配置」：分别以无媒体数据的最小请求验证模型服务与 TMDb Token，并仅显示业务化验证结果。
-- 智能匹配新增来源选择：可复用已有 ACP Agent profile，或使用专用直接 API；Agent 解析使用独立、工具禁用、短生命周期会话，不与聊天历史混用。
-- 已确认的电影/剧集写入 `movie.json`、`series.json` 与分集 JSON，并可按当前媒体读取结构化剧情上下文。
+（暂无）
 
 本项目当前为私有预览阶段。版本说明描述的是已实现能力，不承诺稳定 API、跨平台支持或公开分发。
+
+## 0.2.0 — Private Preview
+
+### 媒体库与元数据
+
+- 实验性本地媒体库：目录守护扫描、`.lumina` 索引、待匹配分组与人工标题兜底。
+- 可配置的 OpenAI-compatible 文件名解析与 TMDb 候选确认；模型密钥与 TMDb Token 可保存到 Windows Credential Manager。
+- 「验证配置」：分别以最小请求验证模型服务与 TMDb Token，仅展示业务化结果。
+- 智能匹配支持复用 ACP Agent profile 或专用直接 API；Agent 解析使用独立、工具禁用、短生命周期会话。
+- 已确认的电影/剧集写入 `movie.json`、`series.json` 与分集 JSON；维基 W4 刷新、过期提示与中文对照。
+- TMDb 刷新与分集元数据精简；维基容错与角色解析。
+
+### ACP 对话与 MCP 工具
+
+- MCP 按需上下文：快照瘦身、series 预热节流、5 个 Lumina MCP 工具（播放/媒体库/分集索引/字幕窗口/截图）。
+- 修复 MCP 环境变量挂载、分集索引解析与媒体库路径统一。
+- 对话体验：本地历史、新建会话、Composer 模型选择、Markdown 渲染、工具报错中文提示。
+- Agent 提示词：工具慎用原则；剧情优先字幕窗口、画面细节再用截图；禁止英译块重复。
+- 识图截图 `lumina_capture_frames`：1 帧/秒取样、640px JPEG、即时清理、设置里 vision 开关（默认开启）并同步 MCP 能力。
+- 助手回复合并：去除重复 Natural English、minimal 模式仅展示工具轨迹。
+
+### 播放器
+
+- **会话恢复**：关闭时保存上次视频、目录与进度；冷启动自动 reopen 并 **暂停** 在保存位置；文件对话框默认上次目录。
+
+### 构建与质量
+
+- Bun 前端 lint、Vitest 单测/UI 测试；Rust `cargo test --lib` 与 clippy。
+- Windows x64 debug bundle：MSI 与 NSIS 安装器。
+
+### 已知边界
+
+- 当前正式支持目标为 Windows x64。
+- libmpv 使用 native 子 HWND；控件须位于视频安全区或侧栏。
+- 本版本不包含代码签名、自动更新服务或公开分发。
 
 ## 0.1.0 — Private Preview
 
