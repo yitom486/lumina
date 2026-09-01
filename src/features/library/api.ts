@@ -1,4 +1,4 @@
-import { invoke } from "@tauri-apps/api/core";
+import { Channel, invoke } from "@tauri-apps/api/core";
 
 import type {
   CredentialKind,
@@ -8,6 +8,7 @@ import type {
   CredentialValidationResult,
   LibraryIndex,
   LibraryStatus,
+  LibraryScanEvent,
   LibraryWatchConfig,
   MediaMetadataContext,
   ModelDiscoveryConfig,
@@ -63,8 +64,13 @@ export function validateTmdbCredentials(
   return invoke<CredentialValidationItem>("library_tmdb_credentials_validate", { config });
 }
 
-export function startLibraryWatch(config: LibraryWatchConfig): Promise<LibraryStatus> {
-  return invoke<LibraryStatus>("library_watch_start", { config });
+export function startLibraryWatch(
+  config: LibraryWatchConfig,
+  onEvent?: (event: LibraryScanEvent) => void,
+): Promise<LibraryStatus> {
+  const channel = new Channel<LibraryScanEvent>();
+  if (onEvent) channel.onmessage = onEvent;
+  return invoke<LibraryStatus>("library_watch_start", { config, onEvent: channel });
 }
 
 export function stopLibraryWatch(): Promise<LibraryStatus> {

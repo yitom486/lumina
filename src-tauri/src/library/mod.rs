@@ -18,7 +18,8 @@ pub use error::{LibraryError, LibraryErrorCode};
 pub use model::{
     AgentModelDiscoveryConfig, AgentModelDiscoveryResult, CredentialValidationConfig,
     CredentialValidationItem, CredentialValidationResult, GroupResolution, LibraryIndex,
-    LibraryStatus, LibraryWatchConfig, MediaGroup, MediaGroupKind, MediaMetadataContext,
+    LibraryScanEvent, LibraryStatus, LibraryWatchConfig, MediaGroup, MediaGroupKind,
+    MediaMetadataContext,
     MetadataMediaType, MetadataWriteResult, ModelDiscoveryConfig, ModelDiscoveryResult,
     ModelResolverConfig, PendingMediaGroup, ResolverIntent, ResolverPreview,
     ResolverProviderConfig, ResolverRunConfig, ResolverSelection, StoredMetadata,

@@ -21,6 +21,12 @@ export type LibraryScanIssue = {
   message: string;
 };
 
+export type LibraryScanEvent =
+  | { type: "Started"; payload: { rootCount: number } }
+  | { type: "Progress"; payload: { rootsCompleted: number; rootCount: number; indexedFiles: number } }
+  | { type: "Finished"; payload: { indexedFiles: number; pendingGroups: number } }
+  | { type: "Failed"; payload: { code: string; message: string } };
+
 export type MediaGroupKind = "movie" | "series" | "unknown";
 export type MetadataMediaType = "movie" | "tv";
 

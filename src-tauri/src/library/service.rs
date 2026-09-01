@@ -6,7 +6,7 @@ use std::time::Duration;
 
 use crate::library::error::LibraryError;
 use crate::library::model::{
-    GroupResolution, LibraryIndex, LibraryScanIssue, LibraryStatus, LibraryWatchConfig,
+    GroupResolution, LibraryIndex, LibraryScanEvent, LibraryScanIssue, LibraryStatus, LibraryWatchConfig,
     MediaMetadataContext, MetadataMediaType, MetadataWriteResult, PendingMediaGroup,
     ResolverPreview, ResolverRunConfig, TmdbConfig,
 };
@@ -42,6 +42,13 @@ impl MediaLibraryService {
     }
 
     pub fn start(&self, config: LibraryWatchConfig) -> Result<LibraryStatus, LibraryError> {
+        self.start_with_progress(config, |_| {})
+    }
+
+    pub fn start_with_progress<F>(&self, config: LibraryWatchConfig, mut on_event: F) -> Result<LibraryStatus, LibraryError>
+    where
+        F: FnMut(LibraryScanEvent),
+    {
         let roots = validate_config(&config)?;
         self.stop()?;
         {
@@ -57,7 +64,7 @@ impl MediaLibraryService {
                 poll_interval_secs: config.poll_interval_secs.max(5),
             };
         }
-        self.scan_now()?;
+        self.scan_now_with_progress(&mut on_event)?;
 
         let cancel = Arc::new(AtomicBool::new(false));
         let worker_cancel = Arc::clone(&cancel);
@@ -93,11 +100,18 @@ impl MediaLibraryService {
     }
 
     pub fn scan_now(&self) -> Result<Vec<LibraryIndex>, LibraryError> {
+        self.scan_now_with_progress(&mut |_| {})
+    }
+
+    fn scan_now_with_progress(
+        &self,
+        on_event: &mut dyn FnMut(LibraryScanEvent),
+    ) -> Result<Vec<LibraryIndex>, LibraryError> {
         let _guard = self
             .scan_lock
             .lock()
             .map_err(|_| LibraryError::internal(Some("library scan mutex poisoned")))?;
-        scan_runtime(&self.runtime)
+        scan_runtime(&self.runtime, on_event)
     }
 
     pub fn status(&self) -> Result<LibraryStatus, LibraryError> {
@@ -325,7 +339,7 @@ fn watch_loop(
         let result = scan_lock
             .lock()
             .map_err(|_| LibraryError::internal(Some("library scan mutex poisoned")))
-            .and_then(|_guard| scan_runtime(&runtime));
+            .and_then(|_guard| scan_runtime(&runtime, &mut |_| {}));
         if let Err(error) = result {
             tracing::warn!(code = ?error.code, details = ?error.details, "media library periodic scan failed");
         }
@@ -333,7 +347,10 @@ fn watch_loop(
     tracing::info!("media library watcher stopped");
 }
 
-fn scan_runtime(runtime: &Arc<Mutex<Runtime>>) -> Result<Vec<LibraryIndex>, LibraryError> {
+fn scan_runtime(
+    runtime: &Arc<Mutex<Runtime>>,
+    on_event: &mut dyn FnMut(LibraryScanEvent),
+) -> Result<Vec<LibraryIndex>, LibraryError> {
     let roots = runtime
         .lock()
         .map_err(|_| LibraryError::internal(Some("library runtime mutex poisoned")))?
@@ -345,21 +362,44 @@ fn scan_runtime(runtime: &Arc<Mutex<Runtime>>) -> Result<Vec<LibraryIndex>, Libr
         record_scan_failure(runtime, &error)?;
         return Err(error);
     }
-    let indexes: Result<Vec<_>, _> = roots
-        .iter()
-        .map(PathBuf::from)
-        .map(|root| scan_and_store(&root))
-        .collect();
-    match indexes {
-        Ok(indexes) => {
-            update_runtime(runtime, &indexes)?;
-            Ok(indexes)
-        }
-        Err(error) => {
-            record_scan_failure(runtime, &error)?;
-            Err(error)
+    on_event(LibraryScanEvent::Started { root_count: roots.len() });
+    let mut indexes = Vec::new();
+    let mut indexed_files = 0;
+    for (root_index, root) in roots.iter().enumerate() {
+        let root = PathBuf::from(root);
+        let index = scan_and_store_with_progress(&root, |files| {
+            on_event(LibraryScanEvent::Progress {
+                roots_completed: root_index,
+                root_count: roots.len(),
+                indexed_files: indexed_files + files,
+            });
+        });
+        match index {
+            Ok(index) => {
+                indexed_files += index.files.len();
+                indexes.push(index);
+                on_event(LibraryScanEvent::Progress {
+                    roots_completed: root_index + 1,
+                    root_count: roots.len(),
+                    indexed_files,
+                });
+            }
+            Err(error) => {
+                record_scan_failure(runtime, &error)?;
+                on_event(LibraryScanEvent::Failed { code: error.code, message: error.message.clone() });
+                return Err(error);
+            }
         }
     }
+    update_runtime(runtime, &indexes)?;
+    let state = runtime
+        .lock()
+        .map_err(|_| LibraryError::internal(Some("library runtime mutex poisoned")))?;
+    on_event(LibraryScanEvent::Finished {
+        indexed_files: state.indexed_files,
+        pending_groups: state.pending_groups,
+    });
+    Ok(indexes)
 }
 
 fn record_scan_failure(
@@ -376,9 +416,12 @@ fn record_scan_failure(
     Ok(())
 }
 
-fn scan_and_store(root: &std::path::Path) -> Result<LibraryIndex, LibraryError> {
+fn scan_and_store_with_progress<F>(root: &std::path::Path, on_file: F) -> Result<LibraryIndex, LibraryError>
+where
+    F: FnMut(usize),
+{
     let previous = store::load(root)?;
-    let index = store::preserve_resolutions(scanner::scan_root(root)?, previous.as_ref());
+    let index = store::preserve_resolutions(scanner::scan_root_with_progress(root, on_file)?, previous.as_ref());
     store::save_if_changed(root, &index)?;
     Ok(index)
 }

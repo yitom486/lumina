@@ -16,7 +16,10 @@ const VIDEO_EXTENSIONS: &[&str] = &[
     "mkv", "mp4", "avi", "mov", "webm", "m4v", "ts", "wmv", "flv",
 ];
 
-pub fn scan_root(root: &Path) -> Result<LibraryIndex, LibraryError> {
+pub fn scan_root_with_progress<F>(root: &Path, mut on_file: F) -> Result<LibraryIndex, LibraryError>
+where
+    F: FnMut(usize),
+{
     if !root.is_dir() {
         return Err(LibraryError::invalid_directory(Some(
             &root.display().to_string(),
@@ -24,7 +27,7 @@ pub fn scan_root(root: &Path) -> Result<LibraryIndex, LibraryError> {
     }
 
     let mut files = Vec::new();
-    visit(root, root, &mut files)?;
+    visit(root, root, &mut files, &mut on_file)?;
     files.sort_by(|a, b| a.relative_path.cmp(&b.relative_path));
 
     let groups = build_groups(&files);
@@ -37,7 +40,10 @@ pub fn scan_root(root: &Path) -> Result<LibraryIndex, LibraryError> {
     })
 }
 
-fn visit(root: &Path, dir: &Path, output: &mut Vec<IndexedMediaFile>) -> Result<(), LibraryError> {
+fn visit<F>(root: &Path, dir: &Path, output: &mut Vec<IndexedMediaFile>, on_file: &mut F) -> Result<(), LibraryError>
+where
+    F: FnMut(usize),
+{
     let entries = fs::read_dir(dir).map_err(|error| {
         LibraryError::scan_failed(Some(&format!("read {}: {error}", dir.display())))
     })?;
@@ -51,9 +57,10 @@ fn visit(root: &Path, dir: &Path, output: &mut Vec<IndexedMediaFile>) -> Result<
             .file_type()
             .map_err(|error| LibraryError::scan_failed(Some(&error.to_string())))?;
         if file_type.is_dir() {
-            visit(root, &path, output)?;
+            visit(root, &path, output, on_file)?;
         } else if file_type.is_file() && is_video(&path) {
             output.push(index_file(root, &path)?);
+            on_file(output.len());
         }
     }
     Ok(())

@@ -34,6 +34,7 @@ import type {
   PendingMediaGroup,
   ResolverPreview,
   ResolverRunConfig,
+  LibraryScanEvent,
 } from "../types";
 
 export function MediaLibraryPanel() {
@@ -60,6 +61,7 @@ export function MediaLibraryPanel() {
   const [tmdbValidation, setTmdbValidation] = useState<CredentialValidationItem | null>(null);
   const [modelConnection, setModelConnection] = useState<ModelDiscoveryResult | null>(null);
   const [agentConnection, setAgentConnection] = useState<AgentModelDiscoveryResult | null>(null);
+  const [scanProgress, setScanProgress] = useState<LibraryScanEvent | null>(null);
 
   const statusQuery = useQuery({
     queryKey: ["library-status"],
@@ -125,7 +127,7 @@ export function MediaLibraryPanel() {
     await queryClient.invalidateQueries({ queryKey: ["library-credential-status"] });
   };
   const startMutation = useMutation({
-    mutationFn: () => startLibraryWatch({ roots, pollIntervalSecs }),
+    mutationFn: () => startLibraryWatch({ roots, pollIntervalSecs }, setScanProgress),
     onSuccess: () => void refresh(),
     onError: (err) => setError(errorMessage(err)),
   });
@@ -236,8 +238,8 @@ export function MediaLibraryPanel() {
             if (!selected) return;
             patchSettings({ roots: Array.isArray(selected) ? selected : [selected] });
           }}>选择目录</Button>
-          <Button size="sm" disabled={!roots.length || startMutation.isPending} onClick={() => startMutation.mutate()}>
-            启动扫描
+          <Button size="sm" disabled={!roots.length || startMutation.isPending} onClick={() => { setError(null); setScanProgress({ type: "Started", payload: { rootCount: roots.length } }); startMutation.mutate(); }}>
+            {startMutation.isPending ? "正在扫描" : "启动扫描"}
           </Button>
           <Button size="sm" variant="outline" disabled={!statusQuery.data?.running || stopMutation.isPending} onClick={() => stopMutation.mutate()}>
             停止
@@ -246,6 +248,7 @@ export function MediaLibraryPanel() {
         <label className="block text-muted-foreground">扫描周期（秒）
           <input className="ml-2 h-7 w-16 rounded border border-border bg-background px-1" type="number" min={5} value={pollIntervalSecs} onChange={(event) => patchSettings({ pollIntervalSecs: Math.max(5, Number(event.target.value) || 5) })} />
         </label>
+        {scanProgress ? <ScanProgressCard event={scanProgress} busy={startMutation.isPending} /> : null}
         <p className="text-muted-foreground">扫描和本地索引不需要连接 Agent 或配置 TMDb；智能匹配时才会使用它们。</p>
         {statusQuery.data?.lastScanError ? <div className="space-y-2 rounded-md border border-destructive/50 bg-destructive/10 p-2 text-destructive" role="alert">
           <p>上一次扫描失败：{statusQuery.data.lastScanError.message}</p>
@@ -323,6 +326,15 @@ function formatScanTime(timestamp: number): string {
   const date = new Date(timestamp);
   if (Number.isNaN(date.getTime())) return "时间未知";
   return date.toLocaleString("zh-CN", { hour12: false });
+}
+
+function ScanProgressCard({ event, busy }: { event: LibraryScanEvent; busy: boolean }) {
+  if (event.type === "Failed") return <div className="rounded-md border border-destructive/50 bg-destructive/10 p-2 text-destructive" role="alert">首次扫描失败：{event.payload.message}</div>;
+  if (event.type === "Finished") return <div className="rounded-md border border-emerald-500/40 bg-emerald-500/10 p-2 text-emerald-500">首次扫描完成：已索引 {event.payload.indexedFiles} 个文件，发现 {event.payload.pendingGroups} 个待匹配分组。</div>;
+  const rootCount = event.payload.rootCount;
+  const rootsCompleted = event.type === "Progress" ? event.payload.rootsCompleted : 0;
+  const indexedFiles = event.type === "Progress" ? event.payload.indexedFiles : 0;
+  return <div className="rounded-md border border-border bg-muted/40 p-2 text-muted-foreground" role="status"><p>{busy ? "正在首次扫描媒体目录…" : "正在准备扫描…"}</p><p>目录进度：{rootsCompleted} / {rootCount} · 已发现 {indexedFiles} 个视频文件</p><div className="mt-1 h-1 overflow-hidden rounded bg-border"><div className="h-full bg-primary transition-all" style={{ width: `${rootCount ? Math.max(8, rootsCompleted / rootCount * 100) : 8}%` }} /></div></div>;
 }
 
 function ValidationItem({ label, item }: { label: string; item: CredentialValidationResult["model"] }) {

@@ -49,6 +49,15 @@ pub struct LibraryScanIssue {
     pub message: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type", content = "payload", rename_all = "PascalCase")]
+pub enum LibraryScanEvent {
+    Started { root_count: usize },
+    Progress { roots_completed: usize, root_count: usize, indexed_files: usize },
+    Finished { indexed_files: usize, pending_groups: usize },
+    Failed { code: crate::library::error::LibraryErrorCode, message: String },
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct LibraryIndex {

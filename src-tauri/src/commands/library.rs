@@ -1,12 +1,14 @@
 //! Tauri boundary for the local index. These command names double as the
 //! application-side tool surface that a future ACP/MCP adapter may expose.
 
+use tauri::ipc::Channel;
 use tauri::State;
 
 use crate::library::{
     credentials, AgentModelDiscoveryConfig, AgentModelDiscoveryResult, CredentialKind,
     CredentialSaveInput, CredentialStatus, CredentialValidationConfig, CredentialValidationItem,
-    CredentialValidationResult, LibraryError, LibraryIndex, LibraryStatus, LibraryWatchConfig,
+    CredentialValidationResult, LibraryError, LibraryIndex, LibraryScanEvent, LibraryStatus,
+    LibraryWatchConfig,
     MediaMetadataContext, MetadataMediaType, MetadataWriteResult, ModelDiscoveryConfig,
     ModelDiscoveryResult, PendingMediaGroup, ResolverPreview, ResolverRunConfig, TmdbConfig,
 };
@@ -16,9 +18,14 @@ use crate::state::AppState;
 pub async fn library_watch_start(
     state: State<'_, AppState>,
     config: LibraryWatchConfig,
+    on_event: Channel<LibraryScanEvent>,
 ) -> Result<LibraryStatus, LibraryError> {
     let service = state.library.clone();
-    tauri::async_runtime::spawn_blocking(move || service.start(config))
+    tauri::async_runtime::spawn_blocking(move || service.start_with_progress(config, |event| {
+        if let Err(error) = on_event.send(event) {
+            tracing::warn!(%error, "failed to send media library scan event");
+        }
+    }))
         .await
         .map_err(|error| LibraryError::internal(Some(&format!("library start join: {error}"))))?
 }
