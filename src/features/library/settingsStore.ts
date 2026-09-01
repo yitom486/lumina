@@ -3,6 +3,8 @@ import { persist } from "zustand/middleware";
 
 type LibrarySettingsState = {
   roots: string[];
+  /** When true, roots track the folder of the currently opened video. */
+  rootsFollowPlayback: boolean;
   pollIntervalSecs: number;
   privacyAcknowledged: boolean;
   resolverProvider: "acpAgent" | "directApi";
@@ -17,6 +19,7 @@ type LibrarySettingsState = {
 
 const DEFAULTS = {
   roots: [] as string[],
+  rootsFollowPlayback: true,
   pollIntervalSecs: 30,
   privacyAcknowledged: false,
   resolverProvider: "directApi" as const,
@@ -39,6 +42,7 @@ export const useLibrarySettingsStore = create<LibrarySettingsState>()(
       name: "lumina-library-settings",
       partialize: (state) => ({
         roots: state.roots,
+        rootsFollowPlayback: state.rootsFollowPlayback,
         pollIntervalSecs: state.pollIntervalSecs,
         privacyAcknowledged: state.privacyAcknowledged,
         resolverProvider: state.resolverProvider,

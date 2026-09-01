@@ -61,3 +61,4 @@ export type {
   StoredMetadataKind,
 } from "./types";
 export { MediaLibraryPanel } from "./components/MediaLibraryPanel";
+export { useLibraryPlaybackRootSync } from "./hooks/useLibraryPlaybackRootSync";

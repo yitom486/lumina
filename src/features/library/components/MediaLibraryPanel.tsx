@@ -5,7 +5,10 @@ import { useEffect, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { profilesHintFromStore } from "@/features/acp/defaultAgentProfiles";
 import { useAcpProfilesStore } from "@/features/acp/acpProfilesStore";
+import { usePlayerStore } from "@/features/player";
 import { errorMessage } from "@/lib/format";
+
+import { libraryRootFromPlaybackPath } from "../playbackRoot";
 
 import {
   applyTmdbMediaMatch,
@@ -60,6 +63,9 @@ import type {
 export function MediaLibraryPanel() {
   const queryClient = useQueryClient();
   const roots = useLibrarySettingsStore((state) => state.roots);
+  const rootsFollowPlayback = useLibrarySettingsStore(
+    (state) => state.rootsFollowPlayback,
+  );
   const pollIntervalSecs = useLibrarySettingsStore((state) => state.pollIntervalSecs);
   const privacyAcknowledged = useLibrarySettingsStore((state) => state.privacyAcknowledged);
   const resolverProvider = useLibrarySettingsStore((state) => state.resolverProvider);
@@ -70,6 +76,7 @@ export function MediaLibraryPanel() {
   const modelId = useLibrarySettingsStore((state) => state.modelId);
   const tmdbLanguage = useLibrarySettingsStore((state) => state.tmdbLanguage);
   const patchSettings = useLibrarySettingsStore((state) => state.patchSettings);
+  const currentFile = usePlayerStore((state) => state.currentFile);
   const activeAcpProfileId = useAcpProfilesStore((state) => state.activeProfileId);
   const acpProfiles = useAcpProfilesStore((state) => state.profiles);
   const [error, setError] = useState<string | null>(null);
@@ -305,6 +312,7 @@ export function MediaLibraryPanel() {
         credentialStatusQuery.data?.modelApiKeySaved),
   );
   const tmdbTokenSaved = Boolean(credentialStatusQuery.data?.tmdbAccessTokenSaved);
+  const playbackRoot = libraryRootFromPlaybackPath(currentFile);
 
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-auto p-3 text-xs">
@@ -316,15 +324,42 @@ export function MediaLibraryPanel() {
           </span>
         </div>
         <div className="space-y-1 text-muted-foreground">
-          {roots.length ? roots.map((root) => <p key={root} className="truncate">{root}</p>) : <p>尚未选择媒体目录</p>}
+          {roots.length ? (
+            roots.map((root) => <p key={root} className="truncate">{root}</p>)
+          ) : rootsFollowPlayback && !playbackRoot ? (
+            <p>打开视频后将自动使用其所在目录</p>
+          ) : (
+            <p>尚未选择媒体目录</p>
+          )}
+          {rootsFollowPlayback && roots.length ? (
+            <p>默认跟随当前播放目录；点「选择目录」可改为固定其它文件夹。</p>
+          ) : roots.length ? (
+            <p>已固定为手动选择的目录；换视频不会自动更改。</p>
+          ) : null}
           {statusQuery.data?.lastScanAtMs ? <p>上次成功扫描：{formatScanTime(statusQuery.data.lastScanAtMs)} · 已索引 {statusQuery.data.indexedFiles} 个文件</p> : null}
         </div>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
           <Button size="sm" variant="outline" onClick={async () => {
             const selected = await open({ directory: true, multiple: true });
             if (!selected) return;
-            patchSettings({ roots: Array.isArray(selected) ? selected : [selected] });
+            patchSettings({
+              roots: Array.isArray(selected) ? selected : [selected],
+              rootsFollowPlayback: false,
+            });
           }}>选择目录</Button>
+          {!rootsFollowPlayback ? (
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={!playbackRoot}
+              onClick={() => {
+                if (!playbackRoot) return;
+                patchSettings({ roots: [playbackRoot], rootsFollowPlayback: true });
+              }}
+            >
+              跟随播放目录
+            </Button>
+          ) : null}
           <Button size="sm" disabled={!roots.length || startMutation.isPending} onClick={() => { setError(null); setScanProgress({ type: "Started", payload: { rootCount: roots.length } }); startMutation.mutate(); }}>
             {startMutation.isPending ? "正在扫描" : "启动扫描"}
           </Button>

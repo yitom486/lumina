@@ -22,7 +22,7 @@ import { ChatDock } from "@/features/acp/components/ChatDock";
 import { useChatUiStore } from "@/features/acp/chatUiStore";
 import { ChaptersPanel } from "@/features/chapters";
 import { MediaInfoPanel } from "@/features/media";
-import { MediaLibraryPanel } from "@/features/library";
+import { MediaLibraryPanel, useLibraryPlaybackRootSync } from "@/features/library";
 import { NotesPanel } from "@/features/notes";
 import {
   PlayerBar,
@@ -74,6 +74,7 @@ export default function App() {
   useSessionPersistence();
   useSessionRestore();
   useWindowFullscreenSync();
+  useLibraryPlaybackRootSync();
 
   const fullscreen = useUiStore((s) => s.fullscreen);
   const sidebarTab = useUiStore((s) => s.sidebarTab);
