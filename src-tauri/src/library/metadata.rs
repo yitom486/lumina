@@ -7,16 +7,15 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use serde_json::Value;
 
 use crate::library::error::LibraryError;
+use crate::library::model::{
+    EpisodeIndexEntry, GroupResolution, IndexedMediaFile, LibraryIndex, MediaGroup,
+    MediaMetadataContext, MergedMediaContext, MetadataCastMember, MetadataMediaType,
+    MetadataWriteResult, SeriesLibraryCache, StoredMetadata, StoredMetadataKind, TmdbConfig,
+    TmdbGroupStatus, WikiEnrichmentCandidate, WikiEnrichmentPreview, WikiGroupStatus,
+    WikiMatchMethod, WikiMetadata, WikiWriteResult, METADATA_SCHEMA_VERSION,
+};
 use crate::library::paths::{display_relative_path, relativize_under_root};
 use crate::library::wikitext::episode_plot_for;
-use crate::library::model::{
-    GroupResolution, IndexedMediaFile, LibraryIndex, MediaGroup, MediaMetadataContext, MergedMediaContext,
-    MetadataCastMember, MetadataMediaType, MetadataWriteResult, StoredMetadata, StoredMetadataKind,
-    SeriesLibraryCache, EpisodeIndexEntry,
-    TmdbConfig, TmdbGroupStatus, WikiEnrichmentCandidate, WikiEnrichmentPreview,
-    WikiGroupStatus, WikiMatchMethod, WikiMetadata, WikiWriteResult,
-    METADATA_SCHEMA_VERSION,
-};
 use crate::library::{resolver, store, wikipedia};
 
 const MAX_OVERVIEW_CAST: usize = 15;
@@ -254,9 +253,9 @@ pub fn episode_index_for_group(
         return Ok(Vec::new());
     }
     let mut entries = Vec::new();
-    for entry in fs::read_dir(&dir).map_err(|error| {
-        LibraryError::storage_failed(Some(&format!("read group dir: {error}")))
-    })? {
+    for entry in fs::read_dir(&dir)
+        .map_err(|error| LibraryError::storage_failed(Some(&format!("read group dir: {error}"))))?
+    {
         let entry = entry.map_err(|error| {
             LibraryError::storage_failed(Some(&format!("read group entry: {error}")))
         })?;
@@ -265,8 +264,7 @@ pub fn episode_index_for_group(
         let Some((season, episode)) = parse_episode_file_name(&file_name) else {
             continue;
         };
-        let document = match store::load_group_json::<StoredMetadata>(root, group_key, &file_name)
-        {
+        let document = match store::load_group_json::<StoredMetadata>(root, group_key, &file_name) {
             Ok(document) => document,
             Err(error) => {
                 tracing::warn!(
@@ -281,10 +279,7 @@ pub fn episode_index_for_group(
         let (title, overview) = if let Some(document) = document {
             (document.title, document.overview)
         } else {
-            (
-                format!("S{season:02}E{episode:02}"),
-                None,
-            )
+            (format!("S{season:02}E{episode:02}"), None)
         };
         entries.push(EpisodeIndexEntry {
             season,
@@ -314,7 +309,11 @@ pub fn resolve_media_in_index<'a>(
     else {
         return Ok(None);
     };
-    let Some(group) = index.groups.iter().find(|group| group.key == file.group_key) else {
+    let Some(group) = index
+        .groups
+        .iter()
+        .find(|group| group.key == file.group_key)
+    else {
         return Ok(None);
     };
     Ok(Some((file, group)))
@@ -508,9 +507,7 @@ fn document_from_tmdb(
             let cast = credits
                 .map(|value| cast_from_credits(value, MAX_OVERVIEW_CAST))
                 .unwrap_or_default();
-            let creators = credits
-                .map(directors_from_credits)
-                .unwrap_or_default();
+            let creators = credits.map(directors_from_credits).unwrap_or_default();
             (cast, creators, None, None)
         }
         StoredMetadataKind::Episode => (Vec::new(), Vec::new(), None, None),

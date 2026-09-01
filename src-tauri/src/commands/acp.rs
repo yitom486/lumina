@@ -3,11 +3,11 @@
 use tauri::ipc::Channel;
 use tauri::{AppHandle, Manager, State};
 
+use crate::acp::paths::resolve_session_cwd;
 use crate::acp::settings::AcpClientSettings;
 use crate::acp::{
     AcpError, AcpEvent, AcpStatus, AgentProfilesHint, SavedSessionHint, VideoPromptContext,
 };
-use crate::acp::paths::resolve_session_cwd;
 use crate::state::AppState;
 
 #[tauri::command]
@@ -83,7 +83,9 @@ pub async fn acp_sync_mcp_capabilities(
         acp.sync_mcp_capabilities(cwd.as_deref(), settings.vision_capable)
     })
     .await
-    .map_err(|error| AcpError::internal(Some(&format!("acp sync mcp capabilities join: {error}"))))??;
+    .map_err(|error| {
+        AcpError::internal(Some(&format!("acp sync mcp capabilities join: {error}")))
+    })??;
     Ok(())
 }
 
@@ -107,11 +109,8 @@ pub async fn acp_prompt(
     let settings = client_settings.unwrap_or_default();
     tauri::async_runtime::spawn_blocking(move || {
         let session_cwd = resolve_session_cwd(cwd.as_deref())?;
-        let snapshot = acp.build_prompt_snapshot(
-            context.as_ref(),
-            &library,
-            settings.vision_capable,
-        )?;
+        let snapshot =
+            acp.build_prompt_snapshot(context.as_ref(), &library, settings.vision_capable)?;
         acp.write_prompt_snapshot(&session_cwd, &snapshot)?;
         acp.prompt(
             text,
@@ -177,17 +176,11 @@ pub async fn acp_new_chat(
     let acp = state.acp.clone();
     let settings = client_settings.unwrap_or_default();
     tauri::async_runtime::spawn_blocking(move || {
-        acp.new_chat(
-            cwd,
-            profile_id,
-            settings,
-            profiles,
-            |event| {
-                if let Err(error) = on_event.send(event) {
-                    tracing::warn!(%error, "failed to send ACP new chat event");
-                }
-            },
-        )
+        acp.new_chat(cwd, profile_id, settings, profiles, |event| {
+            if let Err(error) = on_event.send(event) {
+                tracing::warn!(%error, "failed to send ACP new chat event");
+            }
+        })
     })
     .await
     .map_err(|error| AcpError::internal(Some(&format!("acp new chat join: {error}"))))?

@@ -7,7 +7,7 @@ pub use build::PromptSnapshotState;
 pub use snapshot::{
     read_snapshot, snapshot_path_for_cwd, sync_snapshot_capabilities, write_snapshot,
     AgentCapabilities, LuminaMcpSnapshot, PlaybackLite, PromptAnchor, SessionPolicy,
-    CONTEXT_FILE_ENV, SNAPSHOT_RELATIVE_PATH, SNAPSHOT_SCHEMA_VERSION, LIBRARY_WARM_EVERY,
+    CONTEXT_FILE_ENV, LIBRARY_WARM_EVERY, SNAPSHOT_RELATIVE_PATH, SNAPSHOT_SCHEMA_VERSION,
 };
 
 use std::path::Path;

@@ -71,7 +71,9 @@ fn parse_heading_episodes(section: &str) -> Vec<WikiEpisodeSummary> {
             index += 1;
             let mut body = Vec::new();
             while index < lines.len() {
-                if parse_subheading(lines[index]).is_some() || parse_def_list_marker(lines[index].trim()).is_some() {
+                if parse_subheading(lines[index]).is_some()
+                    || parse_def_list_marker(lines[index].trim()).is_some()
+                {
                     break;
                 }
                 let line = lines[index].trim();
@@ -133,7 +135,10 @@ fn parse_number_and_title(label: &str) -> Option<(u32, Option<String>)> {
     let trimmed = label.trim();
     if let Some((number, title)) = trimmed.split_once('"') {
         let episode = number.trim().trim_end_matches(':').parse().ok()?;
-        let title = title.strip_suffix('"').map(str::trim).filter(|text| !text.is_empty());
+        let title = title
+            .strip_suffix('"')
+            .map(str::trim)
+            .filter(|text| !text.is_empty());
         return Some((episode, title.map(str::to_string)));
     }
     let episode = trimmed

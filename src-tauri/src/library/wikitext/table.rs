@@ -72,9 +72,14 @@ pub fn header_column_map(header_row: &[String]) -> Vec<(String, usize)> {
 }
 
 pub fn pick_column(map: &[(String, usize)], aliases: &[&str]) -> Option<usize> {
-    let normalized_aliases: Vec<String> = aliases.iter().map(|item| normalize_header(item)).collect();
+    let normalized_aliases: Vec<String> =
+        aliases.iter().map(|item| normalize_header(item)).collect();
     map.iter()
-        .find(|(header, _)| normalized_aliases.iter().any(|alias| header.contains(alias.as_str())))
+        .find(|(header, _)| {
+            normalized_aliases
+                .iter()
+                .any(|alias| header.contains(alias.as_str()))
+        })
         .map(|(_, index)| *index)
 }
 

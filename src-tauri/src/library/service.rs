@@ -5,13 +5,14 @@ use std::thread;
 use std::time::Duration;
 
 use crate::library::error::LibraryError;
-use crate::library::paths::library_root_for_media_path;
 use crate::library::model::{
-    GroupResolution, LibraryIndex, LibraryScanEvent, LibraryScanIssue, LibraryStatus, LibraryWatchConfig,
-    MediaGroup, MediaMetadataContext, MetadataMediaType, MetadataWriteResult, PendingMediaGroup,
-    ResolverPreview, ResolverRunConfig, TmdbConfig, WikiEnrichmentCandidate, WikiEnrichmentPreview,
-    WikiGroupStatus, WikiMatchMethod, WikiWriteResult, TmdbGroupStatus,
+    GroupResolution, LibraryIndex, LibraryScanEvent, LibraryScanIssue, LibraryStatus,
+    LibraryWatchConfig, MediaGroup, MediaMetadataContext, MetadataMediaType, MetadataWriteResult,
+    PendingMediaGroup, ResolverPreview, ResolverRunConfig, TmdbConfig, TmdbGroupStatus,
+    WikiEnrichmentCandidate, WikiEnrichmentPreview, WikiGroupStatus, WikiMatchMethod,
+    WikiWriteResult,
 };
+use crate::library::paths::library_root_for_media_path;
 use crate::library::{metadata, scanner, store, RemoteResolver};
 
 struct WatchWorker {
@@ -47,7 +48,11 @@ impl MediaLibraryService {
         self.start_with_progress(config, |_| {})
     }
 
-    pub fn start_with_progress<F>(&self, config: LibraryWatchConfig, mut on_event: F) -> Result<LibraryStatus, LibraryError>
+    pub fn start_with_progress<F>(
+        &self,
+        config: LibraryWatchConfig,
+        mut on_event: F,
+    ) -> Result<LibraryStatus, LibraryError>
     where
         F: FnMut(LibraryScanEvent),
     {
@@ -268,10 +273,7 @@ impl MediaLibraryService {
             .config
             .roots
             .clone();
-        let root = library_root_for_media_path(
-            roots.into_iter().map(PathBuf::from),
-            &media_path,
-        );
+        let root = library_root_for_media_path(roots.into_iter().map(PathBuf::from), &media_path);
         let Some(root) = root else {
             return Ok(None);
         };
@@ -283,13 +285,7 @@ impl MediaLibraryService {
 
     pub fn library_root_for_media(&self, media_path: &str) -> Option<PathBuf> {
         let media_path = PathBuf::from(media_path);
-        let roots = self
-            .runtime
-            .lock()
-            .ok()?
-            .config
-            .roots
-            .clone();
+        let roots = self.runtime.lock().ok()?.config.roots.clone();
         library_root_for_media_path(roots.into_iter().map(PathBuf::from), &media_path)
     }
 
@@ -489,7 +485,9 @@ fn scan_runtime(
         record_scan_failure(runtime, &error)?;
         return Err(error);
     }
-    on_event(LibraryScanEvent::Started { root_count: roots.len() });
+    on_event(LibraryScanEvent::Started {
+        root_count: roots.len(),
+    });
     let mut indexes = Vec::new();
     let mut indexed_files = 0;
     for (root_index, root) in roots.iter().enumerate() {
@@ -513,7 +511,10 @@ fn scan_runtime(
             }
             Err(error) => {
                 record_scan_failure(runtime, &error)?;
-                on_event(LibraryScanEvent::Failed { code: error.code, message: error.message.clone() });
+                on_event(LibraryScanEvent::Failed {
+                    code: error.code,
+                    message: error.message.clone(),
+                });
                 return Err(error);
             }
         }
@@ -543,12 +544,18 @@ fn record_scan_failure(
     Ok(())
 }
 
-fn scan_and_store_with_progress<F>(root: &std::path::Path, on_file: F) -> Result<LibraryIndex, LibraryError>
+fn scan_and_store_with_progress<F>(
+    root: &std::path::Path,
+    on_file: F,
+) -> Result<LibraryIndex, LibraryError>
 where
     F: FnMut(usize),
 {
     let previous = store::load(root)?;
-    let index = store::preserve_resolutions(scanner::scan_root_with_progress(root, on_file)?, previous.as_ref());
+    let index = store::preserve_resolutions(
+        scanner::scan_root_with_progress(root, on_file)?,
+        previous.as_ref(),
+    );
     store::save_if_changed(root, &index)?;
     Ok(index)
 }
@@ -664,6 +671,8 @@ mod tests {
             .last_scan_error
             .expect("safe scan issue");
         assert!(issue.message.contains("媒体目录"));
-        assert!(!issue.message.contains(&missing_root.to_string_lossy().to_string()));
+        assert!(!issue
+            .message
+            .contains(&missing_root.to_string_lossy().to_string()));
     }
 }

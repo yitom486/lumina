@@ -8,10 +8,10 @@ use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::library::error::LibraryError;
-use crate::library::paths::{is_lumina_data_dir, relativize_under_root};
 use crate::library::model::{
     GroupResolution, IndexedMediaFile, LibraryIndex, MediaGroup, MediaGroupKind,
 };
+use crate::library::paths::{is_lumina_data_dir, relativize_under_root};
 
 const VIDEO_EXTENSIONS: &[&str] = &[
     "mkv", "mp4", "avi", "mov", "webm", "m4v", "ts", "wmv", "flv",
@@ -41,7 +41,12 @@ where
     })
 }
 
-fn visit<F>(root: &Path, dir: &Path, output: &mut Vec<IndexedMediaFile>, on_file: &mut F) -> Result<(), LibraryError>
+fn visit<F>(
+    root: &Path,
+    dir: &Path,
+    output: &mut Vec<IndexedMediaFile>,
+    on_file: &mut F,
+) -> Result<(), LibraryError>
 where
     F: FnMut(usize),
 {
@@ -51,7 +56,11 @@ where
     for entry in entries {
         let entry = entry.map_err(|error| LibraryError::scan_failed(Some(&error.to_string())))?;
         let path = entry.path();
-        if path.file_name().and_then(|v| v.to_str()).is_some_and(is_lumina_data_dir) {
+        if path
+            .file_name()
+            .and_then(|v| v.to_str())
+            .is_some_and(is_lumina_data_dir)
+        {
             continue;
         }
         let file_type = entry

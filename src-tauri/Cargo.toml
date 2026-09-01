@@ -1,6 +1,6 @@
 [package]
 name = "lumina"
-version = "0.2.1"
+version = "0.2.2"
 description = "AI Video Reader desktop app with native libmpv playback"
 authors = ["you"]
 edition = "2021"
@@ -11,6 +11,7 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
+pkg-config = "0.3"
 
 [dependencies]
 tauri = { version = "2", features = [] }
@@ -22,9 +23,17 @@ base64 = "0.22"
 ureq = { version = "3.1", features = ["json"] }
 url = "2"
 libmpv2 = "6"
+libloading = "0.8"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 raw-window-handle = "0.6"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+cocoa = "0.26"
+objc = "0.2"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+x11 = { version = "2.21", features = ["xlib"] }
 
 [target.'cfg(windows)'.dependencies]
 keyring = { version = "3.6.3", features = ["windows-native"] }

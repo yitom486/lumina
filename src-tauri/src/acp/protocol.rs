@@ -525,10 +525,7 @@ pub fn sanitize_tool_detail(input: &str) -> String {
 fn tool_call_content_item_text(item: &Value) -> Option<String> {
     match item.get("type").and_then(Value::as_str) {
         Some("content") => content_blocks_text(item.get("content")),
-        Some("text") => item
-            .get("text")
-            .and_then(Value::as_str)
-            .map(str::to_string),
+        Some("text") => item.get("text").and_then(Value::as_str).map(str::to_string),
         _ => content_blocks_text(Some(item)),
     }
 }
@@ -586,10 +583,7 @@ fn truncate_chars(input: &str, max_chars: usize) -> String {
     if input.chars().count() <= max_chars {
         return input.to_string();
     }
-    format!(
-        "{}…",
-        input.chars().take(max_chars).collect::<String>()
-    )
+    format!("{}…", input.chars().take(max_chars).collect::<String>())
 }
 
 fn looks_like_low_level_tool_error(input: &str) -> bool {
@@ -864,10 +858,7 @@ mod tests {
         });
         let tool = extract_tool_call(&value).expect("tool");
         assert_eq!(tool.status.as_deref(), Some("failed"));
-        assert_eq!(
-            tool.detail.as_deref(),
-            Some("无法读取当前播放上下文")
-        );
+        assert_eq!(tool.detail.as_deref(), Some("无法读取当前播放上下文"));
     }
 
     #[test]

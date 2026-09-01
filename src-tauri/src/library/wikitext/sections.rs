@@ -70,10 +70,7 @@ fn title_matches_any(title: &str, needles: &[&str]) -> bool {
 }
 
 fn normalize_title(title: &str) -> String {
-    title
-        .trim()
-        .to_ascii_lowercase()
-        .replace(' ', "")
+    title.trim().to_ascii_lowercase().replace(' ', "")
 }
 
 #[cfg(test)]

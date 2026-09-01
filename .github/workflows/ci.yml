@@ -11,9 +11,19 @@ permissions:
   contents: read
 
 jobs:
-  windows:
-    name: Windows x64 build and test
-    runs-on: windows-latest
+  validate:
+    name: Validate (${{ matrix.platform }})
+    runs-on: ${{ matrix.runs-on }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: windows
+            runs-on: windows-latest
+          - platform: macos
+            runs-on: macos-latest
+          - platform: linux
+            runs-on: ubuntu-latest
 
     steps:
       - uses: actions/checkout@v4
@@ -25,6 +35,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
 
       - uses: ilammy/msvc-dev-cmd@v1
+        if: matrix.platform == 'windows'
 
       - name: Cache Cargo registry and build metadata
         uses: actions/cache@v4
@@ -33,10 +44,11 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             src-tauri/target
-          key: windows-cargo-${{ hashFiles('src-tauri/Cargo.lock') }}
-          restore-keys: windows-cargo-
+          key: ci-${{ matrix.platform }}-cargo-${{ hashFiles('src-tauri/Cargo.lock') }}
+          restore-keys: ci-${{ matrix.platform }}-cargo-
 
-      - name: Install fixed libmpv development package
+      - name: Install libmpv (Windows)
+        if: matrix.platform == 'windows'
         shell: pwsh
         run: |
           $mpvDir = 'src-tauri/native/mpv'
@@ -68,6 +80,34 @@ jobs:
             & lib.exe "/def:$mpvDir/mpv.def" /machine:x64 "/out:$mpvDir/mpv.lib"
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           }
+          $runtimeDir = "$mpvDir/runtime"
+          New-Item -ItemType Directory -Force -Path $runtimeDir | Out-Null
+          Copy-Item "$mpvDir/libmpv-2.dll" "$runtimeDir/libmpv-2.dll" -Force
+
+      - name: Install libmpv (macOS)
+        if: matrix.platform == 'macos'
+        run: |
+          brew install mpv pkg-config
+          mkdir -p src-tauri/native/mpv/runtime
+          cp "$(brew --prefix mpv)/lib/libmpv"*.dylib src-tauri/native/mpv/runtime/
+
+      - name: Install build deps (Linux)
+        if: matrix.platform == 'linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            libssl-dev \
+            libmpv-dev \
+            libx11-dev \
+            patchelf
+          mkdir -p src-tauri/native/mpv/runtime
+          shopt -s nullglob
+          for lib in /usr/lib/x86_64-linux-gnu/libmpv.so*; do
+            cp "$lib" src-tauri/native/mpv/runtime/
+          done
 
       - name: Install frontend dependencies
         run: bun install --frozen-lockfile
@@ -85,8 +125,73 @@ jobs:
           cargo test --lib
           cargo clippy --all-targets -- -D warnings
 
+  bundle-windows:
+    name: Windows x64 debug bundle
+    needs: validate
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Cache Cargo registry and build metadata
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            src-tauri/target
+          key: ci-windows-cargo-${{ hashFiles('src-tauri/Cargo.lock') }}
+          restore-keys: ci-windows-cargo-
+
+      - name: Install libmpv (Windows)
+        shell: pwsh
+        run: |
+          $mpvDir = 'src-tauri/native/mpv'
+          $metadata = @{}
+          Get-Content "$mpvDir/VERSION" | ForEach-Object {
+            if ($_ -match '^([^=]+)=(.*)$') { $metadata[$matches[1]] = $matches[2] }
+          }
+          if (-not (Test-Path "$mpvDir/libmpv-2.dll") -or -not (Test-Path "$mpvDir/mpv.lib")) {
+            $archive = Join-Path $env:RUNNER_TEMP $metadata['archive']
+            $extractDir = Join-Path $env:RUNNER_TEMP 'lumina-mpv-dev'
+            curl.exe -L --fail --retry 3 -o $archive $metadata['url']
+            New-Item -ItemType Directory -Force -Path $extractDir | Out-Null
+            tar.exe -xf $archive -C $extractDir
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            $dll = Get-ChildItem -Path $extractDir -Recurse -Filter 'libmpv-2.dll' -File | Select-Object -First 1
+            if ($null -eq $dll) {
+              throw 'The libmpv archive did not contain libmpv-2.dll.'
+            }
+            Copy-Item $dll.FullName "$mpvDir/libmpv-2.dll" -Force
+            $exportNames = & dumpbin.exe /exports "$mpvDir/libmpv-2.dll" |
+              ForEach-Object {
+                if ($_ -match '^\s*\d+\s+[0-9A-F]+\s+[0-9A-F]+\s+(\S+)$') { $matches[1] }
+              }
+            if ($LASTEXITCODE -ne 0 -or $exportNames.Count -eq 0) {
+              throw 'Could not read libmpv exports to create an MSVC import library.'
+            }
+            @('LIBRARY libmpv-2.dll', 'EXPORTS') + ($exportNames | ForEach-Object { "  $_" }) |
+              Set-Content "$mpvDir/mpv.def" -Encoding ascii
+            & lib.exe "/def:$mpvDir/mpv.def" /machine:x64 "/out:$mpvDir/mpv.lib"
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
+          $runtimeDir = "$mpvDir/runtime"
+          New-Item -ItemType Directory -Force -Path $runtimeDir | Out-Null
+          Copy-Item "$mpvDir/libmpv-2.dll" "$runtimeDir/libmpv-2.dll" -Force
+
+      - name: Install frontend dependencies
+        run: bun install --frozen-lockfile
+
       - name: Build Windows debug installers
-        run: bun run tauri build --debug
+        run: bun run build && bun run tauri build --debug
 
       - name: Upload Windows installers
         uses: actions/upload-artifact@v4

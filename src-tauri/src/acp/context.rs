@@ -157,8 +157,7 @@ mod tests {
             subtitle_choice_id: Some("embedded:0".into()),
             notes_excerpt: Some("也不应出现".into()),
         };
-        let params =
-            session_prompt_params("sess_1", "这段讲了什么？", Some(&ctx), None);
+        let params = session_prompt_params("sess_1", "这段讲了什么？", Some(&ctx), None);
         let prompt = params
             .get("prompt")
             .and_then(Value::as_array)

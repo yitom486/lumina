@@ -3,14 +3,14 @@
 use std::path::PathBuf;
 
 use crate::acp::VideoPromptContext;
+use crate::library::LibraryError;
 use crate::library::{
     discover_library_root_for_media, load_library_index, resolve_media_in_index,
     series_cache_from_context, MediaLibraryService,
 };
-use crate::library::LibraryError;
 use crate::mcp::snapshot::{
-    AgentCapabilities, LuminaMcpSnapshot, PlaybackLite, PromptAnchor, SessionPolicy,
-    LIBRARY_WARM_EVERY, SNAPSHOT_SCHEMA_VERSION, should_warm_series_library,
+    should_warm_series_library, AgentCapabilities, LuminaMcpSnapshot, PlaybackLite, PromptAnchor,
+    SessionPolicy, LIBRARY_WARM_EVERY, SNAPSHOT_SCHEMA_VERSION,
 };
 
 #[derive(Debug, Clone, Default)]
@@ -57,11 +57,7 @@ impl PromptSnapshotState {
                 let media = PathBuf::from(path);
                 let index = load_library_index(&root_path).ok()??;
                 let (file, _group) = resolve_media_in_index(&index, &media, &root_path).ok()??;
-                Some((
-                    file.group_key.clone(),
-                    file.season,
-                    file.episode,
-                ))
+                Some((file.group_key.clone(), file.season, file.episode))
             })
         });
         let series_cache = if warm {

@@ -4,6 +4,20 @@
 
 （暂无）
 
+## 0.2.2 — Private Preview
+
+### 播放器 / 构建
+
+- **macOS / Linux 原生视频面**：AppKit NSView（macOS）与 X11 子窗口（Linux）作为 libmpv `wid`；Linux Wayland 会话暂不支持。
+- **libmpv 运行时 bundle**：安装包将 `native/mpv/runtime/` 打入 resources；Windows delay-load + 预加载，Unix 优先加载 bundle 内 dylib/so。
+- **Release / CI**：GitHub Actions 三端 matrix（Windows MSI/NSIS、macOS DMG、Linux AppImage/deb）。
+
+### 已知边界
+
+- Linux 需 X11 或 XWayland；Wayland 原生会话会提示暂不支持。
+- macOS / Linux 暂无视频面点击/双击事件（Windows 已有）。
+- ffmpeg / whisper 等非 Windows 安装包路径仍待完善；字幕与 ASR 在 macOS/Linux 上可能需另行配置。
+
 ## 0.2.1 — Private Preview
 
 ### 修复

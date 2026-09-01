@@ -48,6 +48,9 @@ Desktop.ini
 src-tauri/native/mpv/*
 !src-tauri/native/mpv/README.md
 !src-tauri/native/mpv/VERSION
+!src-tauri/native/mpv/runtime/
+src-tauri/native/mpv/runtime/*
+!src-tauri/native/mpv/runtime/.gitkeep
 # Native ffmpeg/ffprobe (dev machine only; keep README + VERSION)
 src-tauri/native/ffmpeg/*
 !src-tauri/native/ffmpeg/README.md

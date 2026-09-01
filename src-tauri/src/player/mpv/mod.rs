@@ -1,6 +1,6 @@
 //! libmpv implementation. Do not import from React-facing commands.
-pub mod dll;
 pub mod events;
+pub mod native_library;
 pub mod player;
 pub mod window;
 

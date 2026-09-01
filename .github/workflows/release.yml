@@ -8,15 +8,25 @@ on:
       tag:
         description: "Git tag to build (e.g. v0.2.0)"
         required: true
-        default: v0.2.1
+        default: v0.2.2
 
 permissions:
   contents: write
 
 jobs:
   release:
-    name: Windows release installers
-    runs-on: windows-latest
+    name: Release (${{ matrix.platform }})
+    runs-on: ${{ matrix.runs-on }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: windows
+            runs-on: windows-latest
+          - platform: macos
+            runs-on: macos-latest
+          - platform: linux
+            runs-on: ubuntu-latest
 
     steps:
       - uses: actions/checkout@v4
@@ -30,6 +40,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
 
       - uses: ilammy/msvc-dev-cmd@v1
+        if: matrix.platform == 'windows'
 
       - name: Cache Cargo registry and build metadata
         uses: actions/cache@v4
@@ -38,10 +49,11 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             src-tauri/target
-          key: release-cargo-${{ hashFiles('src-tauri/Cargo.lock') }}
-          restore-keys: release-cargo-
+          key: release-${{ matrix.platform }}-cargo-${{ hashFiles('src-tauri/Cargo.lock') }}
+          restore-keys: release-${{ matrix.platform }}-cargo-
 
-      - name: Install fixed libmpv development package
+      - name: Install libmpv (Windows)
+        if: matrix.platform == 'windows'
         shell: pwsh
         run: |
           $mpvDir = 'src-tauri/native/mpv'
@@ -61,6 +73,9 @@ jobs:
               throw 'The libmpv archive did not contain libmpv-2.dll.'
             }
             Copy-Item $dll.FullName "$mpvDir/libmpv-2.dll" -Force
+            $runtimeDir = "$mpvDir/runtime"
+            New-Item -ItemType Directory -Force -Path $runtimeDir | Out-Null
+            Copy-Item $dll.FullName "$runtimeDir/libmpv-2.dll" -Force
             $exportNames = & dumpbin.exe /exports "$mpvDir/libmpv-2.dll" |
               ForEach-Object {
                 if ($_ -match '^\s*\d+\s+[0-9A-F]+\s+[0-9A-F]+\s+(\S+)$') { $matches[1] }
@@ -73,6 +88,34 @@ jobs:
             & lib.exe "/def:$mpvDir/mpv.def" /machine:x64 "/out:$mpvDir/mpv.lib"
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           }
+          $runtimeDir = "$mpvDir/runtime"
+          New-Item -ItemType Directory -Force -Path $runtimeDir | Out-Null
+          Copy-Item "$mpvDir/libmpv-2.dll" "$runtimeDir/libmpv-2.dll" -Force
+
+      - name: Install libmpv (macOS)
+        if: matrix.platform == 'macos'
+        run: |
+          brew install mpv pkg-config
+          mkdir -p src-tauri/native/mpv/runtime
+          cp "$(brew --prefix mpv)/lib/libmpv"*.dylib src-tauri/native/mpv/runtime/
+
+      - name: Install build deps (Linux)
+        if: matrix.platform == 'linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            libssl-dev \
+            libmpv-dev \
+            libx11-dev \
+            patchelf
+          mkdir -p src-tauri/native/mpv/runtime
+          shopt -s nullglob
+          for lib in /usr/lib/x86_64-linux-gnu/libmpv.so*; do
+            cp "$lib" src-tauri/native/mpv/runtime/
+          done
 
       - name: Install frontend dependencies
         run: bun install --frozen-lockfile
@@ -82,13 +125,15 @@ jobs:
           bun run lint
           bun run test
           bun run build
-          Push-Location src-tauri
+
+      - name: Validate Rust
+        working-directory: src-tauri
+        run: |
           cargo fmt --check
           cargo test --lib
           cargo clippy --all-targets -- -D warnings
-          Pop-Location
 
-      - name: Build Windows installers and upload to GitHub Release
+      - name: Build installers and upload to GitHub Release
         uses: tauri-apps/tauri-action@v0.6.2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -99,9 +144,12 @@ jobs:
           releaseBody: |
             私有预览发布。完整变更见仓库 [CHANGELOG.md](https://github.com/${{ github.repository }}/blob/master/CHANGELOG.md)。
 
-            **资产**：Windows x64 MSI / NSIS 安装器（debug bundle）。
+            **资产**
+            - Windows x64：MSI / NSIS
+            - macOS：DMG
+            - Linux x64：AppImage / deb
 
-            **冒烟**：安装后打开本地视频，确认播放、暂停、字幕与 AI 对话（可选）可用。
+            **冒烟**：安装后打开本地视频；Linux 需 X11 会话（Wayland 暂不支持原生视频面）。
           releaseDraft: false
           prerelease: false
           uploadWorkflowArtifacts: true

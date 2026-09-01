@@ -29,9 +29,8 @@ pub fn capture_frames(
         return Ok(Vec::new());
     }
     let ffmpeg = resolve_ffmpeg()?;
-    std::fs::create_dir_all(output_dir).map_err(|error| {
-        MediaError::internal(Some(&format!("create capture dir: {error}")))
-    })?;
+    std::fs::create_dir_all(output_dir)
+        .map_err(|error| MediaError::internal(Some(&format!("create capture dir: {error}"))))?;
 
     let mut outputs = Vec::new();
     for (index, time_sec) in sample_times_sec.iter().enumerate() {
@@ -77,9 +76,7 @@ pub fn sample_times_for_window(
     after_sec: u32,
 ) -> Vec<f64> {
     let center_sec = center_ms as f64 / 1000.0;
-    let max_sec = duration_ms
-        .map(|ms| ms as f64 / 1000.0)
-        .unwrap_or(f64::MAX);
+    let max_sec = duration_ms.map(|ms| ms as f64 / 1000.0).unwrap_or(f64::MAX);
     if before_sec == 0 && after_sec == 0 {
         return vec![center_sec.clamp(0.0, max_sec)];
     }
@@ -128,7 +125,10 @@ mod tests {
 
     #[test]
     fn sample_times_default_is_anchor_only() {
-        assert_eq!(sample_times_for_window(30_000, Some(120_000), 0, 0), vec![30.0]);
+        assert_eq!(
+            sample_times_for_window(30_000, Some(120_000), 0, 0),
+            vec![30.0]
+        );
     }
 
     #[test]

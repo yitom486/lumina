@@ -200,8 +200,10 @@ mod tests {
             LibraryError::wikipedia_page_not_found(None).message,
             "未找到对应的英文维基页面，请尝试重新选择"
         );
-        assert!(!LibraryError::wikipedia_page_not_found(Some("http status: 404"))
-            .message
-            .contains("404"));
+        assert!(
+            !LibraryError::wikipedia_page_not_found(Some("http status: 404"))
+                .message
+                .contains("404")
+        );
     }
 }

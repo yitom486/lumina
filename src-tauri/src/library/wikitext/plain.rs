@@ -138,9 +138,8 @@ mod tests {
 
     #[test]
     fn strips_links_templates_and_refs() {
-        let plain = wikitext_to_plain(
-            "[[Choi Ung|Ung]] meets {{nowrap|Na Bo-ra}} at school.<ref name=x/>",
-        );
+        let plain =
+            wikitext_to_plain("[[Choi Ung|Ung]] meets {{nowrap|Na Bo-ra}} at school.<ref name=x/>");
         assert_eq!(plain, "Ung meets Na Bo-ra at school.");
     }
 }

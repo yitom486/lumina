@@ -2,8 +2,8 @@ pub mod acp;
 pub mod asr;
 mod commands;
 pub mod library;
-pub mod media;
 pub mod mcp;
+pub mod media;
 pub mod notes;
 pub mod player;
 mod state;
@@ -20,12 +20,12 @@ pub use library::{
     CredentialStatus, CredentialValidationConfig, CredentialValidationItem,
     CredentialValidationResult, GroupResolution, LibraryError, LibraryErrorCode, LibraryIndex,
     LibraryStatus, LibraryWatchConfig, MediaGroup, MediaGroupKind, MediaLibraryService,
-    MediaMetadataContext, MetadataMediaType, MetadataWriteResult, ModelDiscoveryConfig,
-    ModelDiscoveryResult, PendingMediaGroup, ResolverIntent, ResolverPreview,
+    MediaMetadataContext, MergedMediaContext, MetadataMediaType, MetadataWriteResult,
+    ModelDiscoveryConfig, ModelDiscoveryResult, PendingMediaGroup, ResolverIntent, ResolverPreview,
     ResolverProviderConfig, ResolverRunConfig, ResolverSelection, StoredMetadata,
-    StoredMetadataKind, TmdbCandidate, TmdbConfig, WikiEnrichmentCandidate, WikiEnrichmentPreview,
-    WikiMatchMethod, WikiMetadata, WikiWriteResult, MergedMediaContext, WikiGroupStatus,
-    WikiZhReference, WIKI_STALE_AFTER_MS, TmdbGroupStatus,
+    StoredMetadataKind, TmdbCandidate, TmdbConfig, TmdbGroupStatus, WikiEnrichmentCandidate,
+    WikiEnrichmentPreview, WikiGroupStatus, WikiMatchMethod, WikiMetadata, WikiWriteResult,
+    WikiZhReference, WIKI_STALE_AFTER_MS,
 };
 pub use media::{
     MediaChapter, MediaError, MediaErrorCode, MediaInfo, MediaInspector, MediaStream, StreamKind,
@@ -49,9 +49,9 @@ use commands::library::{
     library_credential_delete, library_credential_status, library_credentials_save,
     library_credentials_validate, library_list_groups, library_models_discover,
     library_pending_groups, library_resolve_preview, library_scan_now, library_set_manual_title,
-    library_status, library_tmdb_credentials_validate, library_watch_start, library_watch_stop,
-    library_wikipedia_apply, library_wikipedia_preview, library_wikipedia_refresh,
-    library_wikipedia_statuses, library_tmdb_refresh, library_tmdb_statuses,
+    library_status, library_tmdb_credentials_validate, library_tmdb_refresh, library_tmdb_statuses,
+    library_watch_start, library_watch_stop, library_wikipedia_apply, library_wikipedia_preview,
+    library_wikipedia_refresh, library_wikipedia_statuses,
 };
 use commands::media::{media_inspect, media_list_siblings};
 use commands::notes::{
@@ -63,7 +63,7 @@ use commands::player::{
     player_stop, player_subscribe,
 };
 use commands::subtitle::{subtitle_list_choices, subtitle_load_choice};
-use player::mpv::window::{hwnd_from_webview_window, register_surface_app, VideoSurface};
+use player::mpv::window::{parent_handle_from_webview, register_surface_app, VideoSurface};
 use state::AppState;
 use tauri::Manager;
 
@@ -136,8 +136,7 @@ pub fn run() {
             notes_export_markdown,
         ])
         .setup(|app| {
-            #[cfg(windows)]
-            crate::player::mpv::dll::ensure_libmpv_loaded(app.handle())?;
+            crate::player::mpv::native_library::ensure_libmpv_loaded(app.handle())?;
             attach_native_surface(app)?;
             Ok(())
         })
@@ -169,9 +168,9 @@ fn attach_native_surface(app: &mut tauri::App) -> Result<(), Box<dyn std::error:
     let window = app
         .get_webview_window("main")
         .ok_or("main webview window is missing")?;
-    let parent = hwnd_from_webview_window(&window)?;
+    let parent = parent_handle_from_webview(&window)?;
     let surface = VideoSurface::create(parent)?;
-    let wid = surface.hwnd_i64();
+    let wid = surface.wid_i64();
 
     let state = app.state::<AppState>();
     state.set_surface(surface)?;

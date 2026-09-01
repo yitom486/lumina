@@ -55,9 +55,15 @@ pub fn run_stdio_server() -> Result<(), String> {
             _ if id.is_null() => continue,
             other => error(id, -32601, &format!("Method not found: {other}")),
         };
-        writeln!(stdout, "{}", serde_json::to_string(&response).unwrap_or_default())
-            .map_err(|error| format!("stdout write: {error}"))?;
-        stdout.flush().map_err(|error| format!("stdout flush: {error}"))?;
+        writeln!(
+            stdout,
+            "{}",
+            serde_json::to_string(&response).unwrap_or_default()
+        )
+        .map_err(|error| format!("stdout write: {error}"))?;
+        stdout
+            .flush()
+            .map_err(|error| format!("stdout flush: {error}"))?;
     }
     Ok(())
 }

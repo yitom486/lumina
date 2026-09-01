@@ -543,7 +543,14 @@ pub fn fetch_tmdb_details(
     season: Option<u32>,
     episode: Option<u32>,
 ) -> Result<Value, LibraryError> {
-    fetch_tmdb_details_with_language(config, tmdb_id, media_type, season, episode, &config.language)
+    fetch_tmdb_details_with_language(
+        config,
+        tmdb_id,
+        media_type,
+        season,
+        episode,
+        &config.language,
+    )
 }
 
 pub fn fetch_tmdb_details_with_language(
@@ -607,16 +614,14 @@ pub fn fetch_tmdb_external_ids(
     let payload: Value = response.body_mut().read_json().map_err(|error| {
         LibraryError::remote_request_failed(Some(&format!("TMDb external_ids body: {error}")))
     })?;
-    Ok(payload
-        .get("wikidata_id")
-        .and_then(|value| {
-            value
-                .as_str()
-                .map(str::trim)
-                .filter(|text| !text.is_empty())
-                .map(str::to_string)
-                .or_else(|| value.as_u64().map(|id| format!("Q{id}")))
-        }))
+    Ok(payload.get("wikidata_id").and_then(|value| {
+        value
+            .as_str()
+            .map(str::trim)
+            .filter(|text| !text.is_empty())
+            .map(str::to_string)
+            .or_else(|| value.as_u64().map(|id| format!("Q{id}")))
+    }))
 }
 
 pub fn fetch_tmdb_credits(

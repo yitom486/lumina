@@ -34,20 +34,24 @@ Player Runtime（`AppState` → `Mutex<PlayerService>` + `VideoSurface`）由 Ta
 ### libmpv (M4)
 
 - Crate：`libmpv2` 6.x；本地 `src-tauri/native/mpv/`
-- `build.rs` 链接并放置 `libmpv-2.dll`
+- `build.rs` 链接 libmpv；Windows delay-load `libmpv-2.dll`；Unix 优先 `native/mpv/runtime/` 或 pkg-config
+- 安装包 resources：`native/mpv/runtime/` → `mpv/`（`tauri.conf.json`）
 
 ### Native surface (M5)
 
-**方案（Windows）：子 HWND + `wid`**
+**方案：平台子 surface + libmpv `wid`（禁止 HTML `<video>`）**
 
-1. 从 Tauri `WebviewWindow` 取父 `HWND`（`HasWindowHandle` / Win32）
-2. 创建 `WS_CHILD | WS_CLIPSIBLINGS` 子窗口 `LuminaMpvSurface`
-3. 仅覆盖前端量到的视频矩形（`player_set_surface_bounds`，含 DPI scale）
-4. `SetWindowPos(HWND_TOP)`，让视频子窗口盖在 WebView 之上；底部 HTML 控件区域不被遮挡
-5. `LibMpvPlayer::initialize_with_wid(hwnd)`；`hwdec=auto`（失败则软件解码）
-6. `player_open` → `loadfile` 真实本地文件
+| 平台 | 父 handle | 子 surface | 备注 |
+|------|-----------|------------|------|
+| Windows | WebView 父 `HWND` | `LuminaMpvSurface` 子 HWND | 点击/双击 → `PlayerEvent` |
+| macOS | AppKit `NSView` | 子 `NSView` | Y 轴翻转对齐 WebView |
+| Linux | X11 父 window | `XCreateSimpleWindow` 子窗口 | Wayland 暂不支持 |
 
-不使用 HTML `<video>` / canvas 逐帧拷贝。macOS / Linux 表面在 Phase 1 未实现。
+1. setup：`ensure_libmpv_loaded` → `parent_handle_from_webview` → `VideoSurface::create` → `attach_backend_with_wid`
+2. 前端 `player_set_surface_bounds` 量视频矩形（含 DPI scale）；子 surface 仅覆盖该区域
+3. Windows：`SetWindowPos(HWND_TOP)` 盖在 WebView 之上，底部 HTML 控件不被遮挡
+4. `LibMpvPlayer::initialize_with_wid`；`hwdec=auto`（失败则软件解码）
+5. `player_open` → `loadfile` 真实本地文件
 
 ### Frontend (M7)
 

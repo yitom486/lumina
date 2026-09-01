@@ -20,26 +20,25 @@ use crate::acp::model::{
     AgentProfilesHint, PermissionOption, SavedSessionHint,
 };
 use crate::acp::paths::{resolve_session_cwd, status_from_profiles};
-use crate::mcp::{
-    lumina_mcp_servers, snapshot_path_for_cwd, sync_snapshot_capabilities, write_snapshot,
-    LuminaMcpSnapshot, PromptSnapshotState,
-};
 use crate::acp::profile::{
     prepare_profiles, resolve_active_profile, resolve_launch, AgentKind, PreparedProfiles,
 };
 use crate::acp::protocol::{
     authenticate_params, classify_inbound, encode_line, error_response, extract_agent_text,
     extract_permission_options, extract_plan_summary, extract_thought_text, extract_tool_call,
-    extract_tool_call_content_chunk,
-    initialize_params, initialize_params_restricted, is_error_response, notification,
-    parse_initialize_result, parse_session_id, parse_session_model_options, parse_stop_reason,
-    permission_auto_result, permission_cancelled_result, permission_selected_result,
-    pick_auth_method, request, session_cancel_params, session_close_params, session_new_params,
-    session_resume_params, session_set_config_option_params, success_response, Inbound,
-    InitializeResult,
+    extract_tool_call_content_chunk, initialize_params, initialize_params_restricted,
+    is_error_response, notification, parse_initialize_result, parse_session_id,
+    parse_session_model_options, parse_stop_reason, permission_auto_result,
+    permission_cancelled_result, permission_selected_result, pick_auth_method, request,
+    session_cancel_params, session_close_params, session_new_params, session_resume_params,
+    session_set_config_option_params, success_response, Inbound, InitializeResult,
 };
 use crate::acp::settings::{AcpClientSettings, PermissionMode};
 use crate::library::MediaLibraryService;
+use crate::mcp::{
+    lumina_mcp_servers, snapshot_path_for_cwd, sync_snapshot_capabilities, write_snapshot,
+    LuminaMcpSnapshot, PromptSnapshotState,
+};
 
 struct LiveSession {
     child: Child,
@@ -103,7 +102,8 @@ impl AcpService {
         status.busy = self.busy.load(Ordering::SeqCst);
         if let Ok(guard) = self.session.lock() {
             status.session_active = guard.is_some();
-            status.session_model_options = guard.as_ref().map(|session| session.model_options.clone());
+            status.session_model_options =
+                guard.as_ref().map(|session| session.model_options.clone());
         }
         status
     }
@@ -141,8 +141,7 @@ impl AcpService {
         snapshot: &LuminaMcpSnapshot,
     ) -> Result<std::path::PathBuf, AcpError> {
         let path = snapshot_path_for_cwd(cwd);
-        write_snapshot(&path, snapshot)
-            .map_err(|details| AcpError::internal(Some(&details)))?;
+        write_snapshot(&path, snapshot).map_err(|details| AcpError::internal(Some(&details)))?;
         Ok(path)
     }
 
@@ -210,8 +209,7 @@ impl AcpService {
             self.sync_mcp_capabilities(cwd.as_deref(), client_settings.vision_capable)?;
             if let Some(session) = guard.as_mut() {
                 if let Some(selection) = client_settings.model_selection() {
-                    let _ =
-                        self.apply_model_selection(session, &selection, &mut on_event);
+                    let _ = self.apply_model_selection(session, &selection, &mut on_event);
                 }
             }
             on_event(AcpEvent::Progress {
@@ -287,11 +285,7 @@ impl AcpService {
             self.host.release_all();
 
             if session.init.supports_session_close {
-                if let Err(error) = Self::close_agent_session(
-                    self,
-                    session,
-                    &mut on_event,
-                ) {
+                if let Err(error) = Self::close_agent_session(self, session, &mut on_event) {
                     tracing::warn!(%error, "session/close failed during new chat; respawning agent");
                     drop(guard);
                     self.drop_live_session();
@@ -329,14 +323,7 @@ impl AcpService {
             Ok(())
         } else {
             drop(guard);
-            self.connect(
-                cwd,
-                profile_id,
-                None,
-                client_settings,
-                profiles,
-                on_event,
-            )
+            self.connect(cwd, profile_id, None, client_settings, profiles, on_event)
         }
     }
 
@@ -363,7 +350,9 @@ impl AcpService {
             on_event,
         )?;
         if let Some(message) = is_error_response(&response) {
-            return Err(AcpError::protocol(Some(&format!("session/close: {message}"))));
+            return Err(AcpError::protocol(Some(&format!(
+                "session/close: {message}"
+            ))));
         }
         Ok(())
     }
@@ -386,9 +375,9 @@ impl AcpService {
             .session
             .lock()
             .map_err(|_| AcpError::internal(Some("ACP session mutex poisoned")))?;
-        let session = guard.as_mut().ok_or_else(|| {
-            AcpError::protocol(Some("no active agent session"))
-        })?;
+        let session = guard
+            .as_mut()
+            .ok_or_else(|| AcpError::protocol(Some("no active agent session")))?;
 
         if let Some(model_id) = model_id.filter(|value| !value.trim().is_empty()) {
             Self::set_session_config_option(
@@ -596,15 +585,13 @@ impl AcpService {
                 let vision_capable = resolve_session_cwd(cwd)
                     .ok()
                     .and_then(|workspace| {
-                        crate::mcp::read_snapshot(&snapshot_path_for_cwd(
-                            &workspace,
-                        ))
-                        .ok()
-                        .and_then(|snapshot| {
-                            snapshot
-                                .capabilities
-                                .map(|capabilities| capabilities.vision_capable)
-                        })
+                        crate::mcp::read_snapshot(&snapshot_path_for_cwd(&workspace))
+                            .ok()
+                            .and_then(|snapshot| {
+                                snapshot
+                                    .capabilities
+                                    .map(|capabilities| capabilities.vision_capable)
+                            })
                     })
                     .unwrap_or(true);
                 let mut spawned = self.spawn_session(
@@ -973,7 +960,13 @@ impl AcpService {
                 }
                 Err(error) => {
                     tracing::warn!(%error, "session/resume failed; creating new session");
-                    self.create_new_session(&mut session, &cwd, &profile.id, vision_capable, on_event)?
+                    self.create_new_session(
+                        &mut session,
+                        &cwd,
+                        &profile.id,
+                        vision_capable,
+                        on_event,
+                    )?
                 }
             }
         } else {

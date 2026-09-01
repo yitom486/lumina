@@ -10,9 +10,9 @@ use url::form_urlencoded;
 
 use crate::library::error::LibraryError;
 use crate::library::model::{
-    GroupResolution, MetadataMediaType, StoredMetadata, WikiCandidateSource,
-    WikiEnrichmentCandidate, WikiEnrichmentPreview, WikiMatchInfo, WikiMatchMethod, WikiMetadata,
-    MediaGroup, WikiWriteResult, WikiGroupStatus, WikiZhReference, WIKI_METADATA_SCHEMA_VERSION,
+    GroupResolution, MediaGroup, MetadataMediaType, StoredMetadata, WikiCandidateSource,
+    WikiEnrichmentCandidate, WikiEnrichmentPreview, WikiGroupStatus, WikiMatchInfo,
+    WikiMatchMethod, WikiMetadata, WikiWriteResult, WikiZhReference, WIKI_METADATA_SCHEMA_VERSION,
     WIKI_STALE_AFTER_MS,
 };
 use crate::library::{resolver, store, wikitext};
@@ -22,7 +22,10 @@ const PREFERRED_WIKI_LANG: &str = "en";
 const ZHWIKI_LANG: &str = "zh";
 const SEARCH_LIMIT: usize = 3;
 
-pub fn load_existing_wiki(root: &Path, group_key: &str) -> Result<Option<WikiMetadata>, LibraryError> {
+pub fn load_existing_wiki(
+    root: &Path,
+    group_key: &str,
+) -> Result<Option<WikiMetadata>, LibraryError> {
     store::load_group_json(root, group_key, "wiki.json")
 }
 
@@ -75,9 +78,14 @@ pub fn preview_enrichment(
     })
 }
 
-pub fn refresh_existing_page(root: &Path, group_key: &str) -> Result<WikiWriteResult, LibraryError> {
+pub fn refresh_existing_page(
+    root: &Path,
+    group_key: &str,
+) -> Result<WikiWriteResult, LibraryError> {
     let Some(existing) = load_existing_wiki(root, group_key)? else {
-        return Err(LibraryError::invalid_input("尚未补充维基百科，请先选择英文页面"));
+        return Err(LibraryError::invalid_input(
+            "尚未补充维基百科，请先选择英文页面",
+        ));
     };
     let candidate = WikiEnrichmentCandidate {
         page_lang: existing.page_lang.clone(),
@@ -267,7 +275,9 @@ fn try_bridge_via_wikidata_tmdb_id(
     tmdb_id: u64,
     media_type: MetadataMediaType,
 ) -> Option<WikiEnrichmentCandidate> {
-    let wikidata_id = lookup_wikidata_id_by_tmdb_id(tmdb_id, media_type).ok().flatten()?;
+    let wikidata_id = lookup_wikidata_id_by_tmdb_id(tmdb_id, media_type)
+        .ok()
+        .flatten()?;
     tracing::info!(
         tmdb_id,
         ?media_type,
@@ -334,12 +344,7 @@ fn tmdb_title_queries(
     let mut queries = titles_from_tmdb_detail(&detail, media_type);
     if !tmdb.language.starts_with("en") {
         if let Ok(en_detail) = resolver::fetch_tmdb_details_with_language(
-            tmdb,
-            tmdb_id,
-            media_type,
-            None,
-            None,
-            "en-US",
+            tmdb, tmdb_id, media_type, None, None, "en-US",
         ) {
             for title in titles_from_tmdb_detail(&en_detail, media_type) {
                 push_unique_query(&mut queries, title);
@@ -377,7 +382,10 @@ fn titles_from_tmdb_detail(detail: &Value, media_type: MetadataMediaType) -> Vec
                 .get("iso_3166_1")
                 .and_then(Value::as_str)
                 .unwrap_or_default();
-            let title = item.get("title").and_then(Value::as_str).unwrap_or_default();
+            let title = item
+                .get("title")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
             if iso.eq_ignore_ascii_case("US") || iso.eq_ignore_ascii_case("GB") {
                 push_optional_query(&mut queries, Some(title));
             }
@@ -407,10 +415,8 @@ fn merge_search_candidates(
     target: &mut Vec<WikiEnrichmentCandidate>,
     incoming: Vec<WikiEnrichmentCandidate>,
 ) {
-    let mut seen: std::collections::BTreeSet<String> = target
-        .iter()
-        .map(|item| item.page_title.clone())
-        .collect();
+    let mut seen: std::collections::BTreeSet<String> =
+        target.iter().map(|item| item.page_title.clone()).collect();
     for candidate in incoming {
         if !seen.insert(candidate.page_title.clone()) {
             continue;
@@ -454,11 +460,15 @@ fn wikidata_sparql_for_tmdb_id(tmdb_id: u64, media_type: MetadataMediaType) -> S
 }
 
 fn wikidata_entity_id_from_iri(iri: &str) -> Option<String> {
-    iri.rsplit('/').next().filter(|segment| segment.starts_with('Q'))
+    iri.rsplit('/')
+        .next()
+        .filter(|segment| segment.starts_with('Q'))
         .map(str::to_string)
 }
 
-fn search_title_candidates(stored: &StoredMetadata) -> Result<Vec<WikiEnrichmentCandidate>, LibraryError> {
+fn search_title_candidates(
+    stored: &StoredMetadata,
+) -> Result<Vec<WikiEnrichmentCandidate>, LibraryError> {
     let mut queries = Vec::new();
     if !stored.title.trim().is_empty() {
         queries.push(stored.title.trim().to_string());
@@ -491,7 +501,9 @@ fn fetch_zhwiki_reference(wikidata_id: &str) -> Option<WikiZhReference> {
     if normalized.is_empty() {
         return None;
     }
-    let page_title = fetch_wikidata_sitelink(&normalized, ZHWIKI_LANG).ok().flatten()?;
+    let page_title = fetch_wikidata_sitelink(&normalized, ZHWIKI_LANG)
+        .ok()
+        .flatten()?;
     let summary = fetch_page_summary(ZHWIKI_LANG, &page_title).ok()?;
     let zh_qid = lookup_page_wikidata_id(ZHWIKI_LANG, &page_title)
         .ok()
@@ -512,9 +524,7 @@ fn fetch_zhwiki_reference(wikidata_id: &str) -> Option<WikiZhReference> {
 
 fn fetch_wikidata_sitelink(wikidata_id: &str, lang: &str) -> Result<Option<String>, LibraryError> {
     let normalized = normalize_wikidata_id(wikidata_id);
-    let endpoint = format!(
-        "https://www.wikidata.org/wiki/Special:EntityData/{normalized}.json"
-    );
+    let endpoint = format!("https://www.wikidata.org/wiki/Special:EntityData/{normalized}.json");
     let payload: Value = get_json(&endpoint, "wikidata entity")?;
     let title = payload
         .get("entities")
@@ -613,7 +623,9 @@ fn fetch_page_wikitext(lang: &str, title: &str) -> Result<String, LibraryError> 
         .and_then(|wikitext| wikitext.get("*"))
         .and_then(Value::as_str)
         .map(str::to_string)
-        .ok_or_else(|| LibraryError::wikipedia_summary_unavailable(Some("wikipedia wikitext missing")))
+        .ok_or_else(|| {
+            LibraryError::wikipedia_summary_unavailable(Some("wikipedia wikitext missing"))
+        })
 }
 
 fn fetch_page_summary(lang: &str, title: &str) -> Result<PageSummary, LibraryError> {
@@ -723,7 +735,10 @@ fn is_wikipedia_not_found(error: &LibraryError) -> bool {
     matches!(
         error.message.as_str(),
         "未找到对应的英文维基页面，请尝试重新选择"
-    ) || error.details.as_deref().is_some_and(|details| details.contains("http status: 404"))
+    ) || error
+        .details
+        .as_deref()
+        .is_some_and(|details| details.contains("http status: 404"))
 }
 
 fn get_json(endpoint: &str, context: &str) -> Result<Value, LibraryError> {
@@ -807,7 +822,11 @@ mod tests {
 
     #[test]
     fn auto_when_wikidata_and_search_share_qid() {
-        let wikidata = candidate("Our Beloved Summer", "Q110123456", WikiCandidateSource::Wikidata);
+        let wikidata = candidate(
+            "Our Beloved Summer",
+            "Q110123456",
+            WikiCandidateSource::Wikidata,
+        );
         let search = vec![candidate(
             "Our Beloved Summer",
             "Q110123456",
@@ -817,7 +836,10 @@ mod tests {
         assert!(!aligned.needs_user_pick);
         assert!(!aligned.conflict);
         assert_eq!(
-            aligned.recommended.as_ref().map(|item| item.page_title.as_str()),
+            aligned
+                .recommended
+                .as_ref()
+                .map(|item| item.page_title.as_str()),
             Some("Our Beloved Summer")
         );
     }
@@ -851,10 +873,7 @@ mod tests {
             "https://en.wikipedia.org/api/rest_v1/page/summary/Foo",
             &"http status: 404",
         );
-        assert_eq!(
-            error.message,
-            "未找到对应的英文维基页面，请尝试重新选择"
-        );
+        assert_eq!(error.message, "未找到对应的英文维基页面，请尝试重新选择");
     }
 
     #[test]

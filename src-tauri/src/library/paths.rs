@@ -177,14 +177,16 @@ mod tests {
         let show = temp.join("Show Folder");
         let nested_lumina = lumina_dir(&show);
         fs::create_dir_all(&nested_lumina).expect("mkdir nested lumina");
-        fs::write(lumina_index_path(&show), r#"{"schemaVersion":1,"root":"","updatedAtMs":0,"files":[],"groups":[]}"#)
-            .expect("write nested index");
+        fs::write(
+            lumina_index_path(&show),
+            r#"{"schemaVersion":1,"root":"","updatedAtMs":0,"files":[],"groups":[]}"#,
+        )
+        .expect("write nested index");
         let media = show.join("S01E01.mkv");
         fs::write(&media, b"").expect("write media");
 
         let configured = vec![temp.clone()];
-        let resolved =
-            library_root_for_media_path(configured, &media).expect("resolved root");
+        let resolved = library_root_for_media_path(configured, &media).expect("resolved root");
         assert_eq!(resolved, show);
 
         let _ = fs::remove_dir_all(&temp);

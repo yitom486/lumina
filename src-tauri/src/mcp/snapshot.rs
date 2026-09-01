@@ -112,8 +112,8 @@ pub fn write_snapshot(path: &Path, snapshot: &LuminaMcpSnapshot) -> Result<(), S
     if let Some(cwd) = path.parent().and_then(|p| p.parent()) {
         cleanup_ephemeral_tmp(cwd);
     }
-    let payload =
-        serde_json::to_string_pretty(snapshot).map_err(|error| format!("encode snapshot: {error}"))?;
+    let payload = serde_json::to_string_pretty(snapshot)
+        .map_err(|error| format!("encode snapshot: {error}"))?;
     fs::write(path, payload).map_err(|error| format!("write snapshot: {error}"))
 }
 
@@ -128,9 +128,7 @@ pub fn sync_snapshot_capabilities(path: &Path, vision_capable: bool) -> Result<(
     } else {
         LuminaMcpSnapshot::empty()
     };
-    snapshot.capabilities = Some(AgentCapabilities {
-        vision_capable,
-    });
+    snapshot.capabilities = Some(AgentCapabilities { vision_capable });
     snapshot.updated_at_ms = now_ms();
     write_snapshot(path, &snapshot)
 }

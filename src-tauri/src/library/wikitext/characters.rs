@@ -15,8 +15,7 @@ pub fn characters_from_wikitext(wikitext: &str) -> Vec<WikiCharacter> {
     let Some(section) = section_content(wikitext, CAST_SECTIONS) else {
         return Vec::new();
     };
-    let main_section = subsection_content(&section, MAIN_CAST_SUBSECTIONS)
-        .unwrap_or(section);
+    let main_section = subsection_content(&section, MAIN_CAST_SUBSECTIONS).unwrap_or(section);
     let from_table = characters_from_cast_section(&main_section);
     if !from_table.is_empty() {
         return from_table;
@@ -90,10 +89,7 @@ pub fn characters_from_cast_section(section: &str) -> Vec<WikiCharacter> {
         return Vec::new();
     };
 
-    let character_col = pick_column(
-        &header_map,
-        &["character", "role", "name", "角色", "人物"],
-    );
+    let character_col = pick_column(&header_map, &["character", "role", "name", "角色", "人物"]);
     let actor_col = pick_column(
         &header_map,
         &["actor", "portrayedby", "castmember", "演员", "饰演"],
@@ -115,15 +111,14 @@ pub fn characters_from_cast_section(section: &str) -> Vec<WikiCharacter> {
         if name.is_empty() || actor.is_empty() {
             continue;
         }
-        let bio = bio_col
-            .and_then(|index| {
-                let text = wikitext_to_plain(&cell_at(row, index));
-                if text.is_empty() {
-                    None
-                } else {
-                    Some(text)
-                }
-            });
+        let bio = bio_col.and_then(|index| {
+            let text = wikitext_to_plain(&cell_at(row, index));
+            if text.is_empty() {
+                None
+            } else {
+                Some(text)
+            }
+        });
         characters.push(WikiCharacter { name, actor, bio });
     }
     characters
@@ -132,10 +127,8 @@ pub fn characters_from_cast_section(section: &str) -> Vec<WikiCharacter> {
 fn find_cast_header(table: &[Vec<String>]) -> Option<(usize, Vec<(String, usize)>)> {
     for (index, row) in table.iter().enumerate() {
         let header_map = header_column_map(row);
-        let has_character = pick_column(
-            &header_map,
-            &["character", "role", "name", "角色", "人物"],
-        );
+        let has_character =
+            pick_column(&header_map, &["character", "role", "name", "角色", "人物"]);
         let has_actor = pick_column(
             &header_map,
             &["actor", "portrayedby", "castmember", "演员", "饰演"],

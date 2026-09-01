@@ -8,11 +8,10 @@ use crate::library::{
     credentials, AgentModelDiscoveryConfig, AgentModelDiscoveryResult, CredentialKind,
     CredentialSaveInput, CredentialStatus, CredentialValidationConfig, CredentialValidationItem,
     CredentialValidationResult, LibraryError, LibraryIndex, LibraryScanEvent, LibraryStatus,
-    LibraryWatchConfig,
-    MediaMetadataContext, MetadataMediaType, MetadataWriteResult, ModelDiscoveryConfig,
-    ModelDiscoveryResult, PendingMediaGroup, ResolverPreview, ResolverRunConfig, TmdbConfig,
-    WikiEnrichmentCandidate, WikiEnrichmentPreview, WikiMatchMethod, WikiWriteResult,
-    WikiGroupStatus, TmdbGroupStatus,
+    LibraryWatchConfig, MediaMetadataContext, MetadataMediaType, MetadataWriteResult,
+    ModelDiscoveryConfig, ModelDiscoveryResult, PendingMediaGroup, ResolverPreview,
+    ResolverRunConfig, TmdbConfig, TmdbGroupStatus, WikiEnrichmentCandidate, WikiEnrichmentPreview,
+    WikiGroupStatus, WikiMatchMethod, WikiWriteResult,
 };
 use crate::state::AppState;
 
@@ -23,13 +22,15 @@ pub async fn library_watch_start(
     on_event: Channel<LibraryScanEvent>,
 ) -> Result<LibraryStatus, LibraryError> {
     let service = state.library.clone();
-    tauri::async_runtime::spawn_blocking(move || service.start_with_progress(config, |event| {
-        if let Err(error) = on_event.send(event) {
-            tracing::warn!(%error, "failed to send media library scan event");
-        }
-    }))
-        .await
-        .map_err(|error| LibraryError::internal(Some(&format!("library start join: {error}"))))?
+    tauri::async_runtime::spawn_blocking(move || {
+        service.start_with_progress(config, |event| {
+            if let Err(error) = on_event.send(event) {
+                tracing::warn!(%error, "failed to send media library scan event");
+            }
+        })
+    })
+    .await
+    .map_err(|error| LibraryError::internal(Some(&format!("library start join: {error}"))))?
 }
 
 #[tauri::command]
@@ -177,7 +178,9 @@ pub async fn library_wikipedia_refresh(
     let service = state.library.clone();
     tauri::async_runtime::spawn_blocking(move || service.refresh_wikipedia_page(root, group_key))
         .await
-        .map_err(|error| LibraryError::internal(Some(&format!("wikipedia refresh join: {error}"))))?
+        .map_err(|error| {
+            LibraryError::internal(Some(&format!("wikipedia refresh join: {error}")))
+        })?
 }
 
 #[tauri::command]

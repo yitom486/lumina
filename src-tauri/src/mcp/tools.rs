@@ -8,14 +8,13 @@ use serde::Serialize;
 use serde_json::{json, Value};
 use tracing::warn;
 
-use crate::library::{
-    episode_index_for_group, load_context_at_root,
-    load_context_for_group, load_library_index, resolve_media_in_index,
-    series_cache_from_context,
-};
 use crate::library::MergedMediaContext;
-use crate::media::frame_capture::{capture_frames, sample_times_for_window, MAX_CAPTURE_SPAN_SEC};
+use crate::library::{
+    episode_index_for_group, load_context_at_root, load_context_for_group, load_library_index,
+    resolve_media_in_index, series_cache_from_context,
+};
 use crate::mcp::snapshot::{ephemeral_tmp_dir, LuminaMcpSnapshot, PromptAnchor};
+use crate::media::frame_capture::{capture_frames, sample_times_for_window, MAX_CAPTURE_SPAN_SEC};
 use crate::subtitle::SubtitleService;
 
 #[derive(Debug, Serialize)]
@@ -43,7 +42,11 @@ struct LibraryContextResult {
     merged: Option<MergedMediaContext>,
 }
 
-pub fn handle_tool_call(snapshot: &LuminaMcpSnapshot, name: &str, args: &Value) -> Result<Value, String> {
+pub fn handle_tool_call(
+    snapshot: &LuminaMcpSnapshot,
+    name: &str,
+    args: &Value,
+) -> Result<Value, String> {
     let result = match name {
         "lumina_get_playback_context" => playback_context(snapshot),
         "lumina_get_library_context" => library_context(snapshot),
@@ -161,8 +164,12 @@ fn capture_frame_tool(snapshot: &LuminaMcpSnapshot, args: &Value) -> Result<Valu
     if !media_path.is_file() {
         return Err("无法获取当前画面".to_string());
     }
-    let duration_ms = snapshot.playback.as_ref().and_then(|playback| playback.duration_ms);
-    let sample_times = sample_times_for_window(anchor.position_ms, duration_ms, before_sec, after_sec);
+    let duration_ms = snapshot
+        .playback
+        .as_ref()
+        .and_then(|playback| playback.duration_ms);
+    let sample_times =
+        sample_times_for_window(anchor.position_ms, duration_ms, before_sec, after_sec);
     let cwd = snapshot_cwd()?;
     let output_dir = ephemeral_tmp_dir(&cwd).join(format!("capture-{}", anchor.sent_at_ms));
     let frames = capture_frames(&media_path, &sample_times, &output_dir)
@@ -193,23 +200,20 @@ fn load_media_context(
     anchor: &PromptAnchor,
     media_path: &Path,
 ) -> Result<Option<crate::library::MediaMetadataContext>, String> {
-    if let Some(context) = load_context_at_root(root, media_path)
-        .map_err(|error| error.message.clone())?
+    if let Some(context) =
+        load_context_at_root(root, media_path).map_err(|error| error.message.clone())?
     {
         return Ok(Some(context));
     }
-    let group_key = anchor.group_key.as_deref().filter(|value| !value.trim().is_empty());
+    let group_key = anchor
+        .group_key
+        .as_deref()
+        .filter(|value| !value.trim().is_empty());
     let Some(group_key) = group_key else {
         return Ok(None);
     };
-    load_context_for_group(
-        root,
-        group_key,
-        media_path,
-        anchor.season,
-        anchor.episode,
-    )
-    .map_err(|error| error.message.clone())
+    load_context_for_group(root, group_key, media_path, anchor.season, anchor.episode)
+        .map_err(|error| error.message.clone())
 }
 
 fn resolve_group_key(
@@ -222,7 +226,11 @@ fn resolve_group_key(
             return Ok(file.group_key.clone());
         }
     }
-    if let Some(group_key) = anchor.group_key.as_deref().filter(|value| !value.trim().is_empty()) {
+    if let Some(group_key) = anchor
+        .group_key
+        .as_deref()
+        .filter(|value| !value.trim().is_empty())
+    {
         return Ok(group_key.to_string());
     }
     Err("当前媒体未加入媒体库".to_string())
@@ -306,11 +314,7 @@ mod tests {
 
     #[test]
     fn parse_asymmetric_window() {
-        let (before, after) = parse_window_args(
-            &json!({ "beforeSec": 3, "afterSec": 2 }),
-            60,
-            60,
-        );
+        let (before, after) = parse_window_args(&json!({ "beforeSec": 3, "afterSec": 2 }), 60, 60);
         assert_eq!((before, after), (3, 2));
     }
 }

@@ -107,8 +107,13 @@ impl VideoSurface {
         Ok(Self { hwnd: hwnd_value })
     }
 
-    pub fn hwnd_i64(&self) -> i64 {
+    pub fn wid_i64(&self) -> i64 {
         self.hwnd as i64
+    }
+
+    /// Back-compat alias for `wid_i64`.
+    pub fn hwnd_i64(&self) -> i64 {
+        self.wid_i64()
     }
 
     fn as_hwnd(&self) -> HWND {
@@ -166,7 +171,7 @@ impl Drop for VideoSurface {
 unsafe impl Send for VideoSurface {}
 unsafe impl Sync for VideoSurface {}
 
-pub fn hwnd_from_webview_window(window: &WebviewWindow) -> Result<isize, PlayerError> {
+pub fn parent_handle_from_webview(window: &WebviewWindow) -> Result<isize, PlayerError> {
     let handle = window
         .window_handle()
         .map_err(|error| native_error("无法获取窗口句柄", Some(error.to_string())))?;
