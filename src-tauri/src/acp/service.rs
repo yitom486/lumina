@@ -30,6 +30,7 @@ use crate::acp::profile::{
 use crate::acp::protocol::{
     authenticate_params, classify_inbound, encode_line, error_response, extract_agent_text,
     extract_permission_options, extract_plan_summary, extract_thought_text, extract_tool_call,
+    extract_tool_call_content_chunk,
     initialize_params, initialize_params_restricted, is_error_response, notification,
     parse_initialize_result, parse_session_id, parse_session_model_options, parse_stop_reason,
     permission_auto_result, permission_cancelled_result, permission_selected_result,
@@ -100,7 +101,10 @@ impl AcpService {
     pub fn status(&self, profiles: &AgentProfilesHint) -> AcpStatus {
         let mut status = status_from_profiles(profiles);
         status.busy = self.busy.load(Ordering::SeqCst);
-        status.session_active = self.session.lock().map(|g| g.is_some()).unwrap_or(false);
+        if let Ok(guard) = self.session.lock() {
+            status.session_active = guard.is_some();
+            status.session_model_options = guard.as_ref().map(|session| session.model_options.clone());
+        }
         status
     }
 
@@ -192,6 +196,12 @@ impl AcpService {
             .map_err(|_| AcpError::internal(Some("ACP session mutex poisoned")))?;
 
         if guard.is_some() {
+            if let Some(session) = guard.as_mut() {
+                if let Some(selection) = client_settings.model_selection() {
+                    let _ =
+                        self.apply_model_selection(session, &selection, &mut on_event);
+                }
+            }
             on_event(AcpEvent::Progress {
                 message: "Agent 已连接".into(),
             });
@@ -205,7 +215,10 @@ impl AcpService {
             profile_id.as_deref(),
             &mut on_event,
         ) {
-            Ok(session) => {
+            Ok(mut session) => {
+                if let Some(selection) = client_settings.model_selection() {
+                    self.apply_model_selection(&mut session, &selection, &mut on_event)?;
+                }
                 *guard = Some(session);
                 on_event(AcpEvent::Progress {
                     message: "Agent 已就绪".into(),
@@ -218,6 +231,171 @@ impl AcpService {
                 Err(error)
             }
         }
+    }
+
+    /// Start a fresh Agent session for chat UI: clear resume hint, rotate `session/new`
+    /// on an existing process when possible (Cursor-style), otherwise connect.
+    pub fn new_chat<F>(
+        &self,
+        cwd: Option<String>,
+        profile_id: Option<String>,
+        client_settings: AcpClientSettings,
+        profiles: AgentProfilesHint,
+        mut on_event: F,
+    ) -> Result<(), AcpError>
+    where
+        F: FnMut(AcpEvent),
+    {
+        if self.is_busy() {
+            return Err(AcpError::busy());
+        }
+
+        self.cancel.store(false, Ordering::SeqCst);
+        self.reset_prompt_snapshot_state();
+        if let Ok(mut guard) = self.permission_mode.lock() {
+            *guard = client_settings.permission_mode;
+        }
+
+        let prepared = prepare_profiles(&profiles);
+        let workspace = resolve_session_cwd(cwd.as_deref())?;
+        let cwd_string = workspace.to_string_lossy().into_owned();
+        let profile = resolve_active_profile(&prepared, profile_id.as_deref())?;
+
+        let mut guard = self
+            .session
+            .lock()
+            .map_err(|_| AcpError::internal(Some("ACP session mutex poisoned")))?;
+
+        if let Some(session) = guard.as_mut() {
+            on_event(AcpEvent::Progress {
+                message: "正在开始新对话…".into(),
+            });
+            self.host.set_workspace(workspace);
+            self.host.release_all();
+
+            if session.init.supports_session_close {
+                if let Err(error) = Self::close_agent_session(
+                    self,
+                    session,
+                    &mut on_event,
+                ) {
+                    tracing::warn!(%error, "session/close failed during new chat; respawning agent");
+                    drop(guard);
+                    self.drop_live_session();
+                    return self.connect(
+                        Some(cwd_string),
+                        profile_id,
+                        None,
+                        client_settings,
+                        profiles,
+                        on_event,
+                    );
+                }
+            }
+
+            let new_session_id =
+                self.create_new_session(session, &cwd_string, &profile.id, &mut on_event)?;
+            session.session_id = new_session_id;
+
+            if let Some(selection) = client_settings.model_selection() {
+                self.apply_model_selection(session, &selection, &mut on_event)?;
+            } else if let Ok(selection_guard) = self.next_session_model_selection.lock() {
+                if let Some(selection) = selection_guard.clone() {
+                    self.apply_model_selection(session, &selection, &mut on_event)?;
+                }
+            }
+
+            on_event(AcpEvent::Progress {
+                message: "新对话已就绪".into(),
+            });
+            Ok(())
+        } else {
+            drop(guard);
+            self.connect(
+                cwd,
+                profile_id,
+                None,
+                client_settings,
+                profiles,
+                on_event,
+            )
+        }
+    }
+
+    fn close_agent_session(
+        service: &Self,
+        session: &mut LiveSession,
+        on_event: &mut dyn FnMut(AcpEvent),
+    ) -> Result<(), AcpError> {
+        let request_id = session.next_id;
+        session.next_id += 1;
+        Self::write_request(
+            &mut session.stdin,
+            request_id,
+            "session/close",
+            session_close_params(&session.session_id),
+        )?;
+        let response = Self::read_until_id_raw(
+            service,
+            session,
+            request_id,
+            Duration::from_secs(30),
+            &service.cancel,
+            &service.host,
+            on_event,
+        )?;
+        if let Some(message) = is_error_response(&response) {
+            return Err(AcpError::protocol(Some(&format!("session/close: {message}"))));
+        }
+        Ok(())
+    }
+
+    /// Apply model / reasoning overrides to the live session without rotating it.
+    pub fn set_session_model<F>(
+        &self,
+        model_id: Option<String>,
+        reasoning_effort: Option<String>,
+        mut on_event: F,
+    ) -> Result<AcpSessionModelOptions, AcpError>
+    where
+        F: FnMut(AcpEvent),
+    {
+        if self.is_busy() {
+            return Err(AcpError::busy());
+        }
+
+        let mut guard = self
+            .session
+            .lock()
+            .map_err(|_| AcpError::internal(Some("ACP session mutex poisoned")))?;
+        let session = guard.as_mut().ok_or_else(|| {
+            AcpError::protocol(Some("no active agent session"))
+        })?;
+
+        if let Some(model_id) = model_id.filter(|value| !value.trim().is_empty()) {
+            Self::set_session_config_option(
+                session,
+                "model",
+                model_id.trim(),
+                self,
+                &mut on_event,
+            )?;
+            session.model_options.current_model_id = Some(model_id.trim().to_string());
+        }
+
+        if let Some(reasoning_effort) = reasoning_effort.filter(|value| !value.trim().is_empty()) {
+            Self::set_session_config_option(
+                session,
+                "reasoning_effort",
+                reasoning_effort.trim(),
+                self,
+                &mut on_event,
+            )?;
+            session.model_options.current_reasoning_effort =
+                Some(reasoning_effort.trim().to_string());
+        }
+
+        Ok(session.model_options.clone())
     }
 
     fn drop_live_session(&self) {
@@ -330,6 +508,8 @@ impl AcpService {
                 thinking_level: crate::acp::settings::ThinkingLevel::Hidden,
                 agent_mode: "metadata-resolver".into(),
                 vision_capable: false,
+                model_id: None,
+                reasoning_effort: None,
             },
             profiles,
             |_| {},
@@ -1006,12 +1186,25 @@ impl AcpService {
                     title: tool.title,
                     kind: tool.kind,
                     status: tool.status,
+                    detail: tool.detail,
                 });
             } else {
                 on_event(AcpEvent::ToolCallUpdate {
                     tool_call_id: tool.tool_call_id,
                     status: tool.status,
                     title: tool.title,
+                    detail: tool.detail,
+                    append_detail: tool.append_detail,
+                });
+            }
+        } else if let Some((tool_call_id, detail)) = extract_tool_call_content_chunk(value) {
+            if !detail.is_empty() {
+                on_event(AcpEvent::ToolCallUpdate {
+                    tool_call_id,
+                    status: None,
+                    title: None,
+                    detail: Some(detail),
+                    append_detail: true,
                 });
             }
         }

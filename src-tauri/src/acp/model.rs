@@ -32,6 +32,9 @@ pub struct AcpStatus {
     /// Whether a live Agent process/session is currently open.
     pub session_active: bool,
     pub busy: bool,
+    /// Model / reasoning options from the live session, when connected.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_model_options: Option<AcpSessionModelOptions>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -122,12 +125,16 @@ pub enum AcpEvent {
         title: Option<String>,
         kind: Option<String>,
         status: Option<String>,
+        detail: Option<String>,
     },
     #[serde(rename_all = "camelCase")]
     ToolCallUpdate {
         tool_call_id: String,
         status: Option<String>,
         title: Option<String>,
+        detail: Option<String>,
+        #[serde(default)]
+        append_detail: bool,
     },
     #[serde(rename_all = "camelCase")]
     Plan {

@@ -10,12 +10,10 @@ type Props = {
   statusLine?: string | null;
   statusError?: string | null;
   loading?: boolean;
-  sessionActive?: boolean;
   busy?: boolean;
   historyItems: { id: string; label: string }[];
   onNewChat: () => void;
   onPickHistory: (id: string) => void;
-  onEndSession?: () => void;
   onReconnect?: () => void;
 };
 
@@ -34,12 +32,10 @@ export function ChatToolbar({
   statusLine,
   statusError,
   loading,
-  sessionActive,
   busy,
   historyItems,
   onNewChat,
   onPickHistory,
-  onEndSession,
   onReconnect,
 }: Props) {
   return (
@@ -116,7 +112,8 @@ export function ChatToolbar({
           {loading ? "正在检测…" : agentLabel}
         </span>
 
-        {connectionState === "error" && onReconnect ? (
+        {connectionState === "error" || connectionState === "idle" ? (
+          onReconnect ? (
           <Button
             size="sm"
             variant="outline"
@@ -126,19 +123,9 @@ export function ChatToolbar({
           >
             重连
           </Button>
+          ) : null
         ) : null}
 
-        {sessionActive && !busy ? (
-          <Button
-            size="sm"
-            variant="ghost"
-            className="h-7 shrink-0 px-2 text-[11px]"
-            disabled={busy}
-            onClick={onEndSession}
-          >
-            结束会话
-          </Button>
-        ) : null}
       </div>
 
       {statusError ? (

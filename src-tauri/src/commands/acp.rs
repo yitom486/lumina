@@ -129,6 +129,53 @@ pub async fn acp_cancel(app: AppHandle) -> Result<(), AcpError> {
 }
 
 #[tauri::command]
+pub async fn acp_set_session_model(
+    state: State<'_, AppState>,
+    model_id: Option<String>,
+    reasoning_effort: Option<String>,
+    on_event: Channel<AcpEvent>,
+) -> Result<crate::acp::AcpSessionModelOptions, AcpError> {
+    let acp = state.acp.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        acp.set_session_model(model_id, reasoning_effort, |event| {
+            if let Err(error) = on_event.send(event) {
+                tracing::warn!(%error, "failed to send ACP set session model event");
+            }
+        })
+    })
+    .await
+    .map_err(|error| AcpError::internal(Some(&format!("acp set session model join: {error}"))))?
+}
+
+#[tauri::command]
+pub async fn acp_new_chat(
+    state: State<'_, AppState>,
+    cwd: Option<String>,
+    profile_id: Option<String>,
+    client_settings: Option<AcpClientSettings>,
+    profiles: AgentProfilesHint,
+    on_event: Channel<AcpEvent>,
+) -> Result<(), AcpError> {
+    let acp = state.acp.clone();
+    let settings = client_settings.unwrap_or_default();
+    tauri::async_runtime::spawn_blocking(move || {
+        acp.new_chat(
+            cwd,
+            profile_id,
+            settings,
+            profiles,
+            |event| {
+                if let Err(error) = on_event.send(event) {
+                    tracing::warn!(%error, "failed to send ACP new chat event");
+                }
+            },
+        )
+    })
+    .await
+    .map_err(|error| AcpError::internal(Some(&format!("acp new chat join: {error}"))))?
+}
+
+#[tauri::command]
 pub async fn acp_close(app: AppHandle) -> Result<(), AcpError> {
     tauri::async_runtime::spawn_blocking(move || {
         let Some(state) = app.try_state::<AppState>() else {

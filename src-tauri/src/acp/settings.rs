@@ -28,6 +28,29 @@ pub struct AcpClientSettings {
     pub agent_mode: String,
     #[serde(default)]
     pub vision_capable: bool,
+    /// Optional override applied on connect / new chat / live session update.
+    #[serde(default)]
+    pub model_id: Option<String>,
+    #[serde(default)]
+    pub reasoning_effort: Option<String>,
+}
+
+impl AcpClientSettings {
+    pub fn model_selection(&self) -> Option<crate::acp::AcpSessionModelSelection> {
+        let model_id = self.model_id.as_deref()?.trim();
+        if model_id.is_empty() {
+            return None;
+        }
+        Some(crate::acp::AcpSessionModelSelection {
+            model_id: model_id.to_string(),
+            reasoning_effort: self
+                .reasoning_effort
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(str::to_string),
+        })
+    }
 }
 
 impl Default for AcpClientSettings {
@@ -37,6 +60,8 @@ impl Default for AcpClientSettings {
             thinking_level: default_thinking_level(),
             agent_mode: default_agent_mode(),
             vision_capable: false,
+            model_id: None,
+            reasoning_effort: None,
         }
     }
 }
@@ -51,4 +76,30 @@ fn default_thinking_level() -> ThinkingLevel {
 
 fn default_agent_mode() -> String {
     "default".into()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn model_selection_skips_empty_model_id() {
+        let settings = AcpClientSettings {
+            model_id: Some("".into()),
+            ..Default::default()
+        };
+        assert!(settings.model_selection().is_none());
+    }
+
+    #[test]
+    fn model_selection_trims_values() {
+        let settings = AcpClientSettings {
+            model_id: Some(" gpt-5 ".into()),
+            reasoning_effort: Some(" high ".into()),
+            ..Default::default()
+        };
+        let selection = settings.model_selection().expect("selection");
+        assert_eq!(selection.model_id, "gpt-5");
+        assert_eq!(selection.reasoning_effort.as_deref(), Some("high"));
+    }
 }

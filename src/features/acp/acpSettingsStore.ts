@@ -8,6 +8,8 @@ const DEFAULT_SETTINGS: AcpClientSettings = {
   thinkingLevel: "minimal",
   agentMode: "default",
   visionCapable: false,
+  modelId: "",
+  reasoningEffort: "",
 };
 
 type AcpSettingsStore = AcpClientSettings & {
@@ -28,6 +30,8 @@ export const useAcpSettingsStore = create<AcpSettingsStore>()(
         thinkingLevel: state.thinkingLevel,
         agentMode: state.agentMode,
         visionCapable: state.visionCapable,
+        modelId: state.modelId,
+        reasoningEffort: state.reasoningEffort,
       }),
       merge: (persisted, current) => {
         const saved = (persisted ?? {}) as Partial<AcpClientSettings>;
@@ -40,8 +44,24 @@ export const useAcpSettingsStore = create<AcpSettingsStore>()(
           agentMode: saved.agentMode ?? current.agentMode ?? DEFAULT_SETTINGS.agentMode,
           visionCapable:
             saved.visionCapable ?? current.visionCapable ?? DEFAULT_SETTINGS.visionCapable,
+          modelId: saved.modelId ?? current.modelId ?? DEFAULT_SETTINGS.modelId,
+          reasoningEffort:
+            saved.reasoningEffort ?? current.reasoningEffort ?? DEFAULT_SETTINGS.reasoningEffort,
         };
       },
     },
   ),
 );
+
+export function clientSettingsFromStore(
+  settings: AcpClientSettings,
+): AcpClientSettings {
+  return {
+    permissionMode: settings.permissionMode,
+    thinkingLevel: settings.thinkingLevel,
+    agentMode: settings.agentMode,
+    visionCapable: settings.visionCapable ?? false,
+    modelId: settings.modelId?.trim() || null,
+    reasoningEffort: settings.reasoningEffort?.trim() || null,
+  };
+}

@@ -3,6 +3,7 @@ import { cn } from "@/lib/utils";
 import { waitingLabel } from "../activityStatus";
 import type { ChatTurn } from "../types";
 import { ChatActivityFeed } from "./ChatActivityFeed";
+import { ChatMarkdown } from "./ChatMarkdown";
 import { ChatColumn } from "./ChatShell";
 import { ChatWaitingDots } from "./ChatWaitingDots";
 
@@ -32,15 +33,19 @@ export function ChatTurnView({ turn }: Props) {
 
         <div
           className={cn(
-            "w-full rounded-lg px-3 py-2 text-sm whitespace-pre-wrap break-words",
+            "w-full rounded-lg px-3 py-2 text-sm break-words",
             !isError && "bg-muted/40 text-foreground",
-            isError && "bg-destructive/10 text-destructive",
+            isError && "bg-destructive/10 text-destructive whitespace-pre-wrap",
             isStreaming && !isError && "chat-reply-streaming",
           )}
           data-turn-id={turn.id}
         >
           {turn.answer ? (
-            turn.answer
+            isError ? (
+              turn.answer
+            ) : (
+              <ChatMarkdown content={turn.answer} />
+            )
           ) : showWaitingDots ? (
             <ChatWaitingDots label={waitingLabel(turn.activities)} />
           ) : waitingForText ? null : (

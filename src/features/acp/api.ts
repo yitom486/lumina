@@ -3,6 +3,8 @@ import { Channel, invoke } from "@tauri-apps/api/core";
 import type {
   AcpClientSettings,
   AcpEvent,
+  AcpModelDiscoveryResult,
+  AcpSessionModelOptions,
   AcpStatus,
   AgentProfilesHint,
   SavedSessionHint,
@@ -81,4 +83,53 @@ export function acpCancel(): Promise<void> {
 
 export function acpClose(): Promise<void> {
   return invoke("acp_close");
+}
+
+export async function acpNewChat(
+  onEvent?: (event: AcpEvent) => void,
+  options?: {
+    cwd?: string;
+    profileId?: string;
+    clientSettings?: AcpClientSettings;
+    profiles: AgentProfilesHint;
+  },
+): Promise<void> {
+  const channel = new Channel<AcpEvent>();
+  if (onEvent) {
+    channel.onmessage = onEvent;
+  }
+  await invoke("acp_new_chat", {
+    cwd: options?.cwd ?? null,
+    profileId: options?.profileId ?? null,
+    clientSettings: options?.clientSettings ?? null,
+    profiles: options?.profiles,
+    onEvent: channel,
+  });
+}
+
+export async function acpSetSessionModel(
+  options: {
+    modelId?: string | null;
+    reasoningEffort?: string | null;
+  },
+  onEvent?: (event: AcpEvent) => void,
+): Promise<AcpSessionModelOptions> {
+  const channel = new Channel<AcpEvent>();
+  if (onEvent) {
+    channel.onmessage = onEvent;
+  }
+  return invoke<AcpSessionModelOptions>("acp_set_session_model", {
+    modelId: options.modelId ?? null,
+    reasoningEffort: options.reasoningEffort ?? null,
+    onEvent: channel,
+  });
+}
+
+export function discoverAcpModels(
+  profiles: AgentProfilesHint,
+  profileId: string,
+): Promise<AcpModelDiscoveryResult> {
+  return invoke<AcpModelDiscoveryResult>("library_agent_models_discover", {
+    config: { profileId, profiles },
+  });
 }

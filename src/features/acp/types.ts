@@ -31,6 +31,26 @@ export type AcpStatus = {
   responsesOnlyNote: string;
   sessionActive: boolean;
   busy: boolean;
+  sessionModelOptions?: AcpSessionModelOptions | null;
+};
+
+export type AcpSessionOption = {
+  value: string;
+  name: string;
+  description?: string | null;
+};
+
+export type AcpSessionModelOptions = {
+  models: AcpSessionOption[];
+  reasoningEfforts: AcpSessionOption[];
+  currentModelId?: string | null;
+  currentReasoningEffort?: string | null;
+};
+
+export type AcpModelDiscoveryResult = {
+  connected: boolean;
+  options: AcpSessionModelOptions;
+  message: string;
 };
 
 export type AgentProfileInput = {
@@ -73,6 +93,8 @@ export type AcpClientSettings = {
   thinkingLevel: ThinkingLevel;
   agentMode: string;
   visionCapable?: boolean;
+  modelId?: string | null;
+  reasoningEffort?: string | null;
 };
 
 export type PermissionOption = {
@@ -92,12 +114,15 @@ export type AcpEvent =
       title?: string | null;
       kind?: string | null;
       status?: string | null;
+      detail?: string | null;
     }
   | {
       type: "toolCallUpdate";
       toolCallId: string;
       status?: string | null;
       title?: string | null;
+      detail?: string | null;
+      appendDetail?: boolean;
     }
   | { type: "plan"; text: string }
   | {

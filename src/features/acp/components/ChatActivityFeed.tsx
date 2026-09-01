@@ -1,6 +1,12 @@
 import { cn } from "@/lib/utils";
 
 import { hasActiveToolActivity, isToolRunning, waitingLabel } from "../activityStatus";
+import {
+  isToolFailed,
+  isToolSucceeded,
+  toolFailureHint,
+  toolStatusLabel,
+} from "../toolStatus";
 import type { ChatActivity } from "../types";
 import { ChatWaitingDots } from "./ChatWaitingDots";
 
@@ -65,12 +71,17 @@ function ActivityRow({ item, live }: { item: ChatActivity; live: boolean }) {
   }
 
   const running = isToolRunning(item.status);
+  const failed = isToolFailed(item.status);
+  const succeeded = isToolSucceeded(item.status);
+  const failureHint = toolFailureHint(item.status, item.text);
 
   return (
     <div
       className={cn(
-        "flex items-start gap-2 px-1 py-1",
+        "flex items-start gap-2 rounded-md px-1 py-1",
         live && running && "chat-tool-row-active",
+        failed && "bg-destructive/5",
+        succeeded && !failed && "bg-emerald-500/5",
       )}
     >
       {live && running ? (
@@ -93,7 +104,25 @@ function ActivityRow({ item, live }: { item: ChatActivity; live: boolean }) {
           {item.title ?? item.toolCallId ?? "工具"}
         </p>
         {item.status ? (
-          <p className="text-[10px] text-muted-foreground">{item.status}</p>
+          <p
+            className={cn(
+              "text-[10px]",
+              failed && "text-destructive",
+              succeeded && "text-emerald-600 dark:text-emerald-400",
+              !failed && !succeeded && "text-muted-foreground",
+            )}
+          >
+            {toolStatusLabel(item.status)}
+          </p>
+        ) : null}
+        {failureHint ? (
+          <p className="mt-0.5 whitespace-pre-wrap break-words text-[10px] leading-relaxed text-destructive/90">
+            {failureHint}
+          </p>
+        ) : item.text && !failed ? (
+          <p className="mt-0.5 line-clamp-4 whitespace-pre-wrap break-words text-[10px] leading-relaxed text-muted-foreground">
+            {item.text}
+          </p>
         ) : null}
       </div>
     </div>

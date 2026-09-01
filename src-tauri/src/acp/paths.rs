@@ -130,6 +130,7 @@ pub fn status_from_profiles(hint: &AgentProfilesHint) -> AcpStatus {
         responses_only_note: RESPONSES_ONLY_NOTE.into(),
         session_active: false,
         busy: false,
+        session_model_options: None,
     }
 }
 

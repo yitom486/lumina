@@ -89,6 +89,29 @@ describe("ChatTurnView", () => {
     expect(screen.getByText("工具执行中")).toBeInTheDocument();
   });
 
+  it("shows failed tool detail in Chinese", () => {
+    render(
+      <ChatTurnView
+        turn={makeTurn({
+          id: "t5",
+          activities: [
+            {
+              id: "tool-1",
+              kind: "tool",
+              toolCallId: "1",
+              title: "读取播放上下文",
+              status: "failed",
+              text: "无法读取当前播放上下文",
+            },
+          ],
+          showActivities: true,
+        })}
+      />,
+    );
+    expect(screen.getByText("失败")).toBeInTheDocument();
+    expect(screen.getByText("无法读取当前播放上下文")).toBeInTheDocument();
+  });
+
   it("hides activity feed after minimal finish", () => {
     const turn: ChatTurn = {
       id: "t4",

@@ -7,12 +7,16 @@ import { errorMessage } from "@/lib/format";
 import "../chat-motion.css";
 
 import { useAcpProfilesStore } from "../acpProfilesStore";
-import { useAcpSettingsStore } from "../acpSettingsStore";
+import {
+  clientSettingsFromStore,
+  useAcpSettingsStore,
+} from "../acpSettingsStore";
 import { useAcpSessionStore } from "../acpSessionStore";
 import {
   acpCancel,
   acpClose,
   acpConnect,
+  acpNewChat,
   acpPrompt,
   getAcpStatus,
 } from "../api";
@@ -74,7 +78,6 @@ export function AcpPanel() {
   const [connectionState, setConnectionState] =
     useState<AcpConnectionState>("idle");
   const [connectAttempt, setConnectAttempt] = useState(0);
-  const skipAutoConnectRef = useRef(false);
   const prevConnectKeyRef = useRef<string | null>(null);
   const [pendingPermission, setPendingPermission] =
     useState<PendingPermission | null>(null);
@@ -109,22 +112,59 @@ export function AcpPanel() {
     setNotices((prev) => pushNotice(prev, idSeq, content));
   };
 
-  const closeMutation = useMutation({
-    mutationFn: acpClose,
-    onSuccess: async () => {
+  const newChatMutation = useMutation({
+    mutationFn: async () => {
       clearSavedSession();
-      skipAutoConnectRef.current = true;
-      setConnectionState("idle");
-      pushSystem("会话已关闭");
+      setTurns([]);
+      setNotices([]);
+      setDraft("");
+      setProgress(null);
+      setPendingPermission(null);
+      setConnectionState("connecting");
+      setProgress("正在开始新对话…");
+
+      const profileState = useAcpProfilesStore.getState();
+      const settings = clientSettingsFromStore(useAcpSettingsStore.getState());
+
+      await acpNewChat(
+        (event: AcpEvent) => {
+          if (event.type === "progress") {
+            setProgress(event.message);
+          }
+          if (event.type === "sessionSaved") {
+            setSavedSession({
+              sessionId: event.sessionId,
+              profileId: event.profileId,
+              cwd: event.cwd,
+            });
+          }
+        },
+        {
+          profileId: profileState.activeProfileId,
+          cwd: sessionCwd,
+          clientSettings: settings,
+          profiles: profilesHintFromStore(
+            profileState.activeProfileId,
+            profileState.profiles,
+          ),
+        },
+      );
+    },
+    onSuccess: async () => {
+      setConnectionState("connected");
+      setProgress(null);
       await queryClient.invalidateQueries({ queryKey: ["acp-status"] });
     },
-    onError: (error) => pushSystem(errorMessage(error)),
+    onError: (error) => {
+      setConnectionState("error");
+      setProgress(null);
+      pushSystem(errorMessage(error));
+    },
   });
 
   useEffect(() => {
     if (prevConnectKeyRef.current !== connectKey) {
       prevConnectKeyRef.current = connectKey;
-      skipAutoConnectRef.current = false;
       if (sessionActive && !busy) {
         void acpClose().then(() =>
           queryClient.invalidateQueries({ queryKey: ["acp-status"] }),
@@ -143,13 +183,10 @@ export function AcpPanel() {
 
     if (busy) return;
 
+    if (newChatMutation.isPending) return;
+
     if (sessionActive) {
       setConnectionState("connected");
-      return;
-    }
-
-    if (skipAutoConnectRef.current) {
-      setConnectionState("idle");
       return;
     }
 
@@ -158,7 +195,7 @@ export function AcpPanel() {
     setProgress("正在连接 Agent…");
 
     const profileState = useAcpProfilesStore.getState();
-    const settings = useAcpSettingsStore.getState();
+    const settings = clientSettingsFromStore(useAcpSettingsStore.getState());
     const session = useAcpSessionStore.getState();
 
     void acpConnect(
@@ -179,12 +216,7 @@ export function AcpPanel() {
         profileId: profileState.activeProfileId,
         cwd: sessionCwd,
         savedSession: session.savedSession,
-        clientSettings: {
-          permissionMode: settings.permissionMode,
-          thinkingLevel: settings.thinkingLevel,
-          agentMode: settings.agentMode,
-          visionCapable: settings.visionCapable ?? false,
-        },
+        clientSettings: settings,
         profiles: profilesHintFromStore(
           profileState.activeProfileId,
           profileState.profiles,
@@ -217,10 +249,10 @@ export function AcpPanel() {
     sessionCwd,
     setSavedSession,
     statusQuery.isLoading,
+    newChatMutation.isPending,
   ]);
 
   const handleReconnect = () => {
-    skipAutoConnectRef.current = false;
     setConnectAttempt((attempt) => attempt + 1);
   };
 
@@ -291,7 +323,7 @@ export function AcpPanel() {
       setTurns((prev) => [...prev, turn]);
 
       const profileState = useAcpProfilesStore.getState();
-      const settings = useAcpSettingsStore.getState();
+      const settings = clientSettingsFromStore(useAcpSettingsStore.getState());
       const session = useAcpSessionStore.getState();
 
       try {
@@ -303,12 +335,7 @@ export function AcpPanel() {
             cwd: sessionCwd,
             context: videoContext,
             savedSession: session.savedSession,
-            clientSettings: {
-              permissionMode: settings.permissionMode,
-              thinkingLevel: settings.thinkingLevel,
-              agentMode: settings.agentMode,
-              visionCapable: settings.visionCapable ?? false,
-            },
+            clientSettings: settings,
             profiles: profilesHintFromStore(
               profileState.activeProfileId,
               profileState.profiles,
@@ -350,18 +377,24 @@ export function AcpPanel() {
   };
 
   const startNewChat = () => {
-    if (busy) return;
-    if (isBlankChat && !sessionActive) return;
-    setTurns([]);
-    setNotices([]);
-    setDraft("");
-    setProgress(null);
-    setPendingPermission(null);
-    if (sessionActive) {
-      closeMutation.mutate();
-    } else {
-      clearSavedSession();
+    if (busy || newChatMutation.isPending) return;
+    if (
+      isBlankChat &&
+      sessionActive &&
+      connectionState === "connected"
+    ) {
+      return;
     }
+    if (!available) {
+      setTurns([]);
+      setNotices([]);
+      setDraft("");
+      setProgress(null);
+      setPendingPermission(null);
+      clearSavedSession();
+      return;
+    }
+    newChatMutation.mutate();
   };
 
   const scrollToTurn = (turnId: string) => {
@@ -392,12 +425,10 @@ export function AcpPanel() {
           statusQuery.isError ? errorMessage(statusQuery.error) : null
         }
         loading={statusQuery.isLoading}
-        sessionActive={sessionActive}
-        busy={busy}
+        busy={busy || newChatMutation.isPending}
         historyItems={historyItems}
         onNewChat={startNewChat}
         onPickHistory={scrollToTurn}
-        onEndSession={() => closeMutation.mutate()}
         onReconnect={handleReconnect}
       />
 
@@ -424,16 +455,16 @@ export function AcpPanel() {
       <ChatComposer
         value={draft}
         disabled={!available || connectionState !== "connected"}
-        busy={busy}
+        busy={busy || newChatMutation.isPending}
         placeholder={
           !available
             ? "请展开下方 Agent 设置并配置可用的 Agent"
-            : connectionState === "connecting"
+            : newChatMutation.isPending || connectionState === "connecting"
               ? "正在连接 Agent…"
               : connectionState === "error"
                 ? "连接失败，请点击上方「重连」"
                 : connectionState === "idle"
-                  ? "Agent 未连接，请稍候或点击「重连」"
+                  ? "Agent 未连接，请点击上方「重连」"
                   : "输入问题（Enter 发送，Shift+Enter 换行）"
         }
         onChange={setDraft}
@@ -443,7 +474,11 @@ export function AcpPanel() {
         }}
       />
 
-      <AgentSettingsPanel status={statusQuery.data} busy={busy} />
+      <AgentSettingsPanel
+        status={statusQuery.data}
+        busy={busy || newChatMutation.isPending}
+        sessionConnected={connectionState === "connected"}
+      />
     </ChatShell>
   );
 }

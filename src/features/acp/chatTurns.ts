@@ -1,5 +1,6 @@
 import type { AcpEvent, ChatActivity, ChatTurn, ThinkingLevel } from "./types";
 import { hintForAcpFailure } from "./failureHints";
+import { mergeToolDetail } from "./toolStatus";
 
 function nextSeq(seq: { n: number }): string {
   seq.n += 1;
@@ -45,6 +46,7 @@ export function applyAcpEventToTurn(
           toolCallId: event.toolCallId,
           title: event.title ?? event.toolCallId,
           status: event.status ?? "pending",
+          text: mergeToolDetail(undefined, event.detail ?? undefined, false),
         }),
       };
     case "toolCallUpdate":
@@ -54,8 +56,16 @@ export function applyAcpEventToTurn(
           id: `tool-${event.toolCallId}`,
           kind: "tool",
           toolCallId: event.toolCallId,
-          title: event.title ?? event.toolCallId,
-          status: event.status ?? "updated",
+          title: event.title ?? undefined,
+          status: event.status ?? undefined,
+          text: mergeToolDetail(
+            turn.activities.find(
+              (activity) =>
+                activity.kind === "tool" && activity.toolCallId === event.toolCallId,
+            )?.text,
+            event.detail ?? undefined,
+            event.appendDetail ?? false,
+          ),
         }),
       };
     case "plan":
@@ -117,7 +127,14 @@ function upsertTool(activities: ChatActivity[], item: ChatActivity): ChatActivit
   );
   if (idx >= 0) {
     const next = [...activities];
-    next[idx] = { ...next[idx], ...item };
+    const previous = next[idx];
+    next[idx] = {
+      ...previous,
+      ...item,
+      title: item.title ?? previous.title,
+      status: item.status ?? previous.status,
+      text: item.text ?? previous.text,
+    };
     return next;
   }
   return [...activities, item];

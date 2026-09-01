@@ -86,3 +86,90 @@ body {
   background: color-mix(in srgb, var(--muted-foreground) 65%, transparent);
   background-clip: padding-box;
 }
+
+.chat-markdown {
+  overflow-wrap: anywhere;
+}
+
+.chat-markdown :where(p, ul, ol, blockquote, pre, table) {
+  margin-block: 0.5rem;
+}
+
+.chat-markdown :where(p:first-child, ul:first-child, ol:first-child) {
+  margin-block-start: 0;
+}
+
+.chat-markdown :where(p:last-child, ul:last-child, ol:last-child) {
+  margin-block-end: 0;
+}
+
+.chat-markdown :where(h1, h2, h3, h4) {
+  margin-block: 0.75rem 0.35rem;
+  font-weight: 600;
+  line-height: 1.35;
+}
+
+.chat-markdown :where(h1) {
+  font-size: 1.125rem;
+}
+
+.chat-markdown :where(h2) {
+  font-size: 1rem;
+}
+
+.chat-markdown :where(h3, h4) {
+  font-size: 0.9375rem;
+}
+
+.chat-markdown :where(ul, ol) {
+  padding-inline-start: 1.25rem;
+}
+
+.chat-markdown :where(li + li) {
+  margin-block-start: 0.2rem;
+}
+
+.chat-markdown :where(blockquote) {
+  border-inline-start: 3px solid color-mix(in srgb, var(--border) 80%, transparent);
+  padding-inline-start: 0.75rem;
+  color: var(--muted-foreground);
+}
+
+.chat-markdown :where(code) {
+  border-radius: 0.25rem;
+  background: color-mix(in srgb, var(--background) 70%, transparent);
+  padding: 0.1rem 0.3rem;
+  font-size: 0.85em;
+}
+
+.chat-markdown :where(pre) {
+  overflow-x: auto;
+  border-radius: 0.5rem;
+  border: 1px solid color-mix(in srgb, var(--border) 85%, transparent);
+  background: color-mix(in srgb, var(--background) 75%, transparent);
+  padding: 0.75rem;
+}
+
+.chat-markdown :where(pre code) {
+  background: transparent;
+  padding: 0;
+  font-size: 0.8125rem;
+}
+
+.chat-markdown :where(table) {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.8125rem;
+}
+
+.chat-markdown :where(th, td) {
+  border: 1px solid color-mix(in srgb, var(--border) 85%, transparent);
+  padding: 0.35rem 0.5rem;
+  text-align: start;
+}
+
+.chat-markdown :where(.katex-display) {
+  margin-block: 0.65rem;
+  overflow-x: auto;
+  overflow-y: hidden;
+}

@@ -400,6 +400,8 @@ pub fn extract_tool_call(value: &Value) -> Option<ToolCallInfo> {
             .get("kind")
             .and_then(Value::as_str)
             .map(str::to_string),
+        detail: extract_tool_call_detail(update),
+        append_detail: false,
     })
 }
 
@@ -445,6 +447,173 @@ pub struct ToolCallInfo {
     pub title: Option<String>,
     pub status: Option<String>,
     pub kind: Option<String>,
+    pub detail: Option<String>,
+    pub append_detail: bool,
+}
+
+/// Extract user-visible detail from a tool-call update payload.
+pub fn extract_tool_call_detail(update: &Value) -> Option<String> {
+    if let Some(text) = extract_tool_call_content_text(update) {
+        let sanitized = sanitize_tool_detail(&text);
+        if !sanitized.is_empty() {
+            return Some(sanitized);
+        }
+    }
+    update
+        .get("rawOutput")
+        .and_then(value_to_plain_text)
+        .map(|text| sanitize_tool_detail(&text))
+        .filter(|text| !text.is_empty())
+}
+
+pub fn extract_tool_call_content_text(update: &Value) -> Option<String> {
+    let content = update.get("content")?;
+    if content.is_null() {
+        return None;
+    }
+    if let Some(items) = content.as_array() {
+        let mut parts = Vec::new();
+        for item in items {
+            if let Some(text) = tool_call_content_item_text(item) {
+                if !text.trim().is_empty() {
+                    parts.push(text);
+                }
+            }
+        }
+        if !parts.is_empty() {
+            return Some(parts.join("\n"));
+        }
+    }
+    content_blocks_text(Some(content))
+}
+
+pub fn extract_tool_call_content_chunk(value: &Value) -> Option<(String, String)> {
+    let update = session_update_payload(value)?;
+    if update.get("sessionUpdate").and_then(Value::as_str)? != "tool_call_content_chunk" {
+        return None;
+    }
+    let tool_call_id = update
+        .get("toolCallId")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_string();
+    let content = update.get("content")?;
+    let text = tool_call_content_item_text(content)?;
+    Some((tool_call_id, sanitize_tool_detail(&text)))
+}
+
+pub fn sanitize_tool_detail(input: &str) -> String {
+    let collapsed = input
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .take(4)
+        .collect::<Vec<_>>()
+        .join("；");
+    if collapsed.is_empty() {
+        return String::new();
+    }
+    let redacted = redact_absolute_paths(&collapsed);
+    let capped = truncate_chars(&redacted, 220);
+    if looks_like_low_level_tool_error(&capped) {
+        "工具执行未成功，Agent 将尝试其他方式继续".into()
+    } else {
+        capped
+    }
+}
+
+fn tool_call_content_item_text(item: &Value) -> Option<String> {
+    match item.get("type").and_then(Value::as_str) {
+        Some("content") => content_blocks_text(item.get("content")),
+        Some("text") => item
+            .get("text")
+            .and_then(Value::as_str)
+            .map(str::to_string),
+        _ => content_blocks_text(Some(item)),
+    }
+}
+
+fn value_to_plain_text(value: &Value) -> Option<String> {
+    match value {
+        Value::String(text) => Some(text.clone()),
+        Value::Number(number) => Some(number.to_string()),
+        Value::Bool(flag) => Some(flag.to_string()),
+        Value::Null => None,
+        other => serde_json::to_string(other).ok(),
+    }
+}
+
+fn redact_absolute_paths(input: &str) -> String {
+    let mut out = String::new();
+    let mut rest = input;
+    while !rest.is_empty() {
+        if let Some((_, len)) = match_absolute_path_prefix(rest) {
+            out.push_str("[路径]");
+            rest = &rest[len..];
+        } else {
+            let ch = rest.chars().next().unwrap();
+            out.push(ch);
+            rest = &rest[ch.len_utf8()..];
+        }
+    }
+    out
+}
+
+fn match_absolute_path_prefix(input: &str) -> Option<(&str, usize)> {
+    if input.len() >= 3 {
+        let bytes = input.as_bytes();
+        if bytes[0].is_ascii_alphabetic() && bytes[1] == b':' && bytes[2] == b'\\' {
+            let mut end = 3;
+            for (offset, ch) in input[3..].char_indices() {
+                if ch.is_whitespace() || matches!(ch, '"' | '\'' | ')' | '(' | ',' | ';') {
+                    break;
+                }
+                end = 3 + offset + ch.len_utf8();
+            }
+            return Some((&input[..end], end));
+        }
+    }
+    if input.starts_with("\\\\?\\") {
+        let end = input
+            .find(|c: char| c.is_whitespace() || matches!(c, '"' | '\'' | ')' | '(' | ',' | ';'))
+            .unwrap_or(input.len());
+        return Some((&input[..end], end));
+    }
+    None
+}
+
+fn truncate_chars(input: &str, max_chars: usize) -> String {
+    if input.chars().count() <= max_chars {
+        return input.to_string();
+    }
+    format!(
+        "{}…",
+        input.chars().take(max_chars).collect::<String>()
+    )
+}
+
+fn looks_like_low_level_tool_error(input: &str) -> bool {
+    let lower = input.to_ascii_lowercase();
+    [
+        "error:",
+        "traceback",
+        "stack trace",
+        "exit code",
+        "exit status",
+        "serde",
+        "jsonrpc",
+        "stderr",
+        "ffprobe",
+        "ffmpeg",
+        "whisper-cli",
+        "libmpv",
+        "panic",
+        "thread '",
+        "os error",
+        "command not found",
+    ]
+    .iter()
+    .any(|needle| lower.contains(needle))
 }
 
 fn content_blocks_text(content: Option<&Value>) -> Option<String> {
@@ -673,5 +842,54 @@ mod tests {
         assert_eq!(options.current_model_id.as_deref(), Some("mini"));
         assert_eq!(options.models[0].name, "Mini");
         assert_eq!(options.current_reasoning_effort.as_deref(), Some("low"));
+    }
+
+    #[test]
+    fn extract_tool_call_content_and_sanitize_detail() {
+        let value = json!({
+            "method": "session/update",
+            "params": {
+                "update": {
+                    "sessionUpdate": "tool_call_update",
+                    "toolCallId": "call-1",
+                    "status": "failed",
+                    "content": [
+                        {
+                            "type": "content",
+                            "content": { "type": "text", "text": "无法读取当前播放上下文" }
+                        }
+                    ]
+                }
+            }
+        });
+        let tool = extract_tool_call(&value).expect("tool");
+        assert_eq!(tool.status.as_deref(), Some("failed"));
+        assert_eq!(
+            tool.detail.as_deref(),
+            Some("无法读取当前播放上下文")
+        );
+    }
+
+    #[test]
+    fn sanitize_tool_detail_redacts_low_level_errors() {
+        let sanitized = sanitize_tool_detail("ffprobe: exit code 1 at D:\\movie\\a.mkv");
+        assert_eq!(sanitized, "工具执行未成功，Agent 将尝试其他方式继续");
+    }
+
+    #[test]
+    fn extract_tool_call_content_chunk() {
+        let value = json!({
+            "method": "session/update",
+            "params": {
+                "update": {
+                    "sessionUpdate": "tool_call_content_chunk",
+                    "toolCallId": "call-2",
+                    "content": { "type": "text", "text": "步骤 1 完成" }
+                }
+            }
+        });
+        let chunk = super::extract_tool_call_content_chunk(&value).expect("chunk");
+        assert_eq!(chunk.0, "call-2");
+        assert_eq!(chunk.1, "步骤 1 完成");
     }
 }
