@@ -27,8 +27,29 @@ describe("applyAcpEventToTurn", () => {
     );
     expect(turn.answer).toBe("最终答案");
     expect(turn.status).toBe("done");
-    expect(turn.activities).toHaveLength(1);
+    expect(turn.activities).toHaveLength(0);
     expect(turn.showActivities).toBe(false);
+  });
+
+  it("keeps thoughts in verbose mode", () => {
+    const seq = { n: 0 };
+    let turn = createTurn(seq, "你好");
+    turn = applyAcpEventToTurn(
+      turn,
+      { type: "agentThought", text: "想一想" },
+      "verbose",
+    );
+    turn = applyAcpEventToTurn(
+      turn,
+      {
+        type: "finished",
+        text: "最终答案",
+        stopReason: "end_turn",
+      },
+      "verbose",
+    );
+    expect(turn.activities).toHaveLength(1);
+    expect(turn.activities[0]?.kind).toBe("thought");
   });
 
   it("keeps activities in verbose mode", () => {

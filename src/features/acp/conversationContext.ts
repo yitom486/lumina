@@ -1,3 +1,4 @@
+import { composeAssistantAnswer } from "./assistantAnswer";
 import type { ChatTurn } from "./types";
 
 const MAX_CONTEXT_CHARS = 12_000;
@@ -23,7 +24,10 @@ export function formatConversationHistoryContext(
       chunks.push(`用户：${turn.userText.trim()}`);
     }
     if (turn.answer.trim()) {
-      chunks.push(`助手：${turn.answer.trim()}`);
+      const answer = composeAssistantAnswer(turn.answer, turn.activities);
+      if (answer) {
+        chunks.push(`助手：${answer}`);
+      }
     }
     const block = chunks.join("\n");
     if (!block) continue;

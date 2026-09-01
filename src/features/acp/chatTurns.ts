@@ -1,3 +1,4 @@
+import { composeAssistantAnswer } from "./assistantAnswer";
 import type { AcpEvent, ChatActivity, ChatTurn, ThinkingLevel } from "./types";
 import { hintForAcpFailure } from "./failureHints";
 import { mergeToolDetail } from "./toolStatus";
@@ -25,14 +26,19 @@ export function applyAcpEventToTurn(
   thinkingLevel: ThinkingLevel,
 ): ChatTurn {
   switch (event.type) {
-    case "agentMessage":
+    case "agentMessage": {
+      const streamingAnswer = composeAssistantAnswer(
+        `${turn.answer}${event.text}`,
+        turn.activities,
+      );
       return {
         ...turn,
-        answer: `${turn.answer}${event.text}`,
+        answer: streamingAnswer,
         status: "streaming",
       };
+    }
     case "agentThought":
-      if (thinkingLevel === "hidden") return turn;
+      if (thinkingLevel !== "verbose") return turn;
       return {
         ...turn,
         activities: appendThought(turn.activities, event.text),
@@ -69,7 +75,7 @@ export function applyAcpEventToTurn(
         }),
       };
     case "plan":
-      if (thinkingLevel === "hidden") return turn;
+      if (thinkingLevel !== "verbose") return turn;
       return {
         ...turn,
         activities: [
@@ -82,7 +88,8 @@ export function applyAcpEventToTurn(
         ],
       };
     case "finished": {
-      const finalText = event.text.trim() || turn.answer.trim();
+      const rawFinal = event.text.trim() || turn.answer.trim();
+      const finalText = composeAssistantAnswer(rawFinal, turn.activities);
       const hasActivities = turn.activities.length > 0;
       return {
         ...turn,

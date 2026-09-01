@@ -100,7 +100,8 @@ lumina_get_transcript_window（识图模型另有 lumina_capture_frames）。\
 \n\n工具调用原则：\
 (1) 若当前对话、此前工具结果或问题本身已足够回答，直接作答，不要重复调用。\
 (2) 仅缺哪类信息再增量调用对应工具，避免每轮并行全量拉取。\
-(3) 未通过工具确认的剧情/角色信息不要编造。"
+(3) 未通过工具确认的剧情/角色信息不要编造。\
+(4) 直接用中文作答；不要输出 Natural English / English 英译块。"
 }
 
 fn format_time_ms(ms: u64) -> String {

@@ -35,4 +35,19 @@ describe("formatConversationHistoryContext", () => {
       ]),
     ).toBeNull();
   });
+
+  it("strips English translation blocks from injected assistant history", () => {
+    const context = formatConversationHistoryContext([
+      {
+        ...turn(
+          "t1",
+          "截图工具能用吗",
+          "Natural English: Is it available?\n\n目前还不行。",
+        ),
+        activities: [],
+      },
+    ]);
+    expect(context).toContain("助手：目前还不行。");
+    expect(context).not.toMatch(/Natural English/i);
+  });
 });
