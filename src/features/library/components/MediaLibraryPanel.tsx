@@ -103,6 +103,18 @@ export function MediaLibraryPanel() {
       queryClient.invalidateQueries({ queryKey: ["library-pending"] }),
     ]);
   };
+  const persistPendingCredentials = async () => {
+    const nextModelApiKey = modelApiKey.trim();
+    const nextTmdbAccessToken = tmdbAccessToken.trim();
+    if (!nextModelApiKey && !nextTmdbAccessToken) return;
+    await saveMetadataCredentials({
+      modelApiKey: nextModelApiKey || undefined,
+      tmdbAccessToken: nextTmdbAccessToken || undefined,
+    });
+    setModelApiKey("");
+    setTmdbAccessToken("");
+    await queryClient.invalidateQueries({ queryKey: ["library-credential-status"] });
+  };
   const startMutation = useMutation({
     mutationFn: () => startLibraryWatch({ roots, pollIntervalSecs }),
     onSuccess: () => void refresh(),
@@ -135,15 +147,21 @@ export function MediaLibraryPanel() {
     onError: (err) => setError(errorMessage(err)),
   });
   const validateCredentialsMutation = useMutation({
-    mutationFn: () => validateMetadataCredentials({
-      provider: config.provider,
-      tmdb: config.tmdb,
-    }),
+    mutationFn: async () => {
+      await persistPendingCredentials();
+      return validateMetadataCredentials({
+        provider: config.provider,
+        tmdb: config.tmdb,
+      });
+    },
     onSuccess: (result) => setValidation(result),
     onError: (err) => setError(errorMessage(err)),
   });
   const validateTmdbMutation = useMutation({
-    mutationFn: () => validateTmdbCredentials(config.tmdb),
+    mutationFn: async () => {
+      await persistPendingCredentials();
+      return validateTmdbCredentials(config.tmdb);
+    },
     onSuccess: setTmdbValidation,
     onError: (err) => setError(errorMessage(err)),
   });
@@ -232,14 +250,14 @@ export function MediaLibraryPanel() {
             <p>密钥保存在当前 Windows 用户的系统安全凭据中，不会写入 `.lumina`、项目文件或浏览器设置。</p>
             <div className="flex flex-wrap gap-1">
               <Button size="sm" disabled={(!modelApiKey && !tmdbAccessToken) || saveCredentialsMutation.isPending} onClick={() => saveCredentialsMutation.mutate()}>保存到此设备</Button>
-              <Button size="sm" variant="outline" disabled={validateCredentialsMutation.isPending} onClick={() => validateCredentialsMutation.mutate()}>验证全部配置</Button>
-              <Button size="sm" variant="outline" disabled={!credentialStatusQuery.data?.tmdbAccessTokenSaved || validateTmdbMutation.isPending} onClick={() => validateTmdbMutation.mutate()}>验证 TMDb Token</Button>
+              <Button size="sm" variant="outline" disabled={validateCredentialsMutation.isPending} onClick={() => validateCredentialsMutation.mutate()}>{modelApiKey.trim() || tmdbAccessToken.trim() ? "保存并验证全部配置" : "验证全部配置"}</Button>
+              <Button size="sm" variant="outline" disabled={(!tmdbAccessToken.trim() && !credentialStatusQuery.data?.tmdbAccessTokenSaved) || validateTmdbMutation.isPending} onClick={() => validateTmdbMutation.mutate()}>{tmdbAccessToken.trim() ? "保存并验证 TMDb" : "验证 TMDb Token"}</Button>
               {resolverProvider === "directApi" ? <Button size="sm" variant="outline" disabled={!credentialStatusQuery.data?.modelApiKeySaved || deleteCredentialMutation.isPending} onClick={() => deleteCredentialMutation.mutate("modelApiKey")}>删除模型密钥</Button> : null}
               <Button size="sm" variant="outline" disabled={!credentialStatusQuery.data?.tmdbAccessTokenSaved || deleteCredentialMutation.isPending} onClick={() => deleteCredentialMutation.mutate("tmdbAccessToken")}>删除 TMDb Token</Button>
             </div>
             {validation ? <div className="space-y-1 rounded bg-muted/40 p-2"><ValidationItem label={resolverProvider === "acpAgent" ? "Agent" : "模型服务"} item={validation.model} /><ValidationItem label="TMDb" item={validation.tmdb} /></div> : null}
             {tmdbValidation ? <div className="rounded bg-muted/40 p-2"><ValidationItem label="TMDb" item={tmdbValidation} /></div> : null}
-            <p>验证不会发送视频、字幕、笔记、文件名或绝对路径；验证会产生一次极小的模型或 Agent 调用。</p>
+            <p>验证不会发送视频、字幕、笔记、文件名或绝对路径；“验证全部配置”会产生一次极小的模型或 Agent 调用，TMDb 单独验证不会。</p>
           </div>
           <label className="flex gap-2 leading-relaxed text-muted-foreground"><input type="checkbox" checked={privacyAcknowledged} onChange={(e) => patchSettings({ privacyAcknowledged: e.target.checked })} />允许将文件名和相对目录名发送到所选解析器；不会发送视频、字幕、笔记或绝对路径。</label>
         </div>
