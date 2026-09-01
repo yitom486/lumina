@@ -14,7 +14,9 @@ pub mod settings;
 pub use context::VideoPromptContext;
 pub use error::{AcpError, AcpErrorCode};
 pub use model::{
-    AcpEvent, AcpStatus, AgentProfileInput, AgentProfilesHint, PermissionOption, SavedSessionHint,
+    AcpEvent, AcpModelDiscoveryResult, AcpSessionModelOptions, AcpSessionModelSelection,
+    AcpSessionOption, AcpStatus, AgentProfileInput, AgentProfilesHint, PermissionOption,
+    SavedSessionHint,
 };
 pub use profile::{AgentKind, AgentProfile, AgentProfileStatus};
 pub use service::AcpService;

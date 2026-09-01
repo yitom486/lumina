@@ -16,12 +16,13 @@ mod store;
 pub use credentials::{CredentialKind, CredentialSaveInput, CredentialStatus};
 pub use error::{LibraryError, LibraryErrorCode};
 pub use model::{
-    CredentialValidationConfig, CredentialValidationItem, CredentialValidationResult,
-    GroupResolution, LibraryIndex, LibraryStatus, LibraryWatchConfig, MediaGroup, MediaGroupKind,
-    MediaMetadataContext, MetadataMediaType, MetadataWriteResult, ModelDiscoveryConfig,
-    ModelDiscoveryResult, ModelResolverConfig, PendingMediaGroup, ResolverIntent, ResolverPreview,
+    AgentModelDiscoveryConfig, AgentModelDiscoveryResult, CredentialValidationConfig,
+    CredentialValidationItem, CredentialValidationResult, GroupResolution, LibraryIndex,
+    LibraryStatus, LibraryWatchConfig, MediaGroup, MediaGroupKind, MediaMetadataContext,
+    MetadataMediaType, MetadataWriteResult, ModelDiscoveryConfig, ModelDiscoveryResult,
+    ModelResolverConfig, PendingMediaGroup, ResolverIntent, ResolverPreview,
     ResolverProviderConfig, ResolverRunConfig, ResolverSelection, StoredMetadata,
     StoredMetadataKind, TmdbCandidate, TmdbConfig,
 };
-pub use resolver::{discover_models, validate_credentials, RemoteResolver};
+pub use resolver::{discover_agent_models, discover_models, validate_credentials, RemoteResolver};
 pub use service::MediaLibraryService;

@@ -10,6 +10,7 @@ import { errorMessage } from "@/lib/format";
 import {
   applyTmdbMediaMatch,
   deleteMetadataCredential,
+  discoverLibraryAgentModels,
   discoverLibraryModels,
   getLibraryStatus,
   getMetadataCredentialStatus,
@@ -25,6 +26,7 @@ import { useLibrarySettingsStore } from "../settingsStore";
 import type {
   CredentialKind,
   CredentialValidationResult,
+  AgentModelDiscoveryResult,
   ModelDiscoveryResult,
   PendingMediaGroup,
   ResolverPreview,
@@ -38,6 +40,8 @@ export function MediaLibraryPanel() {
   const privacyAcknowledged = useLibrarySettingsStore((state) => state.privacyAcknowledged);
   const resolverProvider = useLibrarySettingsStore((state) => state.resolverProvider);
   const agentProfileId = useLibrarySettingsStore((state) => state.agentProfileId);
+  const agentModelId = useLibrarySettingsStore((state) => state.agentModelId);
+  const agentReasoningEffort = useLibrarySettingsStore((state) => state.agentReasoningEffort);
   const modelBaseUrl = useLibrarySettingsStore((state) => state.modelBaseUrl);
   const modelId = useLibrarySettingsStore((state) => state.modelId);
   const tmdbLanguage = useLibrarySettingsStore((state) => state.tmdbLanguage);
@@ -51,6 +55,7 @@ export function MediaLibraryPanel() {
   const [tmdbAccessToken, setTmdbAccessToken] = useState("");
   const [validation, setValidation] = useState<CredentialValidationResult | null>(null);
   const [modelConnection, setModelConnection] = useState<ModelDiscoveryResult | null>(null);
+  const [agentConnection, setAgentConnection] = useState<AgentModelDiscoveryResult | null>(null);
 
   const statusQuery = useQuery({ queryKey: ["library-status"], queryFn: getLibraryStatus });
   const pendingQuery = useQuery({
@@ -69,10 +74,12 @@ export function MediaLibraryPanel() {
     () => {
       const profiles = profilesHintFromStore(activeAcpProfileId, acpProfiles);
       const provider = resolverProvider === "acpAgent"
-        ? {
+          ? {
             kind: "acpAgent" as const,
             profileId: selectedAgentProfileId,
             profiles,
+            modelId: agentModelId || undefined,
+            reasoningEffort: agentReasoningEffort || undefined,
           }
         : {
             kind: "directApi" as const,
@@ -85,7 +92,7 @@ export function MediaLibraryPanel() {
         tmdb: { accessTokenEnv: "LUMINA_TMDB_ACCESS_TOKEN", language: tmdbLanguage },
       };
     },
-    [activeAcpProfileId, acpProfiles, modelBaseUrl, modelId, privacyAcknowledged, resolverProvider, selectedAgentProfileId, tmdbLanguage],
+    [activeAcpProfileId, acpProfiles, agentModelId, agentReasoningEffort, modelBaseUrl, modelId, privacyAcknowledged, resolverProvider, selectedAgentProfileId, tmdbLanguage],
   );
   const refresh = async () => {
     await Promise.all([
@@ -147,8 +154,24 @@ export function MediaLibraryPanel() {
     onSuccess: setModelConnection,
     onError: (err) => setError(errorMessage(err)),
   });
+  const discoverAgentModelsMutation = useMutation({
+    mutationFn: () => discoverLibraryAgentModels({
+      profileId: selectedAgentProfileId,
+      profiles: profilesHintFromStore(activeAcpProfileId, acpProfiles),
+    }),
+    onSuccess: (result) => {
+      setAgentConnection(result);
+      if (!result.connected) return;
+      patchSettings({
+        agentModelId: result.options.currentModelId ?? "",
+        agentReasoningEffort: result.options.currentReasoningEffort ?? "",
+      });
+    },
+    onError: (err) => setError(errorMessage(err)),
+  });
   const directModelReady = Boolean(modelConnection?.connected && modelId.trim());
-  const resolverReady = resolverProvider === "directApi" ? directModelReady : Boolean(selectedAgentProfileId);
+  const agentModelReady = Boolean(agentConnection?.connected && (!agentConnection.options.models.length || agentModelId));
+  const resolverReady = resolverProvider === "directApi" ? directModelReady : agentModelReady;
   const selectedModelOption = modelConnection?.models.includes(modelId) ? modelId : "__manual__";
 
   return (
@@ -184,10 +207,12 @@ export function MediaLibraryPanel() {
       <details className="rounded-md border border-border p-2">
         <summary className="cursor-pointer font-medium">智能匹配设置</summary>
         <div className="mt-2 space-y-2">
-          <Field label="智能匹配来源"><select className="h-7 w-full rounded border border-border bg-background px-2" value={resolverProvider} onChange={(e) => { setValidation(null); setModelConnection(null); patchSettings({ resolverProvider: e.target.value as "acpAgent" | "directApi" }); }}><option value="directApi">独立模型服务（推荐）</option><option value="acpAgent">复用 Lumina Agent（高级）</option></select></Field>
+          <Field label="智能匹配来源"><select className="h-7 w-full rounded border border-border bg-background px-2" value={resolverProvider} onChange={(e) => { setValidation(null); setModelConnection(null); setAgentConnection(null); patchSettings({ resolverProvider: e.target.value as "acpAgent" | "directApi" }); }}><option value="directApi">独立模型服务（推荐）</option><option value="acpAgent">复用 Lumina Agent（高级）</option></select></Field>
           {resolverProvider === "acpAgent" ? <>
-            <Field label="用于智能匹配的 Agent"><select className="h-7 w-full rounded border border-border bg-background px-2" value={selectedAgentProfileId} onChange={(e) => { setValidation(null); patchSettings({ agentProfileId: e.target.value }); }}>{acpProfiles.map((profile) => <option key={profile.id} value={profile.id}>{profile.name}</option>)}</select></Field>
-            <p className="text-muted-foreground">这是兼容模式：模型仍由该 Agent 自身配置决定，ACP 没有统一的模型列举或切换能力。每次识别创建独立短会话，不读取或写入 AI 对话历史，也不允许工具、文件系统或终端访问。</p>
+            <Field label="用于智能匹配的 Agent"><select className="h-7 w-full rounded border border-border bg-background px-2" value={selectedAgentProfileId} onChange={(e) => { setValidation(null); setAgentConnection(null); patchSettings({ agentProfileId: e.target.value, agentModelId: "", agentReasoningEffort: "" }); }}>{acpProfiles.map((profile) => <option key={profile.id} value={profile.id}>{profile.name}</option>)}</select></Field>
+            <div className="space-y-1"><Button size="sm" variant="outline" disabled={!selectedAgentProfileId || discoverAgentModelsMutation.isPending} onClick={() => discoverAgentModelsMutation.mutate()}>{discoverAgentModelsMutation.isPending ? "连接中" : "连接 Agent 并获取模型"}</Button>{agentConnection ? <p className={agentConnection.connected ? "text-emerald-500" : "text-destructive"}>{agentConnection.message}</p> : <p className="text-muted-foreground">先连接 Agent，再选择本次媒体匹配使用的模型；不会复用或改写聊天会话。</p>}</div>
+            {agentConnection?.connected && agentConnection.options.models.length ? <><Field label="用于媒体匹配的模型"><select className="h-7 w-full rounded border border-border bg-background px-2" value={agentModelId} onChange={(e) => { setValidation(null); patchSettings({ agentModelId: e.target.value }); }}><option value="">请选择模型</option>{agentConnection.options.models.map((option) => <option key={option.value} value={option.value}>{option.name}</option>)}</select></Field><p className="text-muted-foreground">文件名解析是轻量任务：优先选择账户可用的低成本/mini 模型，而非最长任务或旗舰模型。</p>{agentConnection.options.reasoningEfforts.length ? <Field label="推理强度"><select className="h-7 w-full rounded border border-border bg-background px-2" value={agentReasoningEffort} onChange={(e) => { setValidation(null); patchSettings({ agentReasoningEffort: e.target.value }); }}><option value="">使用模型默认值</option>{agentConnection.options.reasoningEfforts.map((option) => <option key={option.value} value={option.value}>{option.name}</option>)}</select></Field> : null}<p className="text-muted-foreground">建议设为 low 或 minimal（若该模型提供），以降低文件名匹配的延迟与成本。</p></> : null}
+            <p className="text-muted-foreground">每次识别创建独立短会话，发出请求前会应用这里选定的模型与推理强度；不读取或写入 AI 对话历史，也不允许工具、文件系统或终端访问。</p>
           </> : <>
             <Field label="模型服务地址"><input value={modelBaseUrl} onChange={(e) => { setValidation(null); setModelConnection(null); patchSettings({ modelBaseUrl: e.target.value }); }} placeholder="https://…/v1" /></Field>
             <Field label="模型 API Key（留空则沿用已保存密钥）"><input type="password" autoComplete="off" value={modelApiKey} onChange={(e) => { setValidation(null); setModelConnection(null); setModelApiKey(e.target.value); }} placeholder={credentialStatusQuery.data?.modelApiKeySaved ? "已保存到此设备" : "输入后保存到此设备"} /></Field>

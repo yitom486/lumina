@@ -83,8 +83,36 @@ export type TmdbConfig = {
 };
 
 export type ResolverProviderConfig =
-  | { kind: "acpAgent"; profileId: string; profiles: AgentProfilesHint }
+  | {
+      kind: "acpAgent";
+      profileId: string;
+      profiles: AgentProfilesHint;
+      modelId?: string;
+      reasoningEffort?: string;
+    }
   | { kind: "directApi"; model: ModelResolverConfig };
+
+export type AgentModelDiscoveryConfig = {
+  profileId: string;
+  profiles: AgentProfilesHint;
+};
+
+export type AcpSessionOption = {
+  value: string;
+  name: string;
+  description?: string | null;
+};
+
+export type AgentModelDiscoveryResult = {
+  connected: boolean;
+  options: {
+    models: AcpSessionOption[];
+    reasoningEfforts: AcpSessionOption[];
+    currentModelId?: string | null;
+    currentReasoningEffort?: string | null;
+  };
+  message: string;
+};
 
 export type ResolverRunConfig = {
   privacyAcknowledged: boolean;

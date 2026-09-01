@@ -7,6 +7,8 @@ type LibrarySettingsState = {
   privacyAcknowledged: boolean;
   resolverProvider: "acpAgent" | "directApi";
   agentProfileId: string;
+  agentModelId: string;
+  agentReasoningEffort: string;
   modelBaseUrl: string;
   modelId: string;
   tmdbLanguage: string;
@@ -19,6 +21,8 @@ const DEFAULTS = {
   privacyAcknowledged: false,
   resolverProvider: "directApi" as const,
   agentProfileId: "",
+  agentModelId: "",
+  agentReasoningEffort: "",
   modelBaseUrl: "",
   modelId: "",
   tmdbLanguage: "zh-CN",
@@ -39,6 +43,8 @@ export const useLibrarySettingsStore = create<LibrarySettingsState>()(
         privacyAcknowledged: state.privacyAcknowledged,
         resolverProvider: state.resolverProvider,
         agentProfileId: state.agentProfileId,
+        agentModelId: state.agentModelId,
+        agentReasoningEffort: state.agentReasoningEffort,
         modelBaseUrl: state.modelBaseUrl,
         modelId: state.modelId,
         tmdbLanguage: state.tmdbLanguage,

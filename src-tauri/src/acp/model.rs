@@ -54,6 +54,44 @@ pub struct AgentProfileInput {
     pub env: HashMap<String, String>,
 }
 
+/// A selectable string-valued ACP session configuration option.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct AcpSessionOption {
+    pub value: String,
+    pub name: String,
+    pub description: Option<String>,
+}
+
+/// The model-related options reported after an ACP session is opened.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct AcpSessionModelOptions {
+    pub models: Vec<AcpSessionOption>,
+    pub reasoning_efforts: Vec<AcpSessionOption>,
+    pub current_model_id: Option<String>,
+    pub current_reasoning_effort: Option<String>,
+}
+
+/// A model override applied to one newly-created ACP session before its first
+/// prompt. It is never persisted as a chat-session mutation.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct AcpSessionModelSelection {
+    pub model_id: String,
+    pub reasoning_effort: Option<String>,
+}
+
+/// Explicit, short-lived connection result for media matching. It deliberately
+/// contains no credentials and no chat-session history.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct AcpModelDiscoveryResult {
+    pub connected: bool,
+    pub options: AcpSessionModelOptions,
+    pub message: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PermissionOption {

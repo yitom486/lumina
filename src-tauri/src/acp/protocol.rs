@@ -105,6 +105,14 @@ pub fn session_close_params(session_id: &str) -> Value {
     json!({ "sessionId": session_id })
 }
 
+pub fn session_set_config_option_params(session_id: &str, config_id: &str, value: &str) -> Value {
+    json!({
+        "sessionId": session_id,
+        "configId": config_id,
+        "value": value,
+    })
+}
+
 pub fn authenticate_params(method_id: &str) -> Value {
     json!({ "methodId": method_id })
 }
@@ -232,6 +240,56 @@ pub fn parse_session_id(value: &Value) -> Option<String> {
                 .and_then(|v| v.as_str())
                 .map(str::to_string)
         })
+}
+
+pub fn parse_session_model_options(value: &Value) -> crate::acp::AcpSessionModelOptions {
+    let result = value.get("result").unwrap_or(value);
+    let mut options = crate::acp::AcpSessionModelOptions::default();
+    let Some(config_options) = result.get("configOptions").and_then(Value::as_array) else {
+        return options;
+    };
+    for option in config_options {
+        let id = option.get("id").and_then(Value::as_str);
+        let current = option
+            .get("currentValue")
+            .and_then(Value::as_str)
+            .map(str::to_string);
+        let values = option
+            .get("options")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(|item| {
+                let value = item.get("value")?.as_str()?.trim();
+                (!value.is_empty()).then(|| crate::acp::AcpSessionOption {
+                    value: value.to_string(),
+                    name: item
+                        .get("name")
+                        .and_then(Value::as_str)
+                        .filter(|name| !name.trim().is_empty())
+                        .unwrap_or(value)
+                        .to_string(),
+                    description: item
+                        .get("description")
+                        .and_then(Value::as_str)
+                        .filter(|description| !description.trim().is_empty())
+                        .map(str::to_string),
+                })
+            })
+            .collect::<Vec<_>>();
+        match id {
+            Some("model") => {
+                options.models = values;
+                options.current_model_id = current;
+            }
+            Some("reasoning_effort") => {
+                options.reasoning_efforts = values;
+                options.current_reasoning_effort = current;
+            }
+            _ => {}
+        }
+    }
+    options
 }
 
 pub fn parse_stop_reason(value: &Value) -> Option<String> {
@@ -594,5 +652,21 @@ mod tests {
         };
         let picked = pick_auth_method(&init).expect("method");
         assert_eq!(picked.id, "chat-gpt");
+    }
+
+    #[test]
+    fn parses_session_model_and_reasoning_options() {
+        let response = json!({
+            "result": {
+                "configOptions": [
+                    { "id": "model", "currentValue": "mini", "options": [{ "value": "mini", "name": "Mini", "description": "Low cost" }] },
+                    { "id": "reasoning_effort", "currentValue": "low", "options": [{ "value": "low", "name": "Low" }] }
+                ]
+            }
+        });
+        let options = parse_session_model_options(&response);
+        assert_eq!(options.current_model_id.as_deref(), Some("mini"));
+        assert_eq!(options.models[0].name, "Mini");
+        assert_eq!(options.current_reasoning_effort.as_deref(), Some("low"));
     }
 }

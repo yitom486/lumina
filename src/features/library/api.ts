@@ -2,6 +2,8 @@ import { invoke } from "@tauri-apps/api/core";
 
 import type {
   CredentialKind,
+  AgentModelDiscoveryConfig,
+  AgentModelDiscoveryResult,
   CredentialValidationConfig,
   CredentialValidationResult,
   LibraryIndex,
@@ -24,6 +26,12 @@ export function discoverLibraryModels(
   config: ModelDiscoveryConfig,
 ): Promise<ModelDiscoveryResult> {
   return invoke<ModelDiscoveryResult>("library_models_discover", { config });
+}
+
+export function discoverLibraryAgentModels(
+  config: AgentModelDiscoveryConfig,
+): Promise<AgentModelDiscoveryResult> {
+  return invoke<AgentModelDiscoveryResult>("library_agent_models_discover", { config });
 }
 
 export function getMetadataCredentialStatus(): Promise<MetadataCredentialStatus> {

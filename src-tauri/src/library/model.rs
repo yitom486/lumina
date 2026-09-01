@@ -3,7 +3,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::acp::AgentProfilesHint;
+use crate::acp::{AcpModelDiscoveryResult, AgentProfilesHint};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -184,11 +184,24 @@ pub enum ResolverProviderConfig {
     AcpAgent {
         profile_id: String,
         profiles: AgentProfilesHint,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        model_id: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        reasoning_effort: Option<String>,
     },
     DirectApi {
         model: ModelResolverConfig,
     },
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentModelDiscoveryConfig {
+    pub profile_id: String,
+    pub profiles: AgentProfilesHint,
+}
+
+pub type AgentModelDiscoveryResult = AcpModelDiscoveryResult;
 
 fn default_tmdb_language() -> String {
     "zh-CN".into()

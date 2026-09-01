@@ -4,10 +4,11 @@
 use tauri::State;
 
 use crate::library::{
-    credentials, CredentialKind, CredentialSaveInput, CredentialStatus, CredentialValidationConfig,
-    CredentialValidationResult, LibraryError, LibraryIndex, LibraryStatus, LibraryWatchConfig,
-    MediaMetadataContext, MetadataMediaType, MetadataWriteResult, ModelDiscoveryConfig,
-    ModelDiscoveryResult, PendingMediaGroup, ResolverPreview, ResolverRunConfig, TmdbConfig,
+    credentials, AgentModelDiscoveryConfig, AgentModelDiscoveryResult, CredentialKind,
+    CredentialSaveInput, CredentialStatus, CredentialValidationConfig, CredentialValidationResult,
+    LibraryError, LibraryIndex, LibraryStatus, LibraryWatchConfig, MediaMetadataContext,
+    MetadataMediaType, MetadataWriteResult, ModelDiscoveryConfig, ModelDiscoveryResult,
+    PendingMediaGroup, ResolverPreview, ResolverRunConfig, TmdbConfig,
 };
 use crate::state::AppState;
 
@@ -158,4 +159,17 @@ pub async fn library_models_discover(
     tauri::async_runtime::spawn_blocking(move || crate::library::discover_models(config))
         .await
         .map_err(|error| LibraryError::internal(Some(&format!("model discovery join: {error}"))))
+}
+
+/// Explicitly connect to the selected ACP profile and obtain its available
+/// session model options. The connection is short-lived and immediately closed.
+#[tauri::command]
+pub async fn library_agent_models_discover(
+    config: AgentModelDiscoveryConfig,
+) -> Result<AgentModelDiscoveryResult, LibraryError> {
+    tauri::async_runtime::spawn_blocking(move || crate::library::discover_agent_models(config))
+        .await
+        .map_err(|error| {
+            LibraryError::internal(Some(&format!("agent model discovery join: {error}")))
+        })
 }

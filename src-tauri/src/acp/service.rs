@@ -16,7 +16,8 @@ use crate::acp::context::{self, VideoPromptContext};
 use crate::acp::error::AcpError;
 use crate::acp::host::AcpHost;
 use crate::acp::model::{
-    AcpEvent, AcpStatus, AgentProfilesHint, PermissionOption, SavedSessionHint,
+    AcpEvent, AcpModelDiscoveryResult, AcpSessionModelOptions, AcpSessionModelSelection, AcpStatus,
+    AgentProfilesHint, PermissionOption, SavedSessionHint,
 };
 use crate::acp::paths::{resolve_session_cwd, status_from_profiles};
 use crate::acp::profile::{
@@ -26,10 +27,11 @@ use crate::acp::protocol::{
     authenticate_params, classify_inbound, encode_line, error_response, extract_agent_text,
     extract_permission_options, extract_plan_summary, extract_thought_text, extract_tool_call,
     initialize_params, initialize_params_restricted, is_error_response, notification,
-    parse_initialize_result, parse_session_id, parse_stop_reason, permission_auto_result,
-    permission_cancelled_result, permission_selected_result, pick_auth_method, request,
-    session_cancel_params, session_close_params, session_new_params, session_resume_params,
-    success_response, Inbound, InitializeResult,
+    parse_initialize_result, parse_session_id, parse_session_model_options, parse_stop_reason,
+    permission_auto_result, permission_cancelled_result, permission_selected_result,
+    pick_auth_method, request, session_cancel_params, session_close_params, session_new_params,
+    session_resume_params, session_set_config_option_params, success_response, Inbound,
+    InitializeResult,
 };
 use crate::acp::settings::{AcpClientSettings, PermissionMode};
 
@@ -41,6 +43,7 @@ struct LiveSession {
     next_id: u64,
     init: InitializeResult,
     profile_kind: AgentKind,
+    model_options: AcpSessionModelOptions,
 }
 
 pub struct AcpService {
@@ -52,6 +55,7 @@ pub struct AcpService {
     permission_replies: Mutex<Option<mpsc::Sender<Option<String>>>>,
     permission_seq: AtomicU64,
     tool_access_enabled: AtomicBool,
+    next_session_model_selection: Mutex<Option<AcpSessionModelSelection>>,
 }
 
 impl AcpService {
@@ -65,6 +69,7 @@ impl AcpService {
             permission_replies: Mutex::new(None),
             permission_seq: AtomicU64::new(1),
             tool_access_enabled: AtomicBool::new(true),
+            next_session_model_selection: Mutex::new(None),
         }
     }
 
@@ -267,9 +272,13 @@ impl AcpService {
         text: impl AsRef<str>,
         profile_id: String,
         profiles: AgentProfilesHint,
+        model_selection: Option<AcpSessionModelSelection>,
     ) -> Result<String, AcpError> {
         let service = Self::new();
         service.tool_access_enabled.store(false, Ordering::SeqCst);
+        if let Ok(mut selection) = service.next_session_model_selection.lock() {
+            *selection = model_selection;
+        }
         let outcome = service.prompt(
             text,
             None,
@@ -286,6 +295,33 @@ impl AcpService {
         );
         let _ = service.close_session();
         outcome
+    }
+
+    /// Explicitly opens a short-lived, tool-disabled session and returns only
+    /// its model configuration options. No user/media data is sent.
+    pub fn discover_isolated_models(
+        profile_id: String,
+        profiles: AgentProfilesHint,
+    ) -> Result<AcpModelDiscoveryResult, AcpError> {
+        let service = Self::new();
+        service.tool_access_enabled.store(false, Ordering::SeqCst);
+        let prepared = prepare_profiles(&profiles);
+        let session =
+            service.spawn_session(None, None, &prepared, Some(&profile_id), &mut |_| {})?;
+        let options = session.model_options.clone();
+        if let Ok(mut guard) = service.session.lock() {
+            *guard = Some(session);
+        }
+        let _ = service.close_session();
+        Ok(AcpModelDiscoveryResult {
+            connected: true,
+            message: if options.models.is_empty() {
+                "Agent 已连接，但未提供可选择的模型；将使用 Agent 默认模型".into()
+            } else {
+                "Agent 已连接，请选择用于媒体匹配的低成本模型与推理强度".into()
+            },
+            options,
+        })
     }
 
     // Kept explicit so session lifecycle fields remain visible at the protocol boundary.
@@ -314,13 +350,17 @@ impl AcpService {
                 .lock()
                 .map_err(|_| AcpError::internal(Some("ACP session mutex poisoned")))?;
             if guard.is_none() {
-                *guard = Some(self.spawn_session(
-                    cwd,
-                    saved_session,
-                    prepared,
-                    profile_override,
-                    on_event,
-                )?);
+                let mut spawned =
+                    self.spawn_session(cwd, saved_session, prepared, profile_override, on_event)?;
+                let selection = self
+                    .next_session_model_selection
+                    .lock()
+                    .ok()
+                    .and_then(|mut selection| selection.take());
+                if let Some(selection) = selection {
+                    self.apply_model_selection(&mut spawned, &selection, on_event)?;
+                }
+                *guard = Some(spawned);
             }
         }
 
@@ -528,6 +568,7 @@ impl AcpService {
             next_id: 1,
             init: InitializeResult::default(),
             profile_kind: profile.kind,
+            model_options: AcpSessionModelOptions::default(),
         };
 
         on_event(AcpEvent::Progress {
@@ -637,7 +678,8 @@ impl AcpService {
                 on_event,
             );
             match resume_resp {
-                Ok(_) => {
+                Ok(response) => {
+                    session.model_options = parse_session_model_options(&response);
                     on_event(AcpEvent::Progress {
                         message: "已恢复上次会话".into(),
                     });
@@ -690,12 +732,71 @@ impl AcpService {
             let _ = session.child.kill();
             AcpError::protocol(Some(&format!("missing sessionId: {session_resp}")))
         })?;
+        session.model_options = parse_session_model_options(&session_resp);
         on_event(AcpEvent::SessionSaved {
             session_id: session_id.clone(),
             profile_id: profile_id.to_string(),
             cwd: cwd.to_string(),
         });
         Ok(session_id)
+    }
+
+    fn apply_model_selection(
+        &self,
+        session: &mut LiveSession,
+        selection: &AcpSessionModelSelection,
+        on_event: &mut dyn FnMut(AcpEvent),
+    ) -> Result<(), AcpError> {
+        if selection.model_id.trim().is_empty() {
+            return Ok(());
+        }
+        Self::set_session_config_option(session, "model", &selection.model_id, self, on_event)?;
+        if let Some(reasoning_effort) = selection
+            .reasoning_effort
+            .as_deref()
+            .filter(|value| !value.trim().is_empty())
+        {
+            Self::set_session_config_option(
+                session,
+                "reasoning_effort",
+                reasoning_effort,
+                self,
+                on_event,
+            )?;
+        }
+        Ok(())
+    }
+
+    fn set_session_config_option(
+        session: &mut LiveSession,
+        config_id: &str,
+        value: &str,
+        service: &AcpService,
+        on_event: &mut dyn FnMut(AcpEvent),
+    ) -> Result<(), AcpError> {
+        let request_id = session.next_id;
+        session.next_id += 1;
+        Self::write_request(
+            &mut session.stdin,
+            request_id,
+            "session/set_config_option",
+            session_set_config_option_params(&session.session_id, config_id, value),
+        )?;
+        let response = Self::read_until_id_raw(
+            service,
+            session,
+            request_id,
+            Duration::from_secs(30),
+            &service.cancel,
+            &service.host,
+            on_event,
+        )?;
+        if let Some(message) = is_error_response(&response) {
+            return Err(AcpError::protocol(Some(&format!(
+                "session config {config_id}: {message}"
+            ))));
+        }
+        Ok(())
     }
 
     fn handle_permission_request(

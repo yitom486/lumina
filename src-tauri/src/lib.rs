@@ -15,11 +15,12 @@ pub use acp::{
 };
 pub use asr::{AsrError, AsrErrorCode, AsrEvent, AsrService, AsrStatus};
 pub use library::{
-    CredentialKind, CredentialSaveInput, CredentialStatus, CredentialValidationConfig,
-    CredentialValidationItem, CredentialValidationResult, GroupResolution, LibraryError,
-    LibraryErrorCode, LibraryIndex, LibraryStatus, LibraryWatchConfig, MediaGroup, MediaGroupKind,
-    MediaLibraryService, MediaMetadataContext, MetadataMediaType, MetadataWriteResult,
-    ModelDiscoveryConfig, ModelDiscoveryResult, PendingMediaGroup, ResolverIntent, ResolverPreview,
+    AgentModelDiscoveryConfig, AgentModelDiscoveryResult, CredentialKind, CredentialSaveInput,
+    CredentialStatus, CredentialValidationConfig, CredentialValidationItem,
+    CredentialValidationResult, GroupResolution, LibraryError, LibraryErrorCode, LibraryIndex,
+    LibraryStatus, LibraryWatchConfig, MediaGroup, MediaGroupKind, MediaLibraryService,
+    MediaMetadataContext, MetadataMediaType, MetadataWriteResult, ModelDiscoveryConfig,
+    ModelDiscoveryResult, PendingMediaGroup, ResolverIntent, ResolverPreview,
     ResolverProviderConfig, ResolverRunConfig, ResolverSelection, StoredMetadata,
     StoredMetadataKind, TmdbCandidate, TmdbConfig,
 };
@@ -40,10 +41,11 @@ use commands::acp::{
 };
 use commands::asr::{asr_status, asr_transcribe};
 use commands::library::{
-    library_apply_tmdb_match, library_context_for_media, library_credential_delete,
-    library_credential_status, library_credentials_save, library_credentials_validate,
-    library_models_discover, library_pending_groups, library_resolve_preview, library_scan_now,
-    library_set_manual_title, library_status, library_watch_start, library_watch_stop,
+    library_agent_models_discover, library_apply_tmdb_match, library_context_for_media,
+    library_credential_delete, library_credential_status, library_credentials_save,
+    library_credentials_validate, library_models_discover, library_pending_groups,
+    library_resolve_preview, library_scan_now, library_set_manual_title, library_status,
+    library_watch_start, library_watch_stop,
 };
 use commands::media::{media_inspect, media_list_siblings};
 use commands::notes::{
@@ -100,6 +102,7 @@ pub fn run() {
             library_credential_delete,
             library_credentials_validate,
             library_models_discover,
+            library_agent_models_discover,
             acp_status,
             acp_respond_permission,
             acp_connect,
