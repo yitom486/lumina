@@ -91,7 +91,7 @@ jobs:
       - name: Upload Windows installers
         uses: actions/upload-artifact@v4
         with:
-          name: Lumina-0.1.0-windows-x64-debug
+          name: Lumina-windows-x64-debug
           path: |
             src-tauri/target/debug/bundle/msi/*.msi
             src-tauri/target/debug/bundle/nsis/*.exe

@@ -13,8 +13,8 @@ use crate::library::model::{
     GroupResolution, IndexedMediaFile, LibraryIndex, MediaGroup, MediaMetadataContext, MergedMediaContext,
     MetadataCastMember, MetadataMediaType, MetadataWriteResult, StoredMetadata, StoredMetadataKind,
     SeriesLibraryCache, EpisodeIndexEntry,
-    TmdbConfig, TmdbGroupStatus, WikiCharacter, WikiEnrichmentCandidate, WikiEnrichmentPreview,
-    WikiEpisodeSummary, WikiGroupStatus, WikiMatchInfo, WikiMatchMethod, WikiMetadata, WikiWriteResult,
+    TmdbConfig, TmdbGroupStatus, WikiEnrichmentCandidate, WikiEnrichmentPreview,
+    WikiGroupStatus, WikiMatchMethod, WikiMetadata, WikiWriteResult,
     METADATA_SCHEMA_VERSION,
 };
 use crate::library::{resolver, store, wikipedia};
@@ -666,6 +666,7 @@ fn now_ms() -> u128 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::library::model::{WikiCharacter, WikiEpisodeSummary, WikiMatchInfo};
     use serde_json::json;
 
     #[test]

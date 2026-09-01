@@ -51,18 +51,16 @@ fn strip_templates(input: &str) -> String {
     let mut out = String::with_capacity(input.len());
     let mut chars = input.chars().peekable();
     while let Some(ch) = chars.next() {
-        if ch == '{' {
-            if chars.peek() == Some(&'{') {
-                chars.next();
-                let mut body = String::new();
-                if consume_balanced_body(&mut chars, &mut body) {
-                    out.push_str(&template_plain_fallback(&body));
-                    continue;
-                }
-                out.push('{');
-                out.push('{');
+        if ch == '{' && chars.peek() == Some(&'{') {
+            chars.next();
+            let mut body = String::new();
+            if consume_balanced_body(&mut chars, &mut body) {
+                out.push_str(&template_plain_fallback(&body));
                 continue;
             }
+            out.push('{');
+            out.push('{');
+            continue;
         }
         out.push(ch);
     }
@@ -75,25 +73,22 @@ where
 {
     let mut depth = 2;
     while let Some(ch) = chars.next() {
-        if ch == '{' {
-            if chars.peek() == Some(&'{') {
-                chars.next();
-                depth += 2;
-                body.push('{');
-                body.push('{');
-                continue;
+        if ch == '{' && chars.peek() == Some(&'{') {
+            chars.next();
+            depth += 2;
+            body.push('{');
+            body.push('{');
+            continue;
+        }
+        if ch == '}' && chars.peek() == Some(&'}') {
+            chars.next();
+            depth -= 2;
+            if depth == 0 {
+                return true;
             }
-        } else if ch == '}' {
-            if chars.peek() == Some(&'}') {
-                chars.next();
-                depth -= 2;
-                if depth == 0 {
-                    return true;
-                }
-                body.push('}');
-                body.push('}');
-                continue;
-            }
+            body.push('}');
+            body.push('}');
+            continue;
         }
         body.push(ch);
     }

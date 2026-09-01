@@ -89,7 +89,7 @@ impl LuminaMcpSnapshot {
 }
 
 pub fn should_warm_series_library(turn: u32, path_changed: bool) -> bool {
-    path_changed || turn == 1 || turn % LIBRARY_WARM_EVERY == 0
+    path_changed || turn == 1 || turn.is_multiple_of(LIBRARY_WARM_EVERY)
 }
 
 pub fn snapshot_path_for_cwd(cwd: &Path) -> PathBuf {

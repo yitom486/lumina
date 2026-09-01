@@ -254,7 +254,7 @@ fn parse_capture_window_args(args: &Value) -> (u32, u32) {
     )
 }
 
-fn require_anchor<'a>(snapshot: &'a LuminaMcpSnapshot) -> Result<&'a PromptAnchor, String> {
+fn require_anchor(snapshot: &LuminaMcpSnapshot) -> Result<&PromptAnchor, String> {
     snapshot
         .anchor
         .as_ref()
@@ -278,7 +278,11 @@ fn resolve_paths(anchor: &PromptAnchor) -> Result<(PathBuf, PathBuf), String> {
 
 fn snapshot_cwd() -> Result<PathBuf, String> {
     crate::mcp::snapshot::resolve_snapshot_path()
-        .and_then(|path| path.parent().map(|parent| parent.parent()).flatten().map(Path::to_path_buf))
+        .and_then(|path| {
+            path.parent()
+                .and_then(|parent| parent.parent())
+                .map(Path::to_path_buf)
+        })
         .ok_or_else(|| "无法定位会话目录".to_string())
 }
 

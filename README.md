@@ -80,7 +80,7 @@ Windows debug bundle 会生成 MSI 和 NSIS 安装器。打包后的终端用户
 ## 私有发布
 
 - `.github/workflows/ci.yml`：在 Windows 上验证前端、Rust、libmpv 链接和 debug bundle，并上传仅仓库成员可见的 Actions artifact。
-- `.github/workflows/release.yml`：推送 `v0.1.0` 这类 tag 时创建 **draft** GitHub Release 并附带安装器；仓库保持私有时，Release 与资产也只对有权限的成员可见。
+- `.github/workflows/release.yml`：推送 `v0.2.0` 这类 tag 时运行质量门槛、构建 Windows 安装器并 **上传到 GitHub Release**；也可在 Actions 里手动 `workflow_dispatch` 指定 tag 重跑。仓库保持私有时，Release 与资产也只对有权限的成员可见。
 - CI 会从 [VERSION](src-tauri/native/mpv/VERSION) 下载固定版本的 libmpv 开发包；二进制本身不会进入 Git。
 
 发布前请阅读 [CHANGELOG.md](CHANGELOG.md)，并手工安装一次生成的 MSI/NSIS 包进行播放冒烟测试。

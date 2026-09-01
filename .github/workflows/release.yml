@@ -4,17 +4,24 @@ on:
   push:
     tags: ["v*"]
   workflow_dispatch:
+    inputs:
+      tag:
+        description: "Git tag to build (e.g. v0.2.0)"
+        required: true
+        default: v0.2.0
 
 permissions:
   contents: write
 
 jobs:
   release:
-    name: Draft Windows release
+    name: Windows release installers
     runs-on: windows-latest
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && format('refs/tags/{0}', inputs.tag) || github.ref }}
 
       - uses: oven-sh/setup-bun@v2
         with:
@@ -24,6 +31,16 @@ jobs:
 
       - uses: ilammy/msvc-dev-cmd@v1
 
+      - name: Cache Cargo registry and build metadata
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            src-tauri/target
+          key: release-cargo-${{ hashFiles('src-tauri/Cargo.lock') }}
+          restore-keys: release-cargo-
+
       - name: Install fixed libmpv development package
         shell: pwsh
         run: |
@@ -32,28 +49,30 @@ jobs:
           Get-Content "$mpvDir/VERSION" | ForEach-Object {
             if ($_ -match '^([^=]+)=(.*)$') { $metadata[$matches[1]] = $matches[2] }
           }
-          $archive = Join-Path $env:RUNNER_TEMP $metadata['archive']
-          $extractDir = Join-Path $env:RUNNER_TEMP 'lumina-mpv-dev'
-          curl.exe -L --fail --retry 3 -o $archive $metadata['url']
-          New-Item -ItemType Directory -Force -Path $extractDir | Out-Null
-          tar.exe -xf $archive -C $extractDir
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          $dll = Get-ChildItem -Path $extractDir -Recurse -Filter 'libmpv-2.dll' -File | Select-Object -First 1
-          if ($null -eq $dll) {
-            throw 'The libmpv archive did not contain libmpv-2.dll.'
-          }
-          Copy-Item $dll.FullName "$mpvDir/libmpv-2.dll" -Force
-          $exportNames = & dumpbin.exe /exports "$mpvDir/libmpv-2.dll" |
-            ForEach-Object {
-              if ($_ -match '^\s*\d+\s+[0-9A-F]+\s+[0-9A-F]+\s+(\S+)$') { $matches[1] }
+          if (-not (Test-Path "$mpvDir/libmpv-2.dll") -or -not (Test-Path "$mpvDir/mpv.lib")) {
+            $archive = Join-Path $env:RUNNER_TEMP $metadata['archive']
+            $extractDir = Join-Path $env:RUNNER_TEMP 'lumina-mpv-dev'
+            curl.exe -L --fail --retry 3 -o $archive $metadata['url']
+            New-Item -ItemType Directory -Force -Path $extractDir | Out-Null
+            tar.exe -xf $archive -C $extractDir
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            $dll = Get-ChildItem -Path $extractDir -Recurse -Filter 'libmpv-2.dll' -File | Select-Object -First 1
+            if ($null -eq $dll) {
+              throw 'The libmpv archive did not contain libmpv-2.dll.'
             }
-          if ($LASTEXITCODE -ne 0 -or $exportNames.Count -eq 0) {
-            throw 'Could not read libmpv exports to create an MSVC import library.'
+            Copy-Item $dll.FullName "$mpvDir/libmpv-2.dll" -Force
+            $exportNames = & dumpbin.exe /exports "$mpvDir/libmpv-2.dll" |
+              ForEach-Object {
+                if ($_ -match '^\s*\d+\s+[0-9A-F]+\s+[0-9A-F]+\s+(\S+)$') { $matches[1] }
+              }
+            if ($LASTEXITCODE -ne 0 -or $exportNames.Count -eq 0) {
+              throw 'Could not read libmpv exports to create an MSVC import library.'
+            }
+            @('LIBRARY libmpv-2.dll', 'EXPORTS') + ($exportNames | ForEach-Object { "  $_" }) |
+              Set-Content "$mpvDir/mpv.def" -Encoding ascii
+            & lib.exe "/def:$mpvDir/mpv.def" /machine:x64 "/out:$mpvDir/mpv.lib"
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           }
-          @('LIBRARY libmpv-2.dll', 'EXPORTS') + ($exportNames | ForEach-Object { "  $_" }) |
-            Set-Content "$mpvDir/mpv.def" -Encoding ascii
-          & lib.exe "/def:$mpvDir/mpv.def" /machine:x64 "/out:$mpvDir/mpv.lib"
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Install frontend dependencies
         run: bun install --frozen-lockfile
@@ -69,17 +88,21 @@ jobs:
           cargo clippy --all-targets -- -D warnings
           Pop-Location
 
-      - name: Create private draft release and upload installers
+      - name: Build Windows installers and upload to GitHub Release
         uses: tauri-apps/tauri-action@v0.6.2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           tauriScript: bun run tauri
-          tagName: v__VERSION__
-          releaseName: Lumina v__VERSION__
+          tagName: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+          releaseName: Lumina ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
           releaseBody: |
-            Private preview release. See CHANGELOG.md in this tag for features, constraints and validation steps.
-          releaseDraft: true
+            私有预览发布。完整变更见仓库 [CHANGELOG.md](https://github.com/${{ github.repository }}/blob/master/CHANGELOG.md)。
+
+            **资产**：Windows x64 MSI / NSIS 安装器（debug bundle）。
+
+            **冒烟**：安装后打开本地视频，确认播放、暂停、字幕与 AI 对话（可选）可用。
+          releaseDraft: false
           prerelease: false
           uploadWorkflowArtifacts: true
           workflowArtifactNamePattern: Lumina-[platform]-[arch]-[bundle]

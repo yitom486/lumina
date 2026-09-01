@@ -107,6 +107,7 @@ lumina_get_transcript_window（识图模型另有 lumina_capture_frames）。\
 (6) 直接用中文作答；不要输出 Natural English / English 英译块。"
 }
 
+#[cfg(test)]
 fn format_time_ms(ms: u64) -> String {
     let total_sec = ms / 1000;
     let h = total_sec / 3600;
