@@ -32,9 +32,21 @@ pub struct LibraryStatus {
     pub running: bool,
     pub roots: Vec<String>,
     pub poll_interval_secs: u64,
+    /// Timestamp of the most recent successful scan. Failed scans leave this
+    /// intact so callers can tell stale data from fresh data.
     pub last_scan_at_ms: Option<u128>,
+    /// Safe summary of the latest failed scan. Deliberately excludes paths and
+    /// implementation details that are only useful in application logs.
+    pub last_scan_error: Option<LibraryScanIssue>,
     pub indexed_files: usize,
     pub pending_groups: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct LibraryScanIssue {
+    pub code: crate::library::error::LibraryErrorCode,
+    pub message: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

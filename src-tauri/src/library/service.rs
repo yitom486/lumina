@@ -6,9 +6,9 @@ use std::time::Duration;
 
 use crate::library::error::LibraryError;
 use crate::library::model::{
-    GroupResolution, LibraryIndex, LibraryStatus, LibraryWatchConfig, MediaMetadataContext,
-    MetadataMediaType, MetadataWriteResult, PendingMediaGroup, ResolverPreview, ResolverRunConfig,
-    TmdbConfig,
+    GroupResolution, LibraryIndex, LibraryScanIssue, LibraryStatus, LibraryWatchConfig,
+    MediaMetadataContext, MetadataMediaType, MetadataWriteResult, PendingMediaGroup,
+    ResolverPreview, ResolverRunConfig, TmdbConfig,
 };
 use crate::library::{metadata, scanner, store, RemoteResolver};
 
@@ -21,6 +21,7 @@ struct WatchWorker {
 struct Runtime {
     config: LibraryWatchConfig,
     last_scan_at_ms: Option<u128>,
+    last_scan_error: Option<LibraryScanIssue>,
     indexed_files: usize,
     pending_groups: usize,
 }
@@ -96,24 +97,7 @@ impl MediaLibraryService {
             .scan_lock
             .lock()
             .map_err(|_| LibraryError::internal(Some("library scan mutex poisoned")))?;
-        let roots = self
-            .runtime
-            .lock()
-            .map_err(|_| LibraryError::internal(Some("library runtime mutex poisoned")))?
-            .config
-            .roots
-            .clone();
-        if roots.is_empty() {
-            return Err(LibraryError::not_running());
-        }
-        let indexes: Result<Vec<_>, _> = roots
-            .iter()
-            .map(PathBuf::from)
-            .map(|root| scan_and_store(&root))
-            .collect();
-        let indexes = indexes?;
-        update_runtime(&self.runtime, &indexes)?;
-        Ok(indexes)
+        scan_runtime(&self.runtime)
     }
 
     pub fn status(&self) -> Result<LibraryStatus, LibraryError> {
@@ -131,6 +115,7 @@ impl MediaLibraryService {
             roots: runtime.config.roots.clone(),
             poll_interval_secs: runtime.config.poll_interval_secs,
             last_scan_at_ms: runtime.last_scan_at_ms,
+            last_scan_error: runtime.last_scan_error.clone(),
             indexed_files: runtime.indexed_files,
             pending_groups: runtime.pending_groups,
         })
@@ -348,19 +333,47 @@ fn watch_loop(
     tracing::info!("media library watcher stopped");
 }
 
-fn scan_runtime(runtime: &Arc<Mutex<Runtime>>) -> Result<(), LibraryError> {
+fn scan_runtime(runtime: &Arc<Mutex<Runtime>>) -> Result<Vec<LibraryIndex>, LibraryError> {
     let roots = runtime
         .lock()
         .map_err(|_| LibraryError::internal(Some("library runtime mutex poisoned")))?
         .config
         .roots
         .clone();
+    if roots.is_empty() {
+        let error = LibraryError::not_running();
+        record_scan_failure(runtime, &error)?;
+        return Err(error);
+    }
     let indexes: Result<Vec<_>, _> = roots
         .iter()
         .map(PathBuf::from)
         .map(|root| scan_and_store(&root))
         .collect();
-    update_runtime(runtime, &indexes?)
+    match indexes {
+        Ok(indexes) => {
+            update_runtime(runtime, &indexes)?;
+            Ok(indexes)
+        }
+        Err(error) => {
+            record_scan_failure(runtime, &error)?;
+            Err(error)
+        }
+    }
+}
+
+fn record_scan_failure(
+    runtime: &Arc<Mutex<Runtime>>,
+    error: &LibraryError,
+) -> Result<(), LibraryError> {
+    let mut state = runtime
+        .lock()
+        .map_err(|_| LibraryError::internal(Some("library runtime mutex poisoned")))?;
+    state.last_scan_error = Some(LibraryScanIssue {
+        code: error.code,
+        message: error.message.clone(),
+    });
+    Ok(())
 }
 
 fn scan_and_store(root: &std::path::Path) -> Result<LibraryIndex, LibraryError> {
@@ -378,8 +391,18 @@ fn update_runtime(
         .lock()
         .map_err(|_| LibraryError::internal(Some("library runtime mutex poisoned")))?;
     state.last_scan_at_ms = indexes.iter().map(|index| index.updated_at_ms).max();
+    state.last_scan_error = None;
     state.indexed_files = indexes.iter().map(|index| index.files.len()).sum();
-    state.pending_groups = indexes.iter().map(|index| index.groups.len()).sum();
+    state.pending_groups = indexes
+        .iter()
+        .map(|index| {
+            index
+                .groups
+                .iter()
+                .filter(|group| matches!(group.resolution, GroupResolution::Pending))
+                .count()
+        })
+        .sum();
     Ok(())
 }
 
@@ -446,7 +469,31 @@ mod tests {
             crate::library::model::MediaGroupKind::Series
         );
 
+        let mut resolved_index = stored;
+        resolved_index.groups[0].resolution = GroupResolution::Ignored;
+        update_runtime(&service.runtime, &[resolved_index]).expect("update runtime");
+        assert_eq!(service.status().expect("status").pending_groups, 0);
+
         service.stop().expect("stop watcher");
         let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn failed_scan_is_exposed_as_safe_runtime_status() {
+        let missing_root = test_root();
+        let service = MediaLibraryService::new();
+        {
+            let mut runtime = service.runtime.lock().expect("lock runtime");
+            runtime.config.roots = vec![missing_root.to_string_lossy().to_string()];
+        }
+
+        assert!(service.scan_now().is_err());
+        let issue = service
+            .status()
+            .expect("status")
+            .last_scan_error
+            .expect("safe scan issue");
+        assert!(issue.message.contains("媒体目录"));
+        assert!(!issue.message.contains(&missing_root.to_string_lossy().to_string()));
     }
 }

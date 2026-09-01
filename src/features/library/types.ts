@@ -10,8 +10,15 @@ export type LibraryStatus = {
   roots: string[];
   pollIntervalSecs: number;
   lastScanAtMs?: number | null;
+  lastScanError?: LibraryScanIssue | null;
   indexedFiles: number;
   pendingGroups: number;
+};
+
+/** Safe background-scan feedback. Diagnostic details remain in Rust logs. */
+export type LibraryScanIssue = {
+  code: string;
+  message: string;
 };
 
 export type MediaGroupKind = "movie" | "series" | "unknown";

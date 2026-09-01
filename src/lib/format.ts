@@ -37,6 +37,19 @@ const ERROR_FALLBACK: Record<string, string> = {
   // Acp
   SpawnFailed: "无法启动 AI Agent",
   ProtocolError: "与 Agent 通信失败",
+  // Media library
+  InvalidDirectory: "媒体目录不存在或无法访问",
+  InvalidInput: "输入内容无效，请检查后重试",
+  GroupNotFound: "找不到待处理的媒体分组",
+  PrivacyConsentRequired: "请先确认允许发送文件名用于智能匹配",
+  CredentialAccessFailed: "无法访问系统安全凭据，请检查系统账户后重试",
+  ResolverNotConfigured: "未配置媒体智能匹配服务",
+  AgentResolverFailed: "媒体匹配 Agent 不可用，请检查 Agent 配置",
+  RemoteRequestFailed: "媒体信息查询失败，请稍后重试",
+  InvalidResolverResponse: "智能匹配结果无效，请改用手动标题",
+  ScanFailed: "媒体目录扫描失败，请重试",
+  StorageFailed: "媒体索引保存失败，请重试",
+  NotRunning: "媒体目录守护服务未启动",
   // Note
   IoError: "笔记读写失败",
   NotFound: "找不到该笔记",
@@ -58,8 +71,8 @@ export function formatPlayerError(error: {
   if (message && hasCjk(message)) return message;
   const byCode = error.code ? ERROR_FALLBACK[error.code] : undefined;
   if (byCode) return byCode;
-  if (message) return message;
-  return "发生未知错误";
+  if (!message) return "发生未知错误";
+  return "操作失败，请重试";
 }
 
 /** User-visible error text only — ignores technical `details`. */
@@ -70,8 +83,9 @@ export function errorMessage(error: unknown): string {
     );
   }
   if (typeof error === "object" && error && "message" in error) {
-    const message = String((error as { message: string }).message);
-    return message;
+    return formatPlayerError({
+      message: String((error as { message: string }).message),
+    });
   }
-  return String(error);
+  return "操作失败，请重试";
 }

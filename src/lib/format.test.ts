@@ -62,6 +62,15 @@ describe("formatPlayerError", () => {
       }),
     ).toBe("无法读取该视频的媒体信息");
   });
+
+  it("does not surface unstructured transport errors", () => {
+    expect(errorMessage("invalid args `config`: missing field `profile_id`")).toBe(
+      "操作失败，请重试",
+    );
+    expect(errorMessage({ message: "serde error: invalid type" })).toBe(
+      "操作失败，请重试",
+    );
+  });
 });
 
 describe("errorMessage", () => {

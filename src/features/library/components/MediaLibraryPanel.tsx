@@ -16,6 +16,7 @@ import {
   getMetadataCredentialStatus,
   listPendingMediaGroups,
   previewMediaMatch,
+  scanLibraryNow,
   saveMetadataCredentials,
   setManualMediaTitle,
   startLibraryWatch,
@@ -60,11 +61,19 @@ export function MediaLibraryPanel() {
   const [modelConnection, setModelConnection] = useState<ModelDiscoveryResult | null>(null);
   const [agentConnection, setAgentConnection] = useState<AgentModelDiscoveryResult | null>(null);
 
-  const statusQuery = useQuery({ queryKey: ["library-status"], queryFn: getLibraryStatus });
+  const statusQuery = useQuery({
+    queryKey: ["library-status"],
+    queryFn: getLibraryStatus,
+    refetchInterval: (query) => query.state.data?.running ? 5_000 : false,
+  });
+  const watcherRefreshMs = statusQuery.data?.running
+    ? Math.max(5, statusQuery.data.pollIntervalSecs) * 1_000
+    : false;
   const pendingQuery = useQuery({
     queryKey: ["library-pending"],
     queryFn: listPendingMediaGroups,
     enabled: Boolean(statusQuery.data?.running),
+    refetchInterval: watcherRefreshMs,
   });
   const credentialStatusQuery = useQuery({
     queryKey: ["library-credential-status"],
@@ -122,6 +131,11 @@ export function MediaLibraryPanel() {
   });
   const stopMutation = useMutation({
     mutationFn: stopLibraryWatch,
+    onSuccess: () => void refresh(),
+    onError: (err) => setError(errorMessage(err)),
+  });
+  const scanNowMutation = useMutation({
+    mutationFn: scanLibraryNow,
     onSuccess: () => void refresh(),
     onError: (err) => setError(errorMessage(err)),
   });
@@ -211,6 +225,7 @@ export function MediaLibraryPanel() {
         </div>
         <div className="space-y-1 text-muted-foreground">
           {roots.length ? roots.map((root) => <p key={root} className="truncate">{root}</p>) : <p>尚未选择媒体目录</p>}
+          {statusQuery.data?.lastScanAtMs ? <p>上次成功扫描：{formatScanTime(statusQuery.data.lastScanAtMs)} · 已索引 {statusQuery.data.indexedFiles} 个文件</p> : null}
         </div>
         <div className="flex gap-2">
           <Button size="sm" variant="outline" onClick={async () => {
@@ -228,6 +243,11 @@ export function MediaLibraryPanel() {
         <label className="block text-muted-foreground">扫描周期（秒）
           <input className="ml-2 h-7 w-16 rounded border border-border bg-background px-1" type="number" min={5} value={pollIntervalSecs} onChange={(event) => patchSettings({ pollIntervalSecs: Math.max(5, Number(event.target.value) || 5) })} />
         </label>
+        {statusQuery.data?.lastScanError ? <div className="space-y-2 rounded-md border border-destructive/50 bg-destructive/10 p-2 text-destructive" role="alert">
+          <p>上一次扫描失败：{statusQuery.data.lastScanError.message}</p>
+          <p className="text-muted-foreground">守护服务会在下个扫描周期自动重试；你也可以立即重试。</p>
+          <Button size="sm" variant="outline" disabled={scanNowMutation.isPending || !statusQuery.data.roots.length} onClick={() => scanNowMutation.mutate()}>{scanNowMutation.isPending ? "重试中" : "立即重试"}</Button>
+        </div> : null}
       </section>
 
       <details className="rounded-md border border-border p-2">
@@ -263,7 +283,7 @@ export function MediaLibraryPanel() {
         </div>
       </details>
 
-      {error ? <p className="text-destructive">{error}</p> : null}
+      {error ? <p className="text-destructive" role="alert">{error}</p> : null}
       <section className="min-h-0 space-y-2">
         <p className="font-medium">待匹配分组（{pendingQuery.data?.length ?? 0}）</p>
         {(pendingQuery.data ?? []).map((pending) => (
@@ -292,6 +312,12 @@ export function MediaLibraryPanel() {
       </section>
     </div>
   );
+}
+
+function formatScanTime(timestamp: number): string {
+  const date = new Date(timestamp);
+  if (Number.isNaN(date.getTime())) return "时间未知";
+  return date.toLocaleString("zh-CN", { hour12: false });
 }
 
 function ValidationItem({ label, item }: { label: string; item: CredentialValidationResult["model"] }) {
