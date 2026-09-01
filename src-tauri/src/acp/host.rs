@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use std::fs;
 use std::io::Read;
 use std::path::PathBuf;
-use std::process::{Child, Command, Stdio};
+use std::process::{Child, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -14,6 +14,7 @@ use serde_json::{json, Value};
 
 use crate::acp::error::AcpError;
 use crate::acp::protocol::{error_response, success_response};
+use crate::process_util::command;
 
 static TERMINAL_SEQ: AtomicU64 = AtomicU64::new(1);
 
@@ -184,7 +185,7 @@ impl AcpHost {
     }
 
     fn terminal_create(&self, params: &Value) -> Result<Value, AcpError> {
-        let command = params
+        let program = params
             .get("command")
             .and_then(Value::as_str)
             .ok_or_else(|| AcpError::bad_request("终端命令缺失"))?;
@@ -214,7 +215,7 @@ impl AcpHost {
             .and_then(Value::as_u64)
             .unwrap_or(1024 * 1024) as usize;
 
-        let mut cmd = Command::new(command);
+        let mut cmd = command(program);
         cmd.args(&args)
             .current_dir(&cwd)
             .stdin(Stdio::null())
@@ -231,7 +232,7 @@ impl AcpHost {
         }
 
         let mut child = cmd.spawn().map_err(|error| {
-            tracing::warn!(%command, cwd = %cwd.display(), %error, "ACP terminal spawn failed");
+            tracing::warn!(%program, cwd = %cwd.display(), %error, "ACP terminal spawn failed");
             AcpError::spawn_failed(Some(&error.to_string()))
         })?;
 
@@ -249,7 +250,7 @@ impl AcpHost {
         }
 
         let terminal_id = format!("term-{}", TERMINAL_SEQ.fetch_add(1, Ordering::SeqCst));
-        tracing::info!(%terminal_id, %command, cwd = %cwd.display(), "ACP terminal/create");
+        tracing::info!(%terminal_id, %program, cwd = %cwd.display(), "ACP terminal/create");
 
         let mut map = self
             .terminals

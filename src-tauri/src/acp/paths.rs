@@ -1,7 +1,6 @@
 //! Status aggregation for ACP (uses profiles + discovery).
 
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 use crate::acp::discover::{codex_config_present, find_acp_adapter, find_bunx, find_codex};
 use crate::acp::error::AcpError;
@@ -10,6 +9,7 @@ use crate::acp::model::AgentProfilesHint;
 use crate::acp::profile::{
     install_hint, list_status, prepare_profiles, AgentKind, RESPONSES_ONLY_NOTE,
 };
+use crate::process_util::command;
 
 #[cfg(test)]
 use crate::acp::profile::default_profiles_hint;
@@ -143,7 +143,7 @@ fn codex_home_label() -> &'static str {
 }
 
 pub fn probe_cli_version(cli: &Path) -> Option<String> {
-    let output = Command::new(cli).arg("--version").output().ok()?;
+    let output = command(cli).arg("--version").output().ok()?;
     if !output.status.success() {
         return None;
     }

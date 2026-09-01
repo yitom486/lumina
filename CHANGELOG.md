@@ -4,6 +4,13 @@
 
 （暂无）
 
+## 0.2.3 — Private Preview
+
+### 修复
+
+- **Windows 终端闪窗**：spawn `ffmpeg` / `ffprobe` / `whisper-cli` / ACP 子进程时统一 `CREATE_NO_WINDOW`，浏览文稿、加载字幕、ASR 时不再弹出黑窗口。
+- **文稿重复加载**：字幕列表与文稿查询加 `staleTime: Infinity`，避免窗口聚焦时重复提取内嵌字幕。
+
 ## 0.2.2 — Private Preview
 
 ### 播放器 / 构建

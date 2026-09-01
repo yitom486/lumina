@@ -36,6 +36,7 @@ export function TranscriptPanel() {
     queryFn: () => listSubtitleChoices(path as string),
     enabled: mediaReady,
     retry: false,
+    staleTime: Infinity,
   });
 
   const asrStatusQuery = useQuery({
@@ -71,6 +72,7 @@ export function TranscriptPanel() {
     queryFn: () => loadSubtitleChoice(path as string, choiceId as string),
     enabled: mediaReady && canLoadTranscript,
     retry: false,
+    staleTime: Infinity,
     placeholderData: keepPreviousData,
   });
 

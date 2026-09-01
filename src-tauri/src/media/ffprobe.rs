@@ -1,13 +1,13 @@
 //! Resolve and run project-local ffprobe.
 
 use std::path::Path;
-use std::process::Command;
 
 use serde::Deserialize;
 
 use crate::media::error::MediaError;
 use crate::media::model::{MediaChapter, MediaInfo, MediaStream, StreamKind};
 use crate::media::tools::resolve_ffprobe;
+use crate::process_util::command;
 
 #[derive(Debug, Deserialize)]
 struct ProbeJson {
@@ -70,7 +70,7 @@ pub fn probe_file(path: &Path) -> Result<MediaInfo, MediaError> {
         "running ffprobe"
     );
 
-    let output = Command::new(&ffprobe)
+    let output = command(&ffprobe)
         .args([
             "-v",
             "error",

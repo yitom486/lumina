@@ -12,6 +12,7 @@ node_modules/
 # Build
 dist/
 dist-ssr/
+release/
 src-tauri/target/
 src-tauri/gen/
 

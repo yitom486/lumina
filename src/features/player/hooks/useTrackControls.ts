@@ -79,6 +79,7 @@ export function useTrackControls() {
     queryFn: () => listSubtitleChoices(path as string),
     enabled: mediaReady,
     retry: false,
+    staleTime: Infinity,
   });
 
   const mediaQuery = useMediaInfoQuery();

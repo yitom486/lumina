@@ -1,10 +1,10 @@
 //! Extract mono 16kHz wav for whisper using project-local ffmpeg.
 
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 use crate::asr::error::AsrError;
 use crate::media::tools::resolve_ffmpeg;
+use crate::process_util::command;
 
 pub fn extract_wav_16k_mono(media_path: &Path, out_wav: &Path) -> Result<(), AsrError> {
     let ffmpeg = resolve_ffmpeg().map_err(|error| {
@@ -30,7 +30,7 @@ pub fn extract_wav_16k_mono(media_path: &Path, out_wav: &Path) -> Result<(), Asr
         "extracting audio for ASR"
     );
 
-    let output = Command::new(&ffmpeg)
+    let output = command(&ffmpeg)
         .args([
             "-y",
             "-i",

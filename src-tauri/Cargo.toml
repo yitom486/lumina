@@ -1,6 +1,6 @@
 [package]
 name = "lumina"
-version = "0.2.2"
+version = "0.2.3"
 description = "AI Video Reader desktop app with native libmpv playback"
 authors = ["you"]
 edition = "2021"

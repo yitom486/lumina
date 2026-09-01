@@ -4,7 +4,7 @@
 //! Agent→Client: session/update, session/request_permission, fs/*, terminal/*.
 
 use std::io::{BufRead, BufReader, Write};
-use std::process::{Child, ChildStdin, Command, Stdio};
+use std::process::{Child, ChildStdin, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{mpsc, Mutex};
 use std::thread;
@@ -767,7 +767,7 @@ impl AcpService {
             message: format!("工作目录：{cwd}"),
         });
 
-        let mut command = Command::new(&launch.program);
+        let mut command = crate::process_util::command(&launch.program);
         command
             .args(&launch.args)
             .current_dir(&workspace)
@@ -776,13 +776,6 @@ impl AcpService {
             .stderr(Stdio::piped());
         for (key, value) in &launch.env {
             command.env(key, value);
-        }
-
-        #[cfg(windows)]
-        {
-            use std::os::windows::process::CommandExt;
-            const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-            command.creation_flags(CREATE_NO_WINDOW);
         }
 
         let mut child = command.spawn().map_err(|error| {

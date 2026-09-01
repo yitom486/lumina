@@ -2,9 +2,9 @@
 
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 use crate::media::tools::resolve_ffmpeg;
+use crate::process_util::command;
 use crate::subtitle::error::SubtitleError;
 
 const BITMAP_CODECS: &[&str] = &[
@@ -57,7 +57,7 @@ pub fn extract_text_subtitle(
         }
 
         let map = format!("0:{stream_index}");
-        let output = Command::new(&ffmpeg)
+        let output = command(&ffmpeg)
             .args([
                 "-y",
                 "-i",

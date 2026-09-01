@@ -1,10 +1,10 @@
 //! Run whisper-cli on demand (spawn process; no in-process model preload).
 
 use std::path::Path;
-use std::process::Command;
 
 use crate::asr::error::AsrError;
 use crate::asr::paths::AsrPaths;
+use crate::process_util::command;
 use crate::subtitle::model::Transcript;
 use crate::subtitle::parse::parse_subtitle_text;
 
@@ -28,7 +28,7 @@ pub fn transcribe_wav(
         "starting on-demand whisper-cli"
     );
 
-    let output = Command::new(&paths.cli)
+    let output = command(&paths.cli)
         .args([
             "-m",
             &paths.model.to_string_lossy(),

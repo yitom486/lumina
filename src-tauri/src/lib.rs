@@ -6,6 +6,7 @@ pub mod mcp;
 pub mod media;
 pub mod notes;
 pub mod player;
+mod process_util;
 mod state;
 pub mod subtitle;
 

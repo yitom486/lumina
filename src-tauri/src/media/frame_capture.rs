@@ -7,11 +7,11 @@
 //! - Write under `.lumina/tmp/capture-*`; deleted after MCP returns (next prompt also clears tmp)
 
 use std::path::{Path, PathBuf};
-use std::process::Command;
 use std::time::{Duration, Instant};
 
 use crate::media::tools::resolve_ffmpeg;
 use crate::media::MediaError;
+use crate::process_util::command;
 
 const CAPTURE_TIMEOUT: Duration = Duration::from_secs(15);
 const MAX_FRAME_WIDTH: u32 = 640;
@@ -36,7 +36,7 @@ pub fn capture_frames(
     for (index, time_sec) in sample_times_sec.iter().enumerate() {
         let output = output_dir.join(format!("frame-{index:02}.jpg"));
         let started = Instant::now();
-        let status = Command::new(&ffmpeg)
+        let status = command(&ffmpeg)
             .args([
                 "-hide_banner",
                 "-loglevel",
