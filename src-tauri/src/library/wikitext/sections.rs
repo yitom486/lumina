@@ -1,11 +1,24 @@
 //! Locate section bodies in raw wikitext by heading title.
 
 pub fn section_content(wikitext: &str, title_needles: &[&str]) -> Option<String> {
+    section_content_at_level(wikitext, title_needles, 2)
+}
+
+/// Extract a subsection body (e.g. `=== Main ===`) from an already isolated section.
+pub fn subsection_content(input: &str, title_needles: &[&str]) -> Option<String> {
+    section_content_at_level(input, title_needles, 3)
+}
+
+fn section_content_at_level(
+    wikitext: &str,
+    title_needles: &[&str],
+    heading_level: usize,
+) -> Option<String> {
     let lines: Vec<&str> = wikitext.lines().collect();
     let mut index = 0;
     while index < lines.len() {
         if let Some((level, title)) = parse_heading(lines[index]) {
-            if title_matches_any(&title, title_needles) {
+            if level == heading_level && title_matches_any(&title, title_needles) {
                 let mut body = Vec::new();
                 index += 1;
                 while index < lines.len() {

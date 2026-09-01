@@ -543,6 +543,17 @@ pub fn fetch_tmdb_details(
     season: Option<u32>,
     episode: Option<u32>,
 ) -> Result<Value, LibraryError> {
+    fetch_tmdb_details_with_language(config, tmdb_id, media_type, season, episode, &config.language)
+}
+
+pub fn fetch_tmdb_details_with_language(
+    config: &TmdbConfig,
+    tmdb_id: u64,
+    media_type: MetadataMediaType,
+    season: Option<u32>,
+    episode: Option<u32>,
+    language: &str,
+) -> Result<Value, LibraryError> {
     let token = resolve_secret(
         CredentialKind::TmdbAccessToken,
         &config.access_token_env,
@@ -556,7 +567,7 @@ pub fn fetch_tmdb_details(
         (MetadataMediaType::Tv, _, _) => format!("tv/{tmdb_id}"),
     };
     let query = form_urlencoded::Serializer::new(String::new())
-        .append_pair("language", &config.language)
+        .append_pair("language", language)
         .finish();
     let endpoint = format!("https://api.themoviedb.org/3/{path}?{query}");
     let mut response = ureq::get(&endpoint)

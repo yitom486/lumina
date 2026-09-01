@@ -108,6 +108,38 @@ impl LibraryError {
         )
     }
 
+    pub fn wikipedia_page_not_found(details: Option<&str>) -> Self {
+        Self::new(
+            LibraryErrorCode::RemoteRequestFailed,
+            "未找到对应的英文维基页面，请尝试重新选择",
+            details.map(str::to_string),
+        )
+    }
+
+    pub fn wikipedia_summary_unavailable(details: Option<&str>) -> Self {
+        Self::new(
+            LibraryErrorCode::RemoteRequestFailed,
+            "该维基页面暂无可用摘要，请尝试重新选择",
+            details.map(str::to_string),
+        )
+    }
+
+    pub fn wikipedia_unavailable(details: Option<&str>) -> Self {
+        Self::new(
+            LibraryErrorCode::RemoteRequestFailed,
+            "无法连接维基百科，请检查网络或代理后重试",
+            details.map(str::to_string),
+        )
+    }
+
+    pub fn wikipedia_bridge_failed(details: Option<&str>) -> Self {
+        Self::new(
+            LibraryErrorCode::RemoteRequestFailed,
+            "无法关联作品与维基页面，请稍后重试或手动选择页面",
+            details.map(str::to_string),
+        )
+    }
+
     pub fn invalid_resolver_response(details: Option<&str>) -> Self {
         Self::new(
             LibraryErrorCode::InvalidResolverResponse,
@@ -164,5 +196,12 @@ mod tests {
         assert!(LibraryError::agent_resolver_failed(None)
             .message
             .contains("Agent"));
+        assert_eq!(
+            LibraryError::wikipedia_page_not_found(None).message,
+            "未找到对应的英文维基页面，请尝试重新选择"
+        );
+        assert!(!LibraryError::wikipedia_page_not_found(Some("http status: 404"))
+            .message
+            .contains("404"));
     }
 }

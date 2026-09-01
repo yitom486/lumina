@@ -37,8 +37,21 @@ pub fn preview_enrichment(
     tmdb: &crate::library::model::TmdbConfig,
     existing: Option<&WikiMetadata>,
 ) -> Result<WikiEnrichmentPreview, LibraryError> {
-    let wikidata_candidate = resolve_wikidata_candidate(tmdb_id, media_type, tmdb)?;
-    let search_candidates = search_title_candidates(stored)?;
+    let wikidata_candidate = try_resolve_wikidata_candidate(tmdb_id, media_type, tmdb);
+    let mut search_candidates = search_title_candidates(stored)?;
+    if wikidata_candidate.is_none() || search_candidates.is_empty() {
+        match search_title_candidates_from_tmdb(tmdb_id, media_type, tmdb) {
+            Ok(fallback) => merge_search_candidates(&mut search_candidates, fallback),
+            Err(error) => {
+                tracing::warn!(
+                    details = ?error.details,
+                    tmdb_id,
+                    ?media_type,
+                    "tmdb-id wikipedia fallback skipped"
+                );
+            }
+        }
+    }
     let aligned = align_candidates(wikidata_candidate.as_ref(), &search_candidates);
     let now = now_ms();
     let is_stale = existing
@@ -232,26 +245,221 @@ pub fn align_candidates(
     }
 }
 
-fn resolve_wikidata_candidate(
+fn try_resolve_wikidata_candidate(
     tmdb_id: u64,
     media_type: MetadataMediaType,
     tmdb: &crate::library::model::TmdbConfig,
-) -> Result<Option<WikiEnrichmentCandidate>, LibraryError> {
-    let Some(wikidata_id) = resolver::fetch_tmdb_external_ids(tmdb, tmdb_id, media_type)? else {
-        return Ok(None);
-    };
-    let Some(page_title) = fetch_wikidata_sitelink(&wikidata_id, PREFERRED_WIKI_LANG)? else {
-        return Ok(None);
-    };
-    let summary = fetch_page_summary(PREFERRED_WIKI_LANG, &page_title)?;
-    Ok(Some(WikiEnrichmentCandidate {
+) -> Option<WikiEnrichmentCandidate> {
+    if let Some(candidate) = try_bridge_via_tmdb_external_ids(tmdb_id, media_type, tmdb) {
+        return Some(candidate);
+    }
+    try_bridge_via_wikidata_tmdb_id(tmdb_id, media_type)
+}
+
+fn try_bridge_via_tmdb_external_ids(
+    tmdb_id: u64,
+    media_type: MetadataMediaType,
+    tmdb: &crate::library::model::TmdbConfig,
+) -> Option<WikiEnrichmentCandidate> {
+    let wikidata_id = resolver::fetch_tmdb_external_ids(tmdb, tmdb_id, media_type)
+        .ok()
+        .flatten()?;
+    candidate_from_wikidata_id(&wikidata_id, WikiCandidateSource::Wikidata)
+}
+
+fn try_bridge_via_wikidata_tmdb_id(
+    tmdb_id: u64,
+    media_type: MetadataMediaType,
+) -> Option<WikiEnrichmentCandidate> {
+    let wikidata_id = lookup_wikidata_id_by_tmdb_id(tmdb_id, media_type).ok().flatten()?;
+    tracing::info!(
+        tmdb_id,
+        ?media_type,
+        wikidata_id = %wikidata_id,
+        "resolved wikipedia candidate via wikidata tmdb-id lookup"
+    );
+    candidate_from_wikidata_id(&wikidata_id, WikiCandidateSource::Wikidata)
+}
+
+fn candidate_from_wikidata_id(
+    wikidata_id: &str,
+    source: WikiCandidateSource,
+) -> Option<WikiEnrichmentCandidate> {
+    let normalized = normalize_wikidata_id(wikidata_id);
+    if normalized.is_empty() {
+        return None;
+    }
+    let page_title = fetch_wikidata_sitelink(&normalized, PREFERRED_WIKI_LANG)
+        .ok()
+        .flatten()?;
+    let summary = fetch_page_summary(PREFERRED_WIKI_LANG, &page_title).ok()?;
+    Some(WikiEnrichmentCandidate {
         page_lang: PREFERRED_WIKI_LANG.into(),
         page_title: summary.title,
         page_url: summary.page_url,
-        wikidata_id: Some(normalize_wikidata_id(&wikidata_id)),
+        wikidata_id: Some(normalized),
         extract: Some(summary.extract),
-        source: WikiCandidateSource::Wikidata,
-    }))
+        source,
+    })
+}
+
+fn search_title_candidates_from_tmdb(
+    tmdb_id: u64,
+    media_type: MetadataMediaType,
+    tmdb: &crate::library::model::TmdbConfig,
+) -> Result<Vec<WikiEnrichmentCandidate>, LibraryError> {
+    let queries = tmdb_title_queries(tmdb_id, media_type, tmdb)?;
+    if queries.is_empty() {
+        return Ok(Vec::new());
+    }
+    let mut seen_titles = std::collections::BTreeSet::new();
+    let mut candidates = Vec::new();
+    for query in queries {
+        let hits = search_wikipedia(PREFERRED_WIKI_LANG, &query).unwrap_or_default();
+        for hit in hits {
+            if !seen_titles.insert(hit.page_title.clone()) {
+                continue;
+            }
+            candidates.push(hit);
+            if candidates.len() >= SEARCH_LIMIT {
+                return Ok(candidates);
+            }
+        }
+    }
+    Ok(candidates)
+}
+
+fn tmdb_title_queries(
+    tmdb_id: u64,
+    media_type: MetadataMediaType,
+    tmdb: &crate::library::model::TmdbConfig,
+) -> Result<Vec<String>, LibraryError> {
+    let detail = resolver::fetch_tmdb_details(tmdb, tmdb_id, media_type, None, None)?;
+    let mut queries = titles_from_tmdb_detail(&detail, media_type);
+    if !tmdb.language.starts_with("en") {
+        if let Ok(en_detail) = resolver::fetch_tmdb_details_with_language(
+            tmdb,
+            tmdb_id,
+            media_type,
+            None,
+            None,
+            "en-US",
+        ) {
+            for title in titles_from_tmdb_detail(&en_detail, media_type) {
+                push_unique_query(&mut queries, title);
+            }
+        }
+    }
+    Ok(queries)
+}
+
+fn titles_from_tmdb_detail(detail: &Value, media_type: MetadataMediaType) -> Vec<String> {
+    let mut queries = Vec::new();
+    match media_type {
+        MetadataMediaType::Tv => {
+            push_optional_query(&mut queries, detail.get("name").and_then(Value::as_str));
+            push_optional_query(
+                &mut queries,
+                detail.get("original_name").and_then(Value::as_str),
+            );
+        }
+        MetadataMediaType::Movie => {
+            push_optional_query(&mut queries, detail.get("title").and_then(Value::as_str));
+            push_optional_query(
+                &mut queries,
+                detail.get("original_title").and_then(Value::as_str),
+            );
+        }
+    }
+    if let Some(alternatives) = detail
+        .get("alternative_titles")
+        .and_then(|value| value.get("titles"))
+        .and_then(Value::as_array)
+    {
+        for item in alternatives {
+            let iso = item
+                .get("iso_3166_1")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            let title = item.get("title").and_then(Value::as_str).unwrap_or_default();
+            if iso.eq_ignore_ascii_case("US") || iso.eq_ignore_ascii_case("GB") {
+                push_optional_query(&mut queries, Some(title));
+            }
+        }
+    }
+    queries
+}
+
+fn push_optional_query(queries: &mut Vec<String>, value: Option<&str>) {
+    if let Some(text) = value {
+        push_unique_query(queries, text.to_string());
+    }
+}
+
+fn push_unique_query(queries: &mut Vec<String>, value: String) {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return;
+    }
+    if queries.iter().any(|query| query == trimmed) {
+        return;
+    }
+    queries.push(trimmed.to_string());
+}
+
+fn merge_search_candidates(
+    target: &mut Vec<WikiEnrichmentCandidate>,
+    incoming: Vec<WikiEnrichmentCandidate>,
+) {
+    let mut seen: std::collections::BTreeSet<String> = target
+        .iter()
+        .map(|item| item.page_title.clone())
+        .collect();
+    for candidate in incoming {
+        if !seen.insert(candidate.page_title.clone()) {
+            continue;
+        }
+        target.push(candidate);
+        if target.len() >= SEARCH_LIMIT {
+            break;
+        }
+    }
+}
+
+fn lookup_wikidata_id_by_tmdb_id(
+    tmdb_id: u64,
+    media_type: MetadataMediaType,
+) -> Result<Option<String>, LibraryError> {
+    let query = wikidata_sparql_for_tmdb_id(tmdb_id, media_type);
+    let encoded = form_urlencoded::byte_serialize(query.as_bytes()).collect::<String>();
+    let endpoint = format!("https://query.wikidata.org/sparql?format=json&query={encoded}");
+    let payload: Value = get_json(&endpoint, "wikidata sparql")?;
+    let item = payload
+        .get("results")
+        .and_then(|results| results.get("bindings"))
+        .and_then(Value::as_array)
+        .and_then(|rows| rows.first())
+        .and_then(|row| row.get("item"))
+        .and_then(|item| item.get("value"))
+        .and_then(Value::as_str)
+        .and_then(wikidata_entity_id_from_iri);
+    Ok(item.as_deref().map(normalize_wikidata_id))
+}
+
+fn wikidata_sparql_for_tmdb_id(tmdb_id: u64, media_type: MetadataMediaType) -> String {
+    match media_type {
+        MetadataMediaType::Movie => format!(
+            "SELECT ?item WHERE {{ ?item wdt:P4947 \"{tmdb_id}\" . }} LIMIT 1"
+        ),
+        MetadataMediaType::Tv => format!(
+            "SELECT ?item WHERE {{ {{ ?item wdt:P4983 \"{tmdb_id}\" . }} UNION {{ ?item wdt:P11408 \"{tmdb_id}\" . }} }} LIMIT 1"
+        ),
+    }
+}
+
+fn wikidata_entity_id_from_iri(iri: &str) -> Option<String> {
+    iri.rsplit('/').next().filter(|segment| segment.starts_with('Q'))
+        .map(str::to_string)
 }
 
 fn search_title_candidates(stored: &StoredMetadata) -> Result<Vec<WikiEnrichmentCandidate>, LibraryError> {
@@ -311,7 +519,7 @@ fn fetch_wikidata_sitelink(wikidata_id: &str, lang: &str) -> Result<Option<Strin
     let endpoint = format!(
         "https://www.wikidata.org/wiki/Special:EntityData/{normalized}.json"
     );
-    let payload: Value = get_json(&endpoint)?;
+    let payload: Value = get_json(&endpoint, "wikidata entity")?;
     let title = payload
         .get("entities")
         .and_then(|entities| entities.get(&normalized))
@@ -333,7 +541,7 @@ fn search_wikipedia(lang: &str, query: &str) -> Result<Vec<WikiEnrichmentCandida
         .append_pair("origin", "*")
         .finish();
     let endpoint = format!("https://{lang}.wikipedia.org/w/api.php?{query_string}");
-    let payload: Value = get_json(&endpoint)?;
+    let payload: Value = get_json(&endpoint, "wikipedia search")?;
     let Some(results) = payload
         .get("query")
         .and_then(|query| query.get("search"))
@@ -347,7 +555,7 @@ fn search_wikipedia(lang: &str, query: &str) -> Result<Vec<WikiEnrichmentCandida
         let Some(title) = hit.get("title").and_then(Value::as_str) else {
             continue;
         };
-        let wikidata_id = lookup_page_wikidata_id(lang, title)?;
+        let wikidata_id = lookup_page_wikidata_id(lang, title).ok().flatten();
         let summary = fetch_page_summary(lang, title).ok();
         candidates.push(WikiEnrichmentCandidate {
             page_lang: lang.to_string(),
@@ -371,7 +579,7 @@ fn lookup_page_wikidata_id(lang: &str, title: &str) -> Result<Option<String>, Li
         .append_pair("origin", "*")
         .finish();
     let endpoint = format!("https://{lang}.wikipedia.org/w/api.php?{query_string}");
-    let payload: Value = get_json(&endpoint)?;
+    let payload: Value = get_json(&endpoint, "wikipedia pageprops")?;
     let id = payload
         .get("query")
         .and_then(|query| query.get("pages"))
@@ -402,25 +610,93 @@ fn fetch_page_wikitext(lang: &str, title: &str) -> Result<String, LibraryError> 
         .append_pair("origin", "*")
         .finish();
     let endpoint = format!("https://{lang}.wikipedia.org/w/api.php?{query_string}");
-    let payload: Value = get_json(&endpoint)?;
+    let payload: Value = get_json(&endpoint, "wikipedia wikitext")?;
     payload
         .get("parse")
         .and_then(|parse| parse.get("wikitext"))
         .and_then(|wikitext| wikitext.get("*"))
         .and_then(Value::as_str)
         .map(str::to_string)
-        .ok_or_else(|| LibraryError::remote_request_failed(Some("Wikipedia wikitext missing")))
+        .ok_or_else(|| LibraryError::wikipedia_summary_unavailable(Some("wikipedia wikitext missing")))
 }
 
 fn fetch_page_summary(lang: &str, title: &str) -> Result<PageSummary, LibraryError> {
+    match fetch_page_summary_rest(lang, title) {
+        Ok(summary) => Ok(summary),
+        Err(error) if is_wikipedia_not_found(&error) => fetch_page_summary_query(lang, title),
+        Err(error) => Err(error),
+    }
+}
+
+fn fetch_page_summary_rest(lang: &str, title: &str) -> Result<PageSummary, LibraryError> {
     let encoded = encode_rest_title(title);
     let endpoint = format!("https://{lang}.wikipedia.org/api/rest_v1/page/summary/{encoded}");
-    let payload: Value = get_json(&endpoint)?;
+    let payload: Value = get_json(&endpoint, "wikipedia summary")?;
+    page_summary_from_rest_payload(lang, title, &payload)
+}
+
+fn fetch_page_summary_query(lang: &str, title: &str) -> Result<PageSummary, LibraryError> {
+    let query_string = form_urlencoded::Serializer::new(String::new())
+        .append_pair("action", "query")
+        .append_pair("prop", "extracts")
+        .append_pair("exintro", "1")
+        .append_pair("explaintext", "1")
+        .append_pair("redirects", "1")
+        .append_pair("titles", title)
+        .append_pair("format", "json")
+        .append_pair("origin", "*")
+        .finish();
+    let endpoint = format!("https://{lang}.wikipedia.org/w/api.php?{query_string}");
+    let payload: Value = get_json(&endpoint, "wikipedia extract")?;
+    let pages = payload
+        .get("query")
+        .and_then(|query| query.get("pages"))
+        .and_then(Value::as_object)
+        .ok_or_else(|| {
+            LibraryError::wikipedia_page_not_found(Some("wikipedia extract pages missing"))
+        })?;
+    for page in pages.values() {
+        if page.get("missing").is_some() {
+            continue;
+        }
+        let resolved_title = page
+            .get("title")
+            .and_then(Value::as_str)
+            .filter(|text| !text.trim().is_empty())
+            .unwrap_or(title)
+            .to_string();
+        let extract = page
+            .get("extract")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .trim()
+            .to_string();
+        if extract.is_empty() {
+            continue;
+        }
+        return Ok(PageSummary {
+            title: resolved_title.clone(),
+            extract,
+            page_url: wiki_page_url(lang, &resolved_title),
+        });
+    }
+    Err(LibraryError::wikipedia_page_not_found(Some(
+        "wikipedia extract page missing",
+    )))
+}
+
+fn page_summary_from_rest_payload(
+    lang: &str,
+    fallback_title: &str,
+    payload: &Value,
+) -> Result<PageSummary, LibraryError> {
     let title = payload
         .get("title")
         .and_then(Value::as_str)
         .filter(|text| !text.trim().is_empty())
-        .ok_or_else(|| LibraryError::remote_request_failed(Some("Wikipedia summary title missing")))?
+        .ok_or_else(|| {
+            LibraryError::wikipedia_summary_unavailable(Some("wikipedia summary title missing"))
+        })?
         .to_string();
     let extract = payload
         .get("extract")
@@ -429,8 +705,8 @@ fn fetch_page_summary(lang: &str, title: &str) -> Result<PageSummary, LibraryErr
         .trim()
         .to_string();
     if extract.is_empty() {
-        return Err(LibraryError::remote_request_failed(Some(
-            "Wikipedia summary extract missing",
+        return Err(LibraryError::wikipedia_summary_unavailable(Some(
+            "wikipedia summary extract missing",
         )));
     }
     let page_url = payload
@@ -439,7 +715,7 @@ fn fetch_page_summary(lang: &str, title: &str) -> Result<PageSummary, LibraryErr
         .and_then(|desktop| desktop.get("page"))
         .and_then(Value::as_str)
         .map(str::to_string)
-        .unwrap_or_else(|| wiki_page_url(lang, &title));
+        .unwrap_or_else(|| wiki_page_url(lang, fallback_title));
     Ok(PageSummary {
         title,
         extract,
@@ -447,17 +723,42 @@ fn fetch_page_summary(lang: &str, title: &str) -> Result<PageSummary, LibraryErr
     })
 }
 
-fn get_json(endpoint: &str) -> Result<Value, LibraryError> {
+fn is_wikipedia_not_found(error: &LibraryError) -> bool {
+    matches!(
+        error.message.as_str(),
+        "未找到对应的英文维基页面，请尝试重新选择"
+    ) || error.details.as_deref().is_some_and(|details| details.contains("http status: 404"))
+}
+
+fn get_json(endpoint: &str, context: &str) -> Result<Value, LibraryError> {
     let mut response = ureq::get(endpoint)
         .header("User-Agent", USER_AGENT)
         .header("Accept", "application/json")
         .call()
-        .map_err(|error| {
-            LibraryError::remote_request_failed(Some(&format!("Wikipedia request: {error}")))
-        })?;
-    response.body_mut().read_json().map_err(|error| {
-        LibraryError::remote_request_failed(Some(&format!("Wikipedia response: {error}")))
-    })
+        .map_err(|error| map_http_error(context, endpoint, &error))?;
+    response
+        .body_mut()
+        .read_json()
+        .map_err(|error| map_http_error(context, endpoint, &error))
+}
+
+fn map_http_error(context: &str, endpoint: &str, error: &impl std::fmt::Display) -> LibraryError {
+    let details = format!("{context}: {error} url={endpoint}");
+    let detail_text = details.as_str();
+    if detail_text.contains("http status: 404") {
+        if context.starts_with("wikidata") {
+            return LibraryError::wikipedia_bridge_failed(Some(detail_text));
+        }
+        return LibraryError::wikipedia_page_not_found(Some(detail_text));
+    }
+    if detail_text.contains("http status: 0")
+        || detail_text.contains("Connection refused")
+        || detail_text.contains("timed out")
+        || detail_text.contains("dns")
+    {
+        return LibraryError::wikipedia_unavailable(Some(detail_text));
+    }
+    LibraryError::remote_request_failed(Some(detail_text))
 }
 
 fn wiki_page_url(lang: &str, title: &str) -> String {
@@ -545,5 +846,37 @@ mod tests {
         let now = WIKI_STALE_AFTER_MS + 1_000;
         assert!(!is_wiki_stale(now - WIKI_STALE_AFTER_MS, now));
         assert!(is_wiki_stale(now - WIKI_STALE_AFTER_MS - 1, now));
+    }
+
+    #[test]
+    fn maps_wikipedia_404_to_page_not_found_message() {
+        let error = map_http_error(
+            "wikipedia summary",
+            "https://en.wikipedia.org/api/rest_v1/page/summary/Foo",
+            &"http status: 404",
+        );
+        assert_eq!(
+            error.message,
+            "未找到对应的英文维基页面，请尝试重新选择"
+        );
+    }
+
+    #[test]
+    fn extracts_tmdb_tv_titles_for_fallback_search() {
+        let detail = serde_json::json!({
+            "name": "모두가 자신의 무가치함과 싸우고",
+            "original_name": "We Are All Trying Here"
+        });
+        let titles = titles_from_tmdb_detail(&detail, MetadataMediaType::Tv);
+        assert_eq!(titles.len(), 2);
+        assert!(titles.contains(&"We Are All Trying Here".to_string()));
+    }
+
+    #[test]
+    fn parses_wikidata_entity_id_from_sparql_iri() {
+        assert_eq!(
+            wikidata_entity_id_from_iri("http://www.wikidata.org/entity/Q137843064"),
+            Some("Q137843064".to_string())
+        );
     }
 }

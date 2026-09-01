@@ -397,16 +397,15 @@ export function MediaLibraryPanel() {
                     matchMethod: matchMethodForCandidate(preview.recommended, false),
                     candidatesConsidered: wikiCandidatesConsidered(preview),
                   });
-                  await queryClient.invalidateQueries({
+                  await queryClient.refetchQueries({
                     queryKey: ["library-wiki-status", primaryRoot],
                   });
-                  const nextPreview = await previewWikipediaEnrichment({
-                    root: primaryRoot,
-                    groupKey: group.key,
-                    tmdb: config.tmdb,
+                  setWikiPreviews((state) => {
+                    const next = { ...state };
+                    delete next[group.key];
+                    return next;
                   });
-                  setWikiPreviews((state) => ({ ...state, [group.key]: nextPreview }));
-                  return nextPreview;
+                  return preview;
                 }
                 return preview;
               }}
@@ -418,30 +417,28 @@ export function MediaLibraryPanel() {
                   matchMethod,
                   candidatesConsidered,
                 });
-                await queryClient.invalidateQueries({
+                await queryClient.refetchQueries({
                   queryKey: ["library-wiki-status", primaryRoot],
                 });
-                const preview = await previewWikipediaEnrichment({
-                  root: primaryRoot,
-                  groupKey: group.key,
-                  tmdb: config.tmdb,
+                setWikiPreviews((state) => {
+                  const next = { ...state };
+                  delete next[group.key];
+                  return next;
                 });
-                setWikiPreviews((state) => ({ ...state, [group.key]: preview }));
               }}
               onRefresh={async () => {
                 await refreshWikipediaPage({
                   root: primaryRoot,
                   groupKey: group.key,
                 });
-                await queryClient.invalidateQueries({
+                await queryClient.refetchQueries({
                   queryKey: ["library-wiki-status", primaryRoot],
                 });
-                const preview = await previewWikipediaEnrichment({
-                  root: primaryRoot,
-                  groupKey: group.key,
-                  tmdb: config.tmdb,
+                setWikiPreviews((state) => {
+                  const next = { ...state };
+                  delete next[group.key];
+                  return next;
                 });
-                setWikiPreviews((state) => ({ ...state, [group.key]: preview }));
               }}
               onError={(err) => setError(errorMessage(err))}
             />
@@ -545,11 +542,14 @@ function MatchedGroupCard({
   onRefresh: () => Promise<void>;
   onError: (error: unknown) => void;
 }) {
-  const [busy, setBusy] = useState<"preview" | "refresh" | null>(null);
+  const [busy, setBusy] = useState<"preview" | "refresh" | "apply" | null>(null);
+  const [applyingKey, setApplyingKey] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
   const existing = wikiStatus?.existing ?? preview?.existing ?? null;
   const isStale = wikiStatus?.isStale ?? preview?.isStale ?? false;
   const staleAfterMs = wikiStatus?.staleAfterMs ?? preview?.staleAfterMs ?? 0;
   const showPreviewPanel = Boolean(preview);
+  const isBusy = busy !== null;
 
   const candidates = [
     ...(preview?.wikidataCandidate ? [preview.wikidataCandidate] : []),
@@ -563,16 +563,26 @@ function MatchedGroupCard({
       ) === index,
   );
 
-  const run = async (action: "preview" | "refresh", fn: () => Promise<void>) => {
+  const run = async (
+    action: "preview" | "refresh" | "apply",
+    fn: () => Promise<void>,
+    applyingCandidateKey?: string,
+  ) => {
     setBusy(action);
+    setApplyingKey(applyingCandidateKey ?? null);
+    setNotice(null);
     try {
       await fn();
     } catch (error) {
       onError(error);
     } finally {
       setBusy(null);
+      setApplyingKey(null);
     }
   };
+
+  const candidateKey = (candidate: WikiEnrichmentCandidate) =>
+    `${candidate.pageLang}:${candidate.pageTitle}`;
 
   return (
     <div className="space-y-2 rounded-md border border-border p-2">
@@ -593,34 +603,42 @@ function MatchedGroupCard({
           ) : null}
         </div>
       ) : null}
+      {notice ? (
+        <p className="text-xs text-emerald-600 dark:text-emerald-400">{notice}</p>
+      ) : null}
       <div className="flex flex-wrap gap-1">
         {existing ? (
           <>
             <Button
               size="sm"
               variant="outline"
-              disabled={disabled || busy !== null}
-              onClick={() => void run("refresh", onRefresh)}
+              disabled={disabled || isBusy}
+              onClick={() =>
+                void run("refresh", async () => {
+                  await onRefresh();
+                  setNotice("维基内容已刷新");
+                })
+              }
             >
-              {busy === "refresh" ? "刷新中" : "刷新维基"}
+              {busy === "refresh" ? "刷新中…" : "刷新维基"}
             </Button>
             <Button
               size="sm"
               variant="outline"
-              disabled={disabled || busy !== null}
+              disabled={disabled || isBusy}
               onClick={() => void run("preview", async () => { await onPreview(false); })}
             >
-              {busy === "preview" ? "加载中" : "重新选择…"}
+              {busy === "preview" ? "加载中…" : "重新选择…"}
             </Button>
           </>
         ) : (
           <Button
             size="sm"
             variant="outline"
-            disabled={disabled || busy !== null}
+            disabled={disabled || isBusy}
             onClick={() => void run("preview", async () => { await onPreview(true); })}
           >
-            {busy === "preview" ? "补充中" : "补充维基（英文）"}
+            {busy === "preview" ? "补充中…" : "补充维基（英文）"}
           </Button>
         )}
       </div>
@@ -649,36 +667,54 @@ function MatchedGroupCard({
               ) : null}
             </div>
           ) : null}
-          {candidates.map((candidate) => (
-            <div
-              key={`${candidate.pageLang}:${candidate.pageTitle}`}
-              className="flex items-start justify-between gap-2"
-            >
-              <div className="min-w-0">
-                <p className="truncate font-medium">{candidate.pageTitle}</p>
-                {candidate.extract ? (
-                  <p className="line-clamp-2 text-muted-foreground">
-                    {candidate.extract}
-                  </p>
+          {candidates.map((candidate) => {
+            const key = candidateKey(candidate);
+            const isSelected =
+              existing?.pageTitle === candidate.pageTitle &&
+              existing.pageLang === candidate.pageLang;
+            return (
+              <div
+                key={key}
+                className="flex items-start justify-between gap-2"
+              >
+                <div className="min-w-0">
+                  <p className="truncate font-medium">{candidate.pageTitle}</p>
+                  {candidate.extract ? (
+                    <p className="line-clamp-2 text-muted-foreground">
+                      {candidate.extract}
+                    </p>
+                  ) : null}
+                </div>
+                {preview.needsUserPick || preview.conflict || existing ? (
+                  <Button
+                    size="sm"
+                    variant={isSelected ? "default" : "outline"}
+                    disabled={disabled || isBusy}
+                    onClick={() =>
+                      void run(
+                        "apply",
+                        async () => {
+                          await onApply(
+                            candidate,
+                            matchMethodForCandidate(candidate, true),
+                            wikiCandidatesConsidered(preview),
+                          );
+                          setNotice(`已写入：${candidate.pageTitle}`);
+                        },
+                        key,
+                      )
+                    }
+                  >
+                    {busy === "apply" && applyingKey === key
+                      ? "写入中…"
+                      : isSelected
+                        ? "当前选用"
+                        : "选用"}
+                  </Button>
                 ) : null}
               </div>
-              {preview.needsUserPick || preview.conflict || existing ? (
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={() =>
-                    void onApply(
-                      candidate,
-                      matchMethodForCandidate(candidate, true),
-                      wikiCandidatesConsidered(preview),
-                    ).catch(onError)
-                  }
-                >
-                  选用
-                </Button>
-              ) : null}
-            </div>
-          ))}
+            );
+          })}
           {candidates.length === 0 ? (
             <p className="text-muted-foreground">未找到英文维基页面。</p>
           ) : null}
