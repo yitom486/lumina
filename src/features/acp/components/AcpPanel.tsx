@@ -569,6 +569,7 @@ export function AcpPanel() {
         status={statusQuery.data}
         busy={busy || newChatMutation.isPending}
         sessionConnected={connectionState === "connected"}
+        sessionCwd={sessionCwd}
       />
     </ChatShell>
   );

@@ -49,6 +49,16 @@ export function respondAcpPermission(
   });
 }
 
+export async function acpSyncMcpCapabilities(options?: {
+  cwd?: string;
+  clientSettings?: AcpClientSettings;
+}): Promise<void> {
+  await invoke("acp_sync_mcp_capabilities", {
+    cwd: options?.cwd ?? null,
+    clientSettings: options?.clientSettings ?? null,
+  });
+}
+
 export async function acpPrompt(
   text: string,
   onEvent?: (event: AcpEvent) => void,

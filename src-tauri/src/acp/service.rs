@@ -21,8 +21,8 @@ use crate::acp::model::{
 };
 use crate::acp::paths::{resolve_session_cwd, status_from_profiles};
 use crate::mcp::{
-    lumina_mcp_servers, snapshot_path_for_cwd, write_snapshot, LuminaMcpSnapshot,
-    PromptSnapshotState,
+    lumina_mcp_servers, snapshot_path_for_cwd, sync_snapshot_capabilities, write_snapshot,
+    LuminaMcpSnapshot, PromptSnapshotState,
 };
 use crate::acp::profile::{
     prepare_profiles, resolve_active_profile, resolve_launch, AgentKind, PreparedProfiles,
@@ -146,6 +146,17 @@ impl AcpService {
         Ok(path)
     }
 
+    pub fn sync_mcp_capabilities(
+        &self,
+        cwd_hint: Option<&str>,
+        vision_capable: bool,
+    ) -> Result<(), AcpError> {
+        let workspace = resolve_session_cwd(cwd_hint)?;
+        let path = snapshot_path_for_cwd(&workspace);
+        sync_snapshot_capabilities(&path, vision_capable)
+            .map_err(|details| AcpError::internal(Some(&details)))
+    }
+
     pub fn build_prompt_snapshot(
         &self,
         context: Option<&VideoPromptContext>,
@@ -196,6 +207,7 @@ impl AcpService {
             .map_err(|_| AcpError::internal(Some("ACP session mutex poisoned")))?;
 
         if guard.is_some() {
+            self.sync_mcp_capabilities(cwd.as_deref(), client_settings.vision_capable)?;
             if let Some(session) = guard.as_mut() {
                 if let Some(selection) = client_settings.model_selection() {
                     let _ =
@@ -213,6 +225,7 @@ impl AcpService {
             saved_session.as_ref(),
             &prepared,
             profile_id.as_deref(),
+            client_settings.vision_capable,
             &mut on_event,
         ) {
             Ok(mut session) => {
@@ -293,8 +306,13 @@ impl AcpService {
                 }
             }
 
-            let new_session_id =
-                self.create_new_session(session, &cwd_string, &profile.id, &mut on_event)?;
+            let new_session_id = self.create_new_session(
+                session,
+                &cwd_string,
+                &profile.id,
+                client_settings.vision_capable,
+                &mut on_event,
+            )?;
             session.session_id = new_session_id;
 
             if let Some(selection) = client_settings.model_selection() {
@@ -531,7 +549,7 @@ impl AcpService {
         service.tool_access_enabled.store(false, Ordering::SeqCst);
         let prepared = prepare_profiles(&profiles);
         let session =
-            service.spawn_session(None, None, &prepared, Some(&profile_id), &mut |_| {})?;
+            service.spawn_session(None, None, &prepared, Some(&profile_id), true, &mut |_| {})?;
         let options = session.model_options.clone();
         if let Ok(mut guard) = service.session.lock() {
             *guard = Some(session);
@@ -575,8 +593,28 @@ impl AcpService {
                 .lock()
                 .map_err(|_| AcpError::internal(Some("ACP session mutex poisoned")))?;
             if guard.is_none() {
-                let mut spawned =
-                    self.spawn_session(cwd, saved_session, prepared, profile_override, on_event)?;
+                let vision_capable = resolve_session_cwd(cwd)
+                    .ok()
+                    .and_then(|workspace| {
+                        crate::mcp::read_snapshot(&snapshot_path_for_cwd(
+                            &workspace,
+                        ))
+                        .ok()
+                        .and_then(|snapshot| {
+                            snapshot
+                                .capabilities
+                                .map(|capabilities| capabilities.vision_capable)
+                        })
+                    })
+                    .unwrap_or(true);
+                let mut spawned = self.spawn_session(
+                    cwd,
+                    saved_session,
+                    prepared,
+                    profile_override,
+                    vision_capable,
+                    on_event,
+                )?;
                 let selection = self
                     .next_session_model_selection
                     .lock()
@@ -710,6 +748,7 @@ impl AcpService {
         saved_session: Option<&SavedSessionHint>,
         prepared: &PreparedProfiles,
         profile_id: Option<&str>,
+        vision_capable: bool,
         on_event: &mut dyn FnMut(AcpEvent),
     ) -> Result<LiveSession, AcpError> {
         let workspace = resolve_session_cwd(cwd_hint)?;
@@ -877,6 +916,12 @@ impl AcpService {
         session.init = init.clone();
         let supports_resume = init.supports_session_resume;
 
+        sync_snapshot_capabilities(
+            &snapshot_path_for_cwd(std::path::Path::new(&cwd)),
+            vision_capable,
+        )
+        .map_err(|error| AcpError::internal(Some(&error)))?;
+
         on_event(AcpEvent::Progress {
             message: "正在创建会话…".into(),
         });
@@ -928,11 +973,11 @@ impl AcpService {
                 }
                 Err(error) => {
                     tracing::warn!(%error, "session/resume failed; creating new session");
-                    self.create_new_session(&mut session, &cwd, &profile.id, on_event)?
+                    self.create_new_session(&mut session, &cwd, &profile.id, vision_capable, on_event)?
                 }
             }
         } else {
-            self.create_new_session(&mut session, &cwd, &profile.id, on_event)?
+            self.create_new_session(&mut session, &cwd, &profile.id, vision_capable, on_event)?
         };
 
         session.session_id = session_id;
@@ -945,13 +990,12 @@ impl AcpService {
         session: &mut LiveSession,
         cwd: &str,
         profile_id: &str,
+        vision_capable: bool,
         on_event: &mut dyn FnMut(AcpEvent),
     ) -> Result<String, AcpError> {
         let snapshot_path = snapshot_path_for_cwd(std::path::Path::new(cwd));
-        let _ = write_snapshot(
-            &snapshot_path,
-            &LuminaMcpSnapshot::empty(),
-        );
+        sync_snapshot_capabilities(&snapshot_path, vision_capable)
+            .map_err(|error| AcpError::internal(Some(&error)))?;
         let new_id = session.next_id;
         session.next_id += 1;
         let mcp_servers = lumina_mcp_servers(&snapshot_path_for_cwd(std::path::Path::new(cwd)));

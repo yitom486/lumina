@@ -1,3 +1,6 @@
+# Lumina local runtime (MCP snapshot, tmp captures; not source)
+.lumina/
+
 # Local planning (not tracked)
 project.md
 .plan/

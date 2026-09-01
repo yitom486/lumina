@@ -41,7 +41,7 @@ pub use subtitle::{
 
 use commands::acp::{
     acp_cancel, acp_close, acp_connect, acp_new_chat, acp_prompt, acp_respond_permission,
-    acp_set_session_model, acp_status,
+    acp_set_session_model, acp_status, acp_sync_mcp_capabilities,
 };
 use commands::asr::{asr_status, asr_transcribe};
 use commands::library::{
@@ -124,6 +124,7 @@ pub fn run() {
             acp_respond_permission,
             acp_connect,
             acp_new_chat,
+            acp_sync_mcp_capabilities,
             acp_set_session_model,
             acp_prompt,
             acp_cancel,

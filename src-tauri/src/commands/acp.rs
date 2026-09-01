@@ -72,6 +72,22 @@ pub async fn acp_connect(
 }
 
 #[tauri::command]
+pub async fn acp_sync_mcp_capabilities(
+    state: State<'_, AppState>,
+    cwd: Option<String>,
+    client_settings: Option<AcpClientSettings>,
+) -> Result<(), AcpError> {
+    let acp = state.acp.clone();
+    let settings = client_settings.unwrap_or_default();
+    tauri::async_runtime::spawn_blocking(move || {
+        acp.sync_mcp_capabilities(cwd.as_deref(), settings.vision_capable)
+    })
+    .await
+    .map_err(|error| AcpError::internal(Some(&format!("acp sync mcp capabilities join: {error}"))))??;
+    Ok(())
+}
+
+#[tauri::command]
 // Tauri maps IPC payload fields to command arguments directly.
 #[allow(clippy::too_many_arguments)]
 pub async fn acp_prompt(

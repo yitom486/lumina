@@ -4,8 +4,9 @@ import { useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 
 import { useAcpProfilesStore } from "../acpProfilesStore";
-import { useAcpSettingsStore } from "../acpSettingsStore";
+import { clientSettingsFromStore, useAcpSettingsStore } from "../acpSettingsStore";
 import type { AgentProfileStatus, ThinkingLevel } from "../types";
+import { acpSyncMcpCapabilities } from "../api";
 import { useAgentModelControls } from "../useAgentModelControls";
 import { ChatColumn } from "./ChatShell";
 
@@ -13,6 +14,7 @@ type Props = {
   status: import("../types").AcpStatus | undefined;
   busy?: boolean;
   sessionConnected?: boolean;
+  sessionCwd?: string;
 };
 
 const AGENT_MODES = [
@@ -29,6 +31,7 @@ export function AgentSettingsPanel({
   status,
   busy,
   sessionConnected,
+  sessionCwd,
 }: Props) {
   const queryClient = useQueryClient();
   const [open, setOpen] = useState(false);
@@ -191,15 +194,26 @@ export function AgentSettingsPanel({
                 className="size-3.5 rounded border border-border"
                 checked={visionCapable}
                 disabled={controlsDisabled}
-                onChange={(e) =>
-                  patchSettings({ visionCapable: e.target.checked })
-                }
+                onChange={(e) => {
+                  const nextVisionCapable = e.target.checked;
+                  patchSettings({ visionCapable: nextVisionCapable });
+                  if (sessionConnected) {
+                    void acpSyncMcpCapabilities({
+                      cwd: sessionCwd,
+                      clientSettings: clientSettingsFromStore({
+                        ...useAcpSettingsStore.getState(),
+                        visionCapable: nextVisionCapable,
+                      }),
+                    });
+                  }
+                }}
               />
               启用画面截图工具（需识图模型）
             </label>
             <p className="text-[10px] leading-relaxed text-muted-foreground">
               以发送消息时的播放进度为锚点；默认单帧；前后秒数按约 1 帧/秒取样（单侧最多
-              7 秒、共最多 15 帧）；640px JPEG；工具返回后本地即删。
+              7 秒、共最多 15 帧）；640px JPEG；工具返回后本地即删。关闭后 MCP
+              不再暴露截图工具；若 Agent 仍看不到变化，请点「新对话」。
             </p>
           </Field>
 

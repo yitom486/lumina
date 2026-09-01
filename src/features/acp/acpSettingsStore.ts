@@ -7,7 +7,7 @@ const DEFAULT_SETTINGS: AcpClientSettings = {
   permissionMode: "auto",
   thinkingLevel: "minimal",
   agentMode: "default",
-  visionCapable: false,
+  visionCapable: true,
   modelId: "",
   reasoningEffort: "",
 };
@@ -60,7 +60,7 @@ export function clientSettingsFromStore(
     permissionMode: settings.permissionMode,
     thinkingLevel: settings.thinkingLevel,
     agentMode: settings.agentMode,
-    visionCapable: settings.visionCapable ?? false,
+    visionCapable: settings.visionCapable ?? true,
     modelId: settings.modelId?.trim() || null,
     reasoningEffort: settings.reasoningEffort?.trim() || null,
   };

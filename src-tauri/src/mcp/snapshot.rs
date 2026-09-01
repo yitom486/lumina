@@ -122,6 +122,19 @@ pub fn read_snapshot(path: &Path) -> Result<LuminaMcpSnapshot, String> {
     serde_json::from_str(&raw).map_err(|error| format!("parse snapshot: {error}"))
 }
 
+pub fn sync_snapshot_capabilities(path: &Path, vision_capable: bool) -> Result<(), String> {
+    let mut snapshot = if path.is_file() {
+        read_snapshot(path).unwrap_or_else(|_| LuminaMcpSnapshot::empty())
+    } else {
+        LuminaMcpSnapshot::empty()
+    };
+    snapshot.capabilities = Some(AgentCapabilities {
+        vision_capable,
+    });
+    snapshot.updated_at_ms = now_ms();
+    write_snapshot(path, &snapshot)
+}
+
 pub fn resolve_snapshot_path() -> Option<PathBuf> {
     if let Ok(path) = std::env::var(CONTEXT_FILE_ENV) {
         let trimmed = path.trim();

@@ -59,7 +59,7 @@ impl Default for AcpClientSettings {
             permission_mode: default_permission_mode(),
             thinking_level: default_thinking_level(),
             agent_mode: default_agent_mode(),
-            vision_capable: false,
+            vision_capable: true,
             model_id: None,
             reasoning_effort: None,
         }
