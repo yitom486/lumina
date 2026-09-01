@@ -8,6 +8,8 @@ import type {
   LibraryStatus,
   LibraryWatchConfig,
   MediaMetadataContext,
+  ModelDiscoveryConfig,
+  ModelDiscoveryResult,
   MetadataCredentialStatus,
   MetadataMediaType,
   MetadataWriteResult,
@@ -17,6 +19,12 @@ import type {
   SaveMetadataCredentialsInput,
   TmdbConfig,
 } from "./types";
+
+export function discoverLibraryModels(
+  config: ModelDiscoveryConfig,
+): Promise<ModelDiscoveryResult> {
+  return invoke<ModelDiscoveryResult>("library_models_discover", { config });
+}
 
 export function getMetadataCredentialStatus(): Promise<MetadataCredentialStatus> {
   return invoke<MetadataCredentialStatus>("library_credential_status");

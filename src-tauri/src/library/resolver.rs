@@ -14,8 +14,9 @@ use crate::library::credentials::{self, CredentialKind};
 use crate::library::error::LibraryError;
 use crate::library::model::{
     CredentialValidationConfig, CredentialValidationItem, CredentialValidationResult, MediaGroup,
-    MetadataMediaType, ModelResolverConfig, ResolverIntent, ResolverPreview,
-    ResolverProviderConfig, ResolverRunConfig, ResolverSelection, TmdbCandidate, TmdbConfig,
+    MetadataMediaType, ModelDiscoveryConfig, ModelDiscoveryResult, ModelResolverConfig,
+    ResolverIntent, ResolverPreview, ResolverProviderConfig, ResolverRunConfig, ResolverSelection,
+    TmdbCandidate, TmdbConfig,
 };
 
 const AUTO_MATCH_CONFIDENCE_MILLI: u16 = 950;
@@ -91,6 +92,69 @@ pub fn validate_credentials(config: CredentialValidationConfig) -> CredentialVal
             "TMDb credential validation failed",
         ),
     }
+}
+
+/// Query `/models` only after the user explicitly chooses to connect. A
+/// service may omit discovery; manual model-ID input is still supported.
+pub fn discover_models(config: ModelDiscoveryConfig) -> ModelDiscoveryResult {
+    let result = (|| -> Result<Vec<String>, LibraryError> {
+        validate_https_url(&config.base_url, "model base URL")?;
+        let api_key = resolve_secret(
+            CredentialKind::ModelApiKey,
+            &config.api_key_env,
+            "model API key",
+        )?;
+        let endpoint = format!("{}/models", config.base_url.trim_end_matches('/'));
+        let mut response = ureq::get(&endpoint)
+            .header("Authorization", &format!("Bearer {api_key}"))
+            .header("Accept", "application/json")
+            .call()
+            .map_err(|error| {
+                LibraryError::remote_request_failed(Some(&format!("model discovery: {error}")))
+            })?;
+        let payload: Value = response.body_mut().read_json().map_err(|error| {
+            LibraryError::remote_request_failed(Some(&format!("model discovery body: {error}")))
+        })?;
+        Ok(model_ids_from_payload(&payload))
+    })();
+
+    match result {
+        Ok(models) if models.is_empty() => ModelDiscoveryResult {
+            connected: true,
+            models,
+            message: "模型服务已连接，但未提供可选模型；请手动输入模型 ID".into(),
+        },
+        Ok(models) => ModelDiscoveryResult {
+            connected: true,
+            models,
+            message: "模型服务已连接，请选择用于媒体匹配的模型".into(),
+        },
+        Err(error) => {
+            tracing::warn!(code = ?error.code, details = ?error.details, "model discovery failed");
+            ModelDiscoveryResult {
+                connected: false,
+                models: Vec::new(),
+                message: "无法连接模型服务，请检查地址和密钥后重试".into(),
+            }
+        }
+    }
+}
+
+fn model_ids_from_payload(payload: &Value) -> Vec<String> {
+    let mut models = payload
+        .get("data")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|item| item.get("id").and_then(Value::as_str))
+        .map(str::trim)
+        .filter(|id| !id.is_empty())
+        .map(str::to_string)
+        .collect::<Vec<_>>();
+    models.sort();
+    models.dedup();
+    models.truncate(200);
+    models
 }
 
 fn validation_item(
@@ -536,5 +600,13 @@ mod tests {
     fn agent_response_parser_accepts_a_json_code_fence() {
         let value = parse_agent_json("```json\n{\"ok\": true}\n```").expect("parse JSON");
         assert_eq!(value.get("ok").and_then(Value::as_bool), Some(true));
+    }
+
+    #[test]
+    fn model_discovery_keeps_only_valid_unique_ids() {
+        let models = model_ids_from_payload(&json!({
+            "data": [{ "id": "small" }, { "id": "large" }, { "id": "small" }, { "id": " " }, {}]
+        }));
+        assert_eq!(models, vec!["large", "small"]);
     }
 }

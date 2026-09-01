@@ -17,7 +17,7 @@ const DEFAULTS = {
   roots: [] as string[],
   pollIntervalSecs: 30,
   privacyAcknowledged: false,
-  resolverProvider: "acpAgent" as const,
+  resolverProvider: "directApi" as const,
   agentProfileId: "",
   modelBaseUrl: "",
   modelId: "",

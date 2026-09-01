@@ -10,6 +10,7 @@ import { errorMessage } from "@/lib/format";
 import {
   applyTmdbMediaMatch,
   deleteMetadataCredential,
+  discoverLibraryModels,
   getLibraryStatus,
   getMetadataCredentialStatus,
   listPendingMediaGroups,
@@ -24,6 +25,7 @@ import { useLibrarySettingsStore } from "../settingsStore";
 import type {
   CredentialKind,
   CredentialValidationResult,
+  ModelDiscoveryResult,
   PendingMediaGroup,
   ResolverPreview,
   ResolverRunConfig,
@@ -48,6 +50,7 @@ export function MediaLibraryPanel() {
   const [modelApiKey, setModelApiKey] = useState("");
   const [tmdbAccessToken, setTmdbAccessToken] = useState("");
   const [validation, setValidation] = useState<CredentialValidationResult | null>(null);
+  const [modelConnection, setModelConnection] = useState<ModelDiscoveryResult | null>(null);
 
   const statusQuery = useQuery({ queryKey: ["library-status"], queryFn: getLibraryStatus });
   const pendingQuery = useQuery({
@@ -129,6 +132,24 @@ export function MediaLibraryPanel() {
     onSuccess: (result) => setValidation(result),
     onError: (err) => setError(errorMessage(err)),
   });
+  const discoverModelsMutation = useMutation({
+    mutationFn: async () => {
+      if (modelApiKey.trim()) {
+        await saveMetadataCredentials({ modelApiKey: modelApiKey.trim() });
+        setModelApiKey("");
+        await queryClient.invalidateQueries({ queryKey: ["library-credential-status"] });
+      }
+      return discoverLibraryModels({
+        baseUrl: modelBaseUrl,
+        apiKeyEnv: "LUMINA_METADATA_MODEL_API_KEY",
+      });
+    },
+    onSuccess: setModelConnection,
+    onError: (err) => setError(errorMessage(err)),
+  });
+  const directModelReady = Boolean(modelConnection?.connected && modelId.trim());
+  const resolverReady = resolverProvider === "directApi" ? directModelReady : Boolean(selectedAgentProfileId);
+  const selectedModelOption = modelConnection?.models.includes(modelId) ? modelId : "__manual__";
 
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-auto p-3 text-xs">
@@ -163,14 +184,15 @@ export function MediaLibraryPanel() {
       <details className="rounded-md border border-border p-2">
         <summary className="cursor-pointer font-medium">智能匹配设置</summary>
         <div className="mt-2 space-y-2">
-          <Field label="智能匹配来源"><select className="h-7 w-full rounded border border-border bg-background px-2" value={resolverProvider} onChange={(e) => { setValidation(null); patchSettings({ resolverProvider: e.target.value as "acpAgent" | "directApi" }); }}><option value="acpAgent">复用已配置的 Lumina Agent（推荐）</option><option value="directApi">直接 API</option></select></Field>
+          <Field label="智能匹配来源"><select className="h-7 w-full rounded border border-border bg-background px-2" value={resolverProvider} onChange={(e) => { setValidation(null); setModelConnection(null); patchSettings({ resolverProvider: e.target.value as "acpAgent" | "directApi" }); }}><option value="directApi">独立模型服务（推荐）</option><option value="acpAgent">复用 Lumina Agent（高级）</option></select></Field>
           {resolverProvider === "acpAgent" ? <>
             <Field label="用于智能匹配的 Agent"><select className="h-7 w-full rounded border border-border bg-background px-2" value={selectedAgentProfileId} onChange={(e) => { setValidation(null); patchSettings({ agentProfileId: e.target.value }); }}>{acpProfiles.map((profile) => <option key={profile.id} value={profile.id}>{profile.name}</option>)}</select></Field>
-            <p className="text-muted-foreground">复用该 Agent 的登录与模型配置；每次识别创建独立短会话，不读取或写入 AI 对话历史，也不允许工具、文件系统或终端访问。</p>
+            <p className="text-muted-foreground">这是兼容模式：模型仍由该 Agent 自身配置决定，ACP 没有统一的模型列举或切换能力。每次识别创建独立短会话，不读取或写入 AI 对话历史，也不允许工具、文件系统或终端访问。</p>
           </> : <>
-            <Field label="模型地址"><input value={modelBaseUrl} onChange={(e) => { setValidation(null); patchSettings({ modelBaseUrl: e.target.value }); }} placeholder="https://…/v1" /></Field>
-            <Field label="模型 ID"><input value={modelId} onChange={(e) => { setValidation(null); patchSettings({ modelId: e.target.value }); }} placeholder="低成本 JSON 模型" /></Field>
-            <Field label="模型 API Key（留空则不更新）"><input type="password" autoComplete="off" value={modelApiKey} onChange={(e) => { setValidation(null); setModelApiKey(e.target.value); }} placeholder={credentialStatusQuery.data?.modelApiKeySaved ? "已保存到此设备" : "输入后保存到此设备"} /></Field>
+            <Field label="模型服务地址"><input value={modelBaseUrl} onChange={(e) => { setValidation(null); setModelConnection(null); patchSettings({ modelBaseUrl: e.target.value }); }} placeholder="https://…/v1" /></Field>
+            <Field label="模型 API Key（留空则沿用已保存密钥）"><input type="password" autoComplete="off" value={modelApiKey} onChange={(e) => { setValidation(null); setModelConnection(null); setModelApiKey(e.target.value); }} placeholder={credentialStatusQuery.data?.modelApiKeySaved ? "已保存到此设备" : "输入后保存到此设备"} /></Field>
+            <div className="space-y-1"><Button size="sm" variant="outline" disabled={!modelBaseUrl.trim() || (!modelApiKey.trim() && !credentialStatusQuery.data?.modelApiKeySaved) || discoverModelsMutation.isPending} onClick={() => discoverModelsMutation.mutate()}>{modelApiKey.trim() ? "保存并连接" : "连接并获取模型"}</Button>{modelConnection ? <p className={modelConnection.connected ? "text-emerald-500" : "text-destructive"}>{modelConnection.message}</p> : <p className="text-muted-foreground">连接成功后再选择模型；模型服务和聊天 Agent 的配置彼此独立。</p>}</div>
+            {modelConnection?.connected ? <Field label="用于媒体匹配的模型">{modelConnection.models.length ? <select className="h-7 w-full rounded border border-border bg-background px-2" value={selectedModelOption} onChange={(e) => { setValidation(null); patchSettings({ modelId: e.target.value === "__manual__" ? "" : e.target.value }); }}><option value="">请选择模型</option>{modelConnection.models.map((model) => <option key={model} value={model}>{model}</option>)}<option value="__manual__">手动输入模型 ID</option></select> : null}{(!modelConnection.models.length || selectedModelOption === "__manual__") ? <input value={modelId} onChange={(e) => { setValidation(null); patchSettings({ modelId: e.target.value }); }} placeholder="输入兼容服务的模型 ID" /> : null}</Field> : null}
           </>}
           <Field label="TMDb Read Access Token（留空则不更新）"><input type="password" autoComplete="off" value={tmdbAccessToken} onChange={(e) => { setValidation(null); setTmdbAccessToken(e.target.value); }} placeholder={credentialStatusQuery.data?.tmdbAccessTokenSaved ? "已保存到此设备" : "输入后保存到此设备"} /></Field>
           <div className="space-y-1 text-muted-foreground">
@@ -197,7 +219,7 @@ export function MediaLibraryPanel() {
             pending={pending}
             title={titles[pending.group.key] ?? pending.group.manualTitle ?? ""}
             preview={previews[pending.group.key]}
-            disabled={!statusQuery.data?.running}
+            disabled={!statusQuery.data?.running || !resolverReady}
             onTitle={(title) => setTitles((state) => ({ ...state, [pending.group.key]: title }))}
             onSaveTitle={async (title) => {
               await setManualMediaTitle({ root: pending.root, groupKey: pending.group.key, title });

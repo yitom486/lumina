@@ -6,8 +6,8 @@ use tauri::State;
 use crate::library::{
     credentials, CredentialKind, CredentialSaveInput, CredentialStatus, CredentialValidationConfig,
     CredentialValidationResult, LibraryError, LibraryIndex, LibraryStatus, LibraryWatchConfig,
-    MediaMetadataContext, MetadataMediaType, MetadataWriteResult, PendingMediaGroup,
-    ResolverPreview, ResolverRunConfig, TmdbConfig,
+    MediaMetadataContext, MetadataMediaType, MetadataWriteResult, ModelDiscoveryConfig,
+    ModelDiscoveryResult, PendingMediaGroup, ResolverPreview, ResolverRunConfig, TmdbConfig,
 };
 use crate::state::AppState;
 
@@ -147,4 +147,15 @@ pub async fn library_credentials_validate(
         .map_err(|error| {
             LibraryError::internal(Some(&format!("credential validation join: {error}")))
         })
+}
+
+/// Connect only after an explicit user action and retrieve the model IDs an
+/// OpenAI-compatible endpoint publishes.
+#[tauri::command]
+pub async fn library_models_discover(
+    config: ModelDiscoveryConfig,
+) -> Result<ModelDiscoveryResult, LibraryError> {
+    tauri::async_runtime::spawn_blocking(move || crate::library::discover_models(config))
+        .await
+        .map_err(|error| LibraryError::internal(Some(&format!("model discovery join: {error}"))))
 }

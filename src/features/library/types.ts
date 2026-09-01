@@ -66,6 +66,17 @@ export type ModelResolverConfig = {
   apiKeyEnv: string;
 };
 
+export type ModelDiscoveryConfig = {
+  baseUrl: string;
+  apiKeyEnv: string;
+};
+
+export type ModelDiscoveryResult = {
+  connected: boolean;
+  models: string[];
+  message: string;
+};
+
 export type TmdbConfig = {
   accessTokenEnv: string;
   language: string;

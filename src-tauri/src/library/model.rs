@@ -148,6 +148,25 @@ pub struct ModelResolverConfig {
     pub api_key_env: String,
 }
 
+/// Connection settings used before a user selects a concrete model. This
+/// excludes `model_id` because a compatible service can provide its list only
+/// after the user explicitly connects.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ModelDiscoveryConfig {
+    pub base_url: String,
+    pub api_key_env: String,
+}
+
+/// Safe user-facing result for a deliberate model-service connection.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ModelDiscoveryResult {
+    pub connected: bool,
+    pub models: Vec<String>,
+    pub message: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct TmdbConfig {
