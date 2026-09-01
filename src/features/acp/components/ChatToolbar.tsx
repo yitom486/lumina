@@ -1,3 +1,5 @@
+import { History, Plus } from "lucide-react";
+
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
@@ -6,14 +8,15 @@ import { ChatColumn } from "./ChatShell";
 
 type Props = {
   agentLabel: string;
+  chatTitle?: string | null;
   connectionState: AcpConnectionState;
   statusLine?: string | null;
   statusError?: string | null;
   loading?: boolean;
   busy?: boolean;
-  historyItems: { id: string; label: string }[];
+  historyCount?: number;
   onNewChat: () => void;
-  onPickHistory: (id: string) => void;
+  onOpenHistory?: () => void;
   onReconnect?: () => void;
 };
 
@@ -25,107 +28,108 @@ const CONNECTION_LABEL: Record<AcpConnectionState, string> = {
   error: "连接失败",
 };
 
-/** Session controls — matches common chat apps (new chat / history on top). */
+/** Header — status, title preview, history / new chat actions. */
 export function ChatToolbar({
   agentLabel,
+  chatTitle,
   connectionState,
   statusLine,
   statusError,
   loading,
   busy,
-  historyItems,
+  historyCount = 0,
   onNewChat,
-  onPickHistory,
+  onOpenHistory,
   onReconnect,
 }: Props) {
   return (
-    <ChatColumn className="shrink-0 space-y-1.5 border-b border-border py-2">
-      <div className="flex items-center gap-1.5">
-        <Button
-          size="sm"
-          variant="outline"
-          className="h-7 shrink-0 px-2 text-[11px]"
-          disabled={busy}
-          onClick={onNewChat}
-        >
-          新建对话
-        </Button>
-
-        <details className="relative shrink-0">
-          <summary
-            className={cn(
-              "flex h-7 cursor-pointer list-none items-center rounded-md border border-border px-2 text-[11px] text-muted-foreground",
-              "hover:bg-muted [&::-webkit-details-marker]:hidden",
-              historyItems.length === 0 && "hidden",
-            )}
-          >
-            本会话
-          </summary>
-          {historyItems.length > 0 ? (
-            <ul className="absolute left-0 z-20 mt-1 max-h-40 w-52 overflow-y-auto rounded-md border border-border bg-popover py-1 shadow-md">
-              {historyItems.map((item) => (
-                <li key={item.id}>
-                  <button
-                    type="button"
-                    className="block w-full truncate px-2 py-1.5 text-left text-[11px] hover:bg-muted"
-                    onClick={() => onPickHistory(item.id)}
-                  >
-                    {item.label}
-                  </button>
-                </li>
-              ))}
-            </ul>
+    <ChatColumn className="shrink-0 space-y-1 border-b border-border py-2">
+      <div className="flex items-start gap-2">
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-2">
+            <span className="text-[12px] font-medium text-foreground">
+              {agentLabel}
+            </span>
+            <span
+              className={cn(
+                "inline-flex min-w-0 items-center gap-1 rounded-full px-2 py-0.5 text-[10px]",
+                connectionState === "connected" &&
+                  "bg-emerald-500/15 text-emerald-700 dark:text-emerald-400",
+                connectionState === "connecting" &&
+                  "bg-amber-500/15 text-amber-700 dark:text-amber-400",
+                connectionState === "error" &&
+                  "bg-destructive/15 text-destructive",
+                (connectionState === "idle" ||
+                  connectionState === "unavailable") &&
+                  "bg-muted text-muted-foreground",
+              )}
+            >
+              <span
+                className={cn(
+                  "h-1.5 w-1.5 shrink-0 rounded-full",
+                  connectionState === "connected" && "bg-emerald-500",
+                  connectionState === "connecting" &&
+                    "animate-pulse bg-amber-500",
+                  connectionState === "error" && "bg-destructive",
+                  (connectionState === "idle" ||
+                    connectionState === "unavailable") &&
+                    "bg-muted-foreground/50",
+                )}
+              />
+              {CONNECTION_LABEL[connectionState]}
+            </span>
+          </div>
+          {chatTitle ? (
+            <p className="mt-1 truncate text-[11px] text-muted-foreground">
+              {chatTitle}
+            </p>
           ) : null}
-        </details>
+        </div>
 
-        <span
-          className={cn(
-            "ml-auto inline-flex min-w-0 shrink items-center gap-1 rounded-full px-2 py-0.5 text-[10px]",
-            connectionState === "connected" &&
-              "bg-emerald-500/15 text-emerald-700 dark:text-emerald-400",
-            connectionState === "connecting" &&
-              "bg-amber-500/15 text-amber-700 dark:text-amber-400",
-            connectionState === "error" &&
-              "bg-destructive/15 text-destructive",
-            (connectionState === "idle" ||
-              connectionState === "unavailable") &&
-              "bg-muted text-muted-foreground",
-          )}
-          title={CONNECTION_LABEL[connectionState]}
-        >
-          <span
-            className={cn(
-              "h-1.5 w-1.5 shrink-0 rounded-full",
-              connectionState === "connected" && "bg-emerald-500",
-              connectionState === "connecting" &&
-                "animate-pulse bg-amber-500",
-              connectionState === "error" && "bg-destructive",
-              (connectionState === "idle" ||
-                connectionState === "unavailable") &&
-                "bg-muted-foreground/50",
-            )}
-          />
-          <span className="truncate">{CONNECTION_LABEL[connectionState]}</span>
-        </span>
-
-        <span className="min-w-0 max-w-[8rem] truncate text-[11px] text-muted-foreground">
-          {loading ? "正在检测…" : agentLabel}
-        </span>
-
-        {connectionState === "error" || connectionState === "idle" ? (
-          onReconnect ? (
+        <div className="flex shrink-0 items-center gap-1">
+          {onOpenHistory ? (
+            <Button
+              size="icon"
+              variant="ghost"
+              className="relative size-7"
+              disabled={busy}
+              aria-label="历史对话"
+              title="历史对话"
+              onClick={onOpenHistory}
+            >
+              <History className="size-3.5" />
+              {historyCount > 0 ? (
+                <span className="absolute -right-0.5 -top-0.5 flex size-3.5 items-center justify-center rounded-full bg-primary text-[8px] text-primary-foreground">
+                  {historyCount > 9 ? "9+" : historyCount}
+                </span>
+              ) : null}
+            </Button>
+          ) : null}
           <Button
-            size="sm"
-            variant="outline"
-            className="h-7 shrink-0 px-2 text-[11px]"
-            disabled={busy || loading}
-            onClick={onReconnect}
+            size="icon"
+            variant="ghost"
+            className="size-7"
+            disabled={busy}
+            aria-label="新建对话"
+            title="新建对话"
+            onClick={onNewChat}
           >
-            重连
+            <Plus className="size-3.5" />
           </Button>
-          ) : null
-        ) : null}
-
+          {connectionState === "error" || connectionState === "idle" ? (
+            onReconnect ? (
+              <Button
+                size="sm"
+                variant="outline"
+                className="h-7 px-2 text-[11px]"
+                disabled={busy || loading}
+                onClick={onReconnect}
+              >
+                重连
+              </Button>
+            ) : null
+          ) : null}
+        </div>
       </div>
 
       {statusError ? (

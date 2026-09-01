@@ -27,6 +27,10 @@ import {
   pushNotice,
   type SystemNotice,
 } from "../chatTurns";
+import {
+  listConversationsForScope,
+  useChatHistoryStore,
+} from "../chatHistoryStore";
 import { workspaceCwdFromMedia } from "../cwd";
 import { profilesSignature } from "../profilesSignature";
 import type {
@@ -38,6 +42,7 @@ import type {
 } from "../types";
 import { useVideoPromptContext } from "../useVideoPromptContext";
 import { AgentSettingsPanel } from "./AgentSettingsPanel";
+import { ChatHistorySheet } from "./ChatHistorySheet";
 import { ChatComposer } from "./ChatComposer";
 import { ChatShell } from "./ChatShell";
 import { ChatColumn } from "./ChatShell";
@@ -55,6 +60,15 @@ export function AcpPanel() {
   const hasSavedSession = useAcpSessionStore((s) => s.savedSession !== null);
   const setSavedSession = useAcpSessionStore((s) => s.setSavedSession);
   const clearSavedSession = useAcpSessionStore((s) => s.clearSavedSession);
+  const conversations = useChatHistoryStore((s) => s.conversations);
+  const activeConversationId = useChatHistoryStore((s) => s.activeConversationId);
+  const upsertActiveConversation = useChatHistoryStore(
+    (s) => s.upsertActiveConversation,
+  );
+  const setActiveConversationId = useChatHistoryStore(
+    (s) => s.setActiveConversationId,
+  );
+  const deleteConversation = useChatHistoryStore((s) => s.deleteConversation);
 
   const statusQuery = useQuery({
     queryKey: ["acp-status", activeProfileId, profilesSig],
@@ -81,6 +95,11 @@ export function AcpPanel() {
   const prevConnectKeyRef = useRef<string | null>(null);
   const [pendingPermission, setPendingPermission] =
     useState<PendingPermission | null>(null);
+  const [conversationId, setConversationId] = useState(
+    () => `chat-${Date.now()}`,
+  );
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [historyIncludeAll, setHistoryIncludeAll] = useState(false);
 
   const available = statusQuery.data?.available ?? false;
   const sessionActive = statusQuery.data?.sessionActive ?? false;
@@ -93,17 +112,20 @@ export function AcpPanel() {
   );
   const agentLabel = activeProfile?.name ?? "Agent";
 
-  const historyItems = useMemo(
+  const chatTitle = useMemo(() => {
+    const first = turns.find((turn) => turn.userText.trim());
+    return first?.userText.trim().slice(0, 72) ?? null;
+  }, [turns]);
+
+  const scopedHistory = useMemo(
     () =>
-      turns
-        .filter((turn) => turn.userText.trim() || turn.answer.trim())
-        .map((turn) => ({
-          id: turn.id,
-          label:
-            turn.userText.trim().slice(0, 48) ||
-            turn.answer.trim().slice(0, 48),
-        })),
-    [turns],
+      listConversationsForScope(
+        conversations,
+        sessionCwd,
+        activeProfileId,
+        historyIncludeAll,
+      ),
+    [conversations, sessionCwd, activeProfileId, historyIncludeAll],
   );
 
   const isBlankChat = turns.length === 0 && notices.length === 0;
@@ -111,6 +133,26 @@ export function AcpPanel() {
   const pushSystem = (content: string) => {
     setNotices((prev) => pushNotice(prev, idSeq, content));
   };
+
+  useEffect(() => {
+    if (busy) return;
+    if (turns.every((turn) => !turn.userText.trim() && !turn.answer.trim())) {
+      return;
+    }
+    upsertActiveConversation({
+      id: conversationId,
+      cwd: sessionCwd ?? null,
+      profileId: activeProfileId,
+      turns,
+    });
+  }, [
+    activeProfileId,
+    busy,
+    conversationId,
+    sessionCwd,
+    turns,
+    upsertActiveConversation,
+  ]);
 
   const newChatMutation = useMutation({
     mutationFn: async () => {
@@ -153,6 +195,9 @@ export function AcpPanel() {
     onSuccess: async () => {
       setConnectionState("connected");
       setProgress(null);
+      setConversationId(`chat-${Date.now()}`);
+      setActiveConversationId(null);
+      setHistoryOpen(false);
       await queryClient.invalidateQueries({ queryKey: ["acp-status"] });
     },
     onError: (error) => {
@@ -397,10 +442,17 @@ export function AcpPanel() {
     newChatMutation.mutate();
   };
 
-  const scrollToTurn = (turnId: string) => {
-    turnListRef.current
-      ?.querySelector(`[data-turn-id="${turnId}"]`)
-      ?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  const loadConversation = (id: string) => {
+    const item = conversations.find((conversation) => conversation.id === id);
+    if (!item) return;
+    setConversationId(item.id);
+    setActiveConversationId(item.id);
+    setTurns(item.turns);
+    setNotices([]);
+    setDraft("");
+    setProgress(null);
+    setPendingPermission(null);
+    setHistoryOpen(false);
   };
 
   const statusLine = statusQuery.isLoading
@@ -417,20 +469,34 @@ export function AcpPanel() {
 
   return (
     <ChatShell data-chat-shell={listKey}>
-      <ChatToolbar
-        agentLabel={agentLabel}
-        connectionState={connectionState}
-        statusLine={statusLine}
-        statusError={
-          statusQuery.isError ? errorMessage(statusQuery.error) : null
-        }
-        loading={statusQuery.isLoading}
-        busy={busy || newChatMutation.isPending}
-        historyItems={historyItems}
-        onNewChat={startNewChat}
-        onPickHistory={scrollToTurn}
-        onReconnect={handleReconnect}
-      />
+      <ChatColumn className="relative shrink-0">
+        <ChatToolbar
+          agentLabel={agentLabel}
+          chatTitle={chatTitle}
+          connectionState={connectionState}
+          statusLine={statusLine}
+          statusError={
+            statusQuery.isError ? errorMessage(statusQuery.error) : null
+          }
+          loading={statusQuery.isLoading}
+          busy={busy || newChatMutation.isPending}
+          historyCount={scopedHistory.length}
+          onNewChat={startNewChat}
+          onOpenHistory={() => setHistoryOpen((open) => !open)}
+          onReconnect={handleReconnect}
+        />
+        <ChatHistorySheet
+          open={historyOpen}
+          items={scopedHistory}
+          activeId={activeConversationId ?? conversationId}
+          scopeLabel="当前视频"
+          includeAll={historyIncludeAll}
+          onToggleScope={() => setHistoryIncludeAll((value) => !value)}
+          onClose={() => setHistoryOpen(false)}
+          onSelect={loadConversation}
+          onDelete={deleteConversation}
+        />
+      </ChatColumn>
 
       <div
         ref={turnListRef}

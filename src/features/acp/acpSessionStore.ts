@@ -9,7 +9,7 @@ type AcpSessionStore = {
   clearSavedSession: () => void;
 };
 
-/** Session id hint for ACP resume; chat history is not persisted. */
+/** Session id hint for ACP resume; chat transcripts live in chatHistoryStore. */
 export const useAcpSessionStore = create<AcpSessionStore>()(
   persist(
     (set) => ({
