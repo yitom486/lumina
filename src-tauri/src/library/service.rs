@@ -9,7 +9,7 @@ use crate::library::model::{
     GroupResolution, LibraryIndex, LibraryScanEvent, LibraryScanIssue, LibraryStatus, LibraryWatchConfig,
     MediaGroup, MediaMetadataContext, MetadataMediaType, MetadataWriteResult, PendingMediaGroup,
     ResolverPreview, ResolverRunConfig, TmdbConfig, WikiEnrichmentCandidate, WikiEnrichmentPreview,
-    WikiMatchMethod, WikiWriteResult,
+    WikiGroupStatus, WikiMatchMethod, WikiWriteResult,
 };
 use crate::library::{metadata, scanner, store, RemoteResolver};
 
@@ -339,6 +339,31 @@ impl MediaLibraryService {
             match_method,
             candidates_considered,
         )
+    }
+
+    pub fn refresh_wikipedia_page(
+        &self,
+        root: String,
+        group_key: String,
+    ) -> Result<WikiWriteResult, LibraryError> {
+        self.ensure_configured_root(&root)?;
+        let path = PathBuf::from(&root);
+        let index = store::load(&path)?.ok_or_else(|| {
+            LibraryError::group_not_found(Some("library index is not available for root"))
+        })?;
+        if !index.groups.iter().any(|group| group.key == group_key) {
+            return Err(LibraryError::group_not_found(Some(&group_key)));
+        }
+        metadata::refresh_wikipedia_page(&path, &group_key)
+    }
+
+    pub fn wikipedia_statuses(&self, root: String) -> Result<Vec<WikiGroupStatus>, LibraryError> {
+        self.ensure_configured_root(&root)?;
+        let path = PathBuf::from(&root);
+        let index = store::load(&path)?.ok_or_else(|| {
+            LibraryError::group_not_found(Some("library index is not available for root"))
+        })?;
+        metadata::wikipedia_statuses_for_root(&path, &index)
     }
 
     fn ensure_configured_root(&self, root: &str) -> Result<(), LibraryError> {

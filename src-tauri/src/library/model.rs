@@ -333,6 +333,8 @@ pub struct MetadataWriteResult {
 }
 
 pub const WIKI_METADATA_SCHEMA_VERSION: u32 = 1;
+/// Local wiki.json older than this is considered stale (30 days).
+pub const WIKI_STALE_AFTER_MS: u128 = 30 * 24 * 60 * 60 * 1000;
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -410,12 +412,38 @@ pub struct WikiEnrichmentCandidate {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
+pub struct WikiZhReference {
+    pub page_lang: String,
+    pub page_title: String,
+    pub page_url: String,
+    pub extract: Option<String>,
+    pub wikidata_id: Option<String>,
+    pub aligned_with_en: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct WikiGroupStatus {
+    pub group_key: String,
+    pub existing: Option<WikiMetadata>,
+    pub is_stale: bool,
+    pub stale_after_ms: u128,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
 pub struct WikiEnrichmentPreview {
     pub wikidata_candidate: Option<WikiEnrichmentCandidate>,
     pub search_candidates: Vec<WikiEnrichmentCandidate>,
     pub recommended: Option<WikiEnrichmentCandidate>,
     pub needs_user_pick: bool,
     pub conflict: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub existing: Option<WikiMetadata>,
+    pub is_stale: bool,
+    pub stale_after_ms: u128,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub zhwiki_reference: Option<WikiZhReference>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

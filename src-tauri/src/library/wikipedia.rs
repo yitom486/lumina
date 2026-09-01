@@ -10,32 +10,101 @@ use url::form_urlencoded;
 
 use crate::library::error::LibraryError;
 use crate::library::model::{
-    MetadataMediaType, StoredMetadata, WikiCandidateSource, WikiEnrichmentCandidate,
-    WikiEnrichmentPreview, WikiMatchInfo, WikiMatchMethod, WikiMetadata, WikiWriteResult,
-    WIKI_METADATA_SCHEMA_VERSION,
+    GroupResolution, MetadataMediaType, StoredMetadata, WikiCandidateSource,
+    WikiEnrichmentCandidate, WikiEnrichmentPreview, WikiMatchInfo, WikiMatchMethod, WikiMetadata,
+    MediaGroup, WikiWriteResult, WikiGroupStatus, WikiZhReference, WIKI_METADATA_SCHEMA_VERSION,
+    WIKI_STALE_AFTER_MS,
 };
 use crate::library::{resolver, store, wikitext};
 
 const USER_AGENT: &str = "Lumina/0.1 (local media reader; Tauri app)";
 const PREFERRED_WIKI_LANG: &str = "en";
+const ZHWIKI_LANG: &str = "zh";
 const SEARCH_LIMIT: usize = 3;
+
+pub fn load_existing_wiki(root: &Path, group_key: &str) -> Result<Option<WikiMetadata>, LibraryError> {
+    store::load_group_json(root, group_key, "wiki.json")
+}
+
+pub fn is_wiki_stale(updated_at_ms: u128, now_ms: u128) -> bool {
+    now_ms.saturating_sub(updated_at_ms) > WIKI_STALE_AFTER_MS
+}
 
 pub fn preview_enrichment(
     stored: &StoredMetadata,
     tmdb_id: u64,
     media_type: MetadataMediaType,
     tmdb: &crate::library::model::TmdbConfig,
+    existing: Option<&WikiMetadata>,
 ) -> Result<WikiEnrichmentPreview, LibraryError> {
     let wikidata_candidate = resolve_wikidata_candidate(tmdb_id, media_type, tmdb)?;
     let search_candidates = search_title_candidates(stored)?;
     let aligned = align_candidates(wikidata_candidate.as_ref(), &search_candidates);
+    let now = now_ms();
+    let is_stale = existing
+        .map(|wiki| is_wiki_stale(wiki.updated_at_ms, now))
+        .unwrap_or(false);
+    let wikidata_id = wikidata_candidate
+        .as_ref()
+        .and_then(|item| item.wikidata_id.as_deref())
+        .or_else(|| existing.and_then(|wiki| wiki.wikidata_id.as_deref()));
+    let zhwiki_reference = wikidata_id.and_then(fetch_zhwiki_reference);
     Ok(WikiEnrichmentPreview {
         wikidata_candidate,
         search_candidates,
         recommended: aligned.recommended,
         needs_user_pick: aligned.needs_user_pick,
         conflict: aligned.conflict,
+        existing: existing.cloned(),
+        is_stale,
+        stale_after_ms: WIKI_STALE_AFTER_MS,
+        zhwiki_reference,
     })
+}
+
+pub fn refresh_existing_page(root: &Path, group_key: &str) -> Result<WikiWriteResult, LibraryError> {
+    let Some(existing) = load_existing_wiki(root, group_key)? else {
+        return Err(LibraryError::invalid_input("尚未补充维基百科，请先选择英文页面"));
+    };
+    let candidate = WikiEnrichmentCandidate {
+        page_lang: existing.page_lang.clone(),
+        page_title: existing.page_title.clone(),
+        page_url: existing.page_url.clone(),
+        wikidata_id: existing.wikidata_id.clone(),
+        extract: None,
+        source: WikiCandidateSource::Wikidata,
+    };
+    write_selected_page(
+        root,
+        group_key,
+        &candidate,
+        existing.match_info.method,
+        existing.match_info.candidates_considered,
+    )
+}
+
+pub fn statuses_for_matched_groups(
+    root: &Path,
+    groups: &[MediaGroup],
+) -> Result<Vec<WikiGroupStatus>, LibraryError> {
+    let now = now_ms();
+    Ok(groups
+        .iter()
+        .filter(|group| matches!(group.resolution, GroupResolution::Matched { .. }))
+        .map(|group| {
+            let existing = load_existing_wiki(root, &group.key).ok().flatten();
+            let is_stale = existing
+                .as_ref()
+                .map(|wiki| is_wiki_stale(wiki.updated_at_ms, now))
+                .unwrap_or(false);
+            WikiGroupStatus {
+                group_key: group.key.clone(),
+                existing,
+                is_stale,
+                stale_after_ms: WIKI_STALE_AFTER_MS,
+            }
+        })
+        .collect())
 }
 
 pub fn write_selected_page(
@@ -211,6 +280,30 @@ fn search_title_candidates(stored: &StoredMetadata) -> Result<Vec<WikiEnrichment
         }
     }
     Ok(candidates)
+}
+
+fn fetch_zhwiki_reference(wikidata_id: &str) -> Option<WikiZhReference> {
+    let normalized = normalize_wikidata_id(wikidata_id);
+    if normalized.is_empty() {
+        return None;
+    }
+    let page_title = fetch_wikidata_sitelink(&normalized, ZHWIKI_LANG).ok().flatten()?;
+    let summary = fetch_page_summary(ZHWIKI_LANG, &page_title).ok()?;
+    let zh_qid = lookup_page_wikidata_id(ZHWIKI_LANG, &page_title)
+        .ok()
+        .flatten();
+    let aligned_with_en = zh_qid
+        .as_deref()
+        .map(|id| id == normalized)
+        .unwrap_or(false);
+    Some(WikiZhReference {
+        page_lang: ZHWIKI_LANG.into(),
+        page_title: summary.title,
+        page_url: summary.page_url,
+        extract: Some(summary.extract),
+        wikidata_id: zh_qid,
+        aligned_with_en,
+    })
 }
 
 fn fetch_wikidata_sitelink(wikidata_id: &str, lang: &str) -> Result<Option<String>, LibraryError> {
@@ -445,5 +538,12 @@ mod tests {
     fn normalize_wikidata_id_adds_prefix() {
         assert_eq!(normalize_wikidata_id("12345"), "Q12345");
         assert_eq!(normalize_wikidata_id("q99"), "Q99");
+    }
+
+    #[test]
+    fn stale_after_threshold() {
+        let now = WIKI_STALE_AFTER_MS + 1_000;
+        assert!(!is_wiki_stale(now - WIKI_STALE_AFTER_MS, now));
+        assert!(is_wiki_stale(now - WIKI_STALE_AFTER_MS - 1, now));
     }
 }

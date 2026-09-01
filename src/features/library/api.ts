@@ -25,6 +25,7 @@ import type {
   CredentialValidationItem,
   WikiEnrichmentCandidate,
   WikiEnrichmentPreview,
+  WikiGroupStatus,
   WikiMatchMethod,
   WikiWriteResult,
 } from "./types";
@@ -140,6 +141,17 @@ export function applyWikipediaPage(input: {
   candidatesConsidered: number;
 }): Promise<WikiWriteResult> {
   return invoke<WikiWriteResult>("library_wikipedia_apply", input);
+}
+
+export function refreshWikipediaPage(input: {
+  root: string;
+  groupKey: string;
+}): Promise<WikiWriteResult> {
+  return invoke<WikiWriteResult>("library_wikipedia_refresh", input);
+}
+
+export function listWikipediaStatuses(root: string): Promise<WikiGroupStatus[]> {
+  return invoke<WikiGroupStatus[]>("library_wikipedia_statuses", { root });
 }
 
 export function getMediaMetadataContext(

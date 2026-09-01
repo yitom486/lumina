@@ -285,6 +285,26 @@ export type WikiEnrichmentPreview = {
   recommended?: WikiEnrichmentCandidate | null;
   needsUserPick: boolean;
   conflict: boolean;
+  existing?: WikiMetadata | null;
+  isStale: boolean;
+  staleAfterMs: number;
+  zhwikiReference?: WikiZhReference | null;
+};
+
+export type WikiZhReference = {
+  pageLang: string;
+  pageTitle: string;
+  pageUrl: string;
+  extract?: string | null;
+  wikidataId?: string | null;
+  alignedWithEn: boolean;
+};
+
+export type WikiGroupStatus = {
+  groupKey: string;
+  existing?: WikiMetadata | null;
+  isStale: boolean;
+  staleAfterMs: number;
 };
 
 export type WikiWriteResult = {

@@ -24,7 +24,8 @@ pub use library::{
     ModelDiscoveryResult, PendingMediaGroup, ResolverIntent, ResolverPreview,
     ResolverProviderConfig, ResolverRunConfig, ResolverSelection, StoredMetadata,
     StoredMetadataKind, TmdbCandidate, TmdbConfig, WikiEnrichmentCandidate, WikiEnrichmentPreview,
-    WikiMatchMethod, WikiMetadata, WikiWriteResult, MergedMediaContext,
+    WikiMatchMethod, WikiMetadata, WikiWriteResult, MergedMediaContext, WikiGroupStatus,
+    WikiZhReference, WIKI_STALE_AFTER_MS,
 };
 pub use media::{
     MediaChapter, MediaError, MediaErrorCode, MediaInfo, MediaInspector, MediaStream, StreamKind,
@@ -48,7 +49,8 @@ use commands::library::{
     library_credentials_validate, library_list_groups, library_models_discover,
     library_pending_groups, library_resolve_preview, library_scan_now, library_set_manual_title,
     library_status, library_tmdb_credentials_validate, library_watch_start, library_watch_stop,
-    library_wikipedia_apply, library_wikipedia_preview,
+    library_wikipedia_apply, library_wikipedia_preview, library_wikipedia_refresh,
+    library_wikipedia_statuses,
 };
 use commands::media::{media_inspect, media_list_siblings};
 use commands::notes::{
@@ -106,6 +108,8 @@ pub fn run() {
             library_list_groups,
             library_wikipedia_preview,
             library_wikipedia_apply,
+            library_wikipedia_refresh,
+            library_wikipedia_statuses,
             library_credential_status,
             library_credentials_save,
             library_credential_delete,

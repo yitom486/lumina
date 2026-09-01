@@ -12,6 +12,7 @@ use crate::library::{
     MediaMetadataContext, MetadataMediaType, MetadataWriteResult, ModelDiscoveryConfig,
     ModelDiscoveryResult, PendingMediaGroup, ResolverPreview, ResolverRunConfig, TmdbConfig,
     WikiEnrichmentCandidate, WikiEnrichmentPreview, WikiMatchMethod, WikiWriteResult,
+    WikiGroupStatus,
 };
 use crate::state::AppState;
 
@@ -165,6 +166,29 @@ pub async fn library_wikipedia_apply(
     })
     .await
     .map_err(|error| LibraryError::internal(Some(&format!("wikipedia apply join: {error}"))))?
+}
+
+#[tauri::command]
+pub async fn library_wikipedia_refresh(
+    state: State<'_, AppState>,
+    root: String,
+    group_key: String,
+) -> Result<WikiWriteResult, LibraryError> {
+    let service = state.library.clone();
+    tauri::async_runtime::spawn_blocking(move || service.refresh_wikipedia_page(root, group_key))
+        .await
+        .map_err(|error| LibraryError::internal(Some(&format!("wikipedia refresh join: {error}"))))?
+}
+
+#[tauri::command]
+pub async fn library_wikipedia_statuses(
+    state: State<'_, AppState>,
+    root: String,
+) -> Result<Vec<WikiGroupStatus>, LibraryError> {
+    let service = state.library.clone();
+    tauri::async_runtime::spawn_blocking(move || service.wikipedia_statuses(root))
+        .await
+        .map_err(|error| LibraryError::internal(Some(&format!("wikipedia status join: {error}"))))?
 }
 
 #[tauri::command]

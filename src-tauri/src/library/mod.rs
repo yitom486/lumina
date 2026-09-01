@@ -27,6 +27,7 @@ pub use model::{
     ResolverProviderConfig, ResolverRunConfig, ResolverSelection, StoredMetadata,
     StoredMetadataKind, TmdbCandidate, TmdbConfig, WikiEnrichmentCandidate, WikiEnrichmentPreview,
     WikiMatchMethod, WikiMetadata, WikiCharacter, WikiEpisodeSummary, WikiWriteResult,
+    WikiZhReference, WikiGroupStatus, WIKI_STALE_AFTER_MS,
 };
 pub use resolver::{
     discover_agent_models, discover_models, validate_credentials, validate_tmdb_credentials,

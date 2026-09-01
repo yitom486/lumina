@@ -10,6 +10,8 @@ import { errorMessage } from "@/lib/format";
 import {
   applyTmdbMediaMatch,
   applyWikipediaPage,
+  listWikipediaStatuses,
+  refreshWikipediaPage,
   deleteMetadataCredential,
   discoverLibraryAgentModels,
   discoverLibraryModels,
@@ -48,6 +50,7 @@ import type {
   LibraryScanEvent,
   WikiEnrichmentCandidate,
   WikiEnrichmentPreview,
+  WikiGroupStatus,
   WikiMatchMethod,
 } from "../types";
 
@@ -70,7 +73,6 @@ export function MediaLibraryPanel() {
   const [titles, setTitles] = useState<Record<string, string>>({});
   const [previews, setPreviews] = useState<Record<string, ResolverPreview>>({});
   const [wikiPreviews, setWikiPreviews] = useState<Record<string, WikiEnrichmentPreview>>({});
-  const [wikiApplied, setWikiApplied] = useState<Record<string, boolean>>({});
   const [modelApiKey, setModelApiKey] = useState("");
   const [tmdbAccessToken, setTmdbAccessToken] = useState("");
   const [validation, setValidation] = useState<CredentialValidationResult | null>(null);
@@ -107,6 +109,18 @@ export function MediaLibraryPanel() {
       ),
     [matchedQuery.data],
   );
+  const wikiStatusQuery = useQuery({
+    queryKey: ["library-wiki-status", primaryRoot],
+    queryFn: () => listWikipediaStatuses(primaryRoot),
+    enabled: Boolean(primaryRoot && matchedGroups.length > 0),
+  });
+  const wikiStatusByKey = useMemo(() => {
+    const map: Record<string, WikiGroupStatus> = {};
+    for (const item of wikiStatusQuery.data ?? []) {
+      map[item.groupKey] = item;
+    }
+    return map;
+  }, [wikiStatusQuery.data]);
   const credentialStatusQuery = useQuery({
     queryKey: ["library-credential-status"],
     queryFn: getMetadataCredentialStatus,
@@ -354,24 +368,46 @@ export function MediaLibraryPanel() {
         <section className="min-h-0 space-y-2">
           <p className="font-medium">已匹配分组（{matchedGroups.length}）</p>
           <p className="text-muted-foreground">
-            完成 TMDb 匹配后，可补充英文维基百科摘要（CC BY-SA）；需已保存 TMDb Token 且联网。
+            完成 TMDb 匹配后，可补充英文维基百科摘要（CC BY-SA）；已写入的分组可刷新或重新选择页面。预览时可只读对照中文维基，需已保存 TMDb Token 且联网。
           </p>
           {matchedGroups.map((group) => (
             <MatchedGroupCard
               key={`${primaryRoot}:${group.key}`}
-              root={primaryRoot}
               group={group}
               preview={wikiPreviews[group.key]}
-              applied={wikiApplied[group.key]}
-              tmdb={config.tmdb}
+              wikiStatus={wikiStatusByKey[group.key]}
               disabled={!credentialStatusQuery.data?.tmdbAccessTokenSaved}
-              onPreview={async () => {
+              onPreview={async (autoApply) => {
                 const preview = await previewWikipediaEnrichment({
                   root: primaryRoot,
                   groupKey: group.key,
                   tmdb: config.tmdb,
                 });
                 setWikiPreviews((state) => ({ ...state, [group.key]: preview }));
+                if (
+                  autoApply &&
+                  !preview.needsUserPick &&
+                  preview.recommended &&
+                  !preview.conflict
+                ) {
+                  await applyWikipediaPage({
+                    root: primaryRoot,
+                    groupKey: group.key,
+                    candidate: preview.recommended,
+                    matchMethod: matchMethodForCandidate(preview.recommended, false),
+                    candidatesConsidered: wikiCandidatesConsidered(preview),
+                  });
+                  await queryClient.invalidateQueries({
+                    queryKey: ["library-wiki-status", primaryRoot],
+                  });
+                  const nextPreview = await previewWikipediaEnrichment({
+                    root: primaryRoot,
+                    groupKey: group.key,
+                    tmdb: config.tmdb,
+                  });
+                  setWikiPreviews((state) => ({ ...state, [group.key]: nextPreview }));
+                  return nextPreview;
+                }
                 return preview;
               }}
               onApply={async (candidate, matchMethod, candidatesConsidered) => {
@@ -382,7 +418,24 @@ export function MediaLibraryPanel() {
                   matchMethod,
                   candidatesConsidered,
                 });
-                setWikiApplied((state) => ({ ...state, [group.key]: true }));
+                await queryClient.invalidateQueries({
+                  queryKey: ["library-wiki-status", primaryRoot],
+                });
+                const preview = await previewWikipediaEnrichment({
+                  root: primaryRoot,
+                  groupKey: group.key,
+                  tmdb: config.tmdb,
+                });
+                setWikiPreviews((state) => ({ ...state, [group.key]: preview }));
+              }}
+              onRefresh={async () => {
+                await refreshWikipediaPage({
+                  root: primaryRoot,
+                  groupKey: group.key,
+                });
+                await queryClient.invalidateQueries({
+                  queryKey: ["library-wiki-status", primaryRoot],
+                });
                 const preview = await previewWikipediaEnrichment({
                   root: primaryRoot,
                   groupKey: group.key,
@@ -456,29 +509,48 @@ function matchMethodForCandidate(
   return candidate.source === "wikidata" ? "wikidata" : "search";
 }
 
+function formatWikiUpdatedAt(updatedAtMs: number): string {
+  if (!updatedAtMs) return "未知";
+  return new Date(updatedAtMs).toLocaleDateString("zh-CN", {
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+  });
+}
+
+function staleDaysLabel(staleAfterMs: number): number {
+  return Math.round(staleAfterMs / (24 * 60 * 60 * 1000));
+}
+
 function MatchedGroupCard({
   group,
   preview,
-  applied,
+  wikiStatus,
   disabled,
   onPreview,
   onApply,
+  onRefresh,
   onError,
 }: {
-  root: string;
   group: MediaGroup;
   preview?: WikiEnrichmentPreview;
-  applied?: boolean;
-  tmdb: ResolverRunConfig["tmdb"];
+  wikiStatus?: WikiGroupStatus;
   disabled: boolean;
-  onPreview: () => Promise<WikiEnrichmentPreview>;
+  onPreview: (autoApply: boolean) => Promise<WikiEnrichmentPreview>;
   onApply: (
     candidate: WikiEnrichmentCandidate,
     matchMethod: WikiMatchMethod,
     candidatesConsidered: number,
   ) => Promise<void>;
+  onRefresh: () => Promise<void>;
   onError: (error: unknown) => void;
 }) {
+  const [busy, setBusy] = useState<"preview" | "refresh" | null>(null);
+  const existing = wikiStatus?.existing ?? preview?.existing ?? null;
+  const isStale = wikiStatus?.isStale ?? preview?.isStale ?? false;
+  const staleAfterMs = wikiStatus?.staleAfterMs ?? preview?.staleAfterMs ?? 0;
+  const showPreviewPanel = Boolean(preview);
+
   const candidates = [
     ...(preview?.wikidataCandidate ? [preview.wikidataCandidate] : []),
     ...(preview?.searchCandidates ?? []),
@@ -491,47 +563,91 @@ function MatchedGroupCard({
       ) === index,
   );
 
+  const run = async (action: "preview" | "refresh", fn: () => Promise<void>) => {
+    setBusy(action);
+    try {
+      await fn();
+    } catch (error) {
+      onError(error);
+    } finally {
+      setBusy(null);
+    }
+  };
+
   return (
     <div className="space-y-2 rounded-md border border-border p-2">
       <p className="font-medium">{group.displayName}</p>
       <p className="text-muted-foreground">
         {group.files.length} 个文件 · TMDb 已匹配
       </p>
-      <Button
-        size="sm"
-        variant="outline"
-        disabled={disabled}
-        onClick={() => {
-          void onPreview()
-            .then((nextPreview) => {
-              if (
-                !nextPreview.needsUserPick &&
-                nextPreview.recommended &&
-                !nextPreview.conflict
-              ) {
-                return onApply(
-                  nextPreview.recommended,
-                  matchMethodForCandidate(nextPreview.recommended, false),
-                  wikiCandidatesConsidered(nextPreview),
-                );
-              }
-            })
-            .catch(onError);
-        }}
-      >
-        补充维基（英文）
-      </Button>
-      {preview ? (
+      {existing ? (
+        <div className="space-y-1 text-xs">
+          <p className="text-emerald-600 dark:text-emerald-400">
+            已补充：{existing.pageTitle} · 更新于{" "}
+            {formatWikiUpdatedAt(Number(existing.updatedAtMs))}
+          </p>
+          {isStale ? (
+            <p className="text-amber-600 dark:text-amber-400">
+              已超过 {staleDaysLabel(staleAfterMs)} 天未刷新，建议更新维基内容。
+            </p>
+          ) : null}
+        </div>
+      ) : null}
+      <div className="flex flex-wrap gap-1">
+        {existing ? (
+          <>
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={disabled || busy !== null}
+              onClick={() => void run("refresh", onRefresh)}
+            >
+              {busy === "refresh" ? "刷新中" : "刷新维基"}
+            </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={disabled || busy !== null}
+              onClick={() => void run("preview", async () => { await onPreview(false); })}
+            >
+              {busy === "preview" ? "加载中" : "重新选择…"}
+            </Button>
+          </>
+        ) : (
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={disabled || busy !== null}
+            onClick={() => void run("preview", async () => { await onPreview(true); })}
+          >
+            {busy === "preview" ? "补充中" : "补充维基（英文）"}
+          </Button>
+        )}
+      </div>
+      {showPreviewPanel && preview ? (
         <div className="space-y-1 rounded bg-muted/40 p-2 text-xs">
           {preview.conflict ? (
             <p className="text-amber-600 dark:text-amber-400">
               Wikidata 与搜索结果不一致，请选择正确页面。
             </p>
           ) : null}
-          {applied && preview?.recommended ? (
-            <p className="text-emerald-600 dark:text-emerald-400">
-              已写入：{preview.recommended.pageTitle}
-            </p>
+          {preview.zhwikiReference ? (
+            <div className="space-y-1 rounded border border-border/60 p-2">
+              <p className="font-medium">
+                中文维基对照（只读，不写入本地）
+                {preview.zhwikiReference.alignedWithEn
+                  ? " · 与英文页面对齐"
+                  : " · 未与当前英文页面对齐"}
+              </p>
+              <p className="truncate font-medium">
+                {preview.zhwikiReference.pageTitle}
+              </p>
+              {preview.zhwikiReference.extract ? (
+                <p className="line-clamp-3 text-muted-foreground">
+                  {preview.zhwikiReference.extract}
+                </p>
+              ) : null}
+            </div>
           ) : null}
           {candidates.map((candidate) => (
             <div
@@ -546,7 +662,7 @@ function MatchedGroupCard({
                   </p>
                 ) : null}
               </div>
-              {preview.needsUserPick || preview.conflict ? (
+              {preview.needsUserPick || preview.conflict || existing ? (
                 <Button
                   size="sm"
                   variant="outline"

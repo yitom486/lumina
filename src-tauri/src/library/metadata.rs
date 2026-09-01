@@ -11,7 +11,8 @@ use crate::library::model::{
     IndexedMediaFile, LibraryIndex, MediaGroup, MediaMetadataContext, MergedMediaContext,
     MetadataCastMember, MetadataMediaType, MetadataWriteResult, StoredMetadata, StoredMetadataKind,
     TmdbConfig, WikiCharacter, WikiEnrichmentCandidate, WikiEnrichmentPreview, WikiEpisodeSummary,
-    WikiMatchInfo, WikiMatchMethod, WikiMetadata, WikiWriteResult, METADATA_SCHEMA_VERSION,
+    WikiGroupStatus, WikiMatchInfo, WikiMatchMethod, WikiMetadata, WikiWriteResult,
+    METADATA_SCHEMA_VERSION,
 };
 use crate::library::{resolver, store, wikipedia};
 
@@ -224,7 +225,22 @@ pub fn preview_wikipedia_enrichment(
     let Some(stored) = load_group_overview(root, group_key, media_type)? else {
         return Err(LibraryError::invalid_input("请先完成 TMDb 匹配"));
     };
-    wikipedia::preview_enrichment(&stored, tmdb_id, media_type, tmdb)
+    let existing = wikipedia::load_existing_wiki(root, group_key)?;
+    wikipedia::preview_enrichment(&stored, tmdb_id, media_type, tmdb, existing.as_ref())
+}
+
+pub fn refresh_wikipedia_page(
+    root: &Path,
+    group_key: &str,
+) -> Result<WikiWriteResult, LibraryError> {
+    wikipedia::refresh_existing_page(root, group_key)
+}
+
+pub fn wikipedia_statuses_for_root(
+    root: &Path,
+    index: &LibraryIndex,
+) -> Result<Vec<WikiGroupStatus>, LibraryError> {
+    wikipedia::statuses_for_matched_groups(root, &index.groups)
 }
 
 pub fn apply_wikipedia_page(
