@@ -210,7 +210,10 @@ export function MediaLibraryPanel() {
     onError: (err) => setError(errorMessage(err)),
   });
   const directModelReady = Boolean(modelConnection?.connected && modelId.trim());
-  const agentModelReady = Boolean(agentConnection?.connected && (!agentConnection.options.models.length || agentModelId));
+  // Connecting only discovers the live model list. Actual matching always
+  // starts a fresh restricted ACP session, so a saved model choice remains
+  // usable after an application restart.
+  const agentModelReady = Boolean(agentModelId.trim());
   const resolverReady = resolverProvider === "directApi" ? directModelReady : agentModelReady;
   const selectedModelOption = modelConnection?.models.includes(modelId) ? modelId : "__manual__";
 
@@ -243,6 +246,7 @@ export function MediaLibraryPanel() {
         <label className="block text-muted-foreground">扫描周期（秒）
           <input className="ml-2 h-7 w-16 rounded border border-border bg-background px-1" type="number" min={5} value={pollIntervalSecs} onChange={(event) => patchSettings({ pollIntervalSecs: Math.max(5, Number(event.target.value) || 5) })} />
         </label>
+        <p className="text-muted-foreground">扫描和本地索引不需要连接 Agent 或配置 TMDb；智能匹配时才会使用它们。</p>
         {statusQuery.data?.lastScanError ? <div className="space-y-2 rounded-md border border-destructive/50 bg-destructive/10 p-2 text-destructive" role="alert">
           <p>上一次扫描失败：{statusQuery.data.lastScanError.message}</p>
           <p className="text-muted-foreground">守护服务会在下个扫描周期自动重试；你也可以立即重试。</p>
@@ -256,7 +260,7 @@ export function MediaLibraryPanel() {
           <Field label="智能匹配来源"><select className="h-7 w-full rounded border border-border bg-background px-2" value={resolverProvider} onChange={(e) => { setValidation(null); setModelConnection(null); setAgentConnection(null); patchSettings({ resolverProvider: e.target.value as "acpAgent" | "directApi" }); }}><option value="directApi">独立模型服务（推荐）</option><option value="acpAgent">复用 Lumina Agent（高级）</option></select></Field>
           {resolverProvider === "acpAgent" ? <>
             <Field label="用于智能匹配的 Agent"><select className="h-7 w-full rounded border border-border bg-background px-2" value={selectedAgentProfileId} onChange={(e) => { setValidation(null); setAgentConnection(null); patchSettings({ agentProfileId: e.target.value, agentModelId: "", agentReasoningEffort: "" }); }}>{acpProfiles.map((profile) => <option key={profile.id} value={profile.id}>{profile.name}</option>)}</select></Field>
-            <div className="space-y-1"><Button size="sm" variant="outline" disabled={!selectedAgentProfileId || discoverAgentModelsMutation.isPending} onClick={() => discoverAgentModelsMutation.mutate()}>{discoverAgentModelsMutation.isPending ? "连接中" : "连接 Agent 并获取模型"}</Button>{agentConnection ? <p className={agentConnection.connected ? "text-emerald-500" : "text-destructive"}>{agentConnection.message}</p> : <p className="text-muted-foreground">先连接 Agent，再选择本次媒体匹配使用的模型；不会复用或改写聊天会话。</p>}</div>
+            <div className="space-y-1"><Button size="sm" variant="outline" disabled={!selectedAgentProfileId || discoverAgentModelsMutation.isPending} onClick={() => discoverAgentModelsMutation.mutate()}>{discoverAgentModelsMutation.isPending ? "连接中" : "连接 Agent 并获取模型"}</Button>{agentConnection ? <p className={agentConnection.connected ? "text-emerald-500" : "text-destructive"}>{agentConnection.message}</p> : agentModelId ? <p className="text-muted-foreground">已保存媒体匹配模型：{agentModelId}{agentReasoningEffort ? ` · ${agentReasoningEffort}` : ""}。可直接用于智能匹配；仅在更换或刷新模型列表时需要连接。</p> : <p className="text-muted-foreground">先连接 Agent，再选择本次媒体匹配使用的模型；不会复用或改写聊天会话。</p>}</div>
             {agentConnection?.connected && agentConnection.options.models.length ? <><Field label="用于媒体匹配的模型"><select className="h-7 w-full rounded border border-border bg-background px-2" value={agentModelId} onChange={(e) => { setValidation(null); patchSettings({ agentModelId: e.target.value }); }}><option value="">请选择模型</option>{agentConnection.options.models.map((option) => <option key={option.value} value={option.value}>{option.name}</option>)}</select></Field><p className="text-muted-foreground">文件名解析是轻量任务：优先选择账户可用的低成本/mini 模型，而非最长任务或旗舰模型。</p>{agentConnection.options.reasoningEfforts.length ? <Field label="推理强度"><select className="h-7 w-full rounded border border-border bg-background px-2" value={agentReasoningEffort} onChange={(e) => { setValidation(null); patchSettings({ agentReasoningEffort: e.target.value }); }}><option value="">使用模型默认值</option>{agentConnection.options.reasoningEfforts.map((option) => <option key={option.value} value={option.value}>{option.name}</option>)}</select></Field> : null}<p className="text-muted-foreground">建议设为 low 或 minimal（若该模型提供），以降低文件名匹配的延迟与成本。</p></> : null}
             <p className="text-muted-foreground">每次识别创建独立短会话，发出请求前会应用这里选定的模型与推理强度；不读取或写入 AI 对话历史，也不允许工具、文件系统或终端访问。</p>
           </> : <>
@@ -268,6 +272,7 @@ export function MediaLibraryPanel() {
           <Field label="TMDb Read Access Token（留空则不更新）"><input type="password" autoComplete="off" value={tmdbAccessToken} onChange={(e) => { setValidation(null); setTmdbValidation(null); setTmdbAccessToken(e.target.value); }} placeholder={credentialStatusQuery.data?.tmdbAccessTokenSaved ? "已保存到此设备" : "输入后保存到此设备"} /></Field>
           <div className="space-y-1 text-muted-foreground">
             <p>密钥保存在当前 Windows 用户的系统安全凭据中，不会写入 `.lumina`、项目文件或浏览器设置。</p>
+            <p>{tmdbAccessToken.trim() ? "已输入新 TMDb Token，点击“保存到此设备”后才会长期保存。" : credentialStatusQuery.data?.tmdbAccessTokenSaved ? "TMDb Token 已安全保存到此设备。" : "尚未保存 TMDb Token。"}</p>
             <div className="flex flex-wrap gap-1">
               <Button size="sm" disabled={(!modelApiKey && !tmdbAccessToken) || saveCredentialsMutation.isPending} onClick={() => saveCredentialsMutation.mutate()}>保存到此设备</Button>
               <Button size="sm" variant="outline" disabled={validateCredentialsMutation.isPending} onClick={() => validateCredentialsMutation.mutate()}>{modelApiKey.trim() || tmdbAccessToken.trim() ? "保存并验证全部配置" : "验证全部配置"}</Button>
