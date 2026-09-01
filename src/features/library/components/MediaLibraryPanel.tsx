@@ -11,6 +11,8 @@ import {
   applyTmdbMediaMatch,
   applyWikipediaPage,
   listWikipediaStatuses,
+  listTmdbStatuses,
+  refreshTmdbMetadata,
   refreshWikipediaPage,
   deleteMetadataCredential,
   discoverLibraryAgentModels,
@@ -51,6 +53,7 @@ import type {
   WikiEnrichmentCandidate,
   WikiEnrichmentPreview,
   WikiGroupStatus,
+  TmdbGroupStatus,
   WikiMatchMethod,
 } from "../types";
 
@@ -121,6 +124,18 @@ export function MediaLibraryPanel() {
     }
     return map;
   }, [wikiStatusQuery.data]);
+  const tmdbStatusQuery = useQuery({
+    queryKey: ["library-tmdb-status", primaryRoot],
+    queryFn: () => listTmdbStatuses(primaryRoot),
+    enabled: Boolean(primaryRoot && matchedGroups.length > 0),
+  });
+  const tmdbStatusByKey = useMemo(() => {
+    const map: Record<string, TmdbGroupStatus> = {};
+    for (const item of tmdbStatusQuery.data ?? []) {
+      map[item.groupKey] = item;
+    }
+    return map;
+  }, [tmdbStatusQuery.data]);
   const credentialStatusQuery = useQuery({
     queryKey: ["library-credential-status"],
     queryFn: getMetadataCredentialStatus,
@@ -368,7 +383,7 @@ export function MediaLibraryPanel() {
         <section className="min-h-0 space-y-2">
           <p className="font-medium">已匹配分组（{matchedGroups.length}）</p>
           <p className="text-muted-foreground">
-            完成 TMDb 匹配后，可补充英文维基百科摘要（CC BY-SA）；已写入的分组可刷新或重新选择页面。预览时可只读对照中文维基，需已保存 TMDb Token 且联网。
+            完成 TMDb 匹配后，可分别刷新 TMDb 与维基元数据；TMDb 含演员/创作者/分集，维基含英文摘要与主要角色小传。需已保存 TMDb Token 且联网。
           </p>
           {matchedGroups.map((group) => (
             <MatchedGroupCard
@@ -376,6 +391,7 @@ export function MediaLibraryPanel() {
               group={group}
               preview={wikiPreviews[group.key]}
               wikiStatus={wikiStatusByKey[group.key]}
+              tmdbStatus={tmdbStatusByKey[group.key]}
               disabled={!credentialStatusQuery.data?.tmdbAccessTokenSaved}
               onPreview={async (autoApply) => {
                 const preview = await previewWikipediaEnrichment({
@@ -424,6 +440,16 @@ export function MediaLibraryPanel() {
                   const next = { ...state };
                   delete next[group.key];
                   return next;
+                });
+              }}
+              onRefreshTmdb={async () => {
+                await refreshTmdbMetadata({
+                  root: primaryRoot,
+                  groupKey: group.key,
+                  tmdb: config.tmdb,
+                });
+                await queryClient.refetchQueries({
+                  queryKey: ["library-tmdb-status", primaryRoot],
                 });
               }}
               onRefresh={async () => {
@@ -523,15 +549,18 @@ function MatchedGroupCard({
   group,
   preview,
   wikiStatus,
+  tmdbStatus,
   disabled,
   onPreview,
   onApply,
+  onRefreshTmdb,
   onRefresh,
   onError,
 }: {
   group: MediaGroup;
   preview?: WikiEnrichmentPreview;
   wikiStatus?: WikiGroupStatus;
+  tmdbStatus?: TmdbGroupStatus;
   disabled: boolean;
   onPreview: (autoApply: boolean) => Promise<WikiEnrichmentPreview>;
   onApply: (
@@ -539,10 +568,11 @@ function MatchedGroupCard({
     matchMethod: WikiMatchMethod,
     candidatesConsidered: number,
   ) => Promise<void>;
+  onRefreshTmdb: () => Promise<void>;
   onRefresh: () => Promise<void>;
   onError: (error: unknown) => void;
 }) {
-  const [busy, setBusy] = useState<"preview" | "refresh" | "apply" | null>(null);
+  const [busy, setBusy] = useState<"preview" | "refresh" | "tmdb" | "apply" | null>(null);
   const [applyingKey, setApplyingKey] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const existing = wikiStatus?.existing ?? preview?.existing ?? null;
@@ -564,7 +594,7 @@ function MatchedGroupCard({
   );
 
   const run = async (
-    action: "preview" | "refresh" | "apply",
+    action: "preview" | "refresh" | "tmdb" | "apply",
     fn: () => Promise<void>,
     applyingCandidateKey?: string,
   ) => {
@@ -590,6 +620,39 @@ function MatchedGroupCard({
       <p className="text-muted-foreground">
         {group.files.length} 个文件 · TMDb 已匹配
       </p>
+      <div className="space-y-1 text-xs">
+        {tmdbStatus && tmdbStatus.updatedAtMs > 0 ? (
+          <p className="text-muted-foreground">
+            TMDb：{tmdbStatus.title ?? group.displayName}
+            {tmdbStatus.castCount > 0 ? ` · ${tmdbStatus.castCount} 位演员` : ""}
+            {tmdbStatus.creatorsCount > 0 ? ` · ${tmdbStatus.creatorsCount} 位创作者` : ""}
+            {tmdbStatus.episodeFileCount > 0
+              ? ` · ${tmdbStatus.episodeFileCount} 集元数据`
+              : ""}
+            {tmdbStatus.network ? ` · ${tmdbStatus.network}` : ""}
+            {tmdbStatus.status ? ` · ${tmdbStatus.status}` : ""}
+            {" · 更新于 "}
+            {formatWikiUpdatedAt(tmdbStatus.updatedAtMs)}
+          </p>
+        ) : (
+          <p className="text-amber-600 dark:text-amber-400">
+            TMDb 元数据较旧或缺少演员/创作者，建议刷新。
+          </p>
+        )}
+        <Button
+          size="sm"
+          variant="outline"
+          disabled={disabled || isBusy}
+          onClick={() =>
+            void run("tmdb", async () => {
+              await onRefreshTmdb();
+              setNotice("TMDb 元数据已刷新");
+            })
+          }
+        >
+          {busy === "tmdb" ? "刷新中…" : "刷新 TMDb"}
+        </Button>
+      </div>
       {existing ? (
         <div className="space-y-1 text-xs">
           <p className="text-emerald-600 dark:text-emerald-400">

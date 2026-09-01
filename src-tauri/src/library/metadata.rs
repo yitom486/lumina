@@ -8,16 +8,15 @@ use serde_json::Value;
 use crate::library::error::LibraryError;
 use crate::library::wikitext::episode_plot_for;
 use crate::library::model::{
-    IndexedMediaFile, LibraryIndex, MediaGroup, MediaMetadataContext, MergedMediaContext,
+    GroupResolution, IndexedMediaFile, LibraryIndex, MediaGroup, MediaMetadataContext, MergedMediaContext,
     MetadataCastMember, MetadataMediaType, MetadataWriteResult, StoredMetadata, StoredMetadataKind,
-    TmdbConfig, WikiCharacter, WikiEnrichmentCandidate, WikiEnrichmentPreview, WikiEpisodeSummary,
-    WikiGroupStatus, WikiMatchInfo, WikiMatchMethod, WikiMetadata, WikiWriteResult,
+    TmdbConfig, TmdbGroupStatus, WikiCharacter, WikiEnrichmentCandidate, WikiEnrichmentPreview,
+    WikiEpisodeSummary, WikiGroupStatus, WikiMatchInfo, WikiMatchMethod, WikiMetadata, WikiWriteResult,
     METADATA_SCHEMA_VERSION,
 };
 use crate::library::{resolver, store, wikipedia};
 
 const MAX_OVERVIEW_CAST: usize = 15;
-const MAX_EPISODE_CAST: usize = 10;
 const MAX_CREATORS: usize = 5;
 
 pub fn write_confirmed_metadata(
@@ -74,16 +73,9 @@ pub fn write_confirmed_metadata(
                     Some(season),
                     Some(episode),
                 )?;
-                let credits = resolver::fetch_tmdb_credits(
-                    config,
-                    tmdb_id,
-                    media_type,
-                    Some(season),
-                    Some(episode),
-                )?;
                 let document = document_from_tmdb(
                     &detail,
-                    Some(&credits),
+                    None,
                     StoredMetadataKind::Episode,
                     tmdb_id,
                     Some(tmdb_id),
@@ -236,6 +228,60 @@ pub fn refresh_wikipedia_page(
     wikipedia::refresh_existing_page(root, group_key)
 }
 
+pub fn refresh_tmdb_metadata(
+    root: &Path,
+    index: &LibraryIndex,
+    group: &MediaGroup,
+    config: &TmdbConfig,
+) -> Result<MetadataWriteResult, LibraryError> {
+    let GroupResolution::Matched {
+        tmdb_id,
+        media_type,
+    } = group.resolution
+    else {
+        return Err(LibraryError::invalid_input("请先完成 TMDb 匹配"));
+    };
+    write_confirmed_metadata(root, index, group, tmdb_id, media_type, config)
+}
+
+pub fn tmdb_statuses_for_root(
+    root: &Path,
+    index: &LibraryIndex,
+    groups: &[MediaGroup],
+) -> Result<Vec<TmdbGroupStatus>, LibraryError> {
+    Ok(groups
+        .iter()
+        .filter_map(|group| {
+            let GroupResolution::Matched { media_type, .. } = group.resolution else {
+                return None;
+            };
+            let stored = load_group_overview(root, &group.key, media_type)
+                .ok()
+                .flatten();
+            let episode_file_count = group_files(index, group)
+                .iter()
+                .filter(|file| file.season.is_some() && file.episode.is_some())
+                .count() as u32;
+            Some(TmdbGroupStatus {
+                group_key: group.key.clone(),
+                title: stored.as_ref().map(|item| item.title.clone()),
+                cast_count: stored
+                    .as_ref()
+                    .map(|item| item.cast.len() as u32)
+                    .unwrap_or(0),
+                creators_count: stored
+                    .as_ref()
+                    .map(|item| item.creators.len() as u32)
+                    .unwrap_or(0),
+                episode_file_count,
+                network: stored.as_ref().and_then(|item| item.network.clone()),
+                status: stored.as_ref().and_then(|item| item.status.clone()),
+                updated_at_ms: stored.map(|item| item.updated_at_ms).unwrap_or(0),
+            })
+        })
+        .collect())
+}
+
 pub fn wikipedia_statuses_for_root(
     root: &Path,
     index: &LibraryIndex,
@@ -296,7 +342,7 @@ fn document_from_tmdb(
     let (cast, creators, network, status) = match kind {
         StoredMetadataKind::Series => {
             let cast = credits
-                .map(|value| cast_from_credits(value, MAX_OVERVIEW_CAST, false))
+                .map(|value| cast_from_credits(value, MAX_OVERVIEW_CAST))
                 .unwrap_or_default();
             (
                 cast,
@@ -307,19 +353,14 @@ fn document_from_tmdb(
         }
         StoredMetadataKind::Movie => {
             let cast = credits
-                .map(|value| cast_from_credits(value, MAX_OVERVIEW_CAST, false))
+                .map(|value| cast_from_credits(value, MAX_OVERVIEW_CAST))
                 .unwrap_or_default();
             let creators = credits
                 .map(directors_from_credits)
                 .unwrap_or_default();
             (cast, creators, None, None)
         }
-        StoredMetadataKind::Episode => {
-            let cast = credits
-                .map(|value| cast_from_credits(value, MAX_EPISODE_CAST, true))
-                .unwrap_or_default();
-            (cast, Vec::new(), None, None)
-        }
+        StoredMetadataKind::Episode => (Vec::new(), Vec::new(), None, None),
     };
 
     Ok(StoredMetadata {
@@ -363,17 +404,8 @@ fn document_from_tmdb(
     })
 }
 
-fn cast_from_credits(credits: &Value, limit: usize, episode: bool) -> Vec<MetadataCastMember> {
-    let array = if episode {
-        credits
-            .get("guest_stars")
-            .and_then(Value::as_array)
-            .filter(|items| !items.is_empty())
-            .or_else(|| credits.get("cast").and_then(Value::as_array))
-    } else {
-        credits.get("cast").and_then(Value::as_array)
-    };
-    let Some(array) = array else {
+fn cast_from_credits(credits: &Value, limit: usize) -> Vec<MetadataCastMember> {
+    let Some(array) = credits.get("cast").and_then(Value::as_array) else {
         return Vec::new();
     };
 
@@ -526,7 +558,7 @@ mod tests {
     }
 
     #[test]
-    fn episode_prefers_guest_stars_from_credits() {
+    fn episode_documents_omit_cast() {
         let document = document_from_tmdb(
             &json!({
                 "id": 10,
@@ -545,9 +577,9 @@ mod tests {
             Some(1),
         )
         .expect("document");
-        assert_eq!(document.cast.len(), 1);
-        assert_eq!(document.cast[0].name, "客串演员");
+        assert!(document.cast.is_empty());
         assert!(document.creators.is_empty());
+        assert_eq!(document.overview.as_deref(), Some("分集简介"));
     }
 
     #[test]

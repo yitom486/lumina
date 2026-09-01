@@ -307,6 +307,17 @@ export type WikiGroupStatus = {
   staleAfterMs: number;
 };
 
+export type TmdbGroupStatus = {
+  groupKey: string;
+  title?: string | null;
+  castCount: number;
+  creatorsCount: number;
+  episodeFileCount: number;
+  network?: string | null;
+  status?: string | null;
+  updatedAtMs: number;
+};
+
 export type WikiWriteResult = {
   root: string;
   groupKey: string;

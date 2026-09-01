@@ -12,7 +12,7 @@ use crate::library::{
     MediaMetadataContext, MetadataMediaType, MetadataWriteResult, ModelDiscoveryConfig,
     ModelDiscoveryResult, PendingMediaGroup, ResolverPreview, ResolverRunConfig, TmdbConfig,
     WikiEnrichmentCandidate, WikiEnrichmentPreview, WikiMatchMethod, WikiWriteResult,
-    WikiGroupStatus,
+    WikiGroupStatus, TmdbGroupStatus,
 };
 use crate::state::AppState;
 
@@ -189,6 +189,32 @@ pub async fn library_wikipedia_statuses(
     tauri::async_runtime::spawn_blocking(move || service.wikipedia_statuses(root))
         .await
         .map_err(|error| LibraryError::internal(Some(&format!("wikipedia status join: {error}"))))?
+}
+
+#[tauri::command]
+pub async fn library_tmdb_refresh(
+    state: State<'_, AppState>,
+    root: String,
+    group_key: String,
+    tmdb: TmdbConfig,
+) -> Result<MetadataWriteResult, LibraryError> {
+    let service = state.library.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        service.refresh_tmdb_metadata(root, group_key, tmdb)
+    })
+    .await
+    .map_err(|error| LibraryError::internal(Some(&format!("tmdb refresh join: {error}"))))?
+}
+
+#[tauri::command]
+pub async fn library_tmdb_statuses(
+    state: State<'_, AppState>,
+    root: String,
+) -> Result<Vec<TmdbGroupStatus>, LibraryError> {
+    let service = state.library.clone();
+    tauri::async_runtime::spawn_blocking(move || service.tmdb_statuses(root))
+        .await
+        .map_err(|error| LibraryError::internal(Some(&format!("tmdb status join: {error}"))))?
 }
 
 #[tauri::command]

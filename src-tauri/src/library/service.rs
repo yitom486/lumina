@@ -9,7 +9,7 @@ use crate::library::model::{
     GroupResolution, LibraryIndex, LibraryScanEvent, LibraryScanIssue, LibraryStatus, LibraryWatchConfig,
     MediaGroup, MediaMetadataContext, MetadataMediaType, MetadataWriteResult, PendingMediaGroup,
     ResolverPreview, ResolverRunConfig, TmdbConfig, WikiEnrichmentCandidate, WikiEnrichmentPreview,
-    WikiGroupStatus, WikiMatchMethod, WikiWriteResult,
+    WikiGroupStatus, WikiMatchMethod, WikiWriteResult, TmdbGroupStatus,
 };
 use crate::library::{metadata, scanner, store, RemoteResolver};
 
@@ -364,6 +364,35 @@ impl MediaLibraryService {
             LibraryError::group_not_found(Some("library index is not available for root"))
         })?;
         metadata::wikipedia_statuses_for_root(&path, &index)
+    }
+
+    pub fn refresh_tmdb_metadata(
+        &self,
+        root: String,
+        group_key: String,
+        tmdb: TmdbConfig,
+    ) -> Result<MetadataWriteResult, LibraryError> {
+        self.ensure_configured_root(&root)?;
+        let path = PathBuf::from(&root);
+        let index = store::load(&path)?.ok_or_else(|| {
+            LibraryError::group_not_found(Some("library index is not available for root"))
+        })?;
+        let group = index
+            .groups
+            .iter()
+            .find(|group| group.key == group_key)
+            .cloned()
+            .ok_or_else(|| LibraryError::group_not_found(Some(&group_key)))?;
+        metadata::refresh_tmdb_metadata(&path, &index, &group, &tmdb)
+    }
+
+    pub fn tmdb_statuses(&self, root: String) -> Result<Vec<TmdbGroupStatus>, LibraryError> {
+        self.ensure_configured_root(&root)?;
+        let path = PathBuf::from(&root);
+        let index = store::load(&path)?.ok_or_else(|| {
+            LibraryError::group_not_found(Some("library index is not available for root"))
+        })?;
+        metadata::tmdb_statuses_for_root(&path, &index, &index.groups)
     }
 
     fn ensure_configured_root(&self, root: &str) -> Result<(), LibraryError> {

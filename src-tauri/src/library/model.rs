@@ -432,6 +432,21 @@ pub struct WikiGroupStatus {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
+pub struct TmdbGroupStatus {
+    pub group_key: String,
+    pub title: Option<String>,
+    pub cast_count: u32,
+    pub creators_count: u32,
+    pub episode_file_count: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub network: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub status: Option<String>,
+    pub updated_at_ms: u128,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
 pub struct WikiEnrichmentPreview {
     pub wikidata_candidate: Option<WikiEnrichmentCandidate>,
     pub search_candidates: Vec<WikiEnrichmentCandidate>,

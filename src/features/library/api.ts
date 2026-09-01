@@ -26,6 +26,7 @@ import type {
   WikiEnrichmentCandidate,
   WikiEnrichmentPreview,
   WikiGroupStatus,
+  TmdbGroupStatus,
   WikiMatchMethod,
   WikiWriteResult,
 } from "./types";
@@ -152,6 +153,18 @@ export function refreshWikipediaPage(input: {
 
 export function listWikipediaStatuses(root: string): Promise<WikiGroupStatus[]> {
   return invoke<WikiGroupStatus[]>("library_wikipedia_statuses", { root });
+}
+
+export function refreshTmdbMetadata(input: {
+  root: string;
+  groupKey: string;
+  tmdb: TmdbConfig;
+}): Promise<MetadataWriteResult> {
+  return invoke<MetadataWriteResult>("library_tmdb_refresh", input);
+}
+
+export function listTmdbStatuses(root: string): Promise<TmdbGroupStatus[]> {
+  return invoke<TmdbGroupStatus[]>("library_tmdb_statuses", { root });
 }
 
 export function getMediaMetadataContext(
