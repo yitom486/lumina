@@ -78,16 +78,22 @@ pub fn discover_library_root_for_media(media_path: &Path) -> Option<PathBuf> {
     }
 }
 
-/// Best-effort library root: configured roots should call this after their own lookup.
+/// Best-effort library root for a media file.
+///
+/// Prefer the nearest `.lumina/index.json` walking up from the file so metadata
+/// stored beside a show folder is found even when a broader configured root
+/// (for example `D:\movie`) also contains the file.
 pub fn library_root_for_media_path(
     configured_roots: impl IntoIterator<Item = PathBuf>,
     media_path: &Path,
 ) -> Option<PathBuf> {
+    if let Some(discovered) = discover_library_root_for_media(media_path) {
+        return Some(discovered);
+    }
     configured_roots
         .into_iter()
         .filter(|root| is_media_under_root(root, media_path))
         .max_by_key(|root| root.as_os_str().len())
-        .or_else(|| discover_library_root_for_media(media_path))
 }
 
 /// Whether `media_path` lives under a configured library root.
@@ -116,6 +122,7 @@ fn is_under_root(root: &str, media: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
     use std::path::PathBuf;
 
     #[test]
@@ -156,5 +163,30 @@ mod tests {
         let root = PathBuf::from(r"D:\movie\A");
         let media = PathBuf::from(r"D:\movie\B\file.mkv");
         assert!(relativize_under_root(&root, &media).is_err());
+    }
+
+    #[test]
+    fn prefers_nearest_discovered_index_over_broader_configured_root() {
+        use std::time::{SystemTime, UNIX_EPOCH};
+
+        let suffix = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|duration| duration.as_nanos())
+            .unwrap_or_default();
+        let temp = std::env::temp_dir().join(format!("lumina-paths-{suffix}"));
+        let show = temp.join("Show Folder");
+        let nested_lumina = lumina_dir(&show);
+        fs::create_dir_all(&nested_lumina).expect("mkdir nested lumina");
+        fs::write(lumina_index_path(&show), r#"{"schemaVersion":1,"root":"","updatedAtMs":0,"files":[],"groups":[]}"#)
+            .expect("write nested index");
+        let media = show.join("S01E01.mkv");
+        fs::write(&media, b"").expect("write media");
+
+        let configured = vec![temp.clone()];
+        let resolved =
+            library_root_for_media_path(configured, &media).expect("resolved root");
+        assert_eq!(resolved, show);
+
+        let _ = fs::remove_dir_all(&temp);
     }
 }

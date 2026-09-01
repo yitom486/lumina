@@ -9,7 +9,7 @@ use serde_json::{json, Value};
 use tracing::warn;
 
 use crate::library::{
-    discover_library_root_for_media, episode_index_for_group, load_context_at_root,
+    episode_index_for_group, load_context_at_root,
     load_context_for_group, load_library_index, resolve_media_in_index,
     series_cache_from_context,
 };
@@ -255,15 +255,14 @@ fn require_anchor<'a>(snapshot: &'a LuminaMcpSnapshot) -> Result<&'a PromptAncho
 
 fn resolve_paths(anchor: &PromptAnchor) -> Result<(PathBuf, PathBuf), String> {
     let media_path = PathBuf::from(&anchor.media_path);
-    if let Some(root) = anchor
-        .library_root
-        .as_ref()
-        .map(PathBuf::from)
-        .filter(|path| !path.as_os_str().is_empty())
-    {
-        return Ok((root, media_path));
-    }
-    let root = discover_library_root_for_media(&media_path)
+    let root = crate::library::discover_library_root_for_media(&media_path)
+        .or_else(|| {
+            anchor
+                .library_root
+                .as_ref()
+                .filter(|value| !value.trim().is_empty())
+                .map(PathBuf::from)
+        })
         .ok_or_else(|| "当前媒体未关联媒体库目录".to_string())?;
     Ok((root, media_path))
 }

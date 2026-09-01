@@ -265,8 +265,19 @@ pub fn episode_index_for_group(
         let Some((season, episode)) = parse_episode_file_name(&file_name) else {
             continue;
         };
-        let document =
-            store::load_group_json::<StoredMetadata>(root, group_key, &file_name)?;
+        let document = match store::load_group_json::<StoredMetadata>(root, group_key, &file_name)
+        {
+            Ok(document) => document,
+            Err(error) => {
+                tracing::warn!(
+                    group_key,
+                    file = %file_name,
+                    reason = %error.message,
+                    "episode index skipped unreadable metadata file"
+                );
+                None
+            }
+        };
         let (title, overview) = if let Some(document) = document {
             (document.title, document.overview)
         } else {
@@ -339,10 +350,11 @@ fn parse_episode_file_name(file_name: &str) -> Option<(u32, u32)> {
         return None;
     }
     let stem = file_name.strip_suffix(".json")?;
-    let mut parts = stem.split('E');
-    let season = parts.next()?.parse().ok()?;
-    let episode = parts.next()?.parse().ok()?;
-    if parts.next().is_some() {
+    let body = stem.strip_prefix('S')?;
+    let (season_text, episode_text) = body.split_once('E')?;
+    let season = season_text.parse().ok()?;
+    let episode = episode_text.parse().ok()?;
+    if season == 0 || episode == 0 {
         return None;
     }
     Some((season, episode))
@@ -746,6 +758,60 @@ mod tests {
         .expect("document");
         assert_eq!(document.creators, vec!["导演甲"]);
         assert_eq!(document.cast[0].name, "主演");
+    }
+
+    #[test]
+    fn parse_episode_file_name_accepts_standard_season_episode_json() {
+        assert_eq!(parse_episode_file_name("S01E01.json"), Some((1, 1)));
+        assert_eq!(parse_episode_file_name("S12E08.json"), Some((12, 8)));
+        assert!(parse_episode_file_name("series.json").is_none());
+    }
+
+    #[test]
+    fn episode_index_for_group_reads_season_episode_files() {
+        use std::fs;
+        use std::time::{SystemTime, UNIX_EPOCH};
+
+        let suffix = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|duration| duration.as_nanos())
+            .unwrap_or_default();
+        let root = std::env::temp_dir().join(format!("lumina-episode-index-{suffix}"));
+        let group_key = "We.Are.All.Trying.Here";
+        let dir = store::group_dir(&root, group_key);
+        fs::create_dir_all(&dir).expect("mkdir group dir");
+
+        let valid_episode = StoredMetadata {
+            schema_version: 1,
+            kind: StoredMetadataKind::Episode,
+            tmdb_id: 10,
+            series_tmdb_id: Some(289424),
+            title: "第一集".into(),
+            original_title: None,
+            overview: Some("分集简介".into()),
+            year: None,
+            season: Some(1),
+            episode: Some(1),
+            genres: Vec::new(),
+            cast: Vec::new(),
+            creators: Vec::new(),
+            network: None,
+            status: None,
+            updated_at_ms: 1,
+        };
+        store::save_group_json(&root, group_key, "S01E01.json", &valid_episode).expect("write ep1");
+        fs::write(dir.join("S01E02.json"), "{not-json").expect("write broken ep2");
+        assert!(dir.is_dir(), "group dir missing: {}", dir.display());
+        assert!(dir.join("S01E01.json").is_file(), "episode file missing");
+
+        let entries = episode_index_for_group(&root, group_key).expect("episode index");
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0].season, 1);
+        assert_eq!(entries[0].episode, 1);
+        assert_eq!(entries[0].title, "第一集");
+        assert_eq!(entries[1].title, "S01E02");
+
+        let _ = fs::remove_dir_all(&root);
     }
 
     #[test]
