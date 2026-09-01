@@ -179,7 +179,11 @@ pub struct TmdbConfig {
 /// Users can either reuse a configured ACP Agent or configure a dedicated
 /// OpenAI-compatible endpoint for this low-cost task.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(tag = "kind", rename_all = "camelCase")]
+#[serde(
+    tag = "kind",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
 pub enum ResolverProviderConfig {
     AcpAgent {
         profile_id: String,
@@ -293,4 +297,36 @@ pub struct MediaMetadataContext {
     pub media_path: String,
     pub group: StoredMetadata,
     pub item: Option<StoredMetadata>,
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::*;
+
+    #[test]
+    fn provider_config_accepts_frontend_camel_case_fields() {
+        let provider: ResolverProviderConfig = serde_json::from_value(json!({
+            "kind": "acpAgent",
+            "profileId": "codex",
+            "profiles": { "activeProfileId": "codex", "profiles": [] },
+            "modelId": "gpt-mini",
+            "reasoningEffort": "low"
+        }))
+        .expect("deserialize frontend provider");
+        match provider {
+            ResolverProviderConfig::AcpAgent {
+                profile_id,
+                model_id,
+                reasoning_effort,
+                ..
+            } => {
+                assert_eq!(profile_id, "codex");
+                assert_eq!(model_id.as_deref(), Some("gpt-mini"));
+                assert_eq!(reasoning_effort.as_deref(), Some("low"));
+            }
+            ResolverProviderConfig::DirectApi { .. } => panic!("expected ACP provider"),
+        }
+    }
 }

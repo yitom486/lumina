@@ -45,7 +45,7 @@ use commands::library::{
     library_credential_delete, library_credential_status, library_credentials_save,
     library_credentials_validate, library_models_discover, library_pending_groups,
     library_resolve_preview, library_scan_now, library_set_manual_title, library_status,
-    library_watch_start, library_watch_stop,
+    library_tmdb_credentials_validate, library_watch_start, library_watch_stop,
 };
 use commands::media::{media_inspect, media_list_siblings};
 use commands::notes::{
@@ -101,6 +101,7 @@ pub fn run() {
             library_credentials_save,
             library_credential_delete,
             library_credentials_validate,
+            library_tmdb_credentials_validate,
             library_models_discover,
             library_agent_models_discover,
             acp_status,

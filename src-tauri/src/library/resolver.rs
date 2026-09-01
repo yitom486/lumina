@@ -95,6 +95,17 @@ pub fn validate_credentials(config: CredentialValidationConfig) -> CredentialVal
     }
 }
 
+/// Validate TMDb independently so users can confirm their access token without
+/// requiring a working model or Agent configuration.
+pub fn validate_tmdb_credentials(config: TmdbConfig) -> CredentialValidationItem {
+    validation_item(
+        validate_tmdb_token(&config),
+        "TMDb Token 已验证",
+        "TMDb Token 验证失败，请检查 Token 后重试",
+        "TMDb credential validation failed",
+    )
+}
+
 /// Query `/models` only after the user explicitly chooses to connect. A
 /// service may omit discovery; manual model-ID input is still supported.
 pub fn discover_models(config: ModelDiscoveryConfig) -> ModelDiscoveryResult {

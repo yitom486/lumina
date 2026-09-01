@@ -21,11 +21,13 @@ import {
   startLibraryWatch,
   stopLibraryWatch,
   validateMetadataCredentials,
+  validateTmdbCredentials,
 } from "../api";
 import { useLibrarySettingsStore } from "../settingsStore";
 import type {
   CredentialKind,
   CredentialValidationResult,
+  CredentialValidationItem,
   AgentModelDiscoveryResult,
   ModelDiscoveryResult,
   PendingMediaGroup,
@@ -54,6 +56,7 @@ export function MediaLibraryPanel() {
   const [modelApiKey, setModelApiKey] = useState("");
   const [tmdbAccessToken, setTmdbAccessToken] = useState("");
   const [validation, setValidation] = useState<CredentialValidationResult | null>(null);
+  const [tmdbValidation, setTmdbValidation] = useState<CredentialValidationItem | null>(null);
   const [modelConnection, setModelConnection] = useState<ModelDiscoveryResult | null>(null);
   const [agentConnection, setAgentConnection] = useState<AgentModelDiscoveryResult | null>(null);
 
@@ -139,6 +142,11 @@ export function MediaLibraryPanel() {
     onSuccess: (result) => setValidation(result),
     onError: (err) => setError(errorMessage(err)),
   });
+  const validateTmdbMutation = useMutation({
+    mutationFn: () => validateTmdbCredentials(config.tmdb),
+    onSuccess: setTmdbValidation,
+    onError: (err) => setError(errorMessage(err)),
+  });
   const discoverModelsMutation = useMutation({
     mutationFn: async () => {
       if (modelApiKey.trim()) {
@@ -219,16 +227,18 @@ export function MediaLibraryPanel() {
             <div className="space-y-1"><Button size="sm" variant="outline" disabled={!modelBaseUrl.trim() || (!modelApiKey.trim() && !credentialStatusQuery.data?.modelApiKeySaved) || discoverModelsMutation.isPending} onClick={() => discoverModelsMutation.mutate()}>{modelApiKey.trim() ? "保存并连接" : "连接并获取模型"}</Button>{modelConnection ? <p className={modelConnection.connected ? "text-emerald-500" : "text-destructive"}>{modelConnection.message}</p> : <p className="text-muted-foreground">连接成功后再选择模型；模型服务和聊天 Agent 的配置彼此独立。</p>}</div>
             {modelConnection?.connected ? <Field label="用于媒体匹配的模型">{modelConnection.models.length ? <select className="h-7 w-full rounded border border-border bg-background px-2" value={selectedModelOption} onChange={(e) => { setValidation(null); patchSettings({ modelId: e.target.value === "__manual__" ? "" : e.target.value }); }}><option value="">请选择模型</option>{modelConnection.models.map((model) => <option key={model} value={model}>{model}</option>)}<option value="__manual__">手动输入模型 ID</option></select> : null}{(!modelConnection.models.length || selectedModelOption === "__manual__") ? <input value={modelId} onChange={(e) => { setValidation(null); patchSettings({ modelId: e.target.value }); }} placeholder="输入兼容服务的模型 ID" /> : null}</Field> : null}
           </>}
-          <Field label="TMDb Read Access Token（留空则不更新）"><input type="password" autoComplete="off" value={tmdbAccessToken} onChange={(e) => { setValidation(null); setTmdbAccessToken(e.target.value); }} placeholder={credentialStatusQuery.data?.tmdbAccessTokenSaved ? "已保存到此设备" : "输入后保存到此设备"} /></Field>
+          <Field label="TMDb Read Access Token（留空则不更新）"><input type="password" autoComplete="off" value={tmdbAccessToken} onChange={(e) => { setValidation(null); setTmdbValidation(null); setTmdbAccessToken(e.target.value); }} placeholder={credentialStatusQuery.data?.tmdbAccessTokenSaved ? "已保存到此设备" : "输入后保存到此设备"} /></Field>
           <div className="space-y-1 text-muted-foreground">
             <p>密钥保存在当前 Windows 用户的系统安全凭据中，不会写入 `.lumina`、项目文件或浏览器设置。</p>
             <div className="flex flex-wrap gap-1">
               <Button size="sm" disabled={(!modelApiKey && !tmdbAccessToken) || saveCredentialsMutation.isPending} onClick={() => saveCredentialsMutation.mutate()}>保存到此设备</Button>
-              <Button size="sm" variant="outline" disabled={validateCredentialsMutation.isPending} onClick={() => validateCredentialsMutation.mutate()}>验证配置</Button>
+              <Button size="sm" variant="outline" disabled={validateCredentialsMutation.isPending} onClick={() => validateCredentialsMutation.mutate()}>验证全部配置</Button>
+              <Button size="sm" variant="outline" disabled={!credentialStatusQuery.data?.tmdbAccessTokenSaved || validateTmdbMutation.isPending} onClick={() => validateTmdbMutation.mutate()}>验证 TMDb Token</Button>
               {resolverProvider === "directApi" ? <Button size="sm" variant="outline" disabled={!credentialStatusQuery.data?.modelApiKeySaved || deleteCredentialMutation.isPending} onClick={() => deleteCredentialMutation.mutate("modelApiKey")}>删除模型密钥</Button> : null}
               <Button size="sm" variant="outline" disabled={!credentialStatusQuery.data?.tmdbAccessTokenSaved || deleteCredentialMutation.isPending} onClick={() => deleteCredentialMutation.mutate("tmdbAccessToken")}>删除 TMDb Token</Button>
             </div>
             {validation ? <div className="space-y-1 rounded bg-muted/40 p-2"><ValidationItem label={resolverProvider === "acpAgent" ? "Agent" : "模型服务"} item={validation.model} /><ValidationItem label="TMDb" item={validation.tmdb} /></div> : null}
+            {tmdbValidation ? <div className="rounded bg-muted/40 p-2"><ValidationItem label="TMDb" item={tmdbValidation} /></div> : null}
             <p>验证不会发送视频、字幕、笔记、文件名或绝对路径；验证会产生一次极小的模型或 Agent 调用。</p>
           </div>
           <label className="flex gap-2 leading-relaxed text-muted-foreground"><input type="checkbox" checked={privacyAcknowledged} onChange={(e) => patchSettings({ privacyAcknowledged: e.target.checked })} />允许将文件名和相对目录名发送到所选解析器；不会发送视频、字幕、笔记或绝对路径。</label>

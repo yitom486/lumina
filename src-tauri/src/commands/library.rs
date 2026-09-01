@@ -5,10 +5,10 @@ use tauri::State;
 
 use crate::library::{
     credentials, AgentModelDiscoveryConfig, AgentModelDiscoveryResult, CredentialKind,
-    CredentialSaveInput, CredentialStatus, CredentialValidationConfig, CredentialValidationResult,
-    LibraryError, LibraryIndex, LibraryStatus, LibraryWatchConfig, MediaMetadataContext,
-    MetadataMediaType, MetadataWriteResult, ModelDiscoveryConfig, ModelDiscoveryResult,
-    PendingMediaGroup, ResolverPreview, ResolverRunConfig, TmdbConfig,
+    CredentialSaveInput, CredentialStatus, CredentialValidationConfig, CredentialValidationItem,
+    CredentialValidationResult, LibraryError, LibraryIndex, LibraryStatus, LibraryWatchConfig,
+    MediaMetadataContext, MetadataMediaType, MetadataWriteResult, ModelDiscoveryConfig,
+    ModelDiscoveryResult, PendingMediaGroup, ResolverPreview, ResolverRunConfig, TmdbConfig,
 };
 use crate::state::AppState;
 
@@ -147,6 +147,17 @@ pub async fn library_credentials_validate(
         .await
         .map_err(|error| {
             LibraryError::internal(Some(&format!("credential validation join: {error}")))
+        })
+}
+
+#[tauri::command]
+pub async fn library_tmdb_credentials_validate(
+    config: TmdbConfig,
+) -> Result<CredentialValidationItem, LibraryError> {
+    tauri::async_runtime::spawn_blocking(move || crate::library::validate_tmdb_credentials(config))
+        .await
+        .map_err(|error| {
+            LibraryError::internal(Some(&format!("TMDb credential validation join: {error}")))
         })
 }
 

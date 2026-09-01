@@ -20,6 +20,7 @@ import type {
   ResolverRunConfig,
   SaveMetadataCredentialsInput,
   TmdbConfig,
+  CredentialValidationItem,
 } from "./types";
 
 export function discoverLibraryModels(
@@ -54,6 +55,12 @@ export function validateMetadataCredentials(
   config: CredentialValidationConfig,
 ): Promise<CredentialValidationResult> {
   return invoke<CredentialValidationResult>("library_credentials_validate", { config });
+}
+
+export function validateTmdbCredentials(
+  config: TmdbConfig,
+): Promise<CredentialValidationItem> {
+  return invoke<CredentialValidationItem>("library_tmdb_credentials_validate", { config });
 }
 
 export function startLibraryWatch(config: LibraryWatchConfig): Promise<LibraryStatus> {

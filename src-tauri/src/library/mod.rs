@@ -24,5 +24,8 @@ pub use model::{
     ResolverProviderConfig, ResolverRunConfig, ResolverSelection, StoredMetadata,
     StoredMetadataKind, TmdbCandidate, TmdbConfig,
 };
-pub use resolver::{discover_agent_models, discover_models, validate_credentials, RemoteResolver};
+pub use resolver::{
+    discover_agent_models, discover_models, validate_credentials, validate_tmdb_credentials,
+    RemoteResolver,
+};
 pub use service::MediaLibraryService;
