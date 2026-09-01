@@ -1,5 +1,6 @@
 //! Durable TMDb metadata documents and current-media context reader.
 
+use std::fs;
 use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -10,6 +11,7 @@ use crate::library::wikitext::episode_plot_for;
 use crate::library::model::{
     GroupResolution, IndexedMediaFile, LibraryIndex, MediaGroup, MediaMetadataContext, MergedMediaContext,
     MetadataCastMember, MetadataMediaType, MetadataWriteResult, StoredMetadata, StoredMetadataKind,
+    SeriesLibraryCache, EpisodeIndexEntry,
     TmdbConfig, TmdbGroupStatus, WikiCharacter, WikiEnrichmentCandidate, WikiEnrichmentPreview,
     WikiEpisodeSummary, WikiGroupStatus, WikiMatchInfo, WikiMatchMethod, WikiMetadata, WikiWriteResult,
     METADATA_SCHEMA_VERSION,
@@ -205,6 +207,108 @@ pub fn load_group_overview(
         MetadataMediaType::Tv => "series.json",
     };
     store::load_group_json(root, group_key, file_name)
+}
+
+pub fn load_context_at_root(
+    root: &Path,
+    media_path: &Path,
+) -> Result<Option<MediaMetadataContext>, LibraryError> {
+    let Some(index) = store::load(root)? else {
+        return Ok(None);
+    };
+    load_context(root, &index, media_path)
+}
+
+pub fn series_cache_from_context(context: &MediaMetadataContext) -> SeriesLibraryCache {
+    let merged = context.merged.as_ref();
+    SeriesLibraryCache {
+        title: context.group.title.clone(),
+        synopsis: merged
+            .and_then(|entry| entry.synopsis.clone())
+            .or_else(|| context.group.overview.clone()),
+        characters: merged.and_then(|entry| entry.characters.clone()),
+        creators: context.group.creators.clone(),
+        network: context.group.network.clone(),
+        status: context.group.status.clone(),
+        wiki_attribution: merged.and_then(|entry| entry.wiki_attribution.clone()),
+        wiki_page_url: merged.and_then(|entry| entry.wiki_page_url.clone()),
+    }
+}
+
+pub fn episode_index_for_group(
+    root: &Path,
+    group_key: &str,
+) -> Result<Vec<EpisodeIndexEntry>, LibraryError> {
+    let dir = store::group_dir(root, group_key);
+    if !dir.is_dir() {
+        return Ok(Vec::new());
+    }
+    let mut entries = Vec::new();
+    for entry in fs::read_dir(&dir).map_err(|error| {
+        LibraryError::storage_failed(Some(&format!("read group dir: {error}")))
+    })? {
+        let entry = entry.map_err(|error| {
+            LibraryError::storage_failed(Some(&format!("read group entry: {error}")))
+        })?;
+        let file_name = entry.file_name();
+        let file_name = file_name.to_string_lossy();
+        let Some((season, episode)) = parse_episode_file_name(&file_name) else {
+            continue;
+        };
+        let Some(document) =
+            store::load_group_json::<StoredMetadata>(root, group_key, &file_name)?
+        else {
+            continue;
+        };
+        entries.push(EpisodeIndexEntry {
+            season,
+            episode,
+            title: document.title,
+            overview: document.overview,
+        });
+    }
+    entries.sort_by(|left, right| {
+        left.season
+            .cmp(&right.season)
+            .then_with(|| left.episode.cmp(&right.episode))
+    });
+    Ok(entries)
+}
+
+pub fn resolve_media_in_index<'a>(
+    index: &'a LibraryIndex,
+    media_path: &Path,
+    root: &Path,
+) -> Result<Option<(&'a IndexedMediaFile, &'a MediaGroup)>, LibraryError> {
+    let relative = media_path
+        .strip_prefix(root)
+        .map_err(|_error| LibraryError::invalid_input("当前媒体不在已启用目录中"))?;
+    let relative = relative.to_string_lossy().replace('\\', "/");
+    let Some(file) = index
+        .files
+        .iter()
+        .find(|file| file.relative_path == relative)
+    else {
+        return Ok(None);
+    };
+    let Some(group) = index.groups.iter().find(|group| group.key == file.group_key) else {
+        return Ok(None);
+    };
+    Ok(Some((file, group)))
+}
+
+fn parse_episode_file_name(file_name: &str) -> Option<(u32, u32)> {
+    if !file_name.starts_with('S') || !file_name.ends_with(".json") {
+        return None;
+    }
+    let stem = file_name.strip_suffix(".json")?;
+    let mut parts = stem.split('E');
+    let season = parts.next()?.parse().ok()?;
+    let episode = parts.next()?.parse().ok()?;
+    if parts.next().is_some() {
+        return None;
+    }
+    Some((season, episode))
 }
 
 pub fn preview_wikipedia_enrichment(

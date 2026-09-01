@@ -1,9 +1,13 @@
+mod build;
 mod server;
 mod snapshot;
+mod tools;
 
+pub use build::PromptSnapshotState;
 pub use snapshot::{
-    snapshot_path_for_cwd, write_snapshot, LuminaMcpSnapshot, CONTEXT_FILE_ENV,
-    SNAPSHOT_RELATIVE_PATH,
+    snapshot_path_for_cwd, write_snapshot, AgentCapabilities, LuminaMcpSnapshot, PlaybackLite,
+    PromptAnchor, SessionPolicy, CONTEXT_FILE_ENV, SNAPSHOT_RELATIVE_PATH, SNAPSHOT_SCHEMA_VERSION,
+    LIBRARY_WARM_EVERY,
 };
 
 use std::path::Path;

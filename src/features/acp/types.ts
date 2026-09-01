@@ -53,7 +53,7 @@ export type VideoPromptContext = {
   positionMs?: number | null;
   durationMs?: number | null;
   chapterTitle?: string | null;
-  transcriptExcerpt?: string | null;
+  subtitleChoiceId?: string | null;
   notesExcerpt?: string | null;
 };
 
@@ -72,6 +72,7 @@ export type AcpClientSettings = {
   permissionMode: PermissionMode;
   thinkingLevel: ThinkingLevel;
   agentMode: string;
+  visionCapable?: boolean;
 };
 
 export type PermissionOption = {

@@ -86,7 +86,7 @@ pub fn session_new_params(cwd: &str, mcp_servers: Value) -> Value {
 }
 
 pub fn session_prompt_params(session_id: &str, text: &str) -> Value {
-    crate::acp::context::session_prompt_params(session_id, text, None, None)
+    crate::acp::context::session_prompt_params(session_id, text, None)
 }
 
 pub fn session_resume_params(session_id: &str, cwd: &str, mcp_servers: Value) -> Value {

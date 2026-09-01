@@ -2,6 +2,7 @@
 
 pub mod error;
 pub mod ffprobe;
+pub mod frame_capture;
 pub mod model;
 pub mod service;
 pub mod siblings;

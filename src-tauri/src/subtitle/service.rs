@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use crate::media::{MediaInspector, StreamKind};
 use crate::subtitle::error::SubtitleError;
 use crate::subtitle::extract::{self, is_bitmap_codec};
-use crate::subtitle::model::{SubtitleChoice, SubtitleSource, Transcript};
+use crate::subtitle::model::{Cue, SubtitleChoice, SubtitleSource, Transcript};
 use crate::subtitle::parse::parse_subtitle_text;
 
 const SIDECAR_EXTS: &[&str] = &["srt", "ass", "ssa", "vtt"];
@@ -140,6 +140,23 @@ impl SubtitleService {
                 })
             }
         }
+    }
+
+    pub fn excerpt_in_range(
+        media_path: impl AsRef<Path>,
+        choice_id: impl AsRef<str>,
+        center_ms: u64,
+        before_ms: u64,
+        after_ms: u64,
+    ) -> Result<Vec<Cue>, SubtitleError> {
+        let transcript = Self::load_choice(media_path, choice_id)?;
+        let start_ms = center_ms.saturating_sub(before_ms);
+        let end_ms = center_ms.saturating_add(after_ms);
+        Ok(transcript
+            .cues
+            .into_iter()
+            .filter(|cue| cue.end_ms > start_ms && cue.start_ms < end_ms)
+            .collect())
     }
 }
 

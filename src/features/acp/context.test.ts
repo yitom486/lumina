@@ -1,7 +1,5 @@
 import { describe, expect, it } from "vitest";
 
-import type { Cue } from "@/features/transcript/types";
-
 import {
   activeChapterTitle,
   buildVideoPromptContext,
@@ -10,18 +8,13 @@ import {
 } from "./context";
 
 describe("buildVideoPromptContext", () => {
-  it("includes chapter and transcript excerpts", () => {
-    const cues: Cue[] = [
-      { index: 0, startMs: 0, endMs: 1000, text: "a" },
-      { index: 1, startMs: 1000, endMs: 2000, text: "b" },
-      { index: 2, startMs: 2000, endMs: 3000, text: "c" },
-    ];
+  it("includes chapter, subtitle choice, and notes excerpts", () => {
     const ctx = buildVideoPromptContext({
       mediaPath: "D:\\videos\\demo.mp4",
       positionMs: 1500,
       durationMs: 60_000,
       chapters: [{ id: 1, startMs: 0, endMs: 5000, title: "Intro" }],
-      transcriptCues: cues,
+      subtitleChoiceId: "embedded:0",
       notes: [
         {
           id: "n1",
@@ -36,7 +29,7 @@ describe("buildVideoPromptContext", () => {
 
     expect(ctx?.mediaTitle).toBe("demo.mp4");
     expect(ctx?.chapterTitle).toBe("Intro");
-    expect(ctx?.transcriptExcerpt).toContain("▶");
+    expect(ctx?.subtitleChoiceId).toBe("embedded:0");
     expect(ctx?.notesExcerpt).toContain("重点");
   });
 });

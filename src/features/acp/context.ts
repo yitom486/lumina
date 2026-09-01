@@ -74,7 +74,7 @@ export function buildVideoPromptContext(input: {
   positionMs?: number;
   durationMs?: number;
   chapters?: MediaChapter[];
-  transcriptCues?: Cue[];
+  subtitleChoiceId?: string | null;
   notes?: Note[];
 }): VideoPromptContext | undefined {
   const mediaPath = input.mediaPath?.trim();
@@ -86,10 +86,7 @@ export function buildVideoPromptContext(input: {
     positionMs: input.positionMs,
     durationMs: input.durationMs,
     chapterTitle: activeChapterTitle(input.chapters, input.positionMs ?? 0),
-    transcriptExcerpt: transcriptExcerptAround(
-      input.transcriptCues,
-      input.positionMs ?? 0,
-    ),
+    subtitleChoiceId: input.subtitleChoiceId?.trim() || undefined,
     notesExcerpt: notesExcerptNear(input.notes, input.positionMs ?? 0),
   };
 

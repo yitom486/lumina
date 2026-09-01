@@ -183,6 +183,7 @@ export function AcpPanel() {
           permissionMode: settings.permissionMode,
           thinkingLevel: settings.thinkingLevel,
           agentMode: settings.agentMode,
+          visionCapable: settings.visionCapable ?? false,
         },
         profiles: profilesHintFromStore(
           profileState.activeProfileId,
@@ -306,6 +307,7 @@ export function AcpPanel() {
               permissionMode: settings.permissionMode,
               thinkingLevel: settings.thinkingLevel,
               agentMode: settings.agentMode,
+              visionCapable: settings.visionCapable ?? false,
             },
             profiles: profilesHintFromStore(
               profileState.activeProfileId,

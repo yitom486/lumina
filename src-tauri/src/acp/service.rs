@@ -20,7 +20,10 @@ use crate::acp::model::{
     AgentProfilesHint, PermissionOption, SavedSessionHint,
 };
 use crate::acp::paths::{resolve_session_cwd, status_from_profiles};
-use crate::mcp::{lumina_mcp_servers, snapshot_path_for_cwd, write_snapshot, LuminaMcpSnapshot};
+use crate::mcp::{
+    lumina_mcp_servers, snapshot_path_for_cwd, write_snapshot, LuminaMcpSnapshot,
+    PromptSnapshotState,
+};
 use crate::acp::profile::{
     prepare_profiles, resolve_active_profile, resolve_launch, AgentKind, PreparedProfiles,
 };
@@ -35,6 +38,7 @@ use crate::acp::protocol::{
     InitializeResult,
 };
 use crate::acp::settings::{AcpClientSettings, PermissionMode};
+use crate::library::MediaLibraryService;
 
 struct LiveSession {
     child: Child,
@@ -57,6 +61,7 @@ pub struct AcpService {
     permission_seq: AtomicU64,
     tool_access_enabled: AtomicBool,
     next_session_model_selection: Mutex<Option<AcpSessionModelSelection>>,
+    prompt_snapshot_state: Mutex<PromptSnapshotState>,
 }
 
 impl AcpService {
@@ -71,6 +76,7 @@ impl AcpService {
             permission_seq: AtomicU64::new(1),
             tool_access_enabled: AtomicBool::new(true),
             next_session_model_selection: Mutex::new(None),
+            prompt_snapshot_state: Mutex::new(PromptSnapshotState::default()),
         }
     }
 
@@ -120,6 +126,7 @@ impl AcpService {
     pub fn close_session(&self) -> Result<(), AcpError> {
         self.cancel.store(true, Ordering::SeqCst);
         self.drop_live_session();
+        self.reset_prompt_snapshot_state();
         self.cancel.store(false, Ordering::SeqCst);
         Ok(())
     }
@@ -133,6 +140,27 @@ impl AcpService {
         write_snapshot(&path, snapshot)
             .map_err(|details| AcpError::internal(Some(&details)))?;
         Ok(path)
+    }
+
+    pub fn build_prompt_snapshot(
+        &self,
+        context: Option<&VideoPromptContext>,
+        library: &MediaLibraryService,
+        vision_capable: bool,
+    ) -> Result<LuminaMcpSnapshot, AcpError> {
+        let mut guard = self
+            .prompt_snapshot_state
+            .lock()
+            .map_err(|_| AcpError::internal(Some("prompt snapshot mutex poisoned")))?;
+        guard
+            .next_snapshot(context, library, vision_capable)
+            .map_err(|error| AcpError::internal(error.details.as_deref()))
+    }
+
+    pub fn reset_prompt_snapshot_state(&self) {
+        if let Ok(mut guard) = self.prompt_snapshot_state.lock() {
+            guard.reset();
+        }
     }
 
     /// Warm up Agent process + session without sending a prompt (user opened chat tab).
@@ -301,6 +329,7 @@ impl AcpService {
                 permission_mode: PermissionMode::Ask,
                 thinking_level: crate::acp::settings::ThinkingLevel::Hidden,
                 agent_mode: "metadata-resolver".into(),
+                vision_capable: false,
             },
             profiles,
             |_| {},
@@ -384,8 +413,7 @@ impl AcpService {
             .as_mut()
             .ok_or_else(|| AcpError::internal(Some("ACP session missing after spawn")))?;
 
-        let cwd_path = resolve_session_cwd(cwd)?;
-        let snapshot_path = snapshot_path_for_cwd(&cwd_path);
+        let _ = resolve_session_cwd(cwd)?;
 
         on_event(AcpEvent::Progress {
             message: "正在发送问题…".into(),
@@ -397,12 +425,7 @@ impl AcpService {
             &mut session.stdin,
             prompt_id,
             "session/prompt",
-            context::session_prompt_params(
-                &session.session_id,
-                prompt_text,
-                context,
-                Some(&snapshot_path),
-            ),
+            context::session_prompt_params(&session.session_id, prompt_text, context),
         )?;
 
         let empty_hint = match session.profile_kind {
@@ -738,7 +761,7 @@ impl AcpService {
         let snapshot_path = snapshot_path_for_cwd(std::path::Path::new(cwd));
         let _ = write_snapshot(
             &snapshot_path,
-            &LuminaMcpSnapshot::new(None, None),
+            &LuminaMcpSnapshot::empty(),
         );
         let new_id = session.next_id;
         session.next_id += 1;

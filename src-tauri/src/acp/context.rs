@@ -19,7 +19,7 @@ pub struct VideoPromptContext {
     pub position_ms: Option<u64>,
     pub duration_ms: Option<u64>,
     pub chapter_title: Option<String>,
-    pub transcript_excerpt: Option<String>,
+    pub subtitle_choice_id: Option<String>,
     pub notes_excerpt: Option<String>,
 }
 
@@ -37,7 +37,7 @@ impl VideoPromptContext {
                 .as_ref()
                 .is_none_or(|s| s.trim().is_empty())
             && self
-                .transcript_excerpt
+                .subtitle_choice_id
                 .as_ref()
                 .is_none_or(|s| s.trim().is_empty())
             && self
@@ -51,7 +51,6 @@ pub fn session_prompt_params(
     session_id: &str,
     text: &str,
     context: Option<&VideoPromptContext>,
-    context_snapshot: Option<&Path>,
 ) -> Value {
     let mut prompt = Vec::new();
 
@@ -66,14 +65,6 @@ pub fn session_prompt_params(
                 "type": "resource_link",
                 "uri": path_to_file_uri(path),
                 "name": name,
-            }));
-        }
-
-        if let Some(snapshot) = context_snapshot {
-            prompt.push(json!({
-                "type": "resource_link",
-                "uri": path_to_file_uri(&snapshot.to_string_lossy()),
-                "name": format!("Lumina 媒体上下文 ({SNAPSHOT_RELATIVE_PATH})"),
             }));
         }
 
@@ -95,9 +86,8 @@ pub fn session_prompt_params(
 }
 
 fn context_pointer_text() -> &'static str {
-    "【Lumina】用户正在本机观看媒体。播放进度、字幕摘录、笔记，以及 TMDb/维基百科合并元数据已写入会话目录下的 `.lumina/agent-context.json`。\
-请优先调用 MCP 工具 `lumina_get_playback_context` 与 `lumina_get_library_context` 按需读取；\
-若 MCP 不可用，可读取上述 JSON 文件。不要臆造未读取到的剧情或角色信息。"
+    "【Lumina】用户正在本机观看上述媒体。播放锚点、笔记摘要、剧集元数据、分集简介、台词与画面请按需调用 Lumina MCP 工具读取；\
+未读取前不要编造剧情或角色信息。"
 }
 
 fn format_time_ms(ms: u64) -> String {
@@ -146,36 +136,31 @@ mod tests {
             position_ms: Some(83_000),
             duration_ms: Some(2_700_000),
             chapter_title: Some("开场".into()),
-            transcript_excerpt: Some("不应出现在 prompt 中".into()),
+            subtitle_choice_id: Some("embedded:0".into()),
             notes_excerpt: Some("也不应出现".into()),
         };
-        let snapshot = PathBuf::from(r"D:\workspace\.lumina\agent-context.json");
-        let params = session_prompt_params("sess_1", "这段讲了什么？", Some(&ctx), Some(&snapshot));
+        let params = session_prompt_params("sess_1", "这段讲了什么？", Some(&ctx));
         let prompt = params
             .get("prompt")
             .and_then(Value::as_array)
             .expect("prompt");
-        assert_eq!(prompt.len(), 4);
+        assert_eq!(prompt.len(), 3);
         assert_eq!(
             prompt[0].get("type").and_then(Value::as_str),
             Some("resource_link")
         );
+        let pointer = prompt[1].get("text").and_then(Value::as_str).unwrap_or("");
+        assert!(pointer.contains("MCP 工具"));
+        assert!(!pointer.contains("也不应出现"));
         assert_eq!(
-            prompt[1].get("type").and_then(Value::as_str),
-            Some("resource_link")
-        );
-        let pointer = prompt[2].get("text").and_then(Value::as_str).unwrap_or("");
-        assert!(pointer.contains("lumina_get_playback_context"));
-        assert!(!pointer.contains("不应出现在 prompt 中"));
-        assert_eq!(
-            prompt[3].get("text").and_then(Value::as_str),
+            prompt[2].get("text").and_then(Value::as_str),
             Some("这段讲了什么？")
         );
     }
 
     #[test]
     fn prompt_without_context_is_user_text_only() {
-        let params = session_prompt_params("sess_1", "你好", None, None);
+        let params = session_prompt_params("sess_1", "你好", None);
         let prompt = params
             .get("prompt")
             .and_then(Value::as_array)

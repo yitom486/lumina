@@ -281,6 +281,22 @@ impl MediaLibraryService {
         metadata::load_context(&root, &index, &media_path)
     }
 
+    pub fn library_root_for_media(&self, media_path: &str) -> Option<PathBuf> {
+        let media_path = PathBuf::from(media_path);
+        let roots = self
+            .runtime
+            .lock()
+            .ok()?
+            .config
+            .roots
+            .clone();
+        roots
+            .into_iter()
+            .map(PathBuf::from)
+            .filter(|root| media_path.strip_prefix(root).is_ok())
+            .max_by_key(|root| root.as_os_str().len())
+    }
+
     pub fn list_groups(&self, root: String) -> Result<Vec<MediaGroup>, LibraryError> {
         self.ensure_configured_root(&root)?;
         let path = PathBuf::from(&root);

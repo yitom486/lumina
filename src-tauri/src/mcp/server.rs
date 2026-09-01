@@ -5,6 +5,7 @@ use std::io::{self, BufRead, Write};
 use serde_json::{json, Value};
 
 use super::snapshot::{read_snapshot, resolve_snapshot_path, LuminaMcpSnapshot};
+use super::tools::{handle_tool_call, vision_capable};
 
 const PROTOCOL_VERSION: &str = "2024-11-05";
 
@@ -29,9 +30,15 @@ pub fn run_stdio_server() -> Result<(), String> {
         let params = request.get("params").cloned().unwrap_or(Value::Null);
         let response = match method {
             "initialize" => success(id, initialize_result(params)),
-            "tools/list" => success(id, tools_list_result()),
-            "tools/call" => match handle_tool_call(&params) {
-                Ok(result) => success(id, result),
+            "tools/list" => match load_snapshot() {
+                Ok(snapshot) => success(id, tools_list_result(&snapshot)),
+                Err(message) => error(id, -32000, &message),
+            },
+            "tools/call" => match load_snapshot() {
+                Ok(snapshot) => match handle_tool_call_request(&snapshot, &params) {
+                    Ok(result) => success(id, result),
+                    Err(message) => error(id, -32000, &message),
+                },
                 Err(message) => error(id, -32000, &message),
             },
             "ping" => success(id, json!({})),
@@ -54,47 +61,79 @@ fn initialize_result(params: Value) -> Value {
     })
 }
 
-fn tools_list_result() -> Value {
-    json!({
-        "tools": [
-            {
-                "name": "lumina_get_playback_context",
-                "description": "Return current Lumina playback snapshot: media path/title, progress, chapter, transcript excerpt, nearby notes.",
-                "inputSchema": {
-                    "type": "object",
-                    "properties": {},
-                    "additionalProperties": false
-                }
-            },
-            {
-                "name": "lumina_get_library_context",
-                "description": "Return merged TMDb + Wikipedia metadata for the media currently open in Lumina (synopsis, characters, episode plot, attribution).",
-                "inputSchema": {
-                    "type": "object",
-                    "properties": {},
-                    "additionalProperties": false
-                }
+fn tools_list_result(snapshot: &LuminaMcpSnapshot) -> Value {
+    let mut tools = vec![
+        json!({
+            "name": "lumina_get_playback_context",
+            "description": "Return frozen playback anchor, progress, chapter title, and nearby notes for the current prompt turn.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {},
+                "additionalProperties": false
             }
-        ]
-    })
+        }),
+        json!({
+            "name": "lumina_get_library_context",
+            "description": "Return series metadata plus the current episode overview/plot. Loads from warm cache when present, otherwise reads local metadata on demand.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {},
+                "additionalProperties": false
+            }
+        }),
+        json!({
+            "name": "lumina_get_episode_index",
+            "description": "List episode titles and overviews for every episode in the current series group.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {},
+                "additionalProperties": false
+            }
+        }),
+        json!({
+            "name": "lumina_get_transcript_window",
+            "description": "Return subtitle lines around the frozen anchor time. Defaults to 60 seconds before and after.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "beforeSec": { "type": "integer", "minimum": 0, "maximum": 300 },
+                    "afterSec": { "type": "integer", "minimum": 0, "maximum": 300 },
+                    "radiusSec": { "type": "integer", "minimum": 0, "maximum": 300 }
+                },
+                "additionalProperties": false
+            }
+        }),
+    ];
+
+    if vision_capable(snapshot) {
+        tools.push(json!({
+            "name": "lumina_capture_frames",
+            "description": "Capture temporary JPEG frames around the frozen anchor time for vision models. Use radiusSec for symmetric windows or beforeSec/afterSec for asymmetric ranges.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "beforeSec": { "type": "integer", "minimum": 0, "maximum": 300 },
+                    "afterSec": { "type": "integer", "minimum": 0, "maximum": 300 },
+                    "radiusSec": { "type": "integer", "minimum": 0, "maximum": 300 }
+                },
+                "additionalProperties": false
+            }
+        }));
+    }
+
+    json!({ "tools": tools })
 }
 
-fn handle_tool_call(params: &Value) -> Result<Value, String> {
+fn handle_tool_call_request(snapshot: &LuminaMcpSnapshot, params: &Value) -> Result<Value, String> {
     let name = params
         .get("name")
         .and_then(Value::as_str)
         .ok_or_else(|| "tools/call missing name".to_string())?;
-    let snapshot = load_snapshot()?;
-    let payload = match name {
-        "lumina_get_playback_context" => json!({ "playback": snapshot.playback }),
-        "lumina_get_library_context" => json!({ "library": snapshot.library }),
-        other => return Err(format!("Unknown tool: {other}")),
-    };
-    let text = serde_json::to_string_pretty(&payload).map_err(|error| error.to_string())?;
-    Ok(json!({
-        "content": [{ "type": "text", "text": text }],
-        "isError": false
-    }))
+    let args = params
+        .get("arguments")
+        .cloned()
+        .unwrap_or_else(|| json!({}));
+    handle_tool_call(snapshot, name, &args)
 }
 
 fn load_snapshot() -> Result<LuminaMcpSnapshot, String> {
@@ -118,10 +157,22 @@ fn error(id: Value, code: i64, message: &str) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::mcp::snapshot::{AgentCapabilities, LuminaMcpSnapshot, SNAPSHOT_SCHEMA_VERSION};
 
     #[test]
-    fn tools_list_contains_lumina_tools() {
-        let tools = tools_list_result()
+    fn tools_list_contains_core_tools() {
+        let snapshot = LuminaMcpSnapshot {
+            schema_version: SNAPSHOT_SCHEMA_VERSION,
+            anchor: None,
+            playback: None,
+            library: None,
+            session: None,
+            capabilities: Some(AgentCapabilities {
+                vision_capable: false,
+            }),
+            updated_at_ms: 0,
+        };
+        let tools = tools_list_result(&snapshot)
             .get("tools")
             .and_then(Value::as_array)
             .cloned()
@@ -131,6 +182,32 @@ mod tests {
             .filter_map(|tool| tool.get("name").and_then(Value::as_str))
             .collect();
         assert!(names.contains(&"lumina_get_playback_context"));
-        assert!(names.contains(&"lumina_get_library_context"));
+        assert!(names.contains(&"lumina_get_transcript_window"));
+        assert!(!names.contains(&"lumina_capture_frames"));
+    }
+
+    #[test]
+    fn tools_list_includes_capture_when_vision_enabled() {
+        let snapshot = LuminaMcpSnapshot {
+            schema_version: SNAPSHOT_SCHEMA_VERSION,
+            anchor: None,
+            playback: None,
+            library: None,
+            session: None,
+            capabilities: Some(AgentCapabilities {
+                vision_capable: true,
+            }),
+            updated_at_ms: 0,
+        };
+        let tools = tools_list_result(&snapshot)
+            .get("tools")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+        let names: Vec<_> = tools
+            .iter()
+            .filter_map(|tool| tool.get("name").and_then(Value::as_str))
+            .collect();
+        assert!(names.contains(&"lumina_capture_frames"));
     }
 }

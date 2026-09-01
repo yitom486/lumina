@@ -445,6 +445,37 @@ pub struct TmdbGroupStatus {
     pub updated_at_ms: u128,
 }
 
+/// Series-level metadata cached in MCP snapshot (no per-episode fields).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct SeriesLibraryCache {
+    pub title: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub synopsis: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub characters: Option<Vec<WikiCharacter>>,
+    #[serde(default)]
+    pub creators: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub network: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub status: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wiki_attribution: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wiki_page_url: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct EpisodeIndexEntry {
+    pub season: u32,
+    pub episode: u32,
+    pub title: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub overview: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct WikiEnrichmentPreview {

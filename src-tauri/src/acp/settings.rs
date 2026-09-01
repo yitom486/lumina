@@ -26,6 +26,8 @@ pub struct AcpClientSettings {
     pub thinking_level: ThinkingLevel,
     #[serde(default = "default_agent_mode")]
     pub agent_mode: String,
+    #[serde(default)]
+    pub vision_capable: bool,
 }
 
 impl Default for AcpClientSettings {
@@ -34,6 +36,7 @@ impl Default for AcpClientSettings {
             permission_mode: default_permission_mode(),
             thinking_level: default_thinking_level(),
             agent_mode: default_agent_mode(),
+            vision_capable: false,
         }
     }
 }

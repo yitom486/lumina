@@ -27,10 +27,15 @@ pub use model::{
     ResolverProviderConfig, ResolverRunConfig, ResolverSelection, StoredMetadata,
     StoredMetadataKind, TmdbCandidate, TmdbConfig, WikiEnrichmentCandidate, WikiEnrichmentPreview,
     WikiMatchMethod, WikiMetadata, WikiCharacter, WikiEpisodeSummary, WikiWriteResult,
-    WikiZhReference, WikiGroupStatus, WIKI_STALE_AFTER_MS, TmdbGroupStatus,
+    WikiZhReference, WikiGroupStatus, WIKI_STALE_AFTER_MS, TmdbGroupStatus, SeriesLibraryCache,
+    EpisodeIndexEntry,
 };
 pub use resolver::{
     discover_agent_models, discover_models, validate_credentials, validate_tmdb_credentials,
     RemoteResolver,
 };
 pub use service::MediaLibraryService;
+pub use metadata::{
+    episode_index_for_group, load_context_at_root, resolve_media_in_index, series_cache_from_context,
+};
+pub use store::load as load_library_index;

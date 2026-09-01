@@ -7,6 +7,7 @@ const DEFAULT_SETTINGS: AcpClientSettings = {
   permissionMode: "auto",
   thinkingLevel: "minimal",
   agentMode: "default",
+  visionCapable: false,
 };
 
 type AcpSettingsStore = AcpClientSettings & {
@@ -26,6 +27,7 @@ export const useAcpSettingsStore = create<AcpSettingsStore>()(
         permissionMode: state.permissionMode,
         thinkingLevel: state.thinkingLevel,
         agentMode: state.agentMode,
+        visionCapable: state.visionCapable,
       }),
       merge: (persisted, current) => {
         const saved = (persisted ?? {}) as Partial<AcpClientSettings>;
@@ -36,6 +38,8 @@ export const useAcpSettingsStore = create<AcpSettingsStore>()(
           thinkingLevel:
             saved.thinkingLevel ?? current.thinkingLevel ?? DEFAULT_SETTINGS.thinkingLevel,
           agentMode: saved.agentMode ?? current.agentMode ?? DEFAULT_SETTINGS.agentMode,
+          visionCapable:
+            saved.visionCapable ?? current.visionCapable ?? DEFAULT_SETTINGS.visionCapable,
         };
       },
     },
