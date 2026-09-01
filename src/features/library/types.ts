@@ -75,6 +75,18 @@ export type ResolverRunConfig = {
   tmdb: TmdbConfig;
 };
 
+export type CredentialKind = "modelApiKey" | "tmdbAccessToken";
+
+export type MetadataCredentialStatus = {
+  modelApiKeySaved: boolean;
+  tmdbAccessTokenSaved: boolean;
+};
+
+export type SaveMetadataCredentialsInput = {
+  modelApiKey?: string;
+  tmdbAccessToken?: string;
+};
+
 export type ResolverIntent = {
   mediaType: MetadataMediaType;
   title: string;

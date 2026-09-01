@@ -7,15 +7,18 @@ import { errorMessage } from "@/lib/format";
 
 import {
   applyTmdbMediaMatch,
+  deleteMetadataCredential,
   getLibraryStatus,
+  getMetadataCredentialStatus,
   listPendingMediaGroups,
   previewMediaMatch,
+  saveMetadataCredentials,
   setManualMediaTitle,
   startLibraryWatch,
   stopLibraryWatch,
 } from "../api";
 import { useLibrarySettingsStore } from "../settingsStore";
-import type { PendingMediaGroup, ResolverPreview } from "../types";
+import type { CredentialKind, PendingMediaGroup, ResolverPreview } from "../types";
 
 export function MediaLibraryPanel() {
   const queryClient = useQueryClient();
@@ -24,13 +27,13 @@ export function MediaLibraryPanel() {
   const privacyAcknowledged = useLibrarySettingsStore((state) => state.privacyAcknowledged);
   const modelBaseUrl = useLibrarySettingsStore((state) => state.modelBaseUrl);
   const modelId = useLibrarySettingsStore((state) => state.modelId);
-  const modelApiKeyEnv = useLibrarySettingsStore((state) => state.modelApiKeyEnv);
-  const tmdbAccessTokenEnv = useLibrarySettingsStore((state) => state.tmdbAccessTokenEnv);
   const tmdbLanguage = useLibrarySettingsStore((state) => state.tmdbLanguage);
   const patchSettings = useLibrarySettingsStore((state) => state.patchSettings);
   const [error, setError] = useState<string | null>(null);
   const [titles, setTitles] = useState<Record<string, string>>({});
   const [previews, setPreviews] = useState<Record<string, ResolverPreview>>({});
+  const [modelApiKey, setModelApiKey] = useState("");
+  const [tmdbAccessToken, setTmdbAccessToken] = useState("");
 
   const statusQuery = useQuery({ queryKey: ["library-status"], queryFn: getLibraryStatus });
   const pendingQuery = useQuery({
@@ -38,20 +41,19 @@ export function MediaLibraryPanel() {
     queryFn: listPendingMediaGroups,
     enabled: Boolean(statusQuery.data?.running),
   });
+  const credentialStatusQuery = useQuery({
+    queryKey: ["library-credential-status"],
+    queryFn: getMetadataCredentialStatus,
+  });
   const config = useMemo(
     () => ({
       privacyAcknowledged,
-      model: { baseUrl: modelBaseUrl, modelId, apiKeyEnv: modelApiKeyEnv },
-      tmdb: { accessTokenEnv: tmdbAccessTokenEnv, language: tmdbLanguage },
+      // Old installations can continue to supply these environment variables.
+      // Newly saved secrets are read from Windows Credential Manager first.
+      model: { baseUrl: modelBaseUrl, modelId, apiKeyEnv: "LUMINA_METADATA_MODEL_API_KEY" },
+      tmdb: { accessTokenEnv: "LUMINA_TMDB_ACCESS_TOKEN", language: tmdbLanguage },
     }),
-    [
-      modelApiKeyEnv,
-      modelBaseUrl,
-      modelId,
-      privacyAcknowledged,
-      tmdbAccessTokenEnv,
-      tmdbLanguage,
-    ],
+    [modelBaseUrl, modelId, privacyAcknowledged, tmdbLanguage],
   );
   const refresh = async () => {
     await Promise.all([
@@ -67,6 +69,23 @@ export function MediaLibraryPanel() {
   const stopMutation = useMutation({
     mutationFn: stopLibraryWatch,
     onSuccess: () => void refresh(),
+    onError: (err) => setError(errorMessage(err)),
+  });
+  const saveCredentialsMutation = useMutation({
+    mutationFn: () => saveMetadataCredentials({
+      modelApiKey: modelApiKey || undefined,
+      tmdbAccessToken: tmdbAccessToken || undefined,
+    }),
+    onSuccess: () => {
+      setModelApiKey("");
+      setTmdbAccessToken("");
+      void queryClient.invalidateQueries({ queryKey: ["library-credential-status"] });
+    },
+    onError: (err) => setError(errorMessage(err)),
+  });
+  const deleteCredentialMutation = useMutation({
+    mutationFn: (kind: CredentialKind) => deleteMetadataCredential(kind),
+    onSuccess: () => void queryClient.invalidateQueries({ queryKey: ["library-credential-status"] }),
     onError: (err) => setError(errorMessage(err)),
   });
 
@@ -105,8 +124,16 @@ export function MediaLibraryPanel() {
         <div className="mt-2 space-y-2">
           <Field label="模型地址"><input value={modelBaseUrl} onChange={(e) => patchSettings({ modelBaseUrl: e.target.value })} placeholder="https://…/v1" /></Field>
           <Field label="模型 ID"><input value={modelId} onChange={(e) => patchSettings({ modelId: e.target.value })} placeholder="低成本 JSON 模型" /></Field>
-          <Field label="模型密钥环境变量"><input value={modelApiKeyEnv} onChange={(e) => patchSettings({ modelApiKeyEnv: e.target.value })} /></Field>
-          <Field label="TMDb Token 环境变量"><input value={tmdbAccessTokenEnv} onChange={(e) => patchSettings({ tmdbAccessTokenEnv: e.target.value })} /></Field>
+          <Field label="模型 API Key（留空则不更新）"><input type="password" autoComplete="off" value={modelApiKey} onChange={(e) => setModelApiKey(e.target.value)} placeholder={credentialStatusQuery.data?.modelApiKeySaved ? "已保存到此设备" : "输入后保存到此设备"} /></Field>
+          <Field label="TMDb Read Access Token（留空则不更新）"><input type="password" autoComplete="off" value={tmdbAccessToken} onChange={(e) => setTmdbAccessToken(e.target.value)} placeholder={credentialStatusQuery.data?.tmdbAccessTokenSaved ? "已保存到此设备" : "输入后保存到此设备"} /></Field>
+          <div className="space-y-1 text-muted-foreground">
+            <p>密钥保存在当前 Windows 用户的系统安全凭据中，不会写入 `.lumina`、项目文件或浏览器设置。</p>
+            <div className="flex flex-wrap gap-1">
+              <Button size="sm" disabled={(!modelApiKey && !tmdbAccessToken) || saveCredentialsMutation.isPending} onClick={() => saveCredentialsMutation.mutate()}>保存到此设备</Button>
+              <Button size="sm" variant="outline" disabled={!credentialStatusQuery.data?.modelApiKeySaved || deleteCredentialMutation.isPending} onClick={() => deleteCredentialMutation.mutate("modelApiKey")}>删除模型密钥</Button>
+              <Button size="sm" variant="outline" disabled={!credentialStatusQuery.data?.tmdbAccessTokenSaved || deleteCredentialMutation.isPending} onClick={() => deleteCredentialMutation.mutate("tmdbAccessToken")}>删除 TMDb Token</Button>
+            </div>
+          </div>
           <label className="flex gap-2 leading-relaxed text-muted-foreground"><input type="checkbox" checked={privacyAcknowledged} onChange={(e) => patchSettings({ privacyAcknowledged: e.target.checked })} />允许将文件名和相对目录名发送到所选模型服务；不会发送视频、字幕、笔记或绝对路径。</label>
         </div>
       </details>

@@ -1,17 +1,36 @@
 import { invoke } from "@tauri-apps/api/core";
 
 import type {
+  CredentialKind,
   LibraryIndex,
   LibraryStatus,
   LibraryWatchConfig,
   MediaMetadataContext,
+  MetadataCredentialStatus,
   MetadataMediaType,
   MetadataWriteResult,
   PendingMediaGroup,
   ResolverPreview,
   ResolverRunConfig,
+  SaveMetadataCredentialsInput,
   TmdbConfig,
 } from "./types";
+
+export function getMetadataCredentialStatus(): Promise<MetadataCredentialStatus> {
+  return invoke<MetadataCredentialStatus>("library_credential_status");
+}
+
+export function saveMetadataCredentials(
+  input: SaveMetadataCredentialsInput,
+): Promise<MetadataCredentialStatus> {
+  return invoke<MetadataCredentialStatus>("library_credentials_save", { input });
+}
+
+export function deleteMetadataCredential(
+  kind: CredentialKind,
+): Promise<MetadataCredentialStatus> {
+  return invoke<MetadataCredentialStatus>("library_credential_delete", { kind });
+}
 
 export function startLibraryWatch(config: LibraryWatchConfig): Promise<LibraryStatus> {
   return invoke<LibraryStatus>("library_watch_start", { config });

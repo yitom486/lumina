@@ -4,9 +4,9 @@
 use tauri::State;
 
 use crate::library::{
-    LibraryError, LibraryIndex, LibraryStatus, LibraryWatchConfig, MediaMetadataContext,
-    MetadataMediaType, MetadataWriteResult, PendingMediaGroup, ResolverPreview, ResolverRunConfig,
-    TmdbConfig,
+    credentials, CredentialKind, CredentialSaveInput, CredentialStatus, LibraryError, LibraryIndex,
+    LibraryStatus, LibraryWatchConfig, MediaMetadataContext, MetadataMediaType,
+    MetadataWriteResult, PendingMediaGroup, ResolverPreview, ResolverRunConfig, TmdbConfig,
 };
 use crate::state::AppState;
 
@@ -106,4 +106,33 @@ pub async fn library_context_for_media(
     tauri::async_runtime::spawn_blocking(move || service.context_for_media(media_path))
         .await
         .map_err(|error| LibraryError::internal(Some(&format!("library context join: {error}"))))?
+}
+
+#[tauri::command]
+pub async fn library_credential_status() -> Result<CredentialStatus, LibraryError> {
+    tauri::async_runtime::spawn_blocking(credentials::status)
+        .await
+        .map_err(|error| {
+            LibraryError::internal(Some(&format!("credential status join: {error}")))
+        })?
+}
+
+#[tauri::command]
+pub async fn library_credentials_save(
+    input: CredentialSaveInput,
+) -> Result<CredentialStatus, LibraryError> {
+    tauri::async_runtime::spawn_blocking(move || credentials::save(input))
+        .await
+        .map_err(|error| LibraryError::internal(Some(&format!("credential save join: {error}"))))?
+}
+
+#[tauri::command]
+pub async fn library_credential_delete(
+    kind: CredentialKind,
+) -> Result<CredentialStatus, LibraryError> {
+    tauri::async_runtime::spawn_blocking(move || credentials::delete(kind))
+        .await
+        .map_err(|error| {
+            LibraryError::internal(Some(&format!("credential delete join: {error}")))
+        })?
 }

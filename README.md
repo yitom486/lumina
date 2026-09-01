@@ -22,14 +22,16 @@ Lumina 是一款桌面端 AI Video Reader：用原生 libmpv 播放本地视频�
 
 侧栏的「媒体库」可对用户选择的目录建立本地 `.lumina/` 索引，并以周期扫描发现文件变化。待匹配的剧集或电影可先输入作品名，或启用智能匹配：小模型只接收文件名和相对目录名，再由 TMDb 候选结果约束确认。
 
-模型地址、模型 ID、扫描目录和轮询周期保存在本地 WebView 设置；密钥不保存到项目或 `.lumina`。请在启动 Lumina 的环境中设置：
+模型地址、模型 ID、扫描目录和轮询周期保存在本地 WebView 设置；模型 API Key 与 TMDb Token 可在「智能匹配设置」中保存到当前 Windows 用户的 Credential Manager。密钥不会写入项目、`.lumina`、WebView 设置或日志，界面也不会回显密钥。
+
+环境变量仍是开发与 CI 的兼容备用方式；只有在系统凭据中尚未保存对应密钥时才会读取：
 
 ```powershell
 $env:LUMINA_METADATA_MODEL_API_KEY = "你的模型密钥"
 $env:LUMINA_TMDB_ACCESS_TOKEN = "你的 TMDb Read Access Token"
 ```
 
-可在「智能匹配设置」中修改环境变量名、OpenAI-compatible 模型地址和模型 ID。未配置模型或 TMDb 时，播放、字幕和笔记仍完全可用。
+可在「智能匹配设置」中修改 OpenAI-compatible 模型地址和模型 ID，也可删除已保存的任一密钥。未配置模型或 TMDb 时，播放、字幕和笔记仍完全可用。
 
 ## 开发环境
 

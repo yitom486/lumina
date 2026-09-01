@@ -15,11 +15,11 @@ pub use acp::{
 };
 pub use asr::{AsrError, AsrErrorCode, AsrEvent, AsrService, AsrStatus};
 pub use library::{
-    GroupResolution, LibraryError, LibraryErrorCode, LibraryIndex, LibraryStatus,
-    LibraryWatchConfig, MediaGroup, MediaGroupKind, MediaLibraryService, MediaMetadataContext,
-    MetadataMediaType, MetadataWriteResult, PendingMediaGroup, ResolverIntent, ResolverPreview,
-    ResolverRunConfig, ResolverSelection, StoredMetadata, StoredMetadataKind, TmdbCandidate,
-    TmdbConfig,
+    CredentialKind, CredentialSaveInput, CredentialStatus, GroupResolution, LibraryError,
+    LibraryErrorCode, LibraryIndex, LibraryStatus, LibraryWatchConfig, MediaGroup, MediaGroupKind,
+    MediaLibraryService, MediaMetadataContext, MetadataMediaType, MetadataWriteResult,
+    PendingMediaGroup, ResolverIntent, ResolverPreview, ResolverRunConfig, ResolverSelection,
+    StoredMetadata, StoredMetadataKind, TmdbCandidate, TmdbConfig,
 };
 pub use media::{
     MediaChapter, MediaError, MediaErrorCode, MediaInfo, MediaInspector, MediaStream, StreamKind,
@@ -38,7 +38,8 @@ use commands::acp::{
 };
 use commands::asr::{asr_status, asr_transcribe};
 use commands::library::{
-    library_apply_tmdb_match, library_context_for_media, library_pending_groups,
+    library_apply_tmdb_match, library_context_for_media, library_credential_delete,
+    library_credential_status, library_credentials_save, library_pending_groups,
     library_resolve_preview, library_scan_now, library_set_manual_title, library_status,
     library_watch_start, library_watch_stop,
 };
@@ -92,6 +93,9 @@ pub fn run() {
             library_resolve_preview,
             library_apply_tmdb_match,
             library_context_for_media,
+            library_credential_status,
+            library_credentials_save,
+            library_credential_delete,
             acp_status,
             acp_respond_permission,
             acp_connect,

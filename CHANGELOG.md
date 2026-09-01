@@ -3,7 +3,7 @@
 ## Unreleased
 
 - 新增实验性本地媒体库：目录守护扫描、`.lumina` 索引、待匹配分组与人工标题兜底。
-- 新增可配置的 OpenAI-compatible 文件名解析与 TMDb 候选确认；模型密钥与 TMDb Token 仅从环境变量读取。
+- 新增可配置的 OpenAI-compatible 文件名解析与 TMDb 候选确认；模型密钥与 TMDb Token 可保存到当前 Windows 用户的 Credential Manager，环境变量仅作开发/CI 兼容备用。
 - 已确认的电影/剧集写入 `movie.json`、`series.json` 与分集 JSON，并可按当前媒体读取结构化剧情上下文。
 
 本项目当前为私有预览阶段。版本说明描述的是已实现能力，不承诺稳定 API、跨平台支持或公开分发。

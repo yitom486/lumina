@@ -7,8 +7,6 @@ type LibrarySettingsState = {
   privacyAcknowledged: boolean;
   modelBaseUrl: string;
   modelId: string;
-  modelApiKeyEnv: string;
-  tmdbAccessTokenEnv: string;
   tmdbLanguage: string;
   patchSettings: (patch: Partial<LibrarySettingsState>) => void;
 };
@@ -19,8 +17,6 @@ const DEFAULTS = {
   privacyAcknowledged: false,
   modelBaseUrl: "",
   modelId: "",
-  modelApiKeyEnv: "LUMINA_METADATA_MODEL_API_KEY",
-  tmdbAccessTokenEnv: "LUMINA_TMDB_ACCESS_TOKEN",
   tmdbLanguage: "zh-CN",
 };
 
@@ -39,8 +35,6 @@ export const useLibrarySettingsStore = create<LibrarySettingsState>()(
         privacyAcknowledged: state.privacyAcknowledged,
         modelBaseUrl: state.modelBaseUrl,
         modelId: state.modelId,
-        modelApiKeyEnv: state.modelApiKeyEnv,
-        tmdbAccessTokenEnv: state.tmdbAccessTokenEnv,
         tmdbLanguage: state.tmdbLanguage,
       }),
     },

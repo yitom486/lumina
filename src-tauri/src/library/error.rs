@@ -12,6 +12,7 @@ pub enum LibraryErrorCode {
     InvalidInput,
     GroupNotFound,
     PrivacyConsentRequired,
+    CredentialAccessFailed,
     ResolverNotConfigured,
     RemoteRequestFailed,
     InvalidResolverResponse,
@@ -71,6 +72,14 @@ impl LibraryError {
             LibraryErrorCode::PrivacyConsentRequired,
             "请先确认允许发送文件名用于智能匹配",
             None,
+        )
+    }
+
+    pub fn credential_access_failed(details: Option<&str>) -> Self {
+        Self::new(
+            LibraryErrorCode::CredentialAccessFailed,
+            "无法访问系统安全凭据，请检查系统账户后重试",
+            details.map(str::to_string),
         )
     }
 

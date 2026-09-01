@@ -9,6 +9,7 @@ use std::env;
 use serde_json::{json, Value};
 use url::form_urlencoded;
 
+use crate::library::credentials::{self, CredentialKind};
 use crate::library::error::LibraryError;
 use crate::library::model::{
     MediaGroup, MetadataMediaType, ModelResolverConfig, ResolverIntent, ResolverPreview,
@@ -29,8 +30,16 @@ impl RemoteResolver {
     }
 
     pub fn preview(&self, group: &MediaGroup) -> Result<ResolverPreview, LibraryError> {
-        let model_key = secret_from_env(&self.config.model.api_key_env, "model API key")?;
-        let tmdb_token = secret_from_env(&self.config.tmdb.access_token_env, "TMDb token")?;
+        let model_key = resolve_secret(
+            CredentialKind::ModelApiKey,
+            &self.config.model.api_key_env,
+            "model API key",
+        )?;
+        let tmdb_token = resolve_secret(
+            CredentialKind::TmdbAccessToken,
+            &self.config.tmdb.access_token_env,
+            "TMDb token",
+        )?;
         let intent = infer_intent(&self.config.model, &model_key, group)?;
         let candidates = search_tmdb(&self.config.tmdb, &tmdb_token, &intent)?;
         if candidates.is_empty() {
@@ -62,14 +71,9 @@ fn validate_config(config: &ResolverRunConfig) -> Result<(), LibraryError> {
         return Err(LibraryError::privacy_consent_required());
     }
     validate_https_url(&config.model.base_url, "model base URL")?;
-    if config.model.model_id.trim().is_empty() || config.model.api_key_env.trim().is_empty() {
+    if config.model.model_id.trim().is_empty() {
         return Err(LibraryError::resolver_not_configured(Some(
-            "model id or API key environment variable is empty",
-        )));
-    }
-    if config.tmdb.access_token_env.trim().is_empty() {
-        return Err(LibraryError::resolver_not_configured(Some(
-            "TMDb token environment variable is empty",
+            "model id is empty",
         )));
     }
     Ok(())
@@ -85,6 +89,17 @@ fn validate_https_url(value: &str, label: &str) -> Result<(), LibraryError> {
         )));
     }
     Ok(())
+}
+
+fn resolve_secret(
+    kind: CredentialKind,
+    legacy_env_name: &str,
+    label: &str,
+) -> Result<String, LibraryError> {
+    if let Some(secret) = credentials::read(kind)? {
+        return Ok(secret);
+    }
+    secret_from_env(legacy_env_name, label)
 }
 
 fn secret_from_env(name: &str, label: &str) -> Result<String, LibraryError> {
@@ -260,7 +275,11 @@ pub fn fetch_tmdb_details(
     season: Option<u32>,
     episode: Option<u32>,
 ) -> Result<Value, LibraryError> {
-    let token = secret_from_env(&config.access_token_env, "TMDb token")?;
+    let token = resolve_secret(
+        CredentialKind::TmdbAccessToken,
+        &config.access_token_env,
+        "TMDb token",
+    )?;
     let path = match (media_type, season, episode) {
         (MetadataMediaType::Movie, _, _) => format!("movie/{tmdb_id}"),
         (MetadataMediaType::Tv, Some(season), Some(episode)) => {

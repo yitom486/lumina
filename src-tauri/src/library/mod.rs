@@ -4,6 +4,7 @@
 //! A future configured resolver will consume `ResolverIntent`/`TmdbCandidate`
 //! and write confirmed TMDb metadata into the existing `.lumina` group folder.
 
+pub(crate) mod credentials;
 mod error;
 mod metadata;
 pub mod model;
@@ -12,6 +13,7 @@ mod scanner;
 mod service;
 mod store;
 
+pub use credentials::{CredentialKind, CredentialSaveInput, CredentialStatus};
 pub use error::{LibraryError, LibraryErrorCode};
 pub use model::{
     GroupResolution, LibraryIndex, LibraryStatus, LibraryWatchConfig, MediaGroup, MediaGroupKind,
