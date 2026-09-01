@@ -765,11 +765,18 @@ impl AcpService {
         );
         let new_id = session.next_id;
         session.next_id += 1;
+        let mcp_servers = lumina_mcp_servers(&snapshot_path_for_cwd(std::path::Path::new(cwd)));
+        tracing::info!(
+            cwd,
+            snapshot = %snapshot_path.display(),
+            mcp = %mcp_servers,
+            "registering Lumina MCP for ACP session"
+        );
         Self::write_request(
             &mut session.stdin,
             new_id,
             "session/new",
-            session_new_params(cwd, lumina_mcp_servers(&snapshot_path_for_cwd(std::path::Path::new(cwd)))),
+            session_new_params(cwd, mcp_servers),
         )?;
         let session_resp = Self::read_until_id_raw(
             self,

@@ -86,8 +86,10 @@ pub fn session_prompt_params(
 }
 
 fn context_pointer_text() -> &'static str {
-    "【Lumina】用户正在本机观看上述媒体。播放锚点、笔记摘要、剧集元数据、分集简介、台词与画面请按需调用 Lumina MCP 工具读取；\
-未读取前不要编造剧情或角色信息。"
+    "【Lumina】用户正在本机观看上述媒体。请按需调用 MCP 工具：\
+lumina_get_playback_context、lumina_get_library_context、lumina_get_episode_index、\
+lumina_get_transcript_window（及识图模型的 lumina_capture_frames）。\
+未通过工具读取前不要编造剧情或角色信息。"
 }
 
 fn format_time_ms(ms: u64) -> String {
