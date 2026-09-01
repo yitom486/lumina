@@ -136,6 +136,8 @@ pub fn run() {
             notes_export_markdown,
         ])
         .setup(|app| {
+            #[cfg(windows)]
+            crate::player::mpv::dll::ensure_libmpv_loaded(app.handle())?;
             attach_native_surface(app)?;
             Ok(())
         })

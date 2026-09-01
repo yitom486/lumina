@@ -4,6 +4,12 @@
 
 （暂无）
 
+## 0.2.1 — Private Preview
+
+### 修复
+
+- **Windows 安装包**：将 `libmpv-2.dll` 打入 bundle resources，启动时 delay-load 预加载，修复安装后「找不到 libmpv-2.dll」无法启动。
+
 本项目当前为私有预览阶段。版本说明描述的是已实现能力，不承诺稳定 API、跨平台支持或公开分发。
 
 ## 0.2.0 — Private Preview

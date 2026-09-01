@@ -25,6 +25,15 @@ fn link_and_copy_libmpv() {
         return;
     }
 
+    if std::env::var("TARGET")
+        .unwrap_or_default()
+        .contains("windows")
+    {
+        // Installed builds load the DLL from Tauri resources in `setup()` before mpv init.
+        println!("cargo:rustc-link-arg=/DELAYLOAD:libmpv-2.dll");
+        println!("cargo:rustc-link-lib=delayimp");
+    }
+
     println!("cargo:rustc-link-search=native={}", mpv_dir.display());
     println!("cargo:rustc-link-lib=dylib=mpv");
 
