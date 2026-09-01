@@ -1,4 +1,10 @@
 //! Extract compressed JPEG frames via project-local ffmpeg.
+//!
+//! Product rules (`.plan/L1-mcp-adaptive-tools.md`):
+//! - Anchor = playback position when the user sends the prompt
+//! - Default: one frame at anchor; optional windows sample ~1 frame/sec (max 15)
+//! - Scale to 640px width, JPEG `-q:v 5` for moderate size
+//! - Write under `.lumina/tmp/capture-*`; deleted after MCP returns (next prompt also clears tmp)
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -9,6 +15,10 @@ use crate::media::MediaError;
 
 const CAPTURE_TIMEOUT: Duration = Duration::from_secs(15);
 const MAX_FRAME_WIDTH: u32 = 640;
+/// At most one sample per second in the capture window (see `sample_times_for_window`).
+pub const MAX_CAPTURE_FRAMES: usize = 15;
+/// Per-direction span cap at 1 fps → up to 7 + anchor + 7 = 15 frames.
+pub const MAX_CAPTURE_SPAN_SEC: u32 = 7;
 
 pub fn capture_frames(
     media_path: &Path,
@@ -70,22 +80,46 @@ pub fn sample_times_for_window(
     let max_sec = duration_ms
         .map(|ms| ms as f64 / 1000.0)
         .unwrap_or(f64::MAX);
-    let mut times = Vec::new();
     if before_sec == 0 && after_sec == 0 {
+        return vec![center_sec.clamp(0.0, max_sec)];
+    }
+
+    let window_start = (center_sec - f64::from(before_sec)).clamp(0.0, max_sec);
+    let window_end = (center_sec + f64::from(after_sec)).clamp(0.0, max_sec);
+    let mut times = Vec::new();
+    let mut sec = window_start.floor();
+    while sec <= window_end + f64::EPSILON {
+        times.push(sec.clamp(0.0, max_sec));
+        sec += 1.0;
+    }
+    if times.is_empty() {
         times.push(center_sec.clamp(0.0, max_sec));
-        return times;
-    }
-    if before_sec > 0 {
-        times.push((center_sec - before_sec as f64).clamp(0.0, max_sec));
-    }
-    times.push(center_sec.clamp(0.0, max_sec));
-    if after_sec > 0 {
-        times.push((center_sec + after_sec as f64).clamp(0.0, max_sec));
     }
     times.sort_by(|left, right| left.partial_cmp(right).unwrap_or(std::cmp::Ordering::Equal));
     times.dedup_by(|left, right| (*left - *right).abs() < 0.05);
-    times.truncate(3);
+    if times.len() > MAX_CAPTURE_FRAMES {
+        times = subsample_times(times, MAX_CAPTURE_FRAMES);
+    }
     times
+}
+
+fn subsample_times(times: Vec<f64>, max_len: usize) -> Vec<f64> {
+    if times.len() <= max_len {
+        return times;
+    }
+    if max_len == 0 {
+        return Vec::new();
+    }
+    if max_len == 1 {
+        return vec![times[times.len() / 2]];
+    }
+    let last_index = times.len() - 1;
+    (0..max_len)
+        .map(|index| {
+            let pick = index * last_index / (max_len - 1);
+            times[pick]
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -98,8 +132,20 @@ mod tests {
     }
 
     #[test]
-    fn sample_times_asymmetric_window() {
+    fn sample_times_asymmetric_window_samples_one_per_second() {
         let times = sample_times_for_window(30_000, Some(120_000), 3, 2);
-        assert_eq!(times, vec![27.0, 30.0, 32.0]);
+        assert_eq!(times, vec![27.0, 28.0, 29.0, 30.0, 31.0, 32.0]);
+    }
+
+    #[test]
+    fn sample_times_symmetric_radius_samples_one_per_second() {
+        let times = sample_times_for_window(30_000, Some(120_000), 3, 3);
+        assert_eq!(times, vec![27.0, 28.0, 29.0, 30.0, 31.0, 32.0, 33.0]);
+    }
+
+    #[test]
+    fn sample_times_respects_max_frame_cap() {
+        let times = sample_times_for_window(600_000, Some(1_800_000), 10, 10);
+        assert_eq!(times.len(), MAX_CAPTURE_FRAMES);
     }
 }

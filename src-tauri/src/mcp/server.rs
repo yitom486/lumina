@@ -118,13 +118,13 @@ fn tools_list_result(snapshot: &LuminaMcpSnapshot) -> Value {
     if vision_capable(snapshot) {
         tools.push(json!({
             "name": "lumina_capture_frames",
-            "description": "Capture temporary JPEG frames around the frozen anchor time for vision models. Use radiusSec for symmetric windows or beforeSec/afterSec for asymmetric ranges.",
+            "description": "Capture temporary JPEG frames (~1 per second) around the frozen anchor time. Default is a single frame at the anchor. Use radiusSec or beforeSec/afterSec (each capped at 7s, max 15 frames). Files are discarded after the tool returns.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
-                    "beforeSec": { "type": "integer", "minimum": 0, "maximum": 300 },
-                    "afterSec": { "type": "integer", "minimum": 0, "maximum": 300 },
-                    "radiusSec": { "type": "integer", "minimum": 0, "maximum": 300 }
+                    "beforeSec": { "type": "integer", "minimum": 0, "maximum": 7 },
+                    "afterSec": { "type": "integer", "minimum": 0, "maximum": 7 },
+                    "radiusSec": { "type": "integer", "minimum": 0, "maximum": 7 }
                 },
                 "additionalProperties": false
             }

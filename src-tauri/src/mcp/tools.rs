@@ -14,7 +14,7 @@ use crate::library::{
     series_cache_from_context,
 };
 use crate::library::MergedMediaContext;
-use crate::media::frame_capture::{capture_frames, sample_times_for_window};
+use crate::media::frame_capture::{capture_frames, sample_times_for_window, MAX_CAPTURE_SPAN_SEC};
 use crate::mcp::snapshot::{ephemeral_tmp_dir, LuminaMcpSnapshot, PromptAnchor};
 use crate::subtitle::SubtitleService;
 
@@ -156,7 +156,7 @@ fn capture_frame_tool(snapshot: &LuminaMcpSnapshot, args: &Value) -> Result<Valu
         return Err("当前模型不支持识图截图".to_string());
     }
     let anchor = require_anchor(snapshot)?;
-    let (before_sec, after_sec) = parse_window_args(args, 0, 0);
+    let (before_sec, after_sec) = parse_capture_window_args(args);
     let media_path = PathBuf::from(&anchor.media_path);
     if !media_path.is_file() {
         return Err("无法获取当前画面".to_string());
@@ -181,6 +181,7 @@ fn capture_frame_tool(snapshot: &LuminaMcpSnapshot, args: &Value) -> Result<Valu
             "text": format!("frame {index} @ {:.1}s", sample_times.get(index).copied().unwrap_or(0.0)),
         }));
     }
+    let _ = fs::remove_dir_all(&output_dir);
     Ok(json!({
         "content": content,
         "isError": false
@@ -243,6 +244,14 @@ fn parse_window_args(args: &Value, default_before: u32, default_after: u32) -> (
         .map(|value| value.min(300) as u32)
         .unwrap_or(default_after);
     (before, after)
+}
+
+fn parse_capture_window_args(args: &Value) -> (u32, u32) {
+    let (before, after) = parse_window_args(args, 0, 0);
+    (
+        before.min(MAX_CAPTURE_SPAN_SEC),
+        after.min(MAX_CAPTURE_SPAN_SEC),
+    )
 }
 
 fn require_anchor<'a>(snapshot: &'a LuminaMcpSnapshot) -> Result<&'a PromptAnchor, String> {
