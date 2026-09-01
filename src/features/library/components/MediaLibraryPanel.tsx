@@ -3,6 +3,8 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { useMemo, useState } from "react";
 
 import { Button } from "@/components/ui/button";
+import { profilesHintFromStore } from "@/features/acp/defaultAgentProfiles";
+import { useAcpProfilesStore } from "@/features/acp/acpProfilesStore";
 import { errorMessage } from "@/lib/format";
 
 import {
@@ -24,6 +26,7 @@ import type {
   CredentialValidationResult,
   PendingMediaGroup,
   ResolverPreview,
+  ResolverRunConfig,
 } from "../types";
 
 export function MediaLibraryPanel() {
@@ -31,10 +34,14 @@ export function MediaLibraryPanel() {
   const roots = useLibrarySettingsStore((state) => state.roots);
   const pollIntervalSecs = useLibrarySettingsStore((state) => state.pollIntervalSecs);
   const privacyAcknowledged = useLibrarySettingsStore((state) => state.privacyAcknowledged);
+  const resolverProvider = useLibrarySettingsStore((state) => state.resolverProvider);
+  const agentProfileId = useLibrarySettingsStore((state) => state.agentProfileId);
   const modelBaseUrl = useLibrarySettingsStore((state) => state.modelBaseUrl);
   const modelId = useLibrarySettingsStore((state) => state.modelId);
   const tmdbLanguage = useLibrarySettingsStore((state) => state.tmdbLanguage);
   const patchSettings = useLibrarySettingsStore((state) => state.patchSettings);
+  const activeAcpProfileId = useAcpProfilesStore((state) => state.activeProfileId);
+  const acpProfiles = useAcpProfilesStore((state) => state.profiles);
   const [error, setError] = useState<string | null>(null);
   const [titles, setTitles] = useState<Record<string, string>>({});
   const [previews, setPreviews] = useState<Record<string, ResolverPreview>>({});
@@ -52,15 +59,30 @@ export function MediaLibraryPanel() {
     queryKey: ["library-credential-status"],
     queryFn: getMetadataCredentialStatus,
   });
-  const config = useMemo(
-    () => ({
-      privacyAcknowledged,
-      // Old installations can continue to supply these environment variables.
-      // Newly saved secrets are read from Windows Credential Manager first.
-      model: { baseUrl: modelBaseUrl, modelId, apiKeyEnv: "LUMINA_METADATA_MODEL_API_KEY" },
-      tmdb: { accessTokenEnv: "LUMINA_TMDB_ACCESS_TOKEN", language: tmdbLanguage },
-    }),
-    [modelBaseUrl, modelId, privacyAcknowledged, tmdbLanguage],
+  const selectedAgentProfileId = acpProfiles.some((profile) => profile.id === agentProfileId)
+    ? agentProfileId
+    : activeAcpProfileId;
+  const config = useMemo<ResolverRunConfig>(
+    () => {
+      const profiles = profilesHintFromStore(activeAcpProfileId, acpProfiles);
+      const provider = resolverProvider === "acpAgent"
+        ? {
+            kind: "acpAgent" as const,
+            profileId: selectedAgentProfileId,
+            profiles,
+          }
+        : {
+            kind: "directApi" as const,
+            // Environment variables remain a development/CI fallback only.
+            model: { baseUrl: modelBaseUrl, modelId, apiKeyEnv: "LUMINA_METADATA_MODEL_API_KEY" },
+          };
+      return {
+        privacyAcknowledged,
+        provider,
+        tmdb: { accessTokenEnv: "LUMINA_TMDB_ACCESS_TOKEN", language: tmdbLanguage },
+      };
+    },
+    [activeAcpProfileId, acpProfiles, modelBaseUrl, modelId, privacyAcknowledged, resolverProvider, selectedAgentProfileId, tmdbLanguage],
   );
   const refresh = async () => {
     await Promise.all([
@@ -101,7 +123,7 @@ export function MediaLibraryPanel() {
   });
   const validateCredentialsMutation = useMutation({
     mutationFn: () => validateMetadataCredentials({
-      model: config.model,
+      provider: config.provider,
       tmdb: config.tmdb,
     }),
     onSuccess: (result) => setValidation(result),
@@ -141,22 +163,28 @@ export function MediaLibraryPanel() {
       <details className="rounded-md border border-border p-2">
         <summary className="cursor-pointer font-medium">智能匹配设置</summary>
         <div className="mt-2 space-y-2">
-          <Field label="模型地址"><input value={modelBaseUrl} onChange={(e) => { setValidation(null); patchSettings({ modelBaseUrl: e.target.value }); }} placeholder="https://…/v1" /></Field>
-          <Field label="模型 ID"><input value={modelId} onChange={(e) => { setValidation(null); patchSettings({ modelId: e.target.value }); }} placeholder="低成本 JSON 模型" /></Field>
-          <Field label="模型 API Key（留空则不更新）"><input type="password" autoComplete="off" value={modelApiKey} onChange={(e) => { setValidation(null); setModelApiKey(e.target.value); }} placeholder={credentialStatusQuery.data?.modelApiKeySaved ? "已保存到此设备" : "输入后保存到此设备"} /></Field>
+          <Field label="智能匹配来源"><select className="h-7 w-full rounded border border-border bg-background px-2" value={resolverProvider} onChange={(e) => { setValidation(null); patchSettings({ resolverProvider: e.target.value as "acpAgent" | "directApi" }); }}><option value="acpAgent">复用已配置的 Lumina Agent（推荐）</option><option value="directApi">直接 API</option></select></Field>
+          {resolverProvider === "acpAgent" ? <>
+            <Field label="用于智能匹配的 Agent"><select className="h-7 w-full rounded border border-border bg-background px-2" value={selectedAgentProfileId} onChange={(e) => { setValidation(null); patchSettings({ agentProfileId: e.target.value }); }}>{acpProfiles.map((profile) => <option key={profile.id} value={profile.id}>{profile.name}</option>)}</select></Field>
+            <p className="text-muted-foreground">复用该 Agent 的登录与模型配置；每次识别创建独立短会话，不读取或写入 AI 对话历史，也不允许工具、文件系统或终端访问。</p>
+          </> : <>
+            <Field label="模型地址"><input value={modelBaseUrl} onChange={(e) => { setValidation(null); patchSettings({ modelBaseUrl: e.target.value }); }} placeholder="https://…/v1" /></Field>
+            <Field label="模型 ID"><input value={modelId} onChange={(e) => { setValidation(null); patchSettings({ modelId: e.target.value }); }} placeholder="低成本 JSON 模型" /></Field>
+            <Field label="模型 API Key（留空则不更新）"><input type="password" autoComplete="off" value={modelApiKey} onChange={(e) => { setValidation(null); setModelApiKey(e.target.value); }} placeholder={credentialStatusQuery.data?.modelApiKeySaved ? "已保存到此设备" : "输入后保存到此设备"} /></Field>
+          </>}
           <Field label="TMDb Read Access Token（留空则不更新）"><input type="password" autoComplete="off" value={tmdbAccessToken} onChange={(e) => { setValidation(null); setTmdbAccessToken(e.target.value); }} placeholder={credentialStatusQuery.data?.tmdbAccessTokenSaved ? "已保存到此设备" : "输入后保存到此设备"} /></Field>
           <div className="space-y-1 text-muted-foreground">
             <p>密钥保存在当前 Windows 用户的系统安全凭据中，不会写入 `.lumina`、项目文件或浏览器设置。</p>
             <div className="flex flex-wrap gap-1">
               <Button size="sm" disabled={(!modelApiKey && !tmdbAccessToken) || saveCredentialsMutation.isPending} onClick={() => saveCredentialsMutation.mutate()}>保存到此设备</Button>
               <Button size="sm" variant="outline" disabled={validateCredentialsMutation.isPending} onClick={() => validateCredentialsMutation.mutate()}>验证配置</Button>
-              <Button size="sm" variant="outline" disabled={!credentialStatusQuery.data?.modelApiKeySaved || deleteCredentialMutation.isPending} onClick={() => deleteCredentialMutation.mutate("modelApiKey")}>删除模型密钥</Button>
+              {resolverProvider === "directApi" ? <Button size="sm" variant="outline" disabled={!credentialStatusQuery.data?.modelApiKeySaved || deleteCredentialMutation.isPending} onClick={() => deleteCredentialMutation.mutate("modelApiKey")}>删除模型密钥</Button> : null}
               <Button size="sm" variant="outline" disabled={!credentialStatusQuery.data?.tmdbAccessTokenSaved || deleteCredentialMutation.isPending} onClick={() => deleteCredentialMutation.mutate("tmdbAccessToken")}>删除 TMDb Token</Button>
             </div>
-            {validation ? <div className="space-y-1 rounded bg-muted/40 p-2"><ValidationItem label="模型服务" item={validation.model} /><ValidationItem label="TMDb" item={validation.tmdb} /></div> : null}
-            <p>验证不会发送视频、字幕、笔记、文件名或绝对路径；模型验证会产生一次极小的 API 调用。</p>
+            {validation ? <div className="space-y-1 rounded bg-muted/40 p-2"><ValidationItem label={resolverProvider === "acpAgent" ? "Agent" : "模型服务"} item={validation.model} /><ValidationItem label="TMDb" item={validation.tmdb} /></div> : null}
+            <p>验证不会发送视频、字幕、笔记、文件名或绝对路径；验证会产生一次极小的模型或 Agent 调用。</p>
           </div>
-          <label className="flex gap-2 leading-relaxed text-muted-foreground"><input type="checkbox" checked={privacyAcknowledged} onChange={(e) => patchSettings({ privacyAcknowledged: e.target.checked })} />允许将文件名和相对目录名发送到所选模型服务；不会发送视频、字幕、笔记或绝对路径。</label>
+          <label className="flex gap-2 leading-relaxed text-muted-foreground"><input type="checkbox" checked={privacyAcknowledged} onChange={(e) => patchSettings({ privacyAcknowledged: e.target.checked })} />允许将文件名和相对目录名发送到所选解析器；不会发送视频、字幕、笔记或绝对路径。</label>
         </div>
       </details>
 

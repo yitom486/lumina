@@ -23,13 +23,13 @@ use crate::acp::profile::{
     prepare_profiles, resolve_active_profile, resolve_launch, AgentKind, PreparedProfiles,
 };
 use crate::acp::protocol::{
-    authenticate_params, classify_inbound, encode_line, extract_agent_text,
+    authenticate_params, classify_inbound, encode_line, error_response, extract_agent_text,
     extract_permission_options, extract_plan_summary, extract_thought_text, extract_tool_call,
-    initialize_params, is_error_response, notification, parse_initialize_result, parse_session_id,
-    parse_stop_reason, permission_auto_result, permission_cancelled_result,
-    permission_selected_result, pick_auth_method, request, session_cancel_params,
-    session_close_params, session_new_params, session_resume_params, success_response, Inbound,
-    InitializeResult,
+    initialize_params, initialize_params_restricted, is_error_response, notification,
+    parse_initialize_result, parse_session_id, parse_stop_reason, permission_auto_result,
+    permission_cancelled_result, permission_selected_result, pick_auth_method, request,
+    session_cancel_params, session_close_params, session_new_params, session_resume_params,
+    success_response, Inbound, InitializeResult,
 };
 use crate::acp::settings::{AcpClientSettings, PermissionMode};
 
@@ -51,6 +51,7 @@ pub struct AcpService {
     permission_mode: Mutex<PermissionMode>,
     permission_replies: Mutex<Option<mpsc::Sender<Option<String>>>>,
     permission_seq: AtomicU64,
+    tool_access_enabled: AtomicBool,
 }
 
 impl AcpService {
@@ -63,6 +64,7 @@ impl AcpService {
             permission_mode: Mutex::new(PermissionMode::Auto),
             permission_replies: Mutex::new(None),
             permission_seq: AtomicU64::new(1),
+            tool_access_enabled: AtomicBool::new(true),
         }
     }
 
@@ -256,6 +258,34 @@ impl AcpService {
         }
 
         outcome.map(|(text, _)| text)
+    }
+
+    /// Run one prompt in a fresh ACP process/session using an existing profile,
+    /// then close it. This is deliberately separate from the interactive chat
+    /// service: no saved session, no chat context, and no Agent tool access.
+    pub fn prompt_isolated_restricted(
+        text: impl AsRef<str>,
+        profile_id: String,
+        profiles: AgentProfilesHint,
+    ) -> Result<String, AcpError> {
+        let service = Self::new();
+        service.tool_access_enabled.store(false, Ordering::SeqCst);
+        let outcome = service.prompt(
+            text,
+            None,
+            Some(profile_id),
+            None,
+            None,
+            AcpClientSettings {
+                permission_mode: PermissionMode::Ask,
+                thinking_level: crate::acp::settings::ThinkingLevel::Hidden,
+                agent_mode: "metadata-resolver".into(),
+            },
+            profiles,
+            |_| {},
+        );
+        let _ = service.close_session();
+        outcome
     }
 
     // Kept explicit so session lifecycle fields remain visible at the protocol boundary.
@@ -509,7 +539,11 @@ impl AcpService {
             &mut session.stdin,
             init_id,
             "initialize",
-            initialize_params(),
+            if self.tool_access_enabled.load(Ordering::SeqCst) {
+                initialize_params()
+            } else {
+                initialize_params_restricted()
+            },
         )?;
         let init_resp = Self::read_until_id_raw(
             self,
@@ -849,6 +883,11 @@ impl AcpService {
                 Ok(None)
             }
             Inbound::AgentRequest { id, method, params } => {
+                if !self.tool_access_enabled.load(Ordering::SeqCst) {
+                    let response = error_response(id, -32_001, "Tool access is disabled");
+                    Self::write_raw(&mut session.stdin, &response)?;
+                    return Ok(None);
+                }
                 let canceling = cancel.load(Ordering::SeqCst);
                 let response = if method == "session/request_permission" {
                     self.handle_permission_request(id, &params, canceling, on_event)

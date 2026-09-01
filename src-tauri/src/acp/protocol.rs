@@ -40,6 +40,28 @@ pub fn error_response(id: Value, code: i64, message: &str) -> Value {
 }
 
 pub fn initialize_params() -> Value {
+    initialize_params_with_tools(true)
+}
+
+/// Metadata-only sessions never need filesystem or terminal capabilities.
+/// Advertise neither so an Agent cannot treat the media directory as a tool
+/// workspace while resolving filenames.
+pub fn initialize_params_restricted() -> Value {
+    initialize_params_with_tools(false)
+}
+
+#[cfg(test)]
+mod initialize_tests {
+    use super::*;
+
+    #[test]
+    fn restricted_initialize_advertises_no_tools() {
+        let params = initialize_params_restricted();
+        assert_eq!(params["clientCapabilities"], json!({}));
+    }
+}
+
+fn initialize_params_with_tools(tool_access: bool) -> Value {
     json!({
         "protocolVersion": 1,
         "clientInfo": {
@@ -47,9 +69,10 @@ pub fn initialize_params() -> Value {
             "title": "Lumina",
             "version": env!("CARGO_PKG_VERSION"),
         },
-        "clientCapabilities": {
-            "fs": { "readTextFile": true, "writeTextFile": true },
-            "terminal": true,
+        "clientCapabilities": if tool_access {
+            json!({ "fs": { "readTextFile": true, "writeTextFile": true }, "terminal": true })
+        } else {
+            json!({})
         },
     })
 }

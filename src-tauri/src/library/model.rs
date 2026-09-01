@@ -3,6 +3,8 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::acp::AgentProfilesHint;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LibraryWatchConfig {
@@ -154,6 +156,21 @@ pub struct TmdbConfig {
     pub language: String,
 }
 
+/// The small model used to turn untrusted filenames into a TMDb lookup intent.
+/// Users can either reuse a configured ACP Agent or configure a dedicated
+/// OpenAI-compatible endpoint for this low-cost task.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum ResolverProviderConfig {
+    AcpAgent {
+        profile_id: String,
+        profiles: AgentProfilesHint,
+    },
+    DirectApi {
+        model: ModelResolverConfig,
+    },
+}
+
 fn default_tmdb_language() -> String {
     "zh-CN".into()
 }
@@ -162,7 +179,7 @@ fn default_tmdb_language() -> String {
 #[serde(rename_all = "camelCase")]
 pub struct ResolverRunConfig {
     pub privacy_acknowledged: bool,
-    pub model: ModelResolverConfig,
+    pub provider: ResolverProviderConfig,
     pub tmdb: TmdbConfig,
 }
 
@@ -171,7 +188,7 @@ pub struct ResolverRunConfig {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct CredentialValidationConfig {
-    pub model: ModelResolverConfig,
+    pub provider: ResolverProviderConfig,
     pub tmdb: TmdbConfig,
 }
 

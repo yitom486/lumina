@@ -34,6 +34,7 @@ export type {
   PendingMediaGroup,
   ResolverIntent,
   ResolverPreview,
+  ResolverProviderConfig,
   ResolverRunConfig,
   ResolverSelection,
   SaveMetadataCredentialsInput,

@@ -1,3 +1,5 @@
+import type { AgentProfilesHint } from "@/features/acp/types";
+
 export type LibraryWatchConfig = {
   roots: string[];
   pollIntervalSecs: number;
@@ -69,9 +71,13 @@ export type TmdbConfig = {
   language: string;
 };
 
+export type ResolverProviderConfig =
+  | { kind: "acpAgent"; profileId: string; profiles: AgentProfilesHint }
+  | { kind: "directApi"; model: ModelResolverConfig };
+
 export type ResolverRunConfig = {
   privacyAcknowledged: boolean;
-  model: ModelResolverConfig;
+  provider: ResolverProviderConfig;
   tmdb: TmdbConfig;
 };
 
@@ -88,7 +94,7 @@ export type SaveMetadataCredentialsInput = {
 };
 
 export type CredentialValidationConfig = {
-  model: ModelResolverConfig;
+  provider: ResolverProviderConfig;
   tmdb: TmdbConfig;
 };
 

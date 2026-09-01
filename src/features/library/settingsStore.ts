@@ -5,6 +5,8 @@ type LibrarySettingsState = {
   roots: string[];
   pollIntervalSecs: number;
   privacyAcknowledged: boolean;
+  resolverProvider: "acpAgent" | "directApi";
+  agentProfileId: string;
   modelBaseUrl: string;
   modelId: string;
   tmdbLanguage: string;
@@ -15,6 +17,8 @@ const DEFAULTS = {
   roots: [] as string[],
   pollIntervalSecs: 30,
   privacyAcknowledged: false,
+  resolverProvider: "acpAgent" as const,
+  agentProfileId: "",
   modelBaseUrl: "",
   modelId: "",
   tmdbLanguage: "zh-CN",
@@ -33,6 +37,8 @@ export const useLibrarySettingsStore = create<LibrarySettingsState>()(
         roots: state.roots,
         pollIntervalSecs: state.pollIntervalSecs,
         privacyAcknowledged: state.privacyAcknowledged,
+        resolverProvider: state.resolverProvider,
+        agentProfileId: state.agentProfileId,
         modelBaseUrl: state.modelBaseUrl,
         modelId: state.modelId,
         tmdbLanguage: state.tmdbLanguage,

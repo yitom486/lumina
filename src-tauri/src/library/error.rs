@@ -14,6 +14,7 @@ pub enum LibraryErrorCode {
     PrivacyConsentRequired,
     CredentialAccessFailed,
     ResolverNotConfigured,
+    AgentResolverFailed,
     RemoteRequestFailed,
     InvalidResolverResponse,
     ScanFailed,
@@ -91,6 +92,14 @@ impl LibraryError {
         )
     }
 
+    pub fn agent_resolver_failed(details: Option<&str>) -> Self {
+        Self::new(
+            LibraryErrorCode::AgentResolverFailed,
+            "媒体匹配 Agent 不可用，请检查 Agent 配置",
+            details.map(str::to_string),
+        )
+    }
+
     pub fn remote_request_failed(details: Option<&str>) -> Self {
         Self::new(
             LibraryErrorCode::RemoteRequestFailed,
@@ -152,5 +161,8 @@ mod tests {
             LibraryError::not_running().message,
             "媒体目录守护服务未启动"
         );
+        assert!(LibraryError::agent_resolver_failed(None)
+            .message
+            .contains("Agent"));
     }
 }

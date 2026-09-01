@@ -19,8 +19,8 @@ pub use library::{
     CredentialValidationItem, CredentialValidationResult, GroupResolution, LibraryError,
     LibraryErrorCode, LibraryIndex, LibraryStatus, LibraryWatchConfig, MediaGroup, MediaGroupKind,
     MediaLibraryService, MediaMetadataContext, MetadataMediaType, MetadataWriteResult,
-    PendingMediaGroup, ResolverIntent, ResolverPreview, ResolverRunConfig, ResolverSelection,
-    StoredMetadata, StoredMetadataKind, TmdbCandidate, TmdbConfig,
+    PendingMediaGroup, ResolverIntent, ResolverPreview, ResolverProviderConfig, ResolverRunConfig,
+    ResolverSelection, StoredMetadata, StoredMetadataKind, TmdbCandidate, TmdbConfig,
 };
 pub use media::{
     MediaChapter, MediaError, MediaErrorCode, MediaInfo, MediaInspector, MediaStream, StreamKind,

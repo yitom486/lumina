@@ -1,8 +1,8 @@
 //! Local media-library index and future metadata resolver boundary.
 //!
-//! This module intentionally does not spawn ACP/Codex or make network calls.
-//! A future configured resolver will consume `ResolverIntent`/`TmdbCandidate`
-//! and write confirmed TMDb metadata into the existing `.lumina` group folder.
+//! Network resolution remains optional. When users explicitly select an ACP
+//! Agent provider, it is spawned only for an isolated, tool-disabled resolver
+//! session; interactive chat sessions are never reused.
 
 pub(crate) mod credentials;
 mod error;
@@ -19,8 +19,8 @@ pub use model::{
     CredentialValidationConfig, CredentialValidationItem, CredentialValidationResult,
     GroupResolution, LibraryIndex, LibraryStatus, LibraryWatchConfig, MediaGroup, MediaGroupKind,
     MediaMetadataContext, MetadataMediaType, MetadataWriteResult, ModelResolverConfig,
-    PendingMediaGroup, ResolverIntent, ResolverPreview, ResolverRunConfig, ResolverSelection,
-    StoredMetadata, StoredMetadataKind, TmdbCandidate, TmdbConfig,
+    PendingMediaGroup, ResolverIntent, ResolverPreview, ResolverProviderConfig, ResolverRunConfig,
+    ResolverSelection, StoredMetadata, StoredMetadataKind, TmdbCandidate, TmdbConfig,
 };
 pub use resolver::{validate_credentials, RemoteResolver};
 pub use service::MediaLibraryService;
