@@ -39,10 +39,43 @@ export function toolStatusLabel(status?: string): string {
   }
 }
 
+export function parseToolDetail(raw?: string): string | undefined {
+  const trimmed = raw?.trim();
+  if (!trimmed) return undefined;
+  if (trimmed.startsWith("{") || trimmed.startsWith("[")) {
+    try {
+      const parsed: unknown = JSON.parse(trimmed);
+      const fromJson = extractToolMessage(parsed);
+      if (fromJson) return fromJson;
+    } catch {
+      // fall through to raw text
+    }
+  }
+  return trimmed;
+}
+
+function extractToolMessage(value: unknown): string | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const record = value as Record<string, unknown>;
+  if (typeof record.text === "string" && record.text.trim()) {
+    return record.text.trim();
+  }
+  if (record.result !== undefined) {
+    return extractToolMessage(record.result);
+  }
+  if (Array.isArray(record.content)) {
+    for (const item of record.content) {
+      const text = extractToolMessage(item);
+      if (text) return text;
+    }
+  }
+  return undefined;
+}
+
 export function toolFailureHint(status?: string, detail?: string): string | null {
   if (!isToolFailed(status)) return null;
-  const trimmed = detail?.trim();
-  if (trimmed) return trimmed;
+  const readable = parseToolDetail(detail);
+  if (readable) return readable;
   return "工具执行未成功，Agent 将尝试其他方式继续";
 }
 

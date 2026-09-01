@@ -8,6 +8,7 @@ use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::library::error::LibraryError;
+use crate::library::paths::{is_lumina_data_dir, relativize_under_root};
 use crate::library::model::{
     GroupResolution, IndexedMediaFile, LibraryIndex, MediaGroup, MediaGroupKind,
 };
@@ -50,7 +51,7 @@ where
     for entry in entries {
         let entry = entry.map_err(|error| LibraryError::scan_failed(Some(&error.to_string())))?;
         let path = entry.path();
-        if path.file_name().and_then(|v| v.to_str()) == Some(".lumina") {
+        if path.file_name().and_then(|v| v.to_str()).is_some_and(is_lumina_data_dir) {
             continue;
         }
         let file_type = entry
@@ -70,8 +71,12 @@ fn index_file(root: &Path, path: &Path) -> Result<IndexedMediaFile, LibraryError
     let metadata = fs::metadata(path).map_err(|error| {
         LibraryError::scan_failed(Some(&format!("metadata {}: {error}", path.display())))
     })?;
-    let relative = path.strip_prefix(root).map_err(|error| {
-        LibraryError::scan_failed(Some(&format!("relative path {}: {error}", path.display())))
+    let relative_path = relativize_under_root(root, path).map_err(|error| {
+        LibraryError::scan_failed(Some(&format!(
+            "relative path {}: {}",
+            path.display(),
+            error.message
+        )))
     })?;
     let file_name = path
         .file_name()
@@ -80,7 +85,7 @@ fn index_file(root: &Path, path: &Path) -> Result<IndexedMediaFile, LibraryError
         .to_string();
     let parsed = parse_filename(&file_name);
     Ok(IndexedMediaFile {
-        relative_path: normalize_path(relative),
+        relative_path,
         file_name,
         size_bytes: metadata.len(),
         modified_at_ms: metadata
@@ -217,10 +222,6 @@ fn is_video(path: &Path) -> bool {
                 .iter()
                 .any(|known| extension.eq_ignore_ascii_case(known))
         })
-}
-
-fn normalize_path(path: &Path) -> String {
-    path.to_string_lossy().replace('\\', "/")
 }
 
 fn system_time_ms(time: SystemTime) -> u128 {

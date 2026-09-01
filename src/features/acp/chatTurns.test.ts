@@ -27,7 +27,7 @@ describe("applyAcpEventToTurn", () => {
     );
     expect(turn.answer).toBe("最终答案");
     expect(turn.status).toBe("done");
-    expect(turn.activities).toHaveLength(0);
+    expect(turn.activities).toHaveLength(1);
     expect(turn.showActivities).toBe(false);
   });
 

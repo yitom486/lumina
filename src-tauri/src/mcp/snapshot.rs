@@ -7,7 +7,9 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use serde::{Deserialize, Serialize};
 
 use crate::library::SeriesLibraryCache;
+use crate::library::{lumina_agent_context_path, lumina_tmp_dir};
 
+/// Relative path under session cwd; must stay aligned with [`lumina_agent_context_path`].
 pub const SNAPSHOT_RELATIVE_PATH: &str = ".lumina/agent-context.json";
 pub const CONTEXT_FILE_ENV: &str = "LUMINA_MCP_CONTEXT_FILE";
 pub const SNAPSHOT_SCHEMA_VERSION: u32 = 2;
@@ -18,6 +20,12 @@ pub const LIBRARY_WARM_EVERY: u32 = 5;
 pub struct PromptAnchor {
     pub media_path: String,
     pub library_root: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub group_key: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub season: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub episode: Option<u32>,
     pub position_ms: u64,
     pub sent_at_ms: u128,
     pub subtitle_choice_id: Option<String>,
@@ -85,11 +93,11 @@ pub fn should_warm_series_library(turn: u32, path_changed: bool) -> bool {
 }
 
 pub fn snapshot_path_for_cwd(cwd: &Path) -> PathBuf {
-    cwd.join(SNAPSHOT_RELATIVE_PATH)
+    lumina_agent_context_path(cwd)
 }
 
 pub fn ephemeral_tmp_dir(cwd: &Path) -> PathBuf {
-    cwd.join(".lumina/tmp")
+    lumina_tmp_dir(cwd)
 }
 
 pub fn cleanup_ephemeral_tmp(cwd: &Path) {
@@ -158,6 +166,9 @@ mod tests {
             anchor: Some(PromptAnchor {
                 media_path: r"D:\videos\demo.mkv".into(),
                 library_root: Some(r"D:\library".into()),
+                group_key: Some("Demo.Show".into()),
+                season: Some(1),
+                episode: Some(1),
                 position_ms: 12_000,
                 sent_at_ms: 1,
                 subtitle_choice_id: Some("embedded:2".into()),

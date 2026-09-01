@@ -5,6 +5,7 @@ use std::thread;
 use std::time::Duration;
 
 use crate::library::error::LibraryError;
+use crate::library::paths::library_root_for_media_path;
 use crate::library::model::{
     GroupResolution, LibraryIndex, LibraryScanEvent, LibraryScanIssue, LibraryStatus, LibraryWatchConfig,
     MediaGroup, MediaMetadataContext, MetadataMediaType, MetadataWriteResult, PendingMediaGroup,
@@ -267,11 +268,10 @@ impl MediaLibraryService {
             .config
             .roots
             .clone();
-        let root = roots
-            .into_iter()
-            .map(PathBuf::from)
-            .filter(|root| media_path.strip_prefix(root).is_ok())
-            .max_by_key(|root| root.as_os_str().len());
+        let root = library_root_for_media_path(
+            roots.into_iter().map(PathBuf::from),
+            &media_path,
+        );
         let Some(root) = root else {
             return Ok(None);
         };
@@ -290,11 +290,7 @@ impl MediaLibraryService {
             .config
             .roots
             .clone();
-        roots
-            .into_iter()
-            .map(PathBuf::from)
-            .filter(|root| media_path.strip_prefix(root).is_ok())
-            .max_by_key(|root| root.as_os_str().len())
+        library_root_for_media_path(roots.into_iter().map(PathBuf::from), &media_path)
     }
 
     pub fn list_groups(&self, root: String) -> Result<Vec<MediaGroup>, LibraryError> {

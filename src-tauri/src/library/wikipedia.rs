@@ -174,11 +174,7 @@ pub fn write_selected_page(
     Ok(WikiWriteResult {
         root: root.to_string_lossy().to_string(),
         group_key: group_key.to_string(),
-        written_file: path
-            .strip_prefix(root)
-            .unwrap_or(&path)
-            .to_string_lossy()
-            .replace('\\', "/"),
+        written_file: crate::library::paths::display_relative_path(root, &path),
     })
 }
 

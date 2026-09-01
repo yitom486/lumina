@@ -112,17 +112,26 @@ describe("ChatTurnView", () => {
     expect(screen.getByText("无法读取当前播放上下文")).toBeInTheDocument();
   });
 
-  it("hides activity feed after minimal finish", () => {
+  it("offers expanding tool history after minimal finish", () => {
     const turn: ChatTurn = {
       id: "t4",
       userText: "q",
       answer: "最终答案",
       status: "done",
       showActivities: false,
-      activities: [],
+      activities: [
+        {
+          id: "tool-1",
+          kind: "tool",
+          toolCallId: "1",
+          title: "读取库信息",
+          status: "failed",
+          text: "当前媒体未关联媒体库目录",
+        },
+      ],
     };
-    const { container } = render(<ChatTurnView turn={turn} />);
-    expect(container.querySelector(".border-border\\/60")).toBeNull();
-    expect(container.textContent).toContain("最终答案");
+    render(<ChatTurnView turn={turn} />);
+    expect(screen.getByText("查看工具执行（1）")).toBeInTheDocument();
+    expect(screen.queryByText("读取库信息")).not.toBeInTheDocument();
   });
 });

@@ -37,9 +37,19 @@ pub fn run_stdio_server() -> Result<(), String> {
             "tools/call" => match load_snapshot() {
                 Ok(snapshot) => match handle_tool_call_request(&snapshot, &params) {
                     Ok(result) => success(id, result),
-                    Err(message) => error(id, -32000, &message),
+                    Err(message) => {
+                        tracing::warn!(
+                            tool = params.get("name").and_then(|value| value.as_str()).unwrap_or(""),
+                            reason = %message,
+                            "lumina MCP tools/call returned business error"
+                        );
+                        success(id, tool_error_result(&message))
+                    }
                 },
-                Err(message) => error(id, -32000, &message),
+                Err(message) => {
+                    tracing::warn!(reason = %message, "lumina MCP snapshot unavailable");
+                    error(id, -32000, &message)
+                }
             },
             "ping" => success(id, json!({})),
             _ if id.is_null() => continue,
@@ -134,6 +144,13 @@ fn handle_tool_call_request(snapshot: &LuminaMcpSnapshot, params: &Value) -> Res
         .cloned()
         .unwrap_or_else(|| json!({}));
     handle_tool_call(snapshot, name, &args)
+}
+
+fn tool_error_result(message: &str) -> Value {
+    json!({
+        "content": [{ "type": "text", "text": message }],
+        "isError": true
+    })
 }
 
 fn load_snapshot() -> Result<LuminaMcpSnapshot, String> {

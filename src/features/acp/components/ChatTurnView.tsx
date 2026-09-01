@@ -1,3 +1,5 @@
+import { useState } from "react";
+
 import { cn } from "@/lib/utils";
 
 import { waitingLabel } from "../activityStatus";
@@ -12,11 +14,15 @@ type Props = {
 };
 
 export function ChatTurnView({ turn }: Props) {
+  const [toolsOpen, setToolsOpen] = useState(false);
   const isError = turn.status === "error";
   const isStreaming = turn.status === "streaming";
   const waitingForText = isStreaming && !turn.answer.trim();
   const showWaitingDots =
     waitingForText && !(turn.showActivities && turn.activities.length > 0);
+  const toolCount = turn.activities.filter((item) => item.kind === "tool").length;
+  const showActivityFeed =
+    turn.activities.length > 0 && (turn.showActivities || toolsOpen);
 
   return (
     <ChatColumn className="space-y-2">
@@ -27,8 +33,25 @@ export function ChatTurnView({ turn }: Props) {
       </div>
 
       <div className="w-full">
-        {turn.showActivities && turn.activities.length > 0 ? (
-          <ChatActivityFeed activities={turn.activities} streaming={isStreaming} />
+        {toolCount > 0 && !showActivityFeed ? (
+          <button
+            type="button"
+            className="mb-2 text-[11px] text-muted-foreground hover:text-foreground"
+            onClick={() => setToolsOpen(true)}
+          >
+            查看工具执行（{toolCount}）
+          </button>
+        ) : null}
+
+        {showActivityFeed ? (
+          <ChatActivityFeed
+            activities={turn.activities}
+            streaming={isStreaming}
+            collapsible={!isStreaming && !turn.showActivities}
+            onRequestCollapse={
+              !turn.showActivities ? () => setToolsOpen(false) : undefined
+            }
+          />
         ) : null}
 
         <div

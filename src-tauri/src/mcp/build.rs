@@ -1,7 +1,10 @@
 //! Build per-prompt MCP snapshots with library warm-cache policy.
 
+use std::path::PathBuf;
+
 use crate::acp::VideoPromptContext;
 use crate::library::{
+    discover_library_root_for_media, load_library_index, resolve_media_in_index,
     series_cache_from_context, MediaLibraryService,
 };
 use crate::library::LibraryError;
@@ -43,7 +46,24 @@ impl PromptSnapshotState {
         }
 
         let warm = media_path.is_some() && should_warm_series_library(turn, path_changed);
-        let library_root = media_path.and_then(|path| library.library_root_for_media(path));
+        let library_root = media_path.and_then(|path| {
+            library
+                .library_root_for_media(path)
+                .or_else(|| discover_library_root_for_media(PathBuf::from(path).as_path()))
+        });
+        let indexed = media_path.and_then(|path| {
+            library_root.as_ref().and_then(|root| {
+                let root_path = PathBuf::from(root);
+                let media = PathBuf::from(path);
+                let index = load_library_index(&root_path).ok()??;
+                let (file, _group) = resolve_media_in_index(&index, &media, &root_path).ok()??;
+                Some((
+                    file.group_key.clone(),
+                    file.season,
+                    file.episode,
+                ))
+            })
+        });
         let series_cache = if warm {
             media_path.and_then(|path| {
                 library
@@ -64,6 +84,9 @@ impl PromptSnapshotState {
             library_root: library_root
                 .as_ref()
                 .map(|root| root.to_string_lossy().to_string()),
+            group_key: indexed.as_ref().map(|(key, _, _)| key.clone()),
+            season: indexed.as_ref().and_then(|(_, season, _)| *season),
+            episode: indexed.as_ref().and_then(|(_, _, episode)| *episode),
             position_ms: context.and_then(|ctx| ctx.position_ms).unwrap_or(0),
             sent_at_ms: snapshot_now_ms(),
             subtitle_choice_id: context

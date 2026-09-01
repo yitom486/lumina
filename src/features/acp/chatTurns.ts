@@ -83,14 +83,13 @@ export function applyAcpEventToTurn(
       };
     case "finished": {
       const finalText = event.text.trim() || turn.answer.trim();
-      const keepActivities =
-        thinkingLevel === "verbose" && turn.activities.length > 0;
+      const hasActivities = turn.activities.length > 0;
       return {
         ...turn,
         answer: finalText,
         status: "done",
-        showActivities: keepActivities,
-        activities: keepActivities ? turn.activities : [],
+        showActivities: thinkingLevel === "verbose" && hasActivities,
+        activities: hasActivities ? turn.activities : [],
       };
     }
     case "failed":

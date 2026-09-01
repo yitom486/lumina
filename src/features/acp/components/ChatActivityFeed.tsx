@@ -1,9 +1,12 @@
+import { useState } from "react";
+
 import { cn } from "@/lib/utils";
 
 import { hasActiveToolActivity, isToolRunning, waitingLabel } from "../activityStatus";
 import {
   isToolFailed,
   isToolSucceeded,
+  parseToolDetail,
   toolFailureHint,
   toolStatusLabel,
 } from "../toolStatus";
@@ -13,9 +16,16 @@ import { ChatWaitingDots } from "./ChatWaitingDots";
 type Props = {
   activities: ChatActivity[];
   streaming?: boolean;
+  collapsible?: boolean;
+  onRequestCollapse?: () => void;
 };
 
-export function ChatActivityFeed({ activities, streaming }: Props) {
+export function ChatActivityFeed({
+  activities,
+  streaming,
+  collapsible,
+  onRequestCollapse,
+}: Props) {
   if (activities.length === 0) return null;
 
   const live = Boolean(streaming);
@@ -28,8 +38,24 @@ export function ChatActivityFeed({ activities, streaming }: Props) {
         live && "chat-activity-live",
       )}
     >
+      {collapsible && onRequestCollapse ? (
+        <div className="flex justify-end">
+          <button
+            type="button"
+            className="text-[10px] text-muted-foreground hover:text-foreground"
+            onClick={onRequestCollapse}
+          >
+            收起工具轨迹
+          </button>
+        </div>
+      ) : null}
       {activities.map((item) => (
-        <ActivityRow key={item.id} item={item} live={live} />
+        <ActivityRow
+          key={item.id}
+          item={item}
+          live={live}
+          collapsible={Boolean(collapsible && !live && item.kind === "tool")}
+        />
       ))}
       {live ? (
         <ChatWaitingDots
@@ -41,7 +67,15 @@ export function ChatActivityFeed({ activities, streaming }: Props) {
   );
 }
 
-function ActivityRow({ item, live }: { item: ChatActivity; live: boolean }) {
+function ActivityRow({
+  item,
+  live,
+  collapsible,
+}: {
+  item: ChatActivity;
+  live: boolean;
+  collapsible: boolean;
+}) {
   if (item.kind === "thought") {
     return (
       <div className="text-muted-foreground">
@@ -70,10 +104,32 @@ function ActivityRow({ item, live }: { item: ChatActivity; live: boolean }) {
     );
   }
 
+  return (
+    <ToolActivityRow item={item} live={live} collapsible={collapsible} />
+  );
+}
+
+function ToolActivityRow({
+  item,
+  live,
+  collapsible,
+}: {
+  item: ChatActivity;
+  live: boolean;
+  collapsible: boolean;
+}) {
+  const [detailOpen, setDetailOpen] = useState(false);
   const running = isToolRunning(item.status);
   const failed = isToolFailed(item.status);
   const succeeded = isToolSucceeded(item.status);
+  const parsedDetail = parseToolDetail(item.text);
   const failureHint = toolFailureHint(item.status, item.text);
+  const summary =
+    failureHint ??
+    (succeeded ? "执行完成" : parsedDetail?.slice(0, 120) ?? null);
+  const canExpand =
+    collapsible &&
+    Boolean(parsedDetail && parsedDetail.length > 0 && (failed || succeeded));
 
   return (
     <div
@@ -100,28 +156,59 @@ function ActivityRow({ item, live }: { item: ChatActivity; live: boolean }) {
         )}
       </span>
       <div className="min-w-0 flex-1">
-        <p className="font-medium text-foreground/90">
-          {item.title ?? item.toolCallId ?? "工具"}
-        </p>
-        {item.status ? (
-          <p
-            className={cn(
-              "text-[10px]",
-              failed && "text-destructive",
-              succeeded && "text-emerald-600 dark:text-emerald-400",
-              !failed && !succeeded && "text-muted-foreground",
-            )}
-          >
-            {toolStatusLabel(item.status)}
-          </p>
-        ) : null}
-        {failureHint ? (
+        <div className="flex items-start justify-between gap-2">
+          <div className="min-w-0">
+            <p className="font-medium text-foreground/90">
+              {item.title ?? item.toolCallId ?? "工具"}
+            </p>
+            {item.status ? (
+              <p
+                className={cn(
+                  "text-[10px]",
+                  failed && "text-destructive",
+                  succeeded && "text-emerald-600 dark:text-emerald-400",
+                  !failed && !succeeded && "text-muted-foreground",
+                )}
+              >
+                {toolStatusLabel(item.status)}
+              </p>
+            ) : null}
+          </div>
+          {canExpand ? (
+            <button
+              type="button"
+              className="shrink-0 text-[10px] text-muted-foreground hover:text-foreground"
+              onClick={() => setDetailOpen((open) => !open)}
+            >
+              {detailOpen ? "收起" : failed ? "查看原因" : "查看输出"}
+            </button>
+          ) : null}
+        </div>
+
+        {failed && failureHint ? (
           <p className="mt-0.5 whitespace-pre-wrap break-words text-[10px] leading-relaxed text-destructive/90">
             {failureHint}
           </p>
-        ) : item.text && !failed ? (
+        ) : summary && (!collapsible || detailOpen || live || running) ? (
+          <p
+            className={cn(
+              "mt-0.5 whitespace-pre-wrap break-words text-[10px] leading-relaxed text-muted-foreground",
+              collapsible && !detailOpen && !live && canExpand && "line-clamp-2",
+            )}
+          >
+            {summary}
+          </p>
+        ) : null}
+
+        {detailOpen && parsedDetail ? (
+          <pre className="mt-1 max-h-40 overflow-auto whitespace-pre-wrap break-words rounded border border-border/60 bg-background/80 p-2 text-[10px] leading-relaxed text-muted-foreground">
+            {parsedDetail}
+          </pre>
+        ) : null}
+
+        {!collapsible && item.text && !failed && !detailOpen ? (
           <p className="mt-0.5 line-clamp-4 whitespace-pre-wrap break-words text-[10px] leading-relaxed text-muted-foreground">
-            {item.text}
+            {parsedDetail ?? item.text}
           </p>
         ) : null}
       </div>

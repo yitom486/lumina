@@ -86,7 +86,7 @@ pub fn session_new_params(cwd: &str, mcp_servers: Value) -> Value {
 }
 
 pub fn session_prompt_params(session_id: &str, text: &str) -> Value {
-    crate::acp::context::session_prompt_params(session_id, text, None)
+    crate::acp::context::session_prompt_params(session_id, text, None, None)
 }
 
 pub fn session_resume_params(session_id: &str, cwd: &str, mcp_servers: Value) -> Value {
@@ -595,7 +595,7 @@ fn truncate_chars(input: &str, max_chars: usize) -> String {
 fn looks_like_low_level_tool_error(input: &str) -> bool {
     let lower = input.to_ascii_lowercase();
     [
-        "error:",
+        "error: ",
         "traceback",
         "stack trace",
         "exit code",

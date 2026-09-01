@@ -17,6 +17,12 @@ describe("toolStatus", () => {
     expect(toolFailureHint("failed", "无法读取当前播放上下文")).toBe(
       "无法读取当前播放上下文",
     );
+    expect(
+      toolFailureHint(
+        "failed",
+        '{"result":{"content":[{"type":"text","text":"当前媒体未关联媒体库目录"}]}}',
+      ),
+    ).toBe("当前媒体未关联媒体库目录");
     expect(toolFailureHint("failed")).toBe(
       "工具执行未成功，Agent 将尝试其他方式继续",
     );

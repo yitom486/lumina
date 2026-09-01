@@ -51,6 +51,7 @@ pub fn session_prompt_params(
     session_id: &str,
     text: &str,
     context: Option<&VideoPromptContext>,
+    history_context: Option<&str>,
 ) -> Value {
     let mut prompt = Vec::new();
 
@@ -71,6 +72,13 @@ pub fn session_prompt_params(
         prompt.push(json!({
             "type": "text",
             "text": context_pointer_text(),
+        }));
+    }
+
+    if let Some(history) = history_context.filter(|s| !s.trim().is_empty()) {
+        prompt.push(json!({
+            "type": "text",
+            "text": format!("【此前对话摘要】\n{history}"),
         }));
     }
 
@@ -141,7 +149,8 @@ mod tests {
             subtitle_choice_id: Some("embedded:0".into()),
             notes_excerpt: Some("也不应出现".into()),
         };
-        let params = session_prompt_params("sess_1", "这段讲了什么？", Some(&ctx));
+        let params =
+            session_prompt_params("sess_1", "这段讲了什么？", Some(&ctx), None);
         let prompt = params
             .get("prompt")
             .and_then(Value::as_array)
@@ -162,13 +171,35 @@ mod tests {
 
     #[test]
     fn prompt_without_context_is_user_text_only() {
-        let params = session_prompt_params("sess_1", "你好", None);
+        let params = session_prompt_params("sess_1", "你好", None, None);
         let prompt = params
             .get("prompt")
             .and_then(Value::as_array)
             .expect("prompt");
         assert_eq!(prompt.len(), 1);
         assert_eq!(prompt[0].get("text").and_then(Value::as_str), Some("你好"));
+    }
+
+    #[test]
+    fn prompt_includes_history_context_before_user_text() {
+        let params = session_prompt_params(
+            "sess_1",
+            "继续问",
+            None,
+            Some("用户：你好\n\n助手：你好，有什么可以帮你？"),
+        );
+        let prompt = params
+            .get("prompt")
+            .and_then(Value::as_array)
+            .expect("prompt");
+        assert_eq!(prompt.len(), 2);
+        let history = prompt[0].get("text").and_then(Value::as_str).unwrap_or("");
+        assert!(history.contains("此前对话摘要"));
+        assert!(history.contains("用户：你好"));
+        assert_eq!(
+            prompt[1].get("text").and_then(Value::as_str),
+            Some("继续问")
+        );
     }
 
     #[test]

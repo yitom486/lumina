@@ -6,6 +6,7 @@
 
 pub(crate) mod credentials;
 mod error;
+mod paths;
 mod metadata;
 pub mod model;
 mod resolver;
@@ -36,6 +37,9 @@ pub use resolver::{
 };
 pub use service::MediaLibraryService;
 pub use metadata::{
-    episode_index_for_group, load_context_at_root, resolve_media_in_index, series_cache_from_context,
+    episode_index_for_group, load_context_at_root, load_context_for_group,
+    resolve_media_in_index, series_cache_from_context,
 };
 pub use store::load as load_library_index;
+pub(crate) use paths::{lumina_agent_context_path, lumina_tmp_dir};
+pub use paths::discover_library_root_for_media;

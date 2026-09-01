@@ -7,9 +7,10 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::library::error::LibraryError;
 use crate::library::model::LibraryIndex;
+use crate::library::paths::{lumina_groups_dir, lumina_index_path};
 
 pub fn index_path(root: &Path) -> PathBuf {
-    root.join(".lumina").join("index.json")
+    lumina_index_path(root)
 }
 
 pub fn load(root: &Path) -> Result<Option<LibraryIndex>, LibraryError> {
@@ -128,9 +129,7 @@ pub fn group_dir(root: &Path, group_key: &str) -> PathBuf {
     } else {
         readable
     };
-    root.join(".lumina")
-        .join("groups")
-        .join(format!("{readable}-{:08x}", stable_hash(group_key)))
+    lumina_groups_dir(root).join(format!("{readable}-{:08x}", stable_hash(group_key)))
 }
 
 pub fn save_group_json<T: serde::Serialize>(

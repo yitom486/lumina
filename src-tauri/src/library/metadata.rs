@@ -7,6 +7,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use serde_json::Value;
 
 use crate::library::error::LibraryError;
+use crate::library::paths::{display_relative_path, relativize_under_root};
 use crate::library::wikitext::episode_plot_for;
 use crate::library::model::{
     GroupResolution, IndexedMediaFile, LibraryIndex, MediaGroup, MediaMetadataContext, MergedMediaContext,
@@ -106,10 +107,7 @@ pub fn load_context(
     index: &LibraryIndex,
     media_path: &Path,
 ) -> Result<Option<MediaMetadataContext>, LibraryError> {
-    let relative = media_path
-        .strip_prefix(root)
-        .map_err(|_error| LibraryError::invalid_input("当前媒体不在已启用目录中"))?;
-    let relative = relative.to_string_lossy().replace('\\', "/");
+    let relative = relativize_under_root(root, media_path)?;
     let Some(file) = index
         .files
         .iter()
@@ -216,7 +214,19 @@ pub fn load_context_at_root(
     let Some(index) = store::load(root)? else {
         return Ok(None);
     };
-    load_context(root, &index, media_path)
+    if let Some(context) = load_context(root, &index, media_path)? {
+        return Ok(Some(context));
+    }
+    if let Ok(Some((file, _group))) = resolve_media_in_index(&index, media_path, root) {
+        return load_context_for_group(
+            root,
+            &file.group_key,
+            media_path,
+            file.season,
+            file.episode,
+        );
+    }
+    Ok(None)
 }
 
 pub fn series_cache_from_context(context: &MediaMetadataContext) -> SeriesLibraryCache {
@@ -255,16 +265,21 @@ pub fn episode_index_for_group(
         let Some((season, episode)) = parse_episode_file_name(&file_name) else {
             continue;
         };
-        let Some(document) =
-            store::load_group_json::<StoredMetadata>(root, group_key, &file_name)?
-        else {
-            continue;
+        let document =
+            store::load_group_json::<StoredMetadata>(root, group_key, &file_name)?;
+        let (title, overview) = if let Some(document) = document {
+            (document.title, document.overview)
+        } else {
+            (
+                format!("S{season:02}E{episode:02}"),
+                None,
+            )
         };
         entries.push(EpisodeIndexEntry {
             season,
             episode,
-            title: document.title,
-            overview: document.overview,
+            title,
+            overview,
         });
     }
     entries.sort_by(|left, right| {
@@ -280,10 +295,7 @@ pub fn resolve_media_in_index<'a>(
     media_path: &Path,
     root: &Path,
 ) -> Result<Option<(&'a IndexedMediaFile, &'a MediaGroup)>, LibraryError> {
-    let relative = media_path
-        .strip_prefix(root)
-        .map_err(|_error| LibraryError::invalid_input("当前媒体不在已启用目录中"))?;
-    let relative = relative.to_string_lossy().replace('\\', "/");
+    let relative = relativize_under_root(root, media_path)?;
     let Some(file) = index
         .files
         .iter()
@@ -295,6 +307,31 @@ pub fn resolve_media_in_index<'a>(
         return Ok(None);
     };
     Ok(Some((file, group)))
+}
+
+/// Load metadata documents directly from the group folder (bypasses index lookup).
+pub fn load_context_for_group(
+    root: &Path,
+    group_key: &str,
+    media_path: &Path,
+    season: Option<u32>,
+    episode: Option<u32>,
+) -> Result<Option<MediaMetadataContext>, LibraryError> {
+    let Some(group_document) = store::load_group_json(root, group_key, "series.json")? else {
+        return Ok(None);
+    };
+    let item = match (season, episode) {
+        (Some(season), Some(episode)) => {
+            store::load_group_json(root, group_key, &format!("S{season:02}E{episode:02}.json"))?
+        }
+        _ => None,
+    };
+    Ok(Some(build_media_context(
+        media_path.to_string_lossy().to_string(),
+        group_document,
+        item,
+        store::load_group_json(root, group_key, "wiki.json")?,
+    )))
 }
 
 fn parse_episode_file_name(file_name: &str) -> Option<(u32, u32)> {
@@ -604,10 +641,7 @@ fn status_from_tv_detail(detail: &Value) -> Option<String> {
 }
 
 fn relative_group_path(root: &Path, path: &Path) -> String {
-    path.strip_prefix(root)
-        .unwrap_or(path)
-        .to_string_lossy()
-        .replace('\\', "/")
+    display_relative_path(root, path)
 }
 
 fn now_ms() -> u128 {

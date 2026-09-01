@@ -31,6 +31,7 @@ import {
   listConversationsForScope,
   useChatHistoryStore,
 } from "../chatHistoryStore";
+import { formatConversationHistoryContext } from "../conversationContext";
 import { workspaceCwdFromMedia } from "../cwd";
 import { profilesSignature } from "../profilesSignature";
 import type {
@@ -43,7 +44,7 @@ import type {
 import { useVideoPromptContext } from "../useVideoPromptContext";
 import { AgentSettingsPanel } from "./AgentSettingsPanel";
 import { ChatHistorySheet } from "./ChatHistorySheet";
-import { ChatComposer } from "./ChatComposer";
+import { ChatComposerBar } from "./ChatComposerBar";
 import { ChatShell } from "./ChatShell";
 import { ChatColumn } from "./ChatShell";
 import { ChatToolbar } from "./ChatToolbar";
@@ -100,6 +101,7 @@ export function AcpPanel() {
   );
   const [historyOpen, setHistoryOpen] = useState(false);
   const [historyIncludeAll, setHistoryIncludeAll] = useState(false);
+  const [historyInjectionActive, setHistoryInjectionActive] = useState(false);
 
   const available = statusQuery.data?.available ?? false;
   const sessionActive = statusQuery.data?.sessionActive ?? false;
@@ -155,15 +157,19 @@ export function AcpPanel() {
   ]);
 
   const newChatMutation = useMutation({
-    mutationFn: async () => {
+    mutationFn: async (options?: { preserveTurns?: boolean }) => {
+      const preserveTurns = options?.preserveTurns ?? false;
       clearSavedSession();
-      setTurns([]);
-      setNotices([]);
-      setDraft("");
+      if (!preserveTurns) {
+        setTurns([]);
+        setNotices([]);
+        setDraft("");
+        setHistoryInjectionActive(false);
+      }
       setProgress(null);
       setPendingPermission(null);
       setConnectionState("connecting");
-      setProgress("正在开始新对话…");
+      setProgress(preserveTurns ? "正在同步 Agent 会话…" : "正在开始新对话…");
 
       const profileState = useAcpProfilesStore.getState();
       const settings = clientSettingsFromStore(useAcpSettingsStore.getState());
@@ -192,12 +198,14 @@ export function AcpPanel() {
         },
       );
     },
-    onSuccess: async () => {
+    onSuccess: async (_data, options) => {
       setConnectionState("connected");
       setProgress(null);
-      setConversationId(`chat-${Date.now()}`);
-      setActiveConversationId(null);
-      setHistoryOpen(false);
+      if (!options?.preserveTurns) {
+        setConversationId(`chat-${Date.now()}`);
+        setActiveConversationId(null);
+        setHistoryOpen(false);
+      }
       await queryClient.invalidateQueries({ queryKey: ["acp-status"] });
     },
     onError: (error) => {
@@ -365,6 +373,9 @@ export function AcpPanel() {
       setPendingPermission(null);
 
       const turn = createTurn(idSeq, text);
+      const historyContext = historyInjectionActive
+        ? formatConversationHistoryContext(turns)
+        : null;
       setTurns((prev) => [...prev, turn]);
 
       const profileState = useAcpProfilesStore.getState();
@@ -379,6 +390,7 @@ export function AcpPanel() {
             profileId: profileState.activeProfileId,
             cwd: sessionCwd,
             context: videoContext,
+            historyContext,
             savedSession: session.savedSession,
             clientSettings: settings,
             profiles: profilesHintFromStore(
@@ -453,6 +465,17 @@ export function AcpPanel() {
     setProgress(null);
     setPendingPermission(null);
     setHistoryOpen(false);
+    setHistoryInjectionActive(true);
+    pushSystem("已恢复历史对话，继续提问将带上此前上下文");
+
+    if (
+      sessionActive &&
+      connectionState === "connected" &&
+      !busy &&
+      !newChatMutation.isPending
+    ) {
+      newChatMutation.mutate({ preserveTurns: true });
+    }
   };
 
   const statusLine = statusQuery.isLoading
@@ -469,7 +492,7 @@ export function AcpPanel() {
 
   return (
     <ChatShell data-chat-shell={listKey}>
-      <ChatColumn className="relative shrink-0">
+      <ChatColumn className="sticky top-0 z-20 shrink-0 bg-card">
         <ChatToolbar
           agentLabel={agentLabel}
           chatTitle={chatTitle}
@@ -518,10 +541,12 @@ export function AcpPanel() {
         </ChatColumn>
       ) : null}
 
-      <ChatComposer
+      <ChatComposerBar
         value={draft}
         disabled={!available || connectionState !== "connected"}
         busy={busy || newChatMutation.isPending}
+        status={statusQuery.data}
+        sessionConnected={connectionState === "connected"}
         placeholder={
           !available
             ? "请展开下方 Agent 设置并配置可用的 Agent"

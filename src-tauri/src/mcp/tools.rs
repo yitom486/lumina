@@ -6,9 +6,11 @@ use std::path::{Path, PathBuf};
 use base64::{engine::general_purpose::STANDARD, Engine as _};
 use serde::Serialize;
 use serde_json::{json, Value};
+use tracing::warn;
 
 use crate::library::{
-    episode_index_for_group, load_context_at_root, load_library_index, resolve_media_in_index,
+    discover_library_root_for_media, episode_index_for_group, load_context_at_root,
+    load_context_for_group, load_library_index, resolve_media_in_index,
     series_cache_from_context,
 };
 use crate::library::MergedMediaContext;
@@ -42,14 +44,18 @@ struct LibraryContextResult {
 }
 
 pub fn handle_tool_call(snapshot: &LuminaMcpSnapshot, name: &str, args: &Value) -> Result<Value, String> {
-    match name {
+    let result = match name {
         "lumina_get_playback_context" => playback_context(snapshot),
         "lumina_get_library_context" => library_context(snapshot),
         "lumina_get_episode_index" => episode_index(snapshot),
         "lumina_get_transcript_window" => transcript_window(snapshot, args),
         "lumina_capture_frames" => capture_frame_tool(snapshot, args),
         other => Err(format!("Unknown tool: {other}")),
+    };
+    if let Err(message) = result.as_ref() {
+        warn!(tool = name, reason = %message, "lumina MCP tool failed");
     }
+    result
 }
 
 pub fn vision_capable(snapshot: &LuminaMcpSnapshot) -> bool {
@@ -61,10 +67,11 @@ pub fn vision_capable(snapshot: &LuminaMcpSnapshot) -> bool {
 }
 
 fn playback_context(snapshot: &LuminaMcpSnapshot) -> Result<Value, String> {
-    Ok(json!({
+    text_result(&json!({
         "anchor": snapshot.anchor,
         "playback": snapshot.playback,
         "session": snapshot.session,
+        "libraryCached": snapshot.library.is_some(),
     }))
 }
 
@@ -75,15 +82,13 @@ fn library_context(snapshot: &LuminaMcpSnapshot) -> Result<Value, String> {
     let series = if let Some(cache) = snapshot.library.as_ref() {
         serde_json::to_value(cache).map_err(|error| error.to_string())?
     } else {
-        let context = load_context_at_root(&root, &media_path)
-            .map_err(|error| error.message.clone())?
+        let context = load_media_context(&root, anchor, &media_path)?
             .ok_or_else(|| "当前媒体暂无已匹配的元数据".to_string())?;
         serde_json::to_value(series_cache_from_context(&context))
             .map_err(|error| error.to_string())?
     };
 
-    let full = load_context_at_root(&root, &media_path)
-        .map_err(|error| error.message.clone())?
+    let full = load_media_context(&root, anchor, &media_path)?
         .ok_or_else(|| "当前媒体暂无已匹配的元数据".to_string())?;
     let episode = full.item.as_ref().map(|item| {
         json!({
@@ -105,15 +110,12 @@ fn library_context(snapshot: &LuminaMcpSnapshot) -> Result<Value, String> {
 fn episode_index(snapshot: &LuminaMcpSnapshot) -> Result<Value, String> {
     let anchor = require_anchor(snapshot)?;
     let (root, media_path) = resolve_paths(anchor)?;
-    let index = load_library_index(&root)
-        .map_err(|error| error.message.clone())?
-        .ok_or_else(|| "媒体库索引不可用".to_string())?;
-    let Some((_file, group)) = resolve_media_in_index(&index, &media_path, &root)
-        .map_err(|error| error.message.clone())?
-    else {
-        return Err("当前媒体未加入媒体库".to_string());
-    };
-    let entries = episode_index_for_group(&root, &group.key).map_err(|error| error.message.clone())?;
+    let group_key = resolve_group_key(&root, anchor, &media_path)?;
+    let entries =
+        episode_index_for_group(&root, &group_key).map_err(|error| error.message.clone())?;
+    if entries.is_empty() {
+        return Err("当前剧集暂无分集元数据".to_string());
+    }
     text_result(&json!({ "episodes": entries }))
 }
 
@@ -185,6 +187,46 @@ fn capture_frame_tool(snapshot: &LuminaMcpSnapshot, args: &Value) -> Result<Valu
     }))
 }
 
+fn load_media_context(
+    root: &Path,
+    anchor: &PromptAnchor,
+    media_path: &Path,
+) -> Result<Option<crate::library::MediaMetadataContext>, String> {
+    if let Some(context) = load_context_at_root(root, media_path)
+        .map_err(|error| error.message.clone())?
+    {
+        return Ok(Some(context));
+    }
+    let group_key = anchor.group_key.as_deref().filter(|value| !value.trim().is_empty());
+    let Some(group_key) = group_key else {
+        return Ok(None);
+    };
+    load_context_for_group(
+        root,
+        group_key,
+        media_path,
+        anchor.season,
+        anchor.episode,
+    )
+    .map_err(|error| error.message.clone())
+}
+
+fn resolve_group_key(
+    root: &Path,
+    anchor: &PromptAnchor,
+    media_path: &Path,
+) -> Result<String, String> {
+    if let Ok(Some(index)) = load_library_index(root) {
+        if let Ok(Some((file, _group))) = resolve_media_in_index(&index, media_path, root) {
+            return Ok(file.group_key.clone());
+        }
+    }
+    if let Some(group_key) = anchor.group_key.as_deref().filter(|value| !value.trim().is_empty()) {
+        return Ok(group_key.to_string());
+    }
+    Err("当前媒体未加入媒体库".to_string())
+}
+
 fn parse_window_args(args: &Value, default_before: u32, default_after: u32) -> (u32, u32) {
     if let Some(radius) = args.get("radiusSec").and_then(Value::as_u64) {
         let radius = radius.min(300) as u32;
@@ -213,11 +255,15 @@ fn require_anchor<'a>(snapshot: &'a LuminaMcpSnapshot) -> Result<&'a PromptAncho
 
 fn resolve_paths(anchor: &PromptAnchor) -> Result<(PathBuf, PathBuf), String> {
     let media_path = PathBuf::from(&anchor.media_path);
-    let root = anchor
+    if let Some(root) = anchor
         .library_root
         .as_ref()
         .map(PathBuf::from)
         .filter(|path| !path.as_os_str().is_empty())
+    {
+        return Ok((root, media_path));
+    }
+    let root = discover_library_root_for_media(&media_path)
         .ok_or_else(|| "当前媒体未关联媒体库目录".to_string())?;
     Ok((root, media_path))
 }
