@@ -2,7 +2,7 @@
 
 import { useEffect, useRef } from "react";
 
-import { flushPlaybackPersistence } from "./hooks/useSessionPersistence";
+import { flushPlaybackPersistence } from "./useSessionPersistence";
 import { usePlayerStore } from "../store";
 import { useProgressStore } from "../progressStore";
 
