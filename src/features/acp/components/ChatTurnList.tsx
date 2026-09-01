@@ -30,7 +30,7 @@ export function ChatTurnList({
   }
 
   return (
-    <ChatColumn className="min-h-0 flex-1 space-y-4 overflow-auto py-3">
+    <ChatColumn className="min-h-0 space-y-4 py-3">
       {notices.map((n) => (
         <p key={n.id} className="text-center text-[11px] text-muted-foreground">
           {n.content}

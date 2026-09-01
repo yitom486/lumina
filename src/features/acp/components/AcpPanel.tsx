@@ -399,7 +399,10 @@ export function AcpPanel() {
         onReconnect={handleReconnect}
       />
 
-      <div ref={turnListRef} className="min-h-0 flex-1 overflow-hidden">
+      <div
+        ref={turnListRef}
+        className="chat-scroll min-h-0 flex-1 overflow-y-auto overscroll-y-contain"
+      >
         <ChatTurnList turns={turns} notices={notices} />
       </div>
 
