@@ -272,6 +272,18 @@ pub struct ResolverPreview {
     pub can_auto_match: bool,
 }
 
+/// Current on-disk schema for `movie.json` / `series.json` / episode JSON.
+pub const METADATA_SCHEMA_VERSION: u32 = 2;
+
+/// Actor ↔ role pairing from TMDb credits (no image URLs — keep files small).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct MetadataCastMember {
+    pub name: String,
+    pub character: String,
+    pub order: u32,
+}
+
 /// One durable TMDb-derived document. `kind` distinguishes series overview,
 /// episode, and movie files while keeping future context loading uniform.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -289,6 +301,16 @@ pub struct StoredMetadata {
     pub episode: Option<u32>,
     #[serde(default)]
     pub genres: Vec<String>,
+    /// Main cast (series/movie) or guest stars (episode when available).
+    #[serde(default)]
+    pub cast: Vec<MetadataCastMember>,
+    /// TV creators or movie directors.
+    #[serde(default)]
+    pub creators: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub network: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub status: Option<String>,
     pub updated_at_ms: u128,
 }
 
@@ -310,6 +332,115 @@ pub struct MetadataWriteResult {
     pub written_files: Vec<String>,
 }
 
+pub const WIKI_METADATA_SCHEMA_VERSION: u32 = 1;
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum WikiMatchMethod {
+    Wikidata,
+    Search,
+    UserSelected,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum WikiCandidateSource {
+    Wikidata,
+    Search,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct WikiMatchInfo {
+    pub method: WikiMatchMethod,
+    pub candidates_considered: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct WikiCharacter {
+    pub name: String,
+    pub actor: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bio: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct WikiEpisodeSummary {
+    pub season: u32,
+    pub episode: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    pub plot: String,
+}
+
+/// Optional Wikipedia enrichment stored beside TMDb JSON.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct WikiMetadata {
+    pub schema_version: u32,
+    pub wikidata_id: Option<String>,
+    pub page_lang: String,
+    pub page_title: String,
+    pub page_url: String,
+    pub extract: String,
+    pub attribution: String,
+    pub license: String,
+    pub match_info: WikiMatchInfo,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub characters: Vec<WikiCharacter>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub episodes: Vec<WikiEpisodeSummary>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub relationships: Option<String>,
+    pub updated_at_ms: u128,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct WikiEnrichmentCandidate {
+    pub page_lang: String,
+    pub page_title: String,
+    pub page_url: String,
+    pub wikidata_id: Option<String>,
+    pub extract: Option<String>,
+    pub source: WikiCandidateSource,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct WikiEnrichmentPreview {
+    pub wikidata_candidate: Option<WikiEnrichmentCandidate>,
+    pub search_candidates: Vec<WikiEnrichmentCandidate>,
+    pub recommended: Option<WikiEnrichmentCandidate>,
+    pub needs_user_pick: bool,
+    pub conflict: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct WikiWriteResult {
+    pub root: String,
+    pub group_key: String,
+    pub written_file: String,
+}
+
+/// Materialized read model: which field comes from TMDb vs Wikipedia.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct MergedMediaContext {
+    pub overview: Option<String>,
+    pub synopsis: Option<String>,
+    pub episode_overview: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub characters: Option<Vec<WikiCharacter>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wiki_episode_plot: Option<String>,
+    pub wiki_attribution: Option<String>,
+    pub wiki_page_url: Option<String>,
+}
+
 /// Trusted-by-app structure containing untrusted remote reference data. Future
 /// Agent prompts must attach this as media context, never as system text.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -318,6 +449,10 @@ pub struct MediaMetadataContext {
     pub media_path: String,
     pub group: StoredMetadata,
     pub item: Option<StoredMetadata>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wiki: Option<WikiMetadata>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub merged: Option<MergedMediaContext>,
 }
 
 #[cfg(test)]

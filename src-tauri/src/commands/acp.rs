@@ -7,6 +7,8 @@ use crate::acp::settings::AcpClientSettings;
 use crate::acp::{
     AcpError, AcpEvent, AcpStatus, AgentProfilesHint, SavedSessionHint, VideoPromptContext,
 };
+use crate::acp::paths::resolve_session_cwd;
+use crate::mcp::LuminaMcpSnapshot;
 use crate::state::AppState;
 
 #[tauri::command]
@@ -85,8 +87,23 @@ pub async fn acp_prompt(
     on_event: Channel<AcpEvent>,
 ) -> Result<String, AcpError> {
     let acp = state.acp.clone();
+    let library = state.library.clone();
     let settings = client_settings.unwrap_or_default();
     tauri::async_runtime::spawn_blocking(move || {
+        let session_cwd = resolve_session_cwd(cwd.as_deref())?;
+        let library_context = if let Some(ctx) = context.as_ref() {
+            if let Some(path) = ctx.media_path.as_deref().filter(|value| !value.trim().is_empty()) {
+                library.context_for_media(path.to_string()).map_err(|error| {
+                    AcpError::internal(error.details.as_deref())
+                })?
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+        let snapshot = LuminaMcpSnapshot::new(context.clone(), library_context);
+        acp.write_prompt_snapshot(&session_cwd, &snapshot)?;
         acp.prompt(
             text,
             cwd,

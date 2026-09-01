@@ -12,6 +12,8 @@ mod resolver;
 mod scanner;
 mod service;
 mod store;
+mod wikipedia;
+mod wikitext;
 
 pub use credentials::{CredentialKind, CredentialSaveInput, CredentialStatus};
 pub use error::{LibraryError, LibraryErrorCode};
@@ -20,10 +22,11 @@ pub use model::{
     CredentialValidationItem, CredentialValidationResult, GroupResolution, LibraryIndex,
     LibraryScanEvent, LibraryStatus, LibraryWatchConfig, MediaGroup, MediaGroupKind,
     MediaMetadataContext,
-    MetadataMediaType, MetadataWriteResult, ModelDiscoveryConfig, ModelDiscoveryResult,
-    ModelResolverConfig, PendingMediaGroup, ResolverIntent, ResolverPreview,
+    MergedMediaContext, MetadataMediaType, MetadataWriteResult, ModelDiscoveryConfig,
+    ModelDiscoveryResult, ModelResolverConfig, PendingMediaGroup, ResolverIntent, ResolverPreview,
     ResolverProviderConfig, ResolverRunConfig, ResolverSelection, StoredMetadata,
-    StoredMetadataKind, TmdbCandidate, TmdbConfig,
+    StoredMetadataKind, TmdbCandidate, TmdbConfig, WikiEnrichmentCandidate, WikiEnrichmentPreview,
+    WikiMatchMethod, WikiMetadata, WikiCharacter, WikiEpisodeSummary, WikiWriteResult,
 };
 pub use resolver::{
     discover_agent_models, discover_models, validate_credentials, validate_tmdb_credentials,

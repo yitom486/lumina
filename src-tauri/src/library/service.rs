@@ -7,8 +7,9 @@ use std::time::Duration;
 use crate::library::error::LibraryError;
 use crate::library::model::{
     GroupResolution, LibraryIndex, LibraryScanEvent, LibraryScanIssue, LibraryStatus, LibraryWatchConfig,
-    MediaMetadataContext, MetadataMediaType, MetadataWriteResult, PendingMediaGroup,
-    ResolverPreview, ResolverRunConfig, TmdbConfig,
+    MediaGroup, MediaMetadataContext, MetadataMediaType, MetadataWriteResult, PendingMediaGroup,
+    ResolverPreview, ResolverRunConfig, TmdbConfig, WikiEnrichmentCandidate, WikiEnrichmentPreview,
+    WikiMatchMethod, WikiWriteResult,
 };
 use crate::library::{metadata, scanner, store, RemoteResolver};
 
@@ -278,6 +279,66 @@ impl MediaLibraryService {
             return Ok(None);
         };
         metadata::load_context(&root, &index, &media_path)
+    }
+
+    pub fn list_groups(&self, root: String) -> Result<Vec<MediaGroup>, LibraryError> {
+        self.ensure_configured_root(&root)?;
+        let path = PathBuf::from(&root);
+        let index = store::load(&path)?.ok_or_else(|| {
+            LibraryError::group_not_found(Some("library index is not available for root"))
+        })?;
+        Ok(index.groups)
+    }
+
+    pub fn preview_wikipedia_enrichment(
+        &self,
+        root: String,
+        group_key: String,
+        tmdb: TmdbConfig,
+    ) -> Result<WikiEnrichmentPreview, LibraryError> {
+        self.ensure_configured_root(&root)?;
+        let path = PathBuf::from(&root);
+        let index = store::load(&path)?.ok_or_else(|| {
+            LibraryError::group_not_found(Some("library index is not available for root"))
+        })?;
+        let group = index
+            .groups
+            .iter()
+            .find(|group| group.key == group_key)
+            .ok_or_else(|| LibraryError::group_not_found(Some(&group_key)))?;
+        let GroupResolution::Matched {
+            tmdb_id,
+            media_type,
+        } = group.resolution
+        else {
+            return Err(LibraryError::invalid_input("请先完成 TMDb 匹配"));
+        };
+        metadata::preview_wikipedia_enrichment(&path, &group_key, tmdb_id, media_type, &tmdb)
+    }
+
+    pub fn apply_wikipedia_page(
+        &self,
+        root: String,
+        group_key: String,
+        candidate: WikiEnrichmentCandidate,
+        match_method: WikiMatchMethod,
+        candidates_considered: u32,
+    ) -> Result<WikiWriteResult, LibraryError> {
+        self.ensure_configured_root(&root)?;
+        let path = PathBuf::from(&root);
+        let index = store::load(&path)?.ok_or_else(|| {
+            LibraryError::group_not_found(Some("library index is not available for root"))
+        })?;
+        if !index.groups.iter().any(|group| group.key == group_key) {
+            return Err(LibraryError::group_not_found(Some(&group_key)));
+        }
+        metadata::apply_wikipedia_page(
+            &path,
+            &group_key,
+            candidate,
+            match_method,
+            candidates_considered,
+        )
     }
 
     fn ensure_configured_root(&self, root: &str) -> Result<(), LibraryError> {

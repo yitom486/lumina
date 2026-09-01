@@ -49,6 +49,17 @@ export const useLibrarySettingsStore = create<LibrarySettingsState>()(
         modelId: state.modelId,
         tmdbLanguage: state.tmdbLanguage,
       }),
+      merge: (persisted, current) => {
+        const saved = (persisted ?? {}) as Partial<
+          Omit<LibrarySettingsState, "patchSettings">
+        >;
+        return {
+          ...current,
+          ...DEFAULTS,
+          ...saved,
+          patchSettings: current.patchSettings,
+        };
+      },
     },
   ),
 );

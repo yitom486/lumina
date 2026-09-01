@@ -1,11 +1,17 @@
 //! Video playback context attached to `session/prompt` (ACP content blocks).
+//!
+//! Structured metadata is **not** inlined into the prompt. Lumina writes
+//! `.lumina/agent-context.json` and registers an MCP server so the Agent can
+//! fetch playback/library context on demand.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+use crate::mcp::SNAPSHOT_RELATIVE_PATH;
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct VideoPromptContext {
     pub media_path: Option<String>,
@@ -45,6 +51,7 @@ pub fn session_prompt_params(
     session_id: &str,
     text: &str,
     context: Option<&VideoPromptContext>,
+    context_snapshot: Option<&Path>,
 ) -> Value {
     let mut prompt = Vec::new();
 
@@ -62,12 +69,18 @@ pub fn session_prompt_params(
             }));
         }
 
-        if let Some(summary) = build_context_summary(ctx) {
+        if let Some(snapshot) = context_snapshot {
             prompt.push(json!({
-                "type": "text",
-                "text": summary,
+                "type": "resource_link",
+                "uri": path_to_file_uri(&snapshot.to_string_lossy()),
+                "name": format!("Lumina 媒体上下文 ({SNAPSHOT_RELATIVE_PATH})"),
             }));
         }
+
+        prompt.push(json!({
+            "type": "text",
+            "text": context_pointer_text(),
+        }));
     }
 
     prompt.push(json!({
@@ -81,55 +94,10 @@ pub fn session_prompt_params(
     })
 }
 
-fn build_context_summary(ctx: &VideoPromptContext) -> Option<String> {
-    let mut lines = vec!["【Lumina 视频上下文】".to_string()];
-
-    if let Some(title) = ctx.media_title.as_deref().filter(|s| !s.trim().is_empty()) {
-        lines.push(format!("媒体：{title}"));
-    }
-    if let Some(path) = ctx.media_path.as_deref().filter(|s| !s.trim().is_empty()) {
-        lines.push(format!("路径：{path}"));
-    }
-    if ctx.position_ms.is_some() || ctx.duration_ms.is_some() {
-        let pos = ctx
-            .position_ms
-            .map(format_time_ms)
-            .unwrap_or_else(|| "?".into());
-        let dur = ctx
-            .duration_ms
-            .map(format_time_ms)
-            .unwrap_or_else(|| "?".into());
-        lines.push(format!("进度：{pos} / {dur}"));
-    }
-    if let Some(ch) = ctx
-        .chapter_title
-        .as_deref()
-        .filter(|s| !s.trim().is_empty())
-    {
-        lines.push(format!("章节：{ch}"));
-    }
-    if let Some(excerpt) = ctx
-        .transcript_excerpt
-        .as_deref()
-        .filter(|s| !s.trim().is_empty())
-    {
-        lines.push("字幕摘录：".into());
-        lines.push(excerpt.to_string());
-    }
-    if let Some(notes) = ctx
-        .notes_excerpt
-        .as_deref()
-        .filter(|s| !s.trim().is_empty())
-    {
-        lines.push("笔记摘录：".into());
-        lines.push(notes.to_string());
-    }
-
-    lines.push("用户问题如下。".into());
-    if lines.len() <= 2 {
-        return None;
-    }
-    Some(lines.join("\n"))
+fn context_pointer_text() -> &'static str {
+    "【Lumina】用户正在本机观看媒体。播放进度、字幕摘录、笔记，以及 TMDb/维基百科合并元数据已写入会话目录下的 `.lumina/agent-context.json`。\
+请优先调用 MCP 工具 `lumina_get_playback_context` 与 `lumina_get_library_context` 按需读取；\
+若 MCP 不可用，可读取上述 JSON 文件。不要臆造未读取到的剧情或角色信息。"
 }
 
 fn format_time_ms(ms: u64) -> String {
@@ -151,7 +119,7 @@ fn file_name(path: &str) -> &str {
         .unwrap_or(path)
 }
 
-fn path_to_file_uri(path: &str) -> String {
+pub fn path_to_file_uri(path: &str) -> String {
     let normalized = path.replace('\\', "/");
     if normalized.len() >= 2 && normalized.as_bytes()[1] == b':' {
         format!("file:///{normalized}")
@@ -162,47 +130,52 @@ fn path_to_file_uri(path: &str) -> String {
     }
 }
 
+pub fn snapshot_display_path(cwd: &Path) -> PathBuf {
+    cwd.join(SNAPSHOT_RELATIVE_PATH)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn prompt_includes_resource_link_and_user_text() {
+    fn prompt_uses_resource_links_not_inline_metadata() {
         let ctx = VideoPromptContext {
             media_path: Some(r"D:\videos\demo.mp4".into()),
             media_title: Some("demo.mp4".into()),
             position_ms: Some(83_000),
             duration_ms: Some(2_700_000),
             chapter_title: Some("开场".into()),
-            ..Default::default()
+            transcript_excerpt: Some("不应出现在 prompt 中".into()),
+            notes_excerpt: Some("也不应出现".into()),
         };
-        let params = session_prompt_params("sess_1", "这段讲了什么？", Some(&ctx));
+        let snapshot = PathBuf::from(r"D:\workspace\.lumina\agent-context.json");
+        let params = session_prompt_params("sess_1", "这段讲了什么？", Some(&ctx), Some(&snapshot));
         let prompt = params
             .get("prompt")
             .and_then(Value::as_array)
             .expect("prompt");
-        assert_eq!(prompt.len(), 3);
+        assert_eq!(prompt.len(), 4);
         assert_eq!(
             prompt[0].get("type").and_then(Value::as_str),
             Some("resource_link")
         );
-        assert!(prompt[0]
-            .get("uri")
-            .and_then(Value::as_str)
-            .unwrap_or("")
-            .contains("demo.mp4"));
-        let summary = prompt[1].get("text").and_then(Value::as_str).unwrap_or("");
-        assert!(summary.contains("Lumina"));
-        assert!(summary.contains("开场"));
         assert_eq!(
-            prompt[2].get("text").and_then(Value::as_str),
+            prompt[1].get("type").and_then(Value::as_str),
+            Some("resource_link")
+        );
+        let pointer = prompt[2].get("text").and_then(Value::as_str).unwrap_or("");
+        assert!(pointer.contains("lumina_get_playback_context"));
+        assert!(!pointer.contains("不应出现在 prompt 中"));
+        assert_eq!(
+            prompt[3].get("text").and_then(Value::as_str),
             Some("这段讲了什么？")
         );
     }
 
     #[test]
     fn prompt_without_context_is_user_text_only() {
-        let params = session_prompt_params("sess_1", "你好", None);
+        let params = session_prompt_params("sess_1", "你好", None, None);
         let prompt = params
             .get("prompt")
             .and_then(Value::as_array)
@@ -217,5 +190,10 @@ mod tests {
             path_to_file_uri(r"D:\videos\a.mp4"),
             "file:///D:/videos/a.mp4"
         );
+    }
+
+    #[test]
+    fn format_time_ms_helpers() {
+        assert_eq!(format_time_ms(83_000), "1:23");
     }
 }

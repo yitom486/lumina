@@ -78,22 +78,22 @@ fn initialize_params_with_tools(tool_access: bool) -> Value {
 }
 
 /// `cwd` MUST be an absolute path (ACP session-setup).
-pub fn session_new_params(cwd: &str) -> Value {
+pub fn session_new_params(cwd: &str, mcp_servers: Value) -> Value {
     json!({
         "cwd": cwd,
-        "mcpServers": [],
+        "mcpServers": mcp_servers,
     })
 }
 
 pub fn session_prompt_params(session_id: &str, text: &str) -> Value {
-    crate::acp::context::session_prompt_params(session_id, text, None)
+    crate::acp::context::session_prompt_params(session_id, text, None, None)
 }
 
-pub fn session_resume_params(session_id: &str, cwd: &str) -> Value {
+pub fn session_resume_params(session_id: &str, cwd: &str, mcp_servers: Value) -> Value {
     json!({
         "sessionId": session_id,
         "cwd": cwd,
-        "mcpServers": [],
+        "mcpServers": mcp_servers,
     })
 }
 
@@ -616,7 +616,12 @@ mod tests {
 
     #[test]
     fn session_new_requires_absolute_cwd() {
-        let params = session_new_params("D:/videos");
+        let params = session_new_params(
+            "D:/videos",
+            crate::mcp::lumina_mcp_servers(std::path::Path::new(
+                "D:/videos/.lumina/agent-context.json",
+            )),
+        );
         assert_eq!(params.get("cwd").and_then(Value::as_str), Some("D:/videos"));
         assert!(params.get("mcpServers").and_then(Value::as_array).is_some());
     }

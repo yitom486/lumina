@@ -16,12 +16,17 @@ import type {
   MetadataCredentialStatus,
   MetadataMediaType,
   MetadataWriteResult,
+  MediaGroup,
   PendingMediaGroup,
   ResolverPreview,
   ResolverRunConfig,
   SaveMetadataCredentialsInput,
   TmdbConfig,
   CredentialValidationItem,
+  WikiEnrichmentCandidate,
+  WikiEnrichmentPreview,
+  WikiMatchMethod,
+  WikiWriteResult,
 } from "./types";
 
 export function discoverLibraryModels(
@@ -113,6 +118,28 @@ export function applyTmdbMediaMatch(input: {
   tmdb: TmdbConfig;
 }): Promise<MetadataWriteResult> {
   return invoke<MetadataWriteResult>("library_apply_tmdb_match", input);
+}
+
+export function listLibraryGroups(root: string): Promise<MediaGroup[]> {
+  return invoke<MediaGroup[]>("library_list_groups", { root });
+}
+
+export function previewWikipediaEnrichment(input: {
+  root: string;
+  groupKey: string;
+  tmdb: TmdbConfig;
+}): Promise<WikiEnrichmentPreview> {
+  return invoke<WikiEnrichmentPreview>("library_wikipedia_preview", input);
+}
+
+export function applyWikipediaPage(input: {
+  root: string;
+  groupKey: string;
+  candidate: WikiEnrichmentCandidate;
+  matchMethod: WikiMatchMethod;
+  candidatesConsidered: number;
+}): Promise<WikiWriteResult> {
+  return invoke<WikiWriteResult>("library_wikipedia_apply", input);
 }
 
 export function getMediaMetadataContext(

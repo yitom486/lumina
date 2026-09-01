@@ -199,6 +199,12 @@ export type MetadataWriteResult = {
 
 export type StoredMetadataKind = "series" | "episode" | "movie";
 
+export type MetadataCastMember = {
+  name: string;
+  character: string;
+  order: number;
+};
+
 export type StoredMetadata = {
   schemaVersion: number;
   kind: StoredMetadataKind;
@@ -211,6 +217,10 @@ export type StoredMetadata = {
   season?: number | null;
   episode?: number | null;
   genres: string[];
+  cast?: MetadataCastMember[];
+  creators?: string[];
+  network?: string | null;
+  status?: string | null;
   updatedAtMs: number;
 };
 
@@ -218,4 +228,77 @@ export type MediaMetadataContext = {
   mediaPath: string;
   group: StoredMetadata;
   item?: StoredMetadata | null;
+  wiki?: WikiMetadata | null;
+  merged?: MergedMediaContext | null;
+};
+
+export type WikiMatchMethod = "wikidata" | "search" | "userSelected";
+
+export type WikiCandidateSource = "wikidata" | "search";
+
+export type WikiMatchInfo = {
+  method: WikiMatchMethod;
+  candidatesConsidered: number;
+};
+
+export type WikiCharacter = {
+  name: string;
+  actor: string;
+  bio?: string | null;
+};
+
+export type WikiEpisodeSummary = {
+  season: number;
+  episode: number;
+  title?: string | null;
+  plot: string;
+};
+
+export type WikiMetadata = {
+  schemaVersion: number;
+  wikidataId?: string | null;
+  pageLang: string;
+  pageTitle: string;
+  pageUrl: string;
+  extract: string;
+  attribution: string;
+  license: string;
+  matchInfo: WikiMatchInfo;
+  characters?: WikiCharacter[];
+  episodes?: WikiEpisodeSummary[];
+  relationships?: string | null;
+  updatedAtMs: number;
+};
+
+export type WikiEnrichmentCandidate = {
+  pageLang: string;
+  pageTitle: string;
+  pageUrl: string;
+  wikidataId?: string | null;
+  extract?: string | null;
+  source: WikiCandidateSource;
+};
+
+export type WikiEnrichmentPreview = {
+  wikidataCandidate?: WikiEnrichmentCandidate | null;
+  searchCandidates: WikiEnrichmentCandidate[];
+  recommended?: WikiEnrichmentCandidate | null;
+  needsUserPick: boolean;
+  conflict: boolean;
+};
+
+export type WikiWriteResult = {
+  root: string;
+  groupKey: string;
+  writtenFile: string;
+};
+
+export type MergedMediaContext = {
+  overview?: string | null;
+  synopsis?: string | null;
+  episodeOverview?: string | null;
+  characters?: WikiCharacter[] | null;
+  wikiEpisodePlot?: string | null;
+  wikiAttribution?: string | null;
+  wikiPageUrl?: string | null;
 };

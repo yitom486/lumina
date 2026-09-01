@@ -571,6 +571,78 @@ pub fn fetch_tmdb_details(
     })
 }
 
+pub fn fetch_tmdb_external_ids(
+    config: &TmdbConfig,
+    tmdb_id: u64,
+    media_type: MetadataMediaType,
+) -> Result<Option<String>, LibraryError> {
+    let token = resolve_secret(
+        CredentialKind::TmdbAccessToken,
+        &config.access_token_env,
+        "TMDb token",
+    )?;
+    let path = match media_type {
+        MetadataMediaType::Movie => format!("movie/{tmdb_id}/external_ids"),
+        MetadataMediaType::Tv => format!("tv/{tmdb_id}/external_ids"),
+    };
+    let endpoint = format!("https://api.themoviedb.org/3/{path}");
+    let mut response = ureq::get(&endpoint)
+        .header("Authorization", &format!("Bearer {token}"))
+        .header("Accept", "application/json")
+        .call()
+        .map_err(|error| {
+            LibraryError::remote_request_failed(Some(&format!("TMDb external_ids: {error}")))
+        })?;
+    let payload: Value = response.body_mut().read_json().map_err(|error| {
+        LibraryError::remote_request_failed(Some(&format!("TMDb external_ids body: {error}")))
+    })?;
+    Ok(payload
+        .get("wikidata_id")
+        .and_then(|value| {
+            value
+                .as_str()
+                .map(str::trim)
+                .filter(|text| !text.is_empty())
+                .map(str::to_string)
+                .or_else(|| value.as_u64().map(|id| format!("Q{id}")))
+        }))
+}
+
+pub fn fetch_tmdb_credits(
+    config: &TmdbConfig,
+    tmdb_id: u64,
+    media_type: MetadataMediaType,
+    season: Option<u32>,
+    episode: Option<u32>,
+) -> Result<Value, LibraryError> {
+    let token = resolve_secret(
+        CredentialKind::TmdbAccessToken,
+        &config.access_token_env,
+        "TMDb token",
+    )?;
+    let path = match (media_type, season, episode) {
+        (MetadataMediaType::Movie, _, _) => format!("movie/{tmdb_id}/credits"),
+        (MetadataMediaType::Tv, Some(season), Some(episode)) => {
+            format!("tv/{tmdb_id}/season/{season}/episode/{episode}/credits")
+        }
+        (MetadataMediaType::Tv, _, _) => format!("tv/{tmdb_id}/credits"),
+    };
+    let query = form_urlencoded::Serializer::new(String::new())
+        .append_pair("language", &config.language)
+        .finish();
+    let endpoint = format!("https://api.themoviedb.org/3/{path}?{query}");
+    let mut response = ureq::get(&endpoint)
+        .header("Authorization", &format!("Bearer {token}"))
+        .header("Accept", "application/json")
+        .call()
+        .map_err(|error| {
+            LibraryError::remote_request_failed(Some(&format!("TMDb credits: {error}")))
+        })?;
+    response.body_mut().read_json().map_err(|error| {
+        LibraryError::remote_request_failed(Some(&format!("TMDb credits response: {error}")))
+    })
+}
+
 fn tmdb_candidate(value: &Value, media_type: MetadataMediaType) -> Option<TmdbCandidate> {
     let tmdb_id = value.get("id")?.as_u64()?;
     let title = match media_type {

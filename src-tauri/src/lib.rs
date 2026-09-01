@@ -3,6 +3,7 @@ pub mod asr;
 mod commands;
 pub mod library;
 pub mod media;
+pub mod mcp;
 pub mod notes;
 pub mod player;
 mod state;
@@ -22,7 +23,8 @@ pub use library::{
     MediaMetadataContext, MetadataMediaType, MetadataWriteResult, ModelDiscoveryConfig,
     ModelDiscoveryResult, PendingMediaGroup, ResolverIntent, ResolverPreview,
     ResolverProviderConfig, ResolverRunConfig, ResolverSelection, StoredMetadata,
-    StoredMetadataKind, TmdbCandidate, TmdbConfig,
+    StoredMetadataKind, TmdbCandidate, TmdbConfig, WikiEnrichmentCandidate, WikiEnrichmentPreview,
+    WikiMatchMethod, WikiMetadata, WikiWriteResult, MergedMediaContext,
 };
 pub use media::{
     MediaChapter, MediaError, MediaErrorCode, MediaInfo, MediaInspector, MediaStream, StreamKind,
@@ -43,9 +45,10 @@ use commands::asr::{asr_status, asr_transcribe};
 use commands::library::{
     library_agent_models_discover, library_apply_tmdb_match, library_context_for_media,
     library_credential_delete, library_credential_status, library_credentials_save,
-    library_credentials_validate, library_models_discover, library_pending_groups,
-    library_resolve_preview, library_scan_now, library_set_manual_title, library_status,
-    library_tmdb_credentials_validate, library_watch_start, library_watch_stop,
+    library_credentials_validate, library_list_groups, library_models_discover,
+    library_pending_groups, library_resolve_preview, library_scan_now, library_set_manual_title,
+    library_status, library_tmdb_credentials_validate, library_watch_start, library_watch_stop,
+    library_wikipedia_apply, library_wikipedia_preview,
 };
 use commands::media::{media_inspect, media_list_siblings};
 use commands::notes::{
@@ -63,6 +66,9 @@ use tauri::Manager;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    if mcp::run_if_invoked() {
+        return;
+    }
     init_tracing();
 
     let app = match tauri::Builder::default()
@@ -97,6 +103,9 @@ pub fn run() {
             library_resolve_preview,
             library_apply_tmdb_match,
             library_context_for_media,
+            library_list_groups,
+            library_wikipedia_preview,
+            library_wikipedia_apply,
             library_credential_status,
             library_credentials_save,
             library_credential_delete,

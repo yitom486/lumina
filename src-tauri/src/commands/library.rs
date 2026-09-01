@@ -11,6 +11,7 @@ use crate::library::{
     LibraryWatchConfig,
     MediaMetadataContext, MetadataMediaType, MetadataWriteResult, ModelDiscoveryConfig,
     ModelDiscoveryResult, PendingMediaGroup, ResolverPreview, ResolverRunConfig, TmdbConfig,
+    WikiEnrichmentCandidate, WikiEnrichmentPreview, WikiMatchMethod, WikiWriteResult,
 };
 use crate::state::AppState;
 
@@ -115,6 +116,55 @@ pub async fn library_context_for_media(
     tauri::async_runtime::spawn_blocking(move || service.context_for_media(media_path))
         .await
         .map_err(|error| LibraryError::internal(Some(&format!("library context join: {error}"))))?
+}
+
+#[tauri::command]
+pub async fn library_list_groups(
+    state: State<'_, AppState>,
+    root: String,
+) -> Result<Vec<crate::library::MediaGroup>, LibraryError> {
+    let service = state.library.clone();
+    tauri::async_runtime::spawn_blocking(move || service.list_groups(root))
+        .await
+        .map_err(|error| LibraryError::internal(Some(&format!("library groups join: {error}"))))?
+}
+
+#[tauri::command]
+pub async fn library_wikipedia_preview(
+    state: State<'_, AppState>,
+    root: String,
+    group_key: String,
+    tmdb: TmdbConfig,
+) -> Result<WikiEnrichmentPreview, LibraryError> {
+    let service = state.library.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        service.preview_wikipedia_enrichment(root, group_key, tmdb)
+    })
+    .await
+    .map_err(|error| LibraryError::internal(Some(&format!("wikipedia preview join: {error}"))))?
+}
+
+#[tauri::command]
+pub async fn library_wikipedia_apply(
+    state: State<'_, AppState>,
+    root: String,
+    group_key: String,
+    candidate: WikiEnrichmentCandidate,
+    match_method: WikiMatchMethod,
+    candidates_considered: u32,
+) -> Result<WikiWriteResult, LibraryError> {
+    let service = state.library.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        service.apply_wikipedia_page(
+            root,
+            group_key,
+            candidate,
+            match_method,
+            candidates_considered,
+        )
+    })
+    .await
+    .map_err(|error| LibraryError::internal(Some(&format!("wikipedia apply join: {error}"))))?
 }
 
 #[tauri::command]

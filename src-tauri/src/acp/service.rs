@@ -20,6 +20,7 @@ use crate::acp::model::{
     AgentProfilesHint, PermissionOption, SavedSessionHint,
 };
 use crate::acp::paths::{resolve_session_cwd, status_from_profiles};
+use crate::mcp::{lumina_mcp_servers, snapshot_path_for_cwd, write_snapshot, LuminaMcpSnapshot};
 use crate::acp::profile::{
     prepare_profiles, resolve_active_profile, resolve_launch, AgentKind, PreparedProfiles,
 };
@@ -121,6 +122,17 @@ impl AcpService {
         self.drop_live_session();
         self.cancel.store(false, Ordering::SeqCst);
         Ok(())
+    }
+
+    pub fn write_prompt_snapshot(
+        &self,
+        cwd: &std::path::Path,
+        snapshot: &LuminaMcpSnapshot,
+    ) -> Result<std::path::PathBuf, AcpError> {
+        let path = snapshot_path_for_cwd(cwd);
+        write_snapshot(&path, snapshot)
+            .map_err(|details| AcpError::internal(Some(&details)))?;
+        Ok(path)
     }
 
     /// Warm up Agent process + session without sending a prompt (user opened chat tab).
@@ -372,6 +384,9 @@ impl AcpService {
             .as_mut()
             .ok_or_else(|| AcpError::internal(Some("ACP session missing after spawn")))?;
 
+        let cwd_path = resolve_session_cwd(cwd)?;
+        let snapshot_path = snapshot_path_for_cwd(&cwd_path);
+
         on_event(AcpEvent::Progress {
             message: "正在发送问题…".into(),
         });
@@ -382,7 +397,12 @@ impl AcpService {
             &mut session.stdin,
             prompt_id,
             "session/prompt",
-            context::session_prompt_params(&session.session_id, prompt_text, context),
+            context::session_prompt_params(
+                &session.session_id,
+                prompt_text,
+                context,
+                Some(&snapshot_path),
+            ),
         )?;
 
         let empty_hint = match session.profile_kind {
@@ -666,7 +686,11 @@ impl AcpService {
                 &mut session.stdin,
                 resume_id,
                 "session/resume",
-                session_resume_params(&saved.session_id, &cwd),
+                session_resume_params(
+                    &saved.session_id,
+                    &cwd,
+                    lumina_mcp_servers(&snapshot_path_for_cwd(std::path::Path::new(&cwd))),
+                ),
             )?;
             let resume_resp = Self::read_until_id_raw(
                 self,
@@ -711,13 +735,18 @@ impl AcpService {
         profile_id: &str,
         on_event: &mut dyn FnMut(AcpEvent),
     ) -> Result<String, AcpError> {
+        let snapshot_path = snapshot_path_for_cwd(std::path::Path::new(cwd));
+        let _ = write_snapshot(
+            &snapshot_path,
+            &LuminaMcpSnapshot::new(None, None),
+        );
         let new_id = session.next_id;
         session.next_id += 1;
         Self::write_request(
             &mut session.stdin,
             new_id,
             "session/new",
-            session_new_params(cwd),
+            session_new_params(cwd, lumina_mcp_servers(&snapshot_path_for_cwd(std::path::Path::new(cwd)))),
         )?;
         let session_resp = Self::read_until_id_raw(
             self,
