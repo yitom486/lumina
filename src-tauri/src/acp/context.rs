@@ -94,10 +94,13 @@ pub fn session_prompt_params(
 }
 
 fn context_pointer_text() -> &'static str {
-    "【Lumina】用户正在本机观看上述媒体。请按需调用 MCP 工具：\
+    "【Lumina】用户正在本机观看上述媒体。可用 MCP 工具：\
 lumina_get_playback_context、lumina_get_library_context、lumina_get_episode_index、\
-lumina_get_transcript_window（及识图模型的 lumina_capture_frames）。\
-未通过工具读取前不要编造剧情或角色信息。"
+lumina_get_transcript_window（识图模型另有 lumina_capture_frames）。\
+\n\n工具调用原则：\
+(1) 若当前对话、此前工具结果或问题本身已足够回答，直接作答，不要重复调用。\
+(2) 仅缺哪类信息再增量调用对应工具，避免每轮并行全量拉取。\
+(3) 未通过工具确认的剧情/角色信息不要编造。"
 }
 
 fn format_time_ms(ms: u64) -> String {
@@ -162,6 +165,9 @@ mod tests {
         );
         let pointer = prompt[1].get("text").and_then(Value::as_str).unwrap_or("");
         assert!(pointer.contains("MCP 工具"));
+        assert!(pointer.contains("直接作答"));
+        assert!(pointer.contains("增量调用"));
+        assert!(pointer.contains("全量拉取"));
         assert!(!pointer.contains("也不应出现"));
         assert_eq!(
             prompt[2].get("text").and_then(Value::as_str),
