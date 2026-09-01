@@ -16,9 +16,15 @@ import {
   setManualMediaTitle,
   startLibraryWatch,
   stopLibraryWatch,
+  validateMetadataCredentials,
 } from "../api";
 import { useLibrarySettingsStore } from "../settingsStore";
-import type { CredentialKind, PendingMediaGroup, ResolverPreview } from "../types";
+import type {
+  CredentialKind,
+  CredentialValidationResult,
+  PendingMediaGroup,
+  ResolverPreview,
+} from "../types";
 
 export function MediaLibraryPanel() {
   const queryClient = useQueryClient();
@@ -34,6 +40,7 @@ export function MediaLibraryPanel() {
   const [previews, setPreviews] = useState<Record<string, ResolverPreview>>({});
   const [modelApiKey, setModelApiKey] = useState("");
   const [tmdbAccessToken, setTmdbAccessToken] = useState("");
+  const [validation, setValidation] = useState<CredentialValidationResult | null>(null);
 
   const statusQuery = useQuery({ queryKey: ["library-status"], queryFn: getLibraryStatus });
   const pendingQuery = useQuery({
@@ -79,13 +86,25 @@ export function MediaLibraryPanel() {
     onSuccess: () => {
       setModelApiKey("");
       setTmdbAccessToken("");
+      setValidation(null);
       void queryClient.invalidateQueries({ queryKey: ["library-credential-status"] });
     },
     onError: (err) => setError(errorMessage(err)),
   });
   const deleteCredentialMutation = useMutation({
     mutationFn: (kind: CredentialKind) => deleteMetadataCredential(kind),
-    onSuccess: () => void queryClient.invalidateQueries({ queryKey: ["library-credential-status"] }),
+    onSuccess: () => {
+      setValidation(null);
+      void queryClient.invalidateQueries({ queryKey: ["library-credential-status"] });
+    },
+    onError: (err) => setError(errorMessage(err)),
+  });
+  const validateCredentialsMutation = useMutation({
+    mutationFn: () => validateMetadataCredentials({
+      model: config.model,
+      tmdb: config.tmdb,
+    }),
+    onSuccess: (result) => setValidation(result),
     onError: (err) => setError(errorMessage(err)),
   });
 
@@ -122,17 +141,20 @@ export function MediaLibraryPanel() {
       <details className="rounded-md border border-border p-2">
         <summary className="cursor-pointer font-medium">智能匹配设置</summary>
         <div className="mt-2 space-y-2">
-          <Field label="模型地址"><input value={modelBaseUrl} onChange={(e) => patchSettings({ modelBaseUrl: e.target.value })} placeholder="https://…/v1" /></Field>
-          <Field label="模型 ID"><input value={modelId} onChange={(e) => patchSettings({ modelId: e.target.value })} placeholder="低成本 JSON 模型" /></Field>
-          <Field label="模型 API Key（留空则不更新）"><input type="password" autoComplete="off" value={modelApiKey} onChange={(e) => setModelApiKey(e.target.value)} placeholder={credentialStatusQuery.data?.modelApiKeySaved ? "已保存到此设备" : "输入后保存到此设备"} /></Field>
-          <Field label="TMDb Read Access Token（留空则不更新）"><input type="password" autoComplete="off" value={tmdbAccessToken} onChange={(e) => setTmdbAccessToken(e.target.value)} placeholder={credentialStatusQuery.data?.tmdbAccessTokenSaved ? "已保存到此设备" : "输入后保存到此设备"} /></Field>
+          <Field label="模型地址"><input value={modelBaseUrl} onChange={(e) => { setValidation(null); patchSettings({ modelBaseUrl: e.target.value }); }} placeholder="https://…/v1" /></Field>
+          <Field label="模型 ID"><input value={modelId} onChange={(e) => { setValidation(null); patchSettings({ modelId: e.target.value }); }} placeholder="低成本 JSON 模型" /></Field>
+          <Field label="模型 API Key（留空则不更新）"><input type="password" autoComplete="off" value={modelApiKey} onChange={(e) => { setValidation(null); setModelApiKey(e.target.value); }} placeholder={credentialStatusQuery.data?.modelApiKeySaved ? "已保存到此设备" : "输入后保存到此设备"} /></Field>
+          <Field label="TMDb Read Access Token（留空则不更新）"><input type="password" autoComplete="off" value={tmdbAccessToken} onChange={(e) => { setValidation(null); setTmdbAccessToken(e.target.value); }} placeholder={credentialStatusQuery.data?.tmdbAccessTokenSaved ? "已保存到此设备" : "输入后保存到此设备"} /></Field>
           <div className="space-y-1 text-muted-foreground">
             <p>密钥保存在当前 Windows 用户的系统安全凭据中，不会写入 `.lumina`、项目文件或浏览器设置。</p>
             <div className="flex flex-wrap gap-1">
               <Button size="sm" disabled={(!modelApiKey && !tmdbAccessToken) || saveCredentialsMutation.isPending} onClick={() => saveCredentialsMutation.mutate()}>保存到此设备</Button>
+              <Button size="sm" variant="outline" disabled={validateCredentialsMutation.isPending} onClick={() => validateCredentialsMutation.mutate()}>验证配置</Button>
               <Button size="sm" variant="outline" disabled={!credentialStatusQuery.data?.modelApiKeySaved || deleteCredentialMutation.isPending} onClick={() => deleteCredentialMutation.mutate("modelApiKey")}>删除模型密钥</Button>
               <Button size="sm" variant="outline" disabled={!credentialStatusQuery.data?.tmdbAccessTokenSaved || deleteCredentialMutation.isPending} onClick={() => deleteCredentialMutation.mutate("tmdbAccessToken")}>删除 TMDb Token</Button>
             </div>
+            {validation ? <div className="space-y-1 rounded bg-muted/40 p-2"><ValidationItem label="模型服务" item={validation.model} /><ValidationItem label="TMDb" item={validation.tmdb} /></div> : null}
+            <p>验证不会发送视频、字幕、笔记、文件名或绝对路径；模型验证会产生一次极小的 API 调用。</p>
           </div>
           <label className="flex gap-2 leading-relaxed text-muted-foreground"><input type="checkbox" checked={privacyAcknowledged} onChange={(e) => patchSettings({ privacyAcknowledged: e.target.checked })} />允许将文件名和相对目录名发送到所选模型服务；不会发送视频、字幕、笔记或绝对路径。</label>
         </div>
@@ -167,6 +189,10 @@ export function MediaLibraryPanel() {
       </section>
     </div>
   );
+}
+
+function ValidationItem({ label, item }: { label: string; item: CredentialValidationResult["model"] }) {
+  return <p className={item.verified ? "text-emerald-500" : "text-destructive"}>{label}：{item.message}</p>;
 }
 
 function PendingGroupCard({ pending, title, preview, disabled, onTitle, onSaveTitle, onPreview, onApply, onError }: {

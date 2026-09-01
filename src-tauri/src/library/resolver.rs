@@ -12,8 +12,9 @@ use url::form_urlencoded;
 use crate::library::credentials::{self, CredentialKind};
 use crate::library::error::LibraryError;
 use crate::library::model::{
-    MediaGroup, MetadataMediaType, ModelResolverConfig, ResolverIntent, ResolverPreview,
-    ResolverRunConfig, ResolverSelection, TmdbCandidate, TmdbConfig,
+    CredentialValidationConfig, CredentialValidationItem, CredentialValidationResult, MediaGroup,
+    MetadataMediaType, ModelResolverConfig, ResolverIntent, ResolverPreview, ResolverRunConfig,
+    ResolverSelection, TmdbCandidate, TmdbConfig,
 };
 
 const AUTO_MATCH_CONFIDENCE_MILLI: u16 = 950;
@@ -64,6 +65,99 @@ impl RemoteResolver {
             can_auto_match,
         })
     }
+}
+
+/// Validate both configured remote services without sending any media data.
+/// Each result is independent so a user can correct one credential without
+/// losing the diagnostic result for the other service.
+pub fn validate_credentials(config: CredentialValidationConfig) -> CredentialValidationResult {
+    CredentialValidationResult {
+        model: validation_item(
+            validate_model_service(&config.model),
+            "模型服务已验证",
+            "模型服务验证失败，请检查地址、模型和密钥",
+            "model credential validation failed",
+        ),
+        tmdb: validation_item(
+            validate_tmdb_token(&config.tmdb),
+            "TMDb Token 已验证",
+            "TMDb Token 验证失败，请检查 Token 后重试",
+            "TMDb credential validation failed",
+        ),
+    }
+}
+
+fn validation_item(
+    result: Result<(), LibraryError>,
+    success_message: &'static str,
+    failure_message: &'static str,
+    log_message: &'static str,
+) -> CredentialValidationItem {
+    match result {
+        Ok(()) => CredentialValidationItem {
+            verified: true,
+            message: success_message.into(),
+        },
+        Err(error) => {
+            tracing::warn!(code = ?error.code, details = ?error.details, "{log_message}");
+            CredentialValidationItem {
+                verified: false,
+                message: failure_message.into(),
+            }
+        }
+    }
+}
+
+fn validate_model_service(config: &ModelResolverConfig) -> Result<(), LibraryError> {
+    validate_https_url(&config.base_url, "model base URL")?;
+    if config.model_id.trim().is_empty() {
+        return Err(LibraryError::resolver_not_configured(Some(
+            "model id is empty",
+        )));
+    }
+    let api_key = resolve_secret(
+        CredentialKind::ModelApiKey,
+        &config.api_key_env,
+        "model API key",
+    )?;
+    let response = chat_json(
+        config,
+        &api_key,
+        "Return only the requested JSON object.",
+        json!({ "task": "Connectivity check. Return {\"ok\": true}." }),
+    )?;
+    if response.get("ok").and_then(Value::as_bool) != Some(true) {
+        return Err(LibraryError::invalid_resolver_response(Some(
+            "model validation response is missing ok=true",
+        )));
+    }
+    Ok(())
+}
+
+fn validate_tmdb_token(config: &TmdbConfig) -> Result<(), LibraryError> {
+    let token = resolve_secret(
+        CredentialKind::TmdbAccessToken,
+        &config.access_token_env,
+        "TMDb token",
+    )?;
+    // This public movie request validates the same Bearer-token authentication
+    // path used by the metadata retrieval requests.
+    let mut response = ureq::get("https://api.themoviedb.org/3/movie/11?language=en-US")
+        .header("Authorization", &format!("Bearer {token}"))
+        .header("Accept", "application/json")
+        .call()
+        .map_err(|error| {
+            LibraryError::remote_request_failed(Some(&format!("TMDb validation: {error}")))
+        })?;
+    let payload: Value = response.body_mut().read_json().map_err(|error| {
+        LibraryError::remote_request_failed(Some(&format!("TMDb validation body: {error}")))
+    })?;
+    if payload.get("id").and_then(Value::as_u64) != Some(11) {
+        return Err(LibraryError::remote_request_failed(Some(
+            "TMDb validation response is not movie 11",
+        )));
+    }
+    Ok(())
 }
 
 fn validate_config(config: &ResolverRunConfig) -> Result<(), LibraryError> {
@@ -362,5 +456,20 @@ mod tests {
         .expect("movie candidate");
         assert_eq!(movie.year, Some(2010));
         assert_eq!(movie.title, "Inception");
+    }
+
+    #[test]
+    fn validation_hides_transport_details_from_the_result() {
+        let item = validation_item(
+            Err(LibraryError::remote_request_failed(Some(
+                "HTTP 401 token=redacted",
+            ))),
+            "已验证",
+            "验证失败，请重试",
+            "test validation failed",
+        );
+        assert!(!item.verified);
+        assert_eq!(item.message, "验证失败，请重试");
+        assert!(!item.message.contains("401"));
     }
 }

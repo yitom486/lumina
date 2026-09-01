@@ -4,9 +4,10 @@
 use tauri::State;
 
 use crate::library::{
-    credentials, CredentialKind, CredentialSaveInput, CredentialStatus, LibraryError, LibraryIndex,
-    LibraryStatus, LibraryWatchConfig, MediaMetadataContext, MetadataMediaType,
-    MetadataWriteResult, PendingMediaGroup, ResolverPreview, ResolverRunConfig, TmdbConfig,
+    credentials, CredentialKind, CredentialSaveInput, CredentialStatus, CredentialValidationConfig,
+    CredentialValidationResult, LibraryError, LibraryIndex, LibraryStatus, LibraryWatchConfig,
+    MediaMetadataContext, MetadataMediaType, MetadataWriteResult, PendingMediaGroup,
+    ResolverPreview, ResolverRunConfig, TmdbConfig,
 };
 use crate::state::AppState;
 
@@ -135,4 +136,15 @@ pub async fn library_credential_delete(
         .map_err(|error| {
             LibraryError::internal(Some(&format!("credential delete join: {error}")))
         })?
+}
+
+#[tauri::command]
+pub async fn library_credentials_validate(
+    config: CredentialValidationConfig,
+) -> Result<CredentialValidationResult, LibraryError> {
+    tauri::async_runtime::spawn_blocking(move || crate::library::validate_credentials(config))
+        .await
+        .map_err(|error| {
+            LibraryError::internal(Some(&format!("credential validation join: {error}")))
+        })
 }

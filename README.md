@@ -33,6 +33,8 @@ $env:LUMINA_TMDB_ACCESS_TOKEN = "你的 TMDb Read Access Token"
 
 可在「智能匹配设置」中修改 OpenAI-compatible 模型地址和模型 ID，也可删除已保存的任一密钥。未配置模型或 TMDb 时，播放、字幕和笔记仍完全可用。
 
+保存后可点击「验证配置」：TMDb 会执行一次轻量的只读 Bearer 请求；模型服务会执行一次不含媒体资料的最小 JSON 请求，因此会产生极小的模型调用成本。验证结果不会持久化，修改地址、模型名或密钥后请重新验证。
+
 ## 开发环境
 
 当前发布目标是 Windows x64。开发机需要：

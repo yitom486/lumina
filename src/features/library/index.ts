@@ -7,6 +7,7 @@ export {
   listPendingMediaGroups,
   previewMediaMatch,
   saveMetadataCredentials,
+  validateMetadataCredentials,
   scanLibraryNow,
   setManualMediaTitle,
   startLibraryWatch,
@@ -14,6 +15,9 @@ export {
 } from "./api";
 export type {
   CredentialKind,
+  CredentialValidationConfig,
+  CredentialValidationItem,
+  CredentialValidationResult,
   GroupResolution,
   IndexedMediaFile,
   LibraryErrorDto,

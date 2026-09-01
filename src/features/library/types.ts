@@ -87,6 +87,21 @@ export type SaveMetadataCredentialsInput = {
   tmdbAccessToken?: string;
 };
 
+export type CredentialValidationConfig = {
+  model: ModelResolverConfig;
+  tmdb: TmdbConfig;
+};
+
+export type CredentialValidationItem = {
+  verified: boolean;
+  message: string;
+};
+
+export type CredentialValidationResult = {
+  model: CredentialValidationItem;
+  tmdb: CredentialValidationItem;
+};
+
 export type ResolverIntent = {
   mediaType: MetadataMediaType;
   title: string;

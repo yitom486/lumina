@@ -2,6 +2,8 @@ import { invoke } from "@tauri-apps/api/core";
 
 import type {
   CredentialKind,
+  CredentialValidationConfig,
+  CredentialValidationResult,
   LibraryIndex,
   LibraryStatus,
   LibraryWatchConfig,
@@ -30,6 +32,12 @@ export function deleteMetadataCredential(
   kind: CredentialKind,
 ): Promise<MetadataCredentialStatus> {
   return invoke<MetadataCredentialStatus>("library_credential_delete", { kind });
+}
+
+export function validateMetadataCredentials(
+  config: CredentialValidationConfig,
+): Promise<CredentialValidationResult> {
+  return invoke<CredentialValidationResult>("library_credentials_validate", { config });
 }
 
 export function startLibraryWatch(config: LibraryWatchConfig): Promise<LibraryStatus> {

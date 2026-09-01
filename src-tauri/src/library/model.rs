@@ -166,6 +166,29 @@ pub struct ResolverRunConfig {
     pub tmdb: TmdbConfig,
 }
 
+/// A deliberately small, filename-free connectivity check for the saved
+/// metadata credentials and selected model configuration.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct CredentialValidationConfig {
+    pub model: ModelResolverConfig,
+    pub tmdb: TmdbConfig,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct CredentialValidationResult {
+    pub model: CredentialValidationItem,
+    pub tmdb: CredentialValidationItem,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct CredentialValidationItem {
+    pub verified: bool,
+    pub message: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct ResolverPreview {
