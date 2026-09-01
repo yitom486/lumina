@@ -7,9 +7,14 @@ import { errorMessage } from "@/lib/format";
 import * as api from "./api";
 import {
   shouldOfferResume,
+  shouldRestoreSessionPosition,
   useProgressStore,
 } from "./progressStore";
 import { planResumeToast, seekForResume } from "./resumePlayback";
+import {
+  resolveRestorePositionMs,
+  useSessionStore,
+} from "./sessionStore";
 import {
   IDLE_SNAPSHOT,
   type PlayerErrorDto,
@@ -48,7 +53,10 @@ type PlayerStore = PlayerSnapshot & {
   restartFromBeginning: () => Promise<void>;
 
   openFile: () => Promise<void>;
-  openPath: (path: string, options?: { rebuildPlaylist?: boolean }) => Promise<void>;
+  openPath: (
+    path: string,
+    options?: { rebuildPlaylist?: boolean; restorePaused?: boolean },
+  ) => Promise<void>;
   /** Rebuild same-folder playlist when UI resyncs but list was lost (HMR / remount). */
   syncPlaylistForPath: (path: string) => Promise<void>;
   playNext: () => Promise<void>;
@@ -129,6 +137,54 @@ function maybeResume(
       set({ resumeToast: null, statusMessage: errorMessage(error) });
     }
   })();
+}
+
+async function restorePausedPosition(
+  path: string,
+  durationMs: number,
+  get: () => PlayerStore,
+  set: (
+    partial:
+      | Partial<PlayerStore>
+      | ((state: PlayerStore) => Partial<PlayerStore>),
+  ) => void,
+) {
+  if (get().resumeHandledForPath === path) {
+    try {
+      await get().pause();
+    } catch (error) {
+      set({ statusMessage: errorMessage(error) });
+    }
+    return;
+  }
+
+  const session = useSessionStore.getState();
+  const saved = useProgressStore.getState().getProgress(path);
+  const positionMs = resolveRestorePositionMs(
+    path,
+    session,
+    saved?.positionMs,
+  );
+
+  set({ resumeHandledForPath: path, resumeToast: null });
+
+  if (shouldRestoreSessionPosition(positionMs, durationMs)) {
+    try {
+      await seekForResume(positionMs, async (targetMs) => {
+        const snapshot = await api.seekPlayer(targetMs);
+        get().applySnapshot(snapshot);
+        return snapshot;
+      });
+    } catch (error) {
+      set({ statusMessage: errorMessage(error) });
+    }
+  }
+
+  try {
+    await get().pause();
+  } catch (error) {
+    set({ statusMessage: errorMessage(error) });
+  }
 }
 
 export const usePlayerStore = create<PlayerStore>((set, get) => ({
@@ -235,7 +291,9 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
   openFile: async () => {
     set({ busy: true });
     try {
-      const path = await api.pickVideoFile();
+      const path = await api.pickVideoFile(
+        useSessionStore.getState().lastDirectory,
+      );
       if (!path) return;
       await get().openPath(path, { rebuildPlaylist: true });
       useUiStore.getState().setSidebarTab("playlist");
@@ -268,6 +326,7 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
 
   openPath: async (path, options) => {
     const rebuild = options?.rebuildPlaylist ?? false;
+    const restorePaused = options?.restorePaused ?? false;
     set({
       resumeHandledForPath: null,
       resumeToast: null,
@@ -294,12 +353,25 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
         error: snapshot.error,
       });
       if (snapshot.currentFile) {
-        maybeResume(
-          snapshot.currentFile,
-          get().durationMs || snapshot.durationMs,
-          get,
-          set,
-        );
+        useSessionStore.getState().saveSession({
+          path: snapshot.currentFile,
+          positionMs: get().currentTimeMs,
+        });
+        if (restorePaused) {
+          await restorePausedPosition(
+            snapshot.currentFile,
+            get().durationMs || snapshot.durationMs,
+            get,
+            set,
+          );
+        } else {
+          maybeResume(
+            snapshot.currentFile,
+            get().durationMs || snapshot.durationMs,
+            get,
+            set,
+          );
+        }
       }
       await ensureSurfaceBounds();
     } catch (error) {

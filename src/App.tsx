@@ -31,6 +31,8 @@ import {
   usePlayerEvents,
   usePlayerHotkeys,
   useProgressPersistence,
+  useSessionPersistence,
+  useSessionRestore,
   useUiStore,
   useWindowFullscreenSync,
   type SidebarTab,
@@ -69,6 +71,8 @@ export default function App() {
   usePlayerEvents();
   usePlayerHotkeys();
   useProgressPersistence();
+  useSessionPersistence();
+  useSessionRestore();
   useWindowFullscreenSync();
 
   const fullscreen = useUiStore((s) => s.fullscreen);

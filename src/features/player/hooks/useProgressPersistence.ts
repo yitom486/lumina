@@ -2,6 +2,7 @@
 
 import { useEffect, useRef } from "react";
 
+import { flushPlaybackPersistence } from "./hooks/useSessionPersistence";
 import { usePlayerStore } from "../store";
 import { useProgressStore } from "../progressStore";
 
@@ -39,19 +40,8 @@ export function useProgressPersistence() {
   }, [status, currentFile, currentTimeMs, saveProgress, clearProgress]);
 
   useEffect(() => {
-    const flush = () => {
-      const { currentFile: path, currentTimeMs: pos, status: st } =
-        usePlayerStore.getState();
-      if (!path) return;
-      if (st === "Ended") {
-        useProgressStore.getState().clearProgress(path);
-        return;
-      }
-      if (st === "Playing" || st === "Paused" || st === "Ready") {
-        useProgressStore.getState().saveProgress(path, pos);
-      }
-    };
-    window.addEventListener("beforeunload", flush);
-    return () => window.removeEventListener("beforeunload", flush);
+    window.addEventListener("beforeunload", flushPlaybackPersistence);
+    return () =>
+      window.removeEventListener("beforeunload", flushPlaybackPersistence);
   }, []);
 }

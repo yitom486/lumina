@@ -7,6 +7,8 @@ export { usePlayerEvents } from "./hooks/usePlayerEvents";
 export { usePlayerHotkeys } from "./hooks/usePlayerHotkeys";
 export { useWindowFullscreenSync } from "./hooks/useWindowFullscreenSync";
 export { useProgressPersistence } from "./hooks/useProgressPersistence";
+export { useSessionPersistence } from "./hooks/useSessionPersistence";
+export { useSessionRestore } from "./hooks/useSessionRestore";
 export { VideoSurface } from "./components/VideoSurface";
 export { PlayerBar } from "./components/PlayerBar";
 export { TrackMenus } from "./components/TrackMenus";

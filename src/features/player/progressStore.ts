@@ -58,3 +58,13 @@ export function shouldOfferResume(
   if (durationMs > 0 && positionMs >= durationMs - MIN_SAVE_MS) return false;
   return true;
 }
+
+/** Session restore keeps any non-zero position except near the end. */
+export function shouldRestoreSessionPosition(
+  positionMs: number,
+  durationMs: number,
+): boolean {
+  if (positionMs <= 0) return false;
+  if (durationMs > 0 && positionMs >= durationMs - MIN_SAVE_MS) return false;
+  return true;
+}

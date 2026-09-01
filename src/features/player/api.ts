@@ -12,10 +12,13 @@ const VIDEO_FILTERS = [
   },
 ];
 
-export async function pickVideoFile(): Promise<string | null> {
+export async function pickVideoFile(
+  defaultDirectory?: string | null,
+): Promise<string | null> {
   const selected = await open({
     multiple: false,
     filters: VIDEO_FILTERS,
+    defaultPath: defaultDirectory?.trim() || undefined,
   });
   if (!selected || Array.isArray(selected)) {
     return null;
