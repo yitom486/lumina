@@ -2,7 +2,7 @@ import { useState } from "react";
 
 import { cn } from "@/lib/utils";
 
-import { waitingLabel } from "../activityStatus";
+import { waitingLabel, hasActiveToolActivity } from "../activityStatus";
 import type { ChatTurn } from "../types";
 import { ChatActivityFeed } from "./ChatActivityFeed";
 import { ChatMarkdown } from "./ChatMarkdown";
@@ -17,7 +17,10 @@ export function ChatTurnView({ turn }: Props) {
   const [toolsOpen, setToolsOpen] = useState(false);
   const isError = turn.status === "error";
   const isStreaming = turn.status === "streaming";
-  const waitingForText = isStreaming && !turn.answer.trim();
+  const hideAnswerWhileTools =
+    isStreaming && hasActiveToolActivity(turn.activities);
+  const visibleAnswer = hideAnswerWhileTools ? "" : turn.answer;
+  const waitingForText = isStreaming && !visibleAnswer.trim();
   const showWaitingDots =
     waitingForText && !(turn.showActivities && turn.activities.length > 0);
   const toolCount = turn.activities.filter((item) => item.kind === "tool").length;
@@ -63,18 +66,18 @@ export function ChatTurnView({ turn }: Props) {
           )}
           data-turn-id={turn.id}
         >
-          {turn.answer ? (
+          {visibleAnswer ? (
             isError ? (
-              turn.answer
+              visibleAnswer
             ) : (
-              <ChatMarkdown content={turn.answer} />
+              <ChatMarkdown content={visibleAnswer} />
             )
           ) : showWaitingDots ? (
             <ChatWaitingDots label={waitingLabel(turn.activities)} />
           ) : waitingForText ? null : (
             ""
           )}
-          {turn.answer && isStreaming ? (
+          {visibleAnswer && isStreaming ? (
             <span className="chat-stream-caret ml-0.5 inline-block text-muted-foreground">
               ▍
             </span>

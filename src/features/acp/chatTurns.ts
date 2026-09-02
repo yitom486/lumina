@@ -1,3 +1,4 @@
+import { hasActiveToolActivity } from "./activityStatus";
 import { composeAssistantAnswer } from "./assistantAnswer";
 import type { AcpEvent, ChatActivity, ChatTurn, ThinkingLevel } from "./types";
 import { hintForAcpFailure } from "./failureHints";
@@ -6,6 +7,31 @@ import { mergeToolDetail } from "./toolStatus";
 function nextSeq(seq: { n: number }): string {
   seq.n += 1;
   return String(seq.n);
+}
+
+/** Seal pre-tool agent text; only the post-tool segment stays visible. */
+function sealAgentSegment(turn: ChatTurn): ChatTurn {
+  const pending = (turn.agentDraft ?? turn.answer).trim();
+  if (!pending) {
+    return { ...turn, agentDraft: "", answer: "" };
+  }
+  return {
+    ...turn,
+    agentSegments: [...(turn.agentSegments ?? []), pending],
+    agentDraft: "",
+    answer: "",
+  };
+}
+
+function lastAgentSegment(turn: ChatTurn): string {
+  const draft = turn.agentDraft?.trim();
+  if (draft) return draft;
+  const segments = turn.agentSegments ?? [];
+  for (let index = segments.length - 1; index >= 0; index -= 1) {
+    const segment = segments[index]?.trim();
+    if (segment) return segment;
+  }
+  return turn.answer.trim();
 }
 
 export function createTurn(seq: { n: number }, userText: string): ChatTurn {
@@ -27,13 +53,19 @@ export function applyAcpEventToTurn(
 ): ChatTurn {
   switch (event.type) {
     case "agentMessage": {
-      const streamingAnswer = composeAssistantAnswer(
-        `${turn.answer}${event.text}`,
-        turn.activities,
-      );
+      const draft = `${turn.agentDraft ?? ""}${event.text}`;
+      if (hasActiveToolActivity(turn.activities)) {
+        return {
+          ...turn,
+          agentDraft: draft,
+          answer: "",
+          status: "streaming",
+        };
+      }
       return {
         ...turn,
-        answer: streamingAnswer,
+        agentDraft: draft,
+        answer: composeAssistantAnswer(draft, turn.activities),
         status: "streaming",
       };
     }
@@ -43,10 +75,11 @@ export function applyAcpEventToTurn(
         ...turn,
         activities: appendThought(turn.activities, event.text),
       };
-    case "toolCall":
+    case "toolCall": {
+      const sealed = sealAgentSegment(turn);
       return {
-        ...turn,
-        activities: upsertTool(turn.activities, {
+        ...sealed,
+        activities: upsertTool(sealed.activities, {
           id: `tool-${event.toolCallId}`,
           kind: "tool",
           toolCallId: event.toolCallId,
@@ -55,6 +88,7 @@ export function applyAcpEventToTurn(
           text: mergeToolDetail(undefined, event.detail ?? undefined, false),
         }),
       };
+    }
     case "toolCallUpdate":
       return {
         ...turn,
@@ -88,12 +122,14 @@ export function applyAcpEventToTurn(
         ],
       };
     case "finished": {
-      const rawFinal = event.text.trim() || turn.answer.trim();
+      const rawFinal = event.text.trim() || lastAgentSegment(turn);
       const finalText = composeAssistantAnswer(rawFinal, turn.activities);
       const hasActivities = turn.activities.length > 0;
       return {
         ...turn,
         answer: finalText,
+        agentDraft: undefined,
+        agentSegments: undefined,
         status: "done",
         showActivities: thinkingLevel === "verbose" && hasActivities,
         activities: hasActivities ? turn.activities : [],
@@ -103,6 +139,8 @@ export function applyAcpEventToTurn(
       return {
         ...turn,
         answer: event.message,
+        agentDraft: undefined,
+        agentSegments: undefined,
         errorHint: hintForAcpFailure(event.code),
         status: "error",
         showActivities: false,

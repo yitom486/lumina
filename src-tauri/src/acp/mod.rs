@@ -1,5 +1,6 @@
 //! Optional on-demand ACP. Not required for playback.
 
+pub mod agent_reply_collector;
 pub mod context;
 pub mod discover;
 pub mod error;

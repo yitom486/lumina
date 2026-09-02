@@ -166,6 +166,10 @@ export type ChatTurn = {
   status: ChatMessageStatus;
   activities: ChatActivity[];
   showActivities: boolean;
+  /** Pre-tool agent stream; sealed when a tool call starts. */
+  agentDraft?: string;
+  /** Sealed agent segments before tool calls (not shown in UI). */
+  agentSegments?: string[];
   /** Shown under error answer — fixed business copy, not technical details. */
   errorHint?: string;
 };

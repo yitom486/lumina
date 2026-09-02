@@ -12,6 +12,7 @@ use std::time::{Duration, Instant};
 
 use serde_json::Value;
 
+use crate::acp::agent_reply_collector::AgentReplyCollector;
 use crate::acp::context::{self, VideoPromptContext};
 use crate::acp::error::AcpError;
 use crate::acp::host::AcpHost;
@@ -662,10 +663,12 @@ impl AcpService {
             _ => "（会话结束，未解析到文本回复；请确认该 ACP Agent 可用）",
         };
 
-        let mut collected = String::new();
+        let mut collector = AgentReplyCollector::default();
         let mut on_event_collect = |ev: AcpEvent| {
-            if let AcpEvent::AgentMessage { text } = &ev {
-                collected.push_str(text);
+            match &ev {
+                AcpEvent::AgentMessage { text } => collector.push_agent_chunk(text),
+                AcpEvent::ToolCall { .. } => collector.on_tool_call(),
+                _ => {}
             }
             on_event(ev);
         };
@@ -723,10 +726,11 @@ impl AcpService {
                     if stop.as_deref() == Some("cancelled") || self.cancel.load(Ordering::SeqCst) {
                         return Err(AcpError::cancelled());
                     }
-                    if collected.is_empty() {
-                        collected = empty_hint.into();
+                    let final_text = collector.finish();
+                    if final_text.trim().is_empty() {
+                        return Ok((empty_hint.into(), stop));
                     }
-                    return Ok((collected, stop));
+                    return Ok((final_text, stop));
                 }
                 ReadOne::Response { .. } => continue,
             }
@@ -736,10 +740,11 @@ impl AcpService {
             let _ = guard.take();
             return Err(AcpError::cancelled());
         }
-        if collected.is_empty() {
-            collected = empty_hint.into();
+        let final_text = collector.finish();
+        if final_text.trim().is_empty() {
+            return Ok((empty_hint.into(), Some("end_turn".into())));
         }
-        Ok((collected, Some("end_turn".into())))
+        Ok((final_text, Some("end_turn".into())))
     }
 
     fn spawn_session(

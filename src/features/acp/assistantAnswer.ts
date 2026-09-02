@@ -1,18 +1,65 @@
 import type { ChatActivity } from "./types";
 
 const ENGLISH_BLOCK_LINE =
-  /^\s*(?:\*\*)?(?:Natural\s+)?English:(?:\*\*)?\s*.+$/i;
+  /^\s*(?:\*\*)?(?:Natural\s+)?English:(?:\*\*)?\s*(.*)$/i;
 const ENGLISH_BLOCK_INLINE =
   /`(?:Natural\s+)?English:[^`]+`/gi;
+
+function hasSubstantialCjk(text: string): boolean {
+  const cjk = text.match(/[\u4e00-\u9fff]/g);
+  return (cjk?.length ?? 0) >= 2;
+}
+
+function isEnglishPreambleLine(text: string): boolean {
+  const trimmed = text.trim();
+  if (!trimmed) return false;
+  if (ENGLISH_BLOCK_LINE.test(trimmed)) return true;
+  if (hasSubstantialCjk(trimmed)) return false;
+  return /^[A-Za-z0-9\s.,!?;:'"()\-–—/]+$/.test(trimmed);
+}
 
 /** Remove Cursor-style English translation blocks from assistant-visible text. */
 export function stripEnglishTranslationBlocks(text: string): string {
   const withoutInline = text.replace(ENGLISH_BLOCK_INLINE, "");
-  const kept = withoutInline
-    .split("\n")
-    .filter((line) => !ENGLISH_BLOCK_LINE.test(line))
-    .join("\n");
-  return kept.replace(/\n{3,}/g, "\n\n").trim();
+  const lines = withoutInline.split("\n");
+  const kept: string[] = [];
+
+  let index = 0;
+  while (index < lines.length) {
+    const line = lines[index];
+    if (!ENGLISH_BLOCK_LINE.test(line)) {
+      kept.push(line);
+      index += 1;
+      continue;
+    }
+
+    const inline = line.match(ENGLISH_BLOCK_LINE)?.[1]?.trim() ?? "";
+    if (inline && !hasSubstantialCjk(inline)) {
+      index += 1;
+      continue;
+    }
+
+    index += 1;
+    while (index < lines.length) {
+      const next = lines[index];
+      if (!next.trim()) {
+        index += 1;
+        continue;
+      }
+      if (ENGLISH_BLOCK_LINE.test(next)) {
+        break;
+      }
+      if (hasSubstantialCjk(next)) {
+        break;
+      }
+      if (!isEnglishPreambleLine(next)) {
+        break;
+      }
+      index += 1;
+    }
+  }
+
+  return kept.join("\n").replace(/\n{3,}/g, "\n\n").trim();
 }
 
 /** Drop repeated paragraphs/lines (common when thought + answer overlap). */

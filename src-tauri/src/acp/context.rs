@@ -103,8 +103,7 @@ lumina_get_transcript_window（识图模型另有 lumina_capture_frames）。\
 (3) 未通过工具确认的剧情/角色/台词不要编造；上下文不足时，先调用工具补齐必要信息再回答。\
 (4) 问剧情、对话、人物关系：优先 lumina_get_transcript_window（以当前进度为中心的字幕窗口通常很充裕）；\
 单帧截图看不清台词或需要画面/场景/表情细节时，再用 lumina_capture_frames。\
-(5) 分集列表与媒体库背景分别用 lumina_get_episode_index、lumina_get_library_context。\
-(6) 直接用中文作答；不要输出 Natural English / English 英译块。"
+(5) 分集列表与媒体库背景分别用 lumina_get_episode_index、lumina_get_library_context。"
 }
 
 #[cfg(test)]

@@ -68,4 +68,52 @@ describe("applyAcpEventToTurn", () => {
     expect(turn.activities.length).toBeGreaterThan(0);
     expect(turn.showActivities).toBe(true);
   });
+
+  it("drops pre-tool agent text and keeps only post-tool answer", () => {
+    const seq = { n: 0 };
+    let turn = createTurn(seq, "这段讲了什么");
+    turn = applyAcpEventToTurn(
+      turn,
+      {
+        type: "agentMessage",
+        text: "Natural English: What is this about?\n\n我先查字幕。",
+      },
+      "minimal",
+    );
+    turn = applyAcpEventToTurn(
+      turn,
+      { type: "toolCall", toolCallId: "t1", title: "lumina_get_transcript_window" },
+      "minimal",
+    );
+    expect(turn.answer).toBe("");
+    expect(turn.agentDraft).toBe("");
+    expect(turn.agentSegments?.[0]).toContain("Natural English");
+
+    turn = applyAcpEventToTurn(
+      turn,
+      { type: "toolCallUpdate", toolCallId: "t1", status: "completed" },
+      "minimal",
+    );
+    turn = applyAcpEventToTurn(
+      turn,
+      {
+        type: "agentMessage",
+        text: "Natural English: Summary\n\n这段主要讲……",
+      },
+      "minimal",
+    );
+    expect(turn.answer).toContain("这段主要讲");
+
+    turn = applyAcpEventToTurn(
+      turn,
+      {
+        type: "finished",
+        text: "Natural English: Summary\n\n这段主要讲……",
+        stopReason: "end_turn",
+      },
+      "minimal",
+    );
+    expect(turn.answer).toBe("这段主要讲……");
+    expect(turn.answer).not.toMatch(/Natural English/i);
+  });
 });

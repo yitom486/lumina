@@ -59,6 +59,8 @@ export const useChatHistoryStore = create<ChatHistoryStore>()(
             status: turn.status === "streaming" ? "done" : turn.status,
             showActivities: false,
             activities: [],
+            agentDraft: undefined,
+            agentSegments: undefined,
           })),
         };
         set((state) => {

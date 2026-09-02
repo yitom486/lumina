@@ -20,6 +20,18 @@ describe("stripEnglishTranslationBlocks", () => {
       "你好",
     );
   });
+
+  it("removes multiline Natural English blocks", () => {
+    const raw =
+      "Natural English:\n\nIs the tool available?\n\nNatural English:\n\nIs the tool available?\n\n目前还不行。";
+    expect(stripEnglishTranslationBlocks(raw)).toBe("目前还不行。");
+  });
+
+  it("removes both English and Natural English labels in one reply", () => {
+    const raw =
+      "English: Check tools\n\nNatural English: Check tools\n\n我先检查 MCP 工具。";
+    expect(stripEnglishTranslationBlocks(raw)).toBe("我先检查 MCP 工具。");
+  });
 });
 
 describe("dedupeRepeatedBlocks", () => {
