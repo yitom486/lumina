@@ -6,7 +6,12 @@ use crate::asr::error::AsrError;
 use crate::media::tools::resolve_ffmpeg;
 use crate::process_util::command;
 
-pub fn extract_wav_16k_mono(media_path: &Path, out_wav: &Path) -> Result<(), AsrError> {
+/// Optional half-open media window `[from_ms, to_ms)`.
+pub fn extract_wav_16k_mono(
+    media_path: &Path,
+    out_wav: &Path,
+    range: Option<(u64, u64)>,
+) -> Result<(), AsrError> {
     let ffmpeg = resolve_ffmpeg().map_err(|error| {
         tracing::warn!(%error, "ffmpeg missing for ASR extract");
         AsrError::extract_failed(Some(&format!("ffmpeg not found: {error}")))
@@ -27,28 +32,39 @@ pub fn extract_wav_16k_mono(media_path: &Path, out_wav: &Path) -> Result<(), Asr
         ffmpeg = %ffmpeg.display(),
         media = %media_path.display(),
         out = %out_wav.display(),
+        ?range,
         "extracting audio for ASR"
     );
 
-    let output = command(&ffmpeg)
-        .args([
-            "-y",
-            "-i",
-            &media_path.to_string_lossy(),
-            "-vn",
-            "-ac",
-            "1",
-            "-ar",
-            "16000",
-            "-c:a",
-            "pcm_s16le",
-            &out_wav.to_string_lossy(),
-        ])
-        .output()
-        .map_err(|error| {
-            tracing::warn!(%error, "ffmpeg spawn failed for ASR");
-            AsrError::extract_failed(Some(&format!("ffmpeg spawn: {error}")))
-        })?;
+    let mut cmd = command(&ffmpeg);
+    cmd.arg("-y");
+    if let Some((from_ms, to_ms)) = range {
+        if to_ms <= from_ms {
+            return Err(AsrError::invalid("转写时间范围无效"));
+        }
+        let start_sec = from_ms as f64 / 1000.0;
+        let duration_sec = (to_ms - from_ms) as f64 / 1000.0;
+        cmd.args(["-ss", &format!("{start_sec:.3}")]);
+        cmd.arg("-i").arg(media_path);
+        cmd.args(["-t", &format!("{duration_sec:.3}")]);
+    } else {
+        cmd.arg("-i").arg(media_path);
+    }
+    cmd.args([
+        "-vn",
+        "-ac",
+        "1",
+        "-ar",
+        "16000",
+        "-c:a",
+        "pcm_s16le",
+    ]);
+    cmd.arg(out_wav);
+
+    let output = cmd.output().map_err(|error| {
+        tracing::warn!(%error, "ffmpeg spawn failed for ASR");
+        AsrError::extract_failed(Some(&format!("ffmpeg spawn: {error}")))
+    })?;
 
     if !output.status.success() || !out_wav.is_file() {
         let stderr = String::from_utf8_lossy(&output.stderr);

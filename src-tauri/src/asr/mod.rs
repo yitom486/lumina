@@ -8,5 +8,5 @@ pub mod service;
 pub mod whisper_cli;
 
 pub use error::{AsrError, AsrErrorCode};
-pub use model::{AsrEvent, AsrStatus};
+pub use model::{AsrEvent, AsrModelInfo, AsrRange, AsrStatus};
 pub use service::AsrService;

@@ -10,6 +10,7 @@ use serde::{Deserialize, Serialize};
 pub enum AsrErrorCode {
     NotConfigured,
     Busy,
+    InvalidRequest,
     ExtractFailed,
     TranscribeFailed,
     ExportFailed,
@@ -46,6 +47,10 @@ impl AsrError {
 
     pub fn busy() -> Self {
         Self::new(AsrErrorCode::Busy, "已有语音转写任务在运行", None)
+    }
+
+    pub fn invalid(message: impl Into<String>) -> Self {
+        Self::new(AsrErrorCode::InvalidRequest, message, None)
     }
 
     pub fn extract_failed(details: Option<&str>) -> Self {
@@ -110,6 +115,9 @@ mod tests {
         assert!(!AsrError::not_configured(None).message.contains("whisper"));
         assert!(has_cjk(&AsrError::busy().message));
         assert_eq!(AsrError::busy().code, AsrErrorCode::Busy);
+        let invalid = AsrError::invalid("转写时间范围无效");
+        assert_eq!(invalid.code, AsrErrorCode::InvalidRequest);
+        assert!(has_cjk(&invalid.message));
         let t = AsrError::transcribe_failed(Some("whisper-cli exit 1"));
         assert_eq!(t.message, "语音转写失败");
         assert_eq!(t.details.as_deref(), Some("whisper-cli exit 1"));

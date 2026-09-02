@@ -25,8 +25,10 @@ src-tauri/native/whisper/
 ## 行为
 
 - 启动应用 **不会** 加载模型
-- `asr_status`：报告是否可用（有 cli + 至少一个 model）
-- `asr_transcribe`：首次调用才 spawn 进程；用项目本地 ffmpeg 抽 16 kHz mono wav；成功后写出媒体同目录 `{stem}.asr.srt` 外挂字幕
+- `asr_status`：报告是否可用（有 cli + 至少一个 model），并列出本地 `ggml-*.bin`
+- `asr_transcribe`：首次调用才 spawn 进程；可选 `range` / `modelId`；用项目本地 ffmpeg 抽 16 kHz mono wav（可选时间窗 `-ss`/`-t`）；成功后写出媒体同目录外挂字幕（整片 `{stem}.asr.srt`，章节 `{stem}.asr_ch{id}.srt`）
+
+> 应用内不提供一键下载模型；请自行放到 `native/whisper/`（体积与许可见上游文档）。
 
 ## 获取示例（自行下载）
 

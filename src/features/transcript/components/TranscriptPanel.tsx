@@ -6,9 +6,12 @@ import {
 } from "@tanstack/react-query";
 
 import { getAsrStatus, transcribeOnDemand } from "@/features/asr";
+import type { AsrRange } from "@/features/asr";
 import { useAcpProfilesStore } from "@/features/acp/acpProfilesStore";
 import { useAcpSettingsStore } from "@/features/acp/acpSettingsStore";
 import { profilesHintFromStore } from "@/features/acp/defaultAgentProfiles";
+import { useMediaInfoQuery } from "@/features/media";
+import type { MediaChapter } from "@/features/media";
 import type { Transcript } from "@/features/transcript";
 import { formatTime } from "@/lib/format";
 import { usePlayerStore } from "@/features/player";
@@ -28,12 +31,27 @@ function activeCueIndex(cues: Cue[], timeMs: number): number {
   return cues.findIndex((c) => timeMs >= c.startMs && timeMs < c.endMs);
 }
 
+function findChapterAt(
+  chapters: MediaChapter[],
+  timeMs: number,
+): MediaChapter | null {
+  if (chapters.length === 0) return null;
+  const hit = chapters.find((chapter) => {
+    if (timeMs < chapter.startMs) return false;
+    if (chapter.endMs == null) return true;
+    return timeMs < chapter.endMs;
+  });
+  return hit ?? null;
+}
+
 const LANG_PRESETS = [
   { value: "en", label: "英语 (en)" },
   { value: "zh", label: "中文 (zh)" },
   { value: "ja", label: "日语 (ja)" },
   { value: "ko", label: "韩语 (ko)" },
 ];
+
+type AsrScope = "full" | "chapter";
 
 export function TranscriptPanel() {
   const queryClient = useQueryClient();
@@ -60,6 +78,13 @@ export function TranscriptPanel() {
     status !== "Loading" &&
     status !== "Error";
 
+  const mediaInfoQuery = useMediaInfoQuery();
+  const chapters = mediaInfoQuery.data?.chapters ?? [];
+  const activeChapter = useMemo(
+    () => findChapterAt(chapters, currentTimeMs),
+    [chapters, currentTimeMs],
+  );
+
   const choicesQuery = useQuery({
     queryKey: ["subtitleChoices", path],
     queryFn: () => listSubtitleChoices(path as string),
@@ -75,6 +100,8 @@ export function TranscriptPanel() {
     retry: false,
   });
 
+  const [asrScope, setAsrScope] = useState<AsrScope>("full");
+  const [asrModelId, setAsrModelId] = useState<string>("");
   const [asrTranscript, setAsrTranscript] = useState<Transcript | null>(null);
   const [asrBusy, setAsrBusy] = useState(false);
   const [asrProgress, setAsrProgress] = useState<string | null>(null);
@@ -93,7 +120,28 @@ export function TranscriptPanel() {
     setAsrError(null);
     setTranslateProgress(null);
     setTranslateError(null);
+    setAsrScope("full");
   }, [path]);
+
+  useEffect(() => {
+    if (chapters.length === 0 && asrScope === "chapter") {
+      setAsrScope("full");
+    }
+  }, [chapters.length, asrScope]);
+
+  const asrModels = asrStatusQuery.data?.models ?? [];
+  useEffect(() => {
+    if (asrModels.length === 0) {
+      setAsrModelId("");
+      return;
+    }
+    if (asrModelId && asrModels.some((m) => m.id === asrModelId)) {
+      return;
+    }
+    const preferred =
+      asrModels.find((m) => /base|tiny|small/i.test(m.id)) ?? asrModels[0];
+    setAsrModelId(preferred.id);
+  }, [asrModels, asrModelId]);
 
   useEffect(() => {
     setAsrTranscript(null);
@@ -167,21 +215,40 @@ export function TranscriptPanel() {
 
   async function handleAsr() {
     if (!path || asrBusy || translateBusy) return;
+
+    let range: AsrRange | null = null;
+    let suffixHint = ".asr.srt";
+    if (asrScope === "chapter") {
+      if (!activeChapter) {
+        setAsrError("当前位置不在任何章节内");
+        return;
+      }
+      range = { kind: "chapter", chapterId: activeChapter.id };
+      suffixHint = `.asr_ch${activeChapter.id}.srt`;
+    }
+
     setAsrBusy(true);
     setAsrError(null);
     setAsrProgress("准备按需转写…");
     try {
-      const result = await transcribeOnDemand(path, (event) => {
-        if (event.type === "Progress") {
-          setAsrProgress(event.payload.message);
-        } else if (event.type === "Started") {
-          setAsrProgress("已开始语音转写…");
-        } else if (event.type === "Failed") {
-          setAsrError(event.payload.message);
-        }
-      });
+      const result = await transcribeOnDemand(
+        path,
+        (event) => {
+          if (event.type === "Progress") {
+            setAsrProgress(event.payload.message);
+          } else if (event.type === "Started") {
+            setAsrProgress("已开始语音转写…");
+          } else if (event.type === "Failed") {
+            setAsrError(event.payload.message);
+          }
+        },
+        {
+          range,
+          modelId: asrModelId || null,
+        },
+      );
 
-      const exported = await selectExportedTrack(path, result, ".asr.srt");
+      const exported = await selectExportedTrack(path, result, suffixHint);
       setAsrProgress(
         exported ? "已保存外挂字幕并切换到该轨" : null,
       );
@@ -318,12 +385,48 @@ export function TranscriptPanel() {
           </select>
         </label>
 
-        <div className="flex flex-wrap items-center gap-2">
+        <div className="flex flex-wrap items-end gap-2">
+          <label className="flex min-w-[7rem] flex-1 flex-col gap-1 text-xs">
+            <span className="text-muted-foreground">ASR 范围</span>
+            <select
+              className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm disabled:opacity-50"
+              value={asrScope}
+              disabled={busy}
+              onChange={(e) => setAsrScope(e.target.value as AsrScope)}
+              aria-label="ASR transcription scope"
+            >
+              <option value="full">整片</option>
+              <option value="chapter" disabled={chapters.length === 0}>
+                当前章节
+                {chapters.length === 0 ? "（无章节）" : ""}
+              </option>
+            </select>
+          </label>
+          {asrModels.length > 0 ? (
+            <label className="flex min-w-[8rem] flex-1 flex-col gap-1 text-xs">
+              <span className="text-muted-foreground">转写模型</span>
+              <select
+                className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm disabled:opacity-50"
+                value={asrModelId}
+                disabled={busy}
+                onChange={(e) => setAsrModelId(e.target.value)}
+                aria-label="ASR model"
+              >
+                {asrModels.map((model) => (
+                  <option key={model.id} value={model.id}>
+                    {model.id}
+                  </option>
+                ))}
+              </select>
+            </label>
+          ) : null}
           <Button
             type="button"
             variant="outline"
             size="sm"
-            disabled={busy}
+            disabled={
+              busy || (asrScope === "chapter" && !activeChapter)
+            }
             onClick={() => void handleAsr()}
             title={
               asrAvailable
@@ -343,6 +446,17 @@ export function TranscriptPanel() {
             </button>
           ) : null}
         </div>
+        {asrScope === "chapter" ? (
+          <p className="text-[11px] text-muted-foreground">
+            {activeChapter
+              ? `当前章节：${activeChapter.title?.trim() || `第 ${activeChapter.id} 章`}（${formatTime(activeChapter.startMs)}${
+                  activeChapter.endMs != null
+                    ? `–${formatTime(activeChapter.endMs)}`
+                    : "–片尾"
+                }）`
+              : "请先 seek 到某一章节内"}
+          </p>
+        ) : null}
 
         <div className="flex flex-wrap items-end gap-2 rounded-md border border-border/70 bg-muted/20 p-2">
           <label className="flex min-w-[7rem] flex-1 flex-col gap-1 text-xs">

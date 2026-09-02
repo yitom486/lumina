@@ -3,7 +3,7 @@
 use tauri::ipc::Channel;
 use tauri::{AppHandle, Manager, State};
 
-use crate::asr::{AsrError, AsrEvent, AsrStatus};
+use crate::asr::{AsrError, AsrEvent, AsrRange, AsrStatus};
 use crate::state::AppState;
 use crate::subtitle::Transcript;
 
@@ -26,13 +26,15 @@ pub async fn asr_status(app: AppHandle) -> Result<AsrStatus, AsrError> {
 pub async fn asr_transcribe(
     state: State<'_, AppState>,
     path: String,
+    range: Option<AsrRange>,
+    model_id: Option<String>,
     on_event: Channel<AsrEvent>,
 ) -> Result<Transcript, AsrError> {
     let asr = state.asr.clone();
     let path_for_job = path.clone();
 
     tauri::async_runtime::spawn_blocking(move || {
-        asr.transcribe(path_for_job, |event| {
+        asr.transcribe(path_for_job, range, model_id, |event| {
             if let Err(error) = on_event.send(event) {
                 tracing::warn!(%error, "failed to send ASR event");
             }
