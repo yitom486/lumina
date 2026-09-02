@@ -5,6 +5,7 @@ import { useEffect, useRef } from "react";
 import { useChatUiStore } from "@/features/acp/chatUiStore";
 import { usePlayerStore } from "../store";
 import { useUiStore } from "../uiStore";
+import { shouldSuppressPlayerHotkeyDuringAcp } from "./playerHotkeyPolicy";
 
 function isTypingTarget(target: EventTarget | null): boolean {
   if (!(target instanceof HTMLElement)) return false;
@@ -24,12 +25,16 @@ export function usePlayerHotkeys() {
 
       const store = usePlayerStore.getState();
       const ui = useUiStore.getState();
+      const chat = useChatUiStore.getState();
 
       if (event.key === "Escape") {
-        const chat = useChatUiStore.getState();
         if (chat.chatOpen) {
           event.preventDefault();
           chat.closeChat();
+          return;
+        }
+        if (chat.acpResponding) {
+          event.preventDefault();
           return;
         }
         if (ui.fullscreen) {
@@ -37,6 +42,11 @@ export function usePlayerHotkeys() {
           void ui.setFullscreen(false);
           return;
         }
+      }
+
+      if (shouldSuppressPlayerHotkeyDuringAcp(event.code, chat.acpResponding)) {
+        event.preventDefault();
+        return;
       }
 
       const busy = store.busy;

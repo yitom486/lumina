@@ -101,7 +101,8 @@ lumina_get_transcript_window、lumina_get_episode_transcript（识图模型另�
 (1) 若当前对话、此前工具结果或问题本身已足够回答，直接作答，不要重复调用。\
 (2) 仅缺哪类信息再增量调用对应工具，避免每轮并行全量拉取。\
 (3) 未通过工具确认的剧情/角色/台词不要编造；上下文不足时，先调用工具补齐必要信息再回答。\
-(4) 问当前集剧情、对话、人物关系：优先 lumina_get_transcript_window（默认以提问时进度为圆心；可用 centerMs 或 atSec 查看其它时间点，配合 beforeSec/afterSec 扩大窗口）；\
+(4) 时间基准：本回合向 Agent 提供的播放进度、章节、附近笔记与 MCP 工具均共用「提问锚点」anchor.positionMs（用户在本输入框**开始键入**时冻结，非实时；连续输入间隔不超过 10 秒则沿用同一锚点，超过 10 秒无输入后再次键入则重新锚定）。字幕/截图默认以此为中心，可用 centerMs/atSec 覆盖；跨集字幕在目标集与锚点同集时亦默认锚点，否则默认该集起点。\
+问当前集剧情、对话、人物关系：优先 lumina_get_transcript_window（配合 beforeSec/afterSec 扩大窗口）；\
 问其它集台词用 lumina_get_episode_transcript（season/episode 必填，可选 centerMs/atSec）；\
 单帧截图看不清台词或需要画面/场景/表情细节时，再用 lumina_capture_frames。\
 (5) 分集列表与媒体库背景分别用 lumina_get_episode_index、lumina_get_library_context。"

@@ -133,11 +133,8 @@ fn episode_index(snapshot: &LuminaMcpSnapshot) -> Result<Value, String> {
 fn transcript_window(snapshot: &LuminaMcpSnapshot, args: &Value) -> Result<Value, String> {
     let anchor = require_anchor(snapshot)?;
     let (before_sec, after_sec) = parse_window_args(args, 60, 60);
-    let duration_ms = snapshot
-        .playback
-        .as_ref()
-        .and_then(|playback| playback.duration_ms);
-    let center_ms = parse_transcript_center_ms(args, anchor.position_ms, duration_ms);
+    let duration_ms = snapshot_duration_ms(snapshot);
+    let center_ms = parse_time_center_ms(args, anchor.position_ms, duration_ms);
     let choice_id = resolve_subtitle_choice_id(args, anchor)?;
     let media_path = PathBuf::from(&anchor.media_path);
     let lines = fetch_transcript_lines(&media_path, &choice_id, center_ms, before_sec, after_sec)?;
@@ -158,7 +155,8 @@ fn episode_transcript(snapshot: &LuminaMcpSnapshot, args: &Value) -> Result<Valu
     let anchor = require_anchor(snapshot)?;
     let (season, episode) = parse_required_season_episode(args)?;
     let (before_sec, after_sec) = parse_window_args(args, 60, 60);
-    let center_ms = parse_transcript_center_ms(args, 0, None);
+    let default_center = episode_transcript_default_center(anchor, season, episode);
+    let center_ms = parse_time_center_ms(args, default_center, None);
     let choice_id = resolve_subtitle_choice_id(args, anchor)?;
     let (root, media_path) = resolve_paths(anchor)?;
     let group_key = resolve_group_key(&root, anchor, &media_path)?;
@@ -256,18 +254,22 @@ fn capture_frame_tool(snapshot: &LuminaMcpSnapshot, args: &Value) -> Result<Valu
     if !media_path.is_file() {
         return Err("无法获取当前画面".to_string());
     }
-    let duration_ms = snapshot
-        .playback
-        .as_ref()
-        .and_then(|playback| playback.duration_ms);
-    let sample_times =
-        sample_times_for_window(anchor.position_ms, duration_ms, before_sec, after_sec);
+    let duration_ms = snapshot_duration_ms(snapshot);
+    let center_ms = parse_time_center_ms(args, anchor.position_ms, duration_ms);
+    let sample_times = sample_times_for_window(center_ms, duration_ms, before_sec, after_sec);
     let cwd = snapshot_cwd()?;
     let output_dir = ephemeral_tmp_dir(&cwd).join(format!("capture-{}", anchor.sent_at_ms));
     let frames = capture_frames(&media_path, &sample_times, &output_dir)
         .map_err(|_| "无法获取当前画面".to_string())?;
 
     let mut content = Vec::new();
+    content.push(json!({
+        "type": "text",
+        "text": format!(
+            "anchorMs: {}, centerMs: {}",
+            anchor.position_ms, center_ms
+        ),
+    }));
     for (index, frame) in frames.iter().enumerate() {
         let bytes = fs::read(frame).map_err(|error| error.to_string())?;
         content.push(json!({
@@ -328,9 +330,18 @@ fn resolve_group_key(
     Err("当前媒体未加入媒体库".to_string())
 }
 
-fn parse_transcript_center_ms(
+fn snapshot_duration_ms(snapshot: &LuminaMcpSnapshot) -> Option<u64> {
+    snapshot
+        .playback
+        .as_ref()
+        .and_then(|playback| playback.duration_ms)
+}
+
+/// Shared time center for transcript + capture tools. Defaults to `default_center_ms`
+/// (usually the frozen prompt anchor) unless `centerMs` / `atSec` is provided.
+fn parse_time_center_ms(
     args: &Value,
-    anchor_ms: u64,
+    default_center_ms: u64,
     duration_ms: Option<u64>,
 ) -> u64 {
     let center = if let Some(ms) = args.get("centerMs").and_then(Value::as_u64) {
@@ -338,9 +349,17 @@ fn parse_transcript_center_ms(
     } else if let Some(sec) = args.get("atSec").and_then(Value::as_u64) {
         sec.saturating_mul(1000)
     } else {
-        anchor_ms
+        default_center_ms
     };
     duration_ms.map_or(center, |duration| center.min(duration))
+}
+
+fn episode_transcript_default_center(anchor: &PromptAnchor, season: u32, episode: u32) -> u64 {
+    if anchor.season == Some(season) && anchor.episode == Some(episode) {
+        anchor.position_ms
+    } else {
+        0
+    }
 }
 
 fn parse_window_args(args: &Value, default_before: u32, default_after: u32) -> (u32, u32) {
@@ -426,33 +445,33 @@ mod tests {
     }
 
     #[test]
-    fn parse_transcript_center_defaults_to_anchor() {
+    fn parse_time_center_defaults_to_anchor() {
         assert_eq!(
-            parse_transcript_center_ms(&json!({}), 125_000, Some(3_600_000)),
+            parse_time_center_ms(&json!({}), 125_000, Some(3_600_000)),
             125_000
         );
     }
 
     #[test]
-    fn parse_transcript_center_accepts_center_ms() {
+    fn parse_time_center_accepts_center_ms() {
         assert_eq!(
-            parse_transcript_center_ms(&json!({ "centerMs": 90_000 }), 125_000, None),
+            parse_time_center_ms(&json!({ "centerMs": 90_000 }), 125_000, None),
             90_000
         );
     }
 
     #[test]
-    fn parse_transcript_center_accepts_at_sec() {
+    fn parse_time_center_accepts_at_sec() {
         assert_eq!(
-            parse_transcript_center_ms(&json!({ "atSec": 120 }), 125_000, None),
+            parse_time_center_ms(&json!({ "atSec": 120 }), 125_000, None),
             120_000
         );
     }
 
     #[test]
-    fn parse_transcript_center_prefers_center_ms_over_at_sec() {
+    fn parse_time_center_prefers_center_ms_over_at_sec() {
         assert_eq!(
-            parse_transcript_center_ms(
+            parse_time_center_ms(
                 &json!({ "centerMs": 60_000, "atSec": 120 }),
                 125_000,
                 None,
@@ -462,11 +481,27 @@ mod tests {
     }
 
     #[test]
-    fn parse_transcript_center_clamps_to_duration() {
+    fn parse_time_center_clamps_to_duration() {
         assert_eq!(
-            parse_transcript_center_ms(&json!({ "centerMs": 9_000_000 }), 125_000, Some(3_600_000)),
+            parse_time_center_ms(&json!({ "centerMs": 9_000_000 }), 125_000, Some(3_600_000)),
             3_600_000
         );
+    }
+
+    #[test]
+    fn episode_transcript_default_center_matches_anchor_episode() {
+        let anchor = PromptAnchor {
+            media_path: "Show/S01E02.mkv".into(),
+            library_root: None,
+            group_key: Some("Show".into()),
+            season: Some(1),
+            episode: Some(2),
+            position_ms: 88_000,
+            sent_at_ms: 1,
+            subtitle_choice_id: None,
+        };
+        assert_eq!(episode_transcript_default_center(&anchor, 1, 2), 88_000);
+        assert_eq!(episode_transcript_default_center(&anchor, 1, 3), 0);
     }
 
     #[test]

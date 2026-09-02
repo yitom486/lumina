@@ -6,6 +6,7 @@
 
 - **字幕窗口可指定时间点**：`lumina_get_transcript_window` 支持可选 `centerMs` / `atSec` 覆盖提问锚点，仍读取当前文件字幕；返回含 `anchorMs` 供 Agent 对照。
 - **跨集字幕**：新增 `lumina_get_episode_transcript`，按 `season` / `episode` 读取同剧集其它分集字幕，可选 `centerMs` / `atSec`（默认该集起点）与 `subtitleChoiceId`。
+- **工具时间基准统一**：字幕窗口、截图、跨集字幕与 `lumina_get_playback_context` 共用提问锚点；锚点在用户**开始输入**时冻结（10 秒无输入后重新锚定），发送时写入 snapshot，章节/笔记摘要亦按锚点重算。
 
 ### 修复
 

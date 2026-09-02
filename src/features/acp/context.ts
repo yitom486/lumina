@@ -92,3 +92,24 @@ export function buildVideoPromptContext(input: {
 
   return context;
 }
+
+/** Rebuild prompt context so every time-derived field uses the typing anchor. */
+export function buildAnchoredVideoPromptContext(input: {
+  base?: VideoPromptContext;
+  anchorPositionMs: number;
+  durationMs?: number;
+  chapters?: MediaChapter[];
+  notes?: Note[];
+}): VideoPromptContext | undefined {
+  const mediaPath = input.base?.mediaPath?.trim();
+  if (!mediaPath) return undefined;
+
+  return buildVideoPromptContext({
+    mediaPath,
+    positionMs: input.anchorPositionMs,
+    durationMs: input.durationMs ?? input.base?.durationMs ?? undefined,
+    chapters: input.chapters,
+    subtitleChoiceId: input.base?.subtitleChoiceId,
+    notes: input.notes,
+  });
+}

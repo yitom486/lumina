@@ -1,3 +1,4 @@
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef } from "react";
 import { ArrowUp, Loader2 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -5,10 +6,10 @@ import { cn } from "@/lib/utils";
 
 import type { AcpStatus, PermissionMode } from "../types";
 import { useAgentModelControls } from "../useAgentModelControls";
+import { focusComposerTextarea } from "./composerFocus";
 import { ChatColumn } from "./ChatShell";
 
-type Props = {
-  value: string;
+type Props = {  value: string;
   disabled?: boolean;
   busy?: boolean;
   placeholder?: string;
@@ -19,21 +20,28 @@ type Props = {
   onCancel?: () => void;
 };
 
+export type ChatComposerBarHandle = {
+  focusInput: () => void;
+};
+
 const compactSelectClassName =
   "h-7 max-w-[9.5rem] truncate rounded-md border border-border bg-background px-2 text-[11px] text-foreground outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:opacity-60";
 
-export function ChatComposerBar({
-  value,
-  disabled,
-  busy,
-  placeholder = "输入问题…",
-  status,
-  sessionConnected,
-  onChange,
-  onSend,
-  onCancel,
-}: Props) {
-  const {
+export const ChatComposerBar = forwardRef<ChatComposerBarHandle, Props>(
+  function ChatComposerBar(
+    {
+      value,
+      disabled,
+      busy,
+      placeholder = "输入问题…",
+      status,
+      sessionConnected,
+      onChange,
+      onSend,
+      onCancel,
+    },
+    ref,
+  ) {  const {
     permissionMode,
     modelId,
     reasoningEffort,
@@ -51,12 +59,28 @@ export function ChatComposerBar({
     sessionConnected,
   });
 
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const wasBusyRef = useRef(false);
+
+  const focusInput = useCallback(() => {
+    focusComposerTextarea(textareaRef.current);
+  }, []);
+
+  useImperativeHandle(ref, () => ({ focusInput }), [focusInput]);
+
+  useEffect(() => {
+    if (wasBusyRef.current && !busy && !disabled) {
+      focusInput();
+    }
+    wasBusyRef.current = Boolean(busy);
+  }, [busy, disabled, focusInput]);
   const canSend = !disabled && !busy && value.trim().length > 0;
 
   return (
     <ChatColumn className="shrink-0 border-t border-border py-3">
       <div className={cn("rounded-lg border border-border bg-background", busy && "chat-composer-active p-px")}>
         <textarea
+          ref={textareaRef}
           className={cn(
             "min-h-[72px] w-full resize-none rounded-t-lg bg-transparent px-3 py-2 text-sm",
             "outline-none focus-visible:ring-0",
@@ -65,7 +89,7 @@ export function ChatComposerBar({
           )}
           placeholder={placeholder}
           value={value}
-          disabled={disabled || busy}
+          disabled={disabled}
           onChange={(e) => onChange(e.target.value)}
           onKeyDown={(e) => {
             if (e.key === "Enter" && !e.shiftKey) {
@@ -181,4 +205,5 @@ export function ChatComposerBar({
       ) : null}
     </ChatColumn>
   );
-}
+},
+);

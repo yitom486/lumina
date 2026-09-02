@@ -123,7 +123,7 @@ fn tools_list_result(snapshot: &LuminaMcpSnapshot) -> Value {
         }),
         json!({
             "name": "lumina_get_episode_transcript",
-            "description": "Return subtitle lines for another episode in the same series group. Requires season and episode. Defaults to the start of that episode (centerMs/atSec optional). Uses the anchor subtitle track unless subtitleChoiceId is provided. Window defaults to 60 seconds before and after (each side up to 300 seconds).",
+            "description": "Return subtitle lines for another episode in the same series group. Requires season and episode. Defaults to the frozen prompt anchor when season/episode match the anchor file, otherwise episode start (0). Optional centerMs/atSec overrides. Uses the anchor subtitle track unless subtitleChoiceId is provided. Window defaults to 60 seconds before and after (each side up to 300 seconds).",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -145,10 +145,12 @@ fn tools_list_result(snapshot: &LuminaMcpSnapshot) -> Value {
     if vision_capable(snapshot) {
         tools.push(json!({
             "name": "lumina_capture_frames",
-            "description": "Capture temporary JPEG frames (~1 per second) around the frozen anchor time. Default is a single frame at the anchor. Use radiusSec or beforeSec/afterSec (each capped at 7s, max 15 frames). Files are discarded after the tool returns.",
+            "description": "Capture temporary JPEG frames (~1 per second) around a time point on the anchor media file. Defaults to the frozen prompt anchor; optional centerMs or atSec overrides the center. Default is a single frame at center. Use radiusSec or beforeSec/afterSec (each capped at 7s, max 15 frames). Files are discarded after the tool returns.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
+                    "centerMs": { "type": "integer", "minimum": 0 },
+                    "atSec": { "type": "integer", "minimum": 0 },
                     "beforeSec": { "type": "integer", "minimum": 0, "maximum": 7 },
                     "afterSec": { "type": "integer", "minimum": 0, "maximum": 7 },
                     "radiusSec": { "type": "integer", "minimum": 0, "maximum": 7 }

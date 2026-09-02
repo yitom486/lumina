@@ -1,7 +1,7 @@
 //! Extract compressed JPEG frames via project-local ffmpeg.
 //!
 //! Product rules (`.plan/L1-mcp-adaptive-tools.md`):
-//! - Anchor = playback position when the user sends the prompt
+//! - Anchor = playback position when the user starts typing the prompt (10s idle resets)
 //! - Default: one frame at anchor; optional windows sample ~1 frame/sec (max 15)
 //! - Scale to 640px width, JPEG `-q:v 5` for moderate size
 //! - Write under `.lumina/tmp/capture-*`; deleted after MCP returns (next prompt also clears tmp)

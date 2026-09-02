@@ -7,6 +7,7 @@ beforeEach(() => {
     showActivityWhileDone: false,
     chatMounted: false,
     chatOpen: false,
+    acpResponding: false,
   });
 });
 

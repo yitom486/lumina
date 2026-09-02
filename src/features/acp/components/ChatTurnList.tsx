@@ -18,7 +18,7 @@ export function ChatTurnList({
   const endRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    endRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
+    endRef.current?.scrollIntoView({ behavior: "auto", block: "end" });
   }, [turns, notices]);
 
   if (turns.length === 0 && notices.length === 0) {

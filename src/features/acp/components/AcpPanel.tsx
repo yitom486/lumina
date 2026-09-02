@@ -2,6 +2,8 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 
 import { usePlayerStore } from "@/features/player";
+import type { MediaInfo } from "@/features/media/types";
+import type { Note } from "@/features/notes/types";
 import { errorMessage } from "@/lib/format";
 
 import "../chat-motion.css";
@@ -31,7 +33,8 @@ import {
   listConversationsForScope,
   useChatHistoryStore,
 } from "../chatHistoryStore";
-import { formatConversationHistoryContext } from "../conversationContext";
+import { useChatUiStore } from "../chatUiStore";
+import { buildAnchoredVideoPromptContext } from "../context";
 import { workspaceCwdFromMedia } from "../cwd";
 import { profilesSignature } from "../profilesSignature";
 import type {
@@ -42,9 +45,10 @@ import type {
   ThinkingLevel,
 } from "../types";
 import { useVideoPromptContext } from "../useVideoPromptContext";
+import { useTypingPlaybackAnchor } from "../typingPlaybackAnchor";
 import { AgentSettingsPanel } from "./AgentSettingsPanel";
 import { ChatHistorySheet } from "./ChatHistorySheet";
-import { ChatComposerBar } from "./ChatComposerBar";
+import { ChatComposerBar, type ChatComposerBarHandle } from "./ChatComposerBar";
 import { ChatShell } from "./ChatShell";
 import { ChatColumn } from "./ChatShell";
 import { ChatToolbar } from "./ChatToolbar";
@@ -70,6 +74,7 @@ export function AcpPanel() {
     (s) => s.setActiveConversationId,
   );
   const deleteConversation = useChatHistoryStore((s) => s.deleteConversation);
+  const setAcpResponding = useChatUiStore((s) => s.setAcpResponding);
 
   const statusQuery = useQuery({
     queryKey: ["acp-status", activeProfileId, profilesSig],
@@ -85,6 +90,7 @@ export function AcpPanel() {
   const idSeq = useState(() => ({ n: 0 }))[0];
   const listKey = useId();
   const turnListRef = useRef<HTMLDivElement | null>(null);
+  const composerRef = useRef<ChatComposerBarHandle | null>(null);
   const [draft, setDraft] = useState("");
   const [turns, setTurns] = useState<ChatTurn[]>([]);
   const [notices, setNotices] = useState<SystemNotice[]>([]);
@@ -108,6 +114,18 @@ export function AcpPanel() {
   const sessionCwd = workspaceCwdFromMedia(currentFile);
   const connectKey = `${activeProfileId}:${profilesSig}:${sessionCwd ?? ""}`;
   const videoContext = useVideoPromptContext();
+  const { handleDraftChange, clearTypingAnchor, consumeAnchorPositionMs } =
+    useTypingPlaybackAnchor();
+
+  const setDraftEmpty = () => {
+    clearTypingAnchor();
+    setDraft("");
+  };
+
+  const onDraftChange = (next: string) => {
+    handleDraftChange(next);
+    setDraft(next);
+  };
 
   const activeProfile = statusQuery.data?.profiles.find(
     (profile) => profile.id === activeProfileId,
@@ -163,7 +181,7 @@ export function AcpPanel() {
       if (!preserveTurns) {
         setTurns([]);
         setNotices([]);
-        setDraft("");
+        setDraftEmpty();
         setHistoryInjectionActive(false);
       }
       setProgress(null);
@@ -214,6 +232,13 @@ export function AcpPanel() {
       pushSystem(errorMessage(error));
     },
   });
+
+  const composerBusy = busy || newChatMutation.isPending;
+
+  useEffect(() => {
+    setAcpResponding(composerBusy);
+    return () => setAcpResponding(false);
+  }, [composerBusy, setAcpResponding]);
 
   useEffect(() => {
     if (prevConnectKeyRef.current !== connectKey) {
@@ -383,13 +408,30 @@ export function AcpPanel() {
       const session = useAcpSessionStore.getState();
 
       try {
+        const player = usePlayerStore.getState();
+        const anchorPositionMs = consumeAnchorPositionMs();
+        const mediaPath = player.currentFile;
+        const chapters = mediaPath
+          ? queryClient.getQueryData<MediaInfo>(["mediaInfo", mediaPath])
+              ?.chapters
+          : undefined;
+        const notes = mediaPath
+          ? queryClient.getQueryData<Note[]>(["notes", mediaPath])
+          : undefined;
+        const frozenContext = buildAnchoredVideoPromptContext({
+          base: videoContext,
+          anchorPositionMs,
+          durationMs: player.durationMs,
+          chapters,
+          notes,
+        });
         return await acpPrompt(
           text,
           (event: AcpEvent) => handleEvent(event, turn.id, thinkingLevel),
           {
             profileId: profileState.activeProfileId,
             cwd: sessionCwd,
-            context: videoContext,
+            context: frozenContext,
             historyContext,
             savedSession: session.savedSession,
             clientSettings: settings,
@@ -423,13 +465,15 @@ export function AcpPanel() {
       setBusy(false);
       setProgress(null);
       void queryClient.invalidateQueries({ queryKey: ["acp-status"] });
+      window.setTimeout(() => composerRef.current?.focusInput(), 0);
+      window.setTimeout(() => composerRef.current?.focusInput(), 120);
     },
   });
 
   const send = () => {
     const text = draft.trim();
     if (!text || busy || !available || connectionState !== "connected") return;
-    setDraft("");
+    setDraftEmpty();
     runMutation.mutate(text);
   };
 
@@ -445,7 +489,7 @@ export function AcpPanel() {
     if (!available) {
       setTurns([]);
       setNotices([]);
-      setDraft("");
+      setDraftEmpty();
       setProgress(null);
       setPendingPermission(null);
       clearSavedSession();
@@ -461,7 +505,7 @@ export function AcpPanel() {
     setActiveConversationId(item.id);
     setTurns(item.turns);
     setNotices([]);
-    setDraft("");
+    setDraftEmpty();
     setProgress(null);
     setPendingPermission(null);
     setHistoryOpen(false);
@@ -502,7 +546,7 @@ export function AcpPanel() {
             statusQuery.isError ? errorMessage(statusQuery.error) : null
           }
           loading={statusQuery.isLoading}
-          busy={busy || newChatMutation.isPending}
+          busy={composerBusy}
           historyCount={scopedHistory.length}
           onNewChat={startNewChat}
           onOpenHistory={() => setHistoryOpen((open) => !open)}
@@ -542,9 +586,10 @@ export function AcpPanel() {
       ) : null}
 
       <ChatComposerBar
+        ref={composerRef}
         value={draft}
         disabled={!available || connectionState !== "connected"}
-        busy={busy || newChatMutation.isPending}
+        busy={composerBusy}
         status={statusQuery.data}
         sessionConnected={connectionState === "connected"}
         placeholder={
@@ -558,7 +603,7 @@ export function AcpPanel() {
                   ? "Agent 未连接，请点击上方「重连」"
                   : "输入问题（Enter 发送，Shift+Enter 换行）"
         }
-        onChange={setDraft}
+        onChange={onDraftChange}
         onSend={send}
         onCancel={() => {
           void acpCancel();
@@ -567,7 +612,7 @@ export function AcpPanel() {
 
       <AgentSettingsPanel
         status={statusQuery.data}
-        busy={busy || newChatMutation.isPending}
+        busy={composerBusy}
         sessionConnected={connectionState === "connected"}
         sessionCwd={sessionCwd}
       />
