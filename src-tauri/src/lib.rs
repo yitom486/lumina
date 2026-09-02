@@ -40,6 +40,10 @@ pub use subtitle::{
     Transcript,
 };
 
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::thread;
+use std::time::Duration;
+
 use commands::acp::{
     acp_cancel, acp_close, acp_connect, acp_new_chat, acp_prompt, acp_respond_permission,
     acp_set_session_model, acp_status, acp_sync_mcp_capabilities,
@@ -78,6 +82,16 @@ pub fn run() {
     let app = match tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
+        .on_window_event(|window, event| {
+            if matches!(event, tauri::WindowEvent::CloseRequested { .. }) {
+                tracing::info!(label = %window.label(), "native window close requested");
+                // A JavaScript close listener makes Tauri defer the platform
+                // close until that listener resolves. Always request the app
+                // exit here so a WebView-side listener cannot trap the native
+                // close button or Alt+F4.
+                window.app_handle().exit(0);
+            }
+        })
         .manage(AppState::new())
         .invoke_handler(tauri::generate_handler![
             player_subscribe,
@@ -150,11 +164,42 @@ pub fn run() {
         }
     };
 
-    app.run(|app, event| {
-        if matches!(event, tauri::RunEvent::Exit) {
-            shutdown_backend(app);
+    app.run(|app, event| match event {
+        tauri::RunEvent::ExitRequested { .. } | tauri::RunEvent::Exit => {
+            handle_app_exit(app);
         }
+        _ => {}
     });
+}
+
+#[derive(Clone, Copy)]
+struct ForceExitConfig {
+    grace_ms: u64,
+}
+
+const FORCE_EXIT: ForceExitConfig = ForceExitConfig { grace_ms: 1_500 };
+
+static SHUTDOWN_STARTED: AtomicBool = AtomicBool::new(false);
+
+fn handle_app_exit(app: &tauri::AppHandle) {
+    if SHUTDOWN_STARTED.swap(true, Ordering::SeqCst) {
+        return;
+    }
+    let backend = app.clone();
+    let _ = thread::Builder::new()
+        .name("lumina-shutdown".into())
+        .spawn(move || shutdown_backend(&backend));
+    schedule_force_exit();
+}
+
+fn schedule_force_exit() {
+    let _ = thread::Builder::new()
+        .name("lumina-force-exit".into())
+        .spawn(move || {
+            thread::sleep(Duration::from_millis(FORCE_EXIT.grace_ms));
+            tracing::warn!("forcing process exit after shutdown grace period");
+            std::process::exit(0);
+        });
 }
 
 fn init_tracing() {
@@ -192,11 +237,15 @@ fn shutdown_backend(app: &tauri::AppHandle) {
     if let Some(state) = app.try_state::<AppState>() {
         state.mark_shutdown();
         state.acp.request_cancel();
-        let _ = state.library.stop();
+        state.acp.close_session_for_shutdown();
+        state.library.stop_for_shutdown();
         let _ = state.with_player(|player| {
             player.shutdown();
             Ok(())
         });
-        drop(state.take_surface());
+        // The native video surface is a child of the Tauri window and is
+        // destroyed with its parent on the UI thread. Do not explicitly drop
+        // it from this background shutdown worker: Win32 requires a window to
+        // be destroyed by the thread that created it.
     }
 }

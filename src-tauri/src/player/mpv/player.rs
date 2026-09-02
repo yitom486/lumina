@@ -68,6 +68,10 @@ impl LibMpvPlayer {
         self.mpv.command("stop", &[]).map_err(map_playback_error)
     }
 
+    pub fn quit(&self) {
+        let _ = self.mpv.command("quit", &[]);
+    }
+
     pub fn seek_ms(&self, position_ms: u64) -> Result<(), PlayerError> {
         let seconds = position_ms as f64 / 1000.0;
         self.mpv

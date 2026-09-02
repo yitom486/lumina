@@ -129,10 +129,17 @@ impl AcpService {
     /// Close live session (`session/close` when supported) and kill process.
     pub fn close_session(&self) -> Result<(), AcpError> {
         self.cancel.store(true, Ordering::SeqCst);
-        self.drop_live_session();
+        self.drop_live_session(true);
         self.reset_prompt_snapshot_state();
         self.cancel.store(false, Ordering::SeqCst);
         Ok(())
+    }
+
+    /// App exit: kill agent/terminal children without waiting on graceful handshakes.
+    pub fn close_session_for_shutdown(&self) {
+        self.cancel.store(true, Ordering::SeqCst);
+        self.drop_live_session(false);
+        self.reset_prompt_snapshot_state();
     }
 
     pub fn write_prompt_snapshot(
@@ -238,7 +245,7 @@ impl AcpService {
             }
             Err(error) => {
                 drop(guard);
-                self.drop_live_session();
+                self.drop_live_session(true);
                 Err(error)
             }
         }
@@ -288,7 +295,7 @@ impl AcpService {
                 if let Err(error) = Self::close_agent_session(self, session, &mut on_event) {
                     tracing::warn!(%error, "session/close failed during new chat; respawning agent");
                     drop(guard);
-                    self.drop_live_session();
+                    self.drop_live_session(true);
                     return self.connect(
                         Some(cwd_string),
                         profile_id,
@@ -405,10 +412,10 @@ impl AcpService {
         Ok(session.model_options.clone())
     }
 
-    fn drop_live_session(&self) {
+    fn drop_live_session(&self, wait_for_child: bool) {
         if let Ok(mut guard) = self.session.lock() {
             if let Some(mut session) = guard.take() {
-                if session.init.supports_session_close {
+                if wait_for_child && session.init.supports_session_close {
                     let id = session.next_id;
                     session.next_id += 1;
                     let _ = Self::write_request(
@@ -419,10 +426,16 @@ impl AcpService {
                     );
                 }
                 let _ = session.child.kill();
-                let _ = session.child.wait();
+                if wait_for_child {
+                    let _ = session.child.wait();
+                }
             }
         }
-        self.host.release_all();
+        if wait_for_child {
+            self.host.release_all();
+        } else {
+            self.host.release_all_for_shutdown();
+        }
     }
 
     // This public boundary mirrors the explicit ACP/Tauri request fields.
@@ -467,7 +480,7 @@ impl AcpService {
         );
 
         if outcome.is_err() {
-            self.drop_live_session();
+            self.drop_live_session(true);
         }
 
         self.busy.store(false, Ordering::SeqCst);

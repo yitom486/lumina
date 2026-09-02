@@ -1,7 +1,6 @@
 /** Flush last path / directory / position on close and while playing. */
 
 import { useEffect } from "react";
-import { getCurrentWindow } from "@tauri-apps/api/window";
 
 import { usePlayerStore } from "../store";
 import { useProgressStore } from "../progressStore";
@@ -49,22 +48,4 @@ export function useSessionPersistence(): void {
     return () => window.removeEventListener("beforeunload", flushPlaybackPersistence);
   }, []);
 
-  useEffect(() => {
-    let unlisten: (() => void) | undefined;
-
-    void getCurrentWindow()
-      .onCloseRequested(() => {
-        flushPlaybackPersistence();
-      })
-      .then((dispose) => {
-        unlisten = dispose;
-      })
-      .catch((error) => {
-        console.error("session close hook failed", error);
-      });
-
-    return () => {
-      unlisten?.();
-    };
-  }, []);
 }

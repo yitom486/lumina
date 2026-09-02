@@ -1,8 +1,10 @@
 # Changelog
 
-## Unreleased
+## 0.2.4 — Private Preview
 
-（暂无）
+### 修复
+
+- **窗口无法关闭**：移除会拦截 Tauri 原生关闭请求的前端监听；在 Rust 原生窗口层显式处理关闭与 `Alt+F4`，确保应用最迟在 1.5 秒内退出。
 
 ## 0.2.3 — Private Preview
 

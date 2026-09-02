@@ -379,6 +379,16 @@ impl AcpHost {
         Ok(json!({}))
     }
 
+    pub fn release_all_for_shutdown(&self) {
+        if let Ok(mut map) = self.terminals.lock() {
+            for (id, mut term) in map.drain() {
+                let _ = term.child.kill();
+                tracing::debug!(terminal_id = %id, "killed ACP terminal on app shutdown");
+            }
+        }
+        self.clear_workspace();
+    }
+
     pub fn release_all(&self) {
         if let Ok(mut map) = self.terminals.lock() {
             for (id, mut term) in map.drain() {

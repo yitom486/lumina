@@ -51,6 +51,10 @@ impl PlayerService {
 
     pub fn shutdown(&mut self) {
         self.shutdown = true;
+        if let Some(backend) = self.backend.as_ref() {
+            let _ = backend.stop();
+            backend.quit();
+        }
         if self.backend.take().is_some() {
             tracing::info!("player backend dropped");
         }

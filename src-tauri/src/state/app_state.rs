@@ -79,10 +79,6 @@ impl AppState {
         f(surface)
     }
 
-    pub fn take_surface(&self) -> Option<VideoSurface> {
-        self.surface.lock().ok().and_then(|mut slot| slot.take())
-    }
-
     pub fn set_event_channel(&self, channel: Channel<PlayerEvent>) -> Result<(), PlayerError> {
         let mut slot = self
             .events

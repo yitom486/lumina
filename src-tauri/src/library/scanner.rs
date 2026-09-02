@@ -5,6 +5,7 @@
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::Path;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::library::error::LibraryError;
@@ -17,7 +18,11 @@ const VIDEO_EXTENSIONS: &[&str] = &[
     "mkv", "mp4", "avi", "mov", "webm", "m4v", "ts", "wmv", "flv",
 ];
 
-pub fn scan_root_with_progress<F>(root: &Path, mut on_file: F) -> Result<LibraryIndex, LibraryError>
+pub fn scan_root_with_progress<F>(
+    root: &Path,
+    mut on_file: F,
+    cancel: &AtomicBool,
+) -> Result<LibraryIndex, LibraryError>
 where
     F: FnMut(usize),
 {
@@ -28,7 +33,7 @@ where
     }
 
     let mut files = Vec::new();
-    visit(root, root, &mut files, &mut on_file)?;
+    visit(root, root, &mut files, &mut on_file, cancel)?;
     files.sort_by(|a, b| a.relative_path.cmp(&b.relative_path));
 
     let groups = build_groups(&files);
@@ -46,14 +51,21 @@ fn visit<F>(
     dir: &Path,
     output: &mut Vec<IndexedMediaFile>,
     on_file: &mut F,
+    cancel: &AtomicBool,
 ) -> Result<(), LibraryError>
 where
     F: FnMut(usize),
 {
+    if cancel.load(Ordering::SeqCst) {
+        return Err(LibraryError::internal(Some("library scan cancelled")));
+    }
     let entries = fs::read_dir(dir).map_err(|error| {
         LibraryError::scan_failed(Some(&format!("read {}: {error}", dir.display())))
     })?;
     for entry in entries {
+        if cancel.load(Ordering::SeqCst) {
+            return Err(LibraryError::internal(Some("library scan cancelled")));
+        }
         let entry = entry.map_err(|error| LibraryError::scan_failed(Some(&error.to_string())))?;
         let path = entry.path();
         if path
@@ -67,7 +79,7 @@ where
             .file_type()
             .map_err(|error| LibraryError::scan_failed(Some(&error.to_string())))?;
         if file_type.is_dir() {
-            visit(root, &path, output, on_file)?;
+            visit(root, &path, output, on_file, cancel)?;
         } else if file_type.is_file() && is_video(&path) {
             output.push(index_file(root, &path)?);
             on_file(output.len());

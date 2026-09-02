@@ -16,7 +16,6 @@ use crate::library::paths::library_root_for_media_path;
 use crate::library::{metadata, scanner, store, RemoteResolver};
 
 struct WatchWorker {
-    cancel: Arc<AtomicBool>,
     join: thread::JoinHandle<()>,
 }
 
@@ -33,6 +32,7 @@ pub struct MediaLibraryService {
     runtime: Arc<Mutex<Runtime>>,
     worker: Mutex<Option<WatchWorker>>,
     scan_lock: Arc<Mutex<()>>,
+    watch_cancel: Arc<AtomicBool>,
 }
 
 impl MediaLibraryService {
@@ -41,6 +41,7 @@ impl MediaLibraryService {
             runtime: Arc::new(Mutex::new(Runtime::default())),
             worker: Mutex::new(None),
             scan_lock: Arc::new(Mutex::new(())),
+            watch_cancel: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -57,7 +58,8 @@ impl MediaLibraryService {
         F: FnMut(LibraryScanEvent),
     {
         let roots = validate_config(&config)?;
-        self.stop()?;
+        self.stop_internal(true)?;
+        self.watch_cancel.store(false, Ordering::SeqCst);
         {
             let mut runtime = self
                 .runtime
@@ -73,8 +75,7 @@ impl MediaLibraryService {
         }
         self.scan_now_with_progress(&mut on_event)?;
 
-        let cancel = Arc::new(AtomicBool::new(false));
-        let worker_cancel = Arc::clone(&cancel);
+        let worker_cancel = Arc::clone(&self.watch_cancel);
         let runtime = Arc::clone(&self.runtime);
         let scan_lock = Arc::clone(&self.scan_lock);
         let interval = config.poll_interval_secs.max(5);
@@ -88,20 +89,38 @@ impl MediaLibraryService {
             .worker
             .lock()
             .map_err(|_| LibraryError::internal(Some("library worker mutex poisoned")))?;
-        *worker = Some(WatchWorker { cancel, join });
+        *worker = Some(WatchWorker { join });
         drop(worker);
         self.status()
     }
 
     pub fn stop(&self) -> Result<LibraryStatus, LibraryError> {
+        self.stop_internal(true)
+    }
+
+    /// App exit must not block on a long-running directory scan.
+    ///
+    /// Rust has no Java-style daemon threads; we detach the watch worker instead
+    /// of joining it so the process can exit once other subsystems shut down.
+    pub fn stop_for_shutdown(&self) {
+        let _ = self.stop_internal(false);
+    }
+
+    fn stop_internal(&self, wait_for_worker: bool) -> Result<LibraryStatus, LibraryError> {
+        self.watch_cancel.store(true, Ordering::SeqCst);
         let worker = self
             .worker
             .lock()
             .map_err(|_| LibraryError::internal(Some("library worker mutex poisoned")))?
             .take();
         if let Some(worker) = worker {
-            worker.cancel.store(true, Ordering::SeqCst);
-            let _ = worker.join.join();
+            if wait_for_worker {
+                let _ = worker.join.join();
+            } else {
+                // Detach: dropping JoinHandle lets the worker finish cooperatively
+                // without blocking app shutdown on a large directory walk.
+                drop(worker.join);
+            }
         }
         self.status()
     }
@@ -118,7 +137,7 @@ impl MediaLibraryService {
             .scan_lock
             .lock()
             .map_err(|_| LibraryError::internal(Some("library scan mutex poisoned")))?;
-        scan_runtime(&self.runtime, on_event)
+        scan_runtime(&self.runtime, on_event, &self.watch_cancel)
     }
 
     pub fn status(&self) -> Result<LibraryStatus, LibraryError> {
@@ -462,7 +481,7 @@ fn watch_loop(
         let result = scan_lock
             .lock()
             .map_err(|_| LibraryError::internal(Some("library scan mutex poisoned")))
-            .and_then(|_guard| scan_runtime(&runtime, &mut |_| {}));
+            .and_then(|_guard| scan_runtime(&runtime, &mut |_| {}, &cancel));
         if let Err(error) = result {
             tracing::warn!(code = ?error.code, details = ?error.details, "media library periodic scan failed");
         }
@@ -473,6 +492,7 @@ fn watch_loop(
 fn scan_runtime(
     runtime: &Arc<Mutex<Runtime>>,
     on_event: &mut dyn FnMut(LibraryScanEvent),
+    cancel: &AtomicBool,
 ) -> Result<Vec<LibraryIndex>, LibraryError> {
     let roots = runtime
         .lock()
@@ -491,14 +511,22 @@ fn scan_runtime(
     let mut indexes = Vec::new();
     let mut indexed_files = 0;
     for (root_index, root) in roots.iter().enumerate() {
+        if cancel.load(Ordering::SeqCst) {
+            tracing::info!("library scan cancelled");
+            return Err(LibraryError::internal(Some("library scan cancelled")));
+        }
         let root = PathBuf::from(root);
-        let index = scan_and_store_with_progress(&root, |files| {
-            on_event(LibraryScanEvent::Progress {
-                roots_completed: root_index,
-                root_count: roots.len(),
-                indexed_files: indexed_files + files,
-            });
-        });
+        let index = scan_and_store_with_progress(
+            &root,
+            |files| {
+                on_event(LibraryScanEvent::Progress {
+                    roots_completed: root_index,
+                    root_count: roots.len(),
+                    indexed_files: indexed_files + files,
+                });
+            },
+            cancel,
+        );
         match index {
             Ok(index) => {
                 indexed_files += index.files.len();
@@ -547,13 +575,14 @@ fn record_scan_failure(
 fn scan_and_store_with_progress<F>(
     root: &std::path::Path,
     on_file: F,
+    cancel: &AtomicBool,
 ) -> Result<LibraryIndex, LibraryError>
 where
     F: FnMut(usize),
 {
     let previous = store::load(root)?;
     let index = store::preserve_resolutions(
-        scanner::scan_root_with_progress(root, on_file)?,
+        scanner::scan_root_with_progress(root, on_file, cancel)?,
         previous.as_ref(),
     );
     store::save_if_changed(root, &index)?;
@@ -652,6 +681,91 @@ mod tests {
         assert_eq!(service.status().expect("status").pending_groups, 0);
 
         service.stop().expect("stop watcher");
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn stop_for_shutdown_returns_immediately_without_joining_worker() {
+        let root = test_root();
+        fs::create_dir_all(&root).expect("create test root");
+        fs::write(root.join("Example.Show.S01E01.mkv"), b"video").expect("write media");
+
+        let service = MediaLibraryService::new();
+        service
+            .start(LibraryWatchConfig {
+                roots: vec![root.to_string_lossy().to_string()],
+                poll_interval_secs: 3600,
+            })
+            .expect("start watcher");
+        assert!(service.status().expect("status").running);
+
+        let started = std::time::Instant::now();
+        service.stop_for_shutdown();
+        let elapsed = started.elapsed();
+
+        assert!(
+            elapsed < Duration::from_millis(250),
+            "stop_for_shutdown blocked for {elapsed:?}"
+        );
+        assert!(!service.status().expect("status").running);
+
+        thread::sleep(Duration::from_millis(300));
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn stop_for_shutdown_does_not_block_when_worker_waits_on_scan_lock() {
+        let root = test_root();
+        fs::create_dir_all(&root).expect("create test root");
+        fs::write(root.join("Example.Show.S01E01.mkv"), b"video").expect("write media");
+
+        let service = MediaLibraryService::new();
+        service
+            .start(LibraryWatchConfig {
+                roots: vec![root.to_string_lossy().to_string()],
+                poll_interval_secs: 1,
+            })
+            .expect("start watcher");
+
+        let scan_lock = Arc::clone(&service.scan_lock);
+        let _scan_guard = scan_lock
+            .lock()
+            .expect("hold scan lock so watcher blocks on periodic scan");
+        thread::sleep(Duration::from_secs(2));
+
+        let started = std::time::Instant::now();
+        service.stop_for_shutdown();
+        let elapsed = started.elapsed();
+
+        assert!(
+            elapsed < Duration::from_millis(250),
+            "stop_for_shutdown blocked for {elapsed:?} while worker waited on scan lock"
+        );
+        assert!(!service.status().expect("status").running);
+
+        drop(_scan_guard);
+        thread::sleep(Duration::from_millis(300));
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn stop_waits_for_worker_to_finish() {
+        let root = test_root();
+        fs::create_dir_all(&root).expect("create test root");
+        fs::write(root.join("Example.Show.S01E01.mkv"), b"video").expect("write media");
+
+        let service = MediaLibraryService::new();
+        service
+            .start(LibraryWatchConfig {
+                roots: vec![root.to_string_lossy().to_string()],
+                poll_interval_secs: 3600,
+            })
+            .expect("start watcher");
+        assert!(service.status().expect("status").running);
+
+        service.stop().expect("stop watcher");
+        assert!(!service.status().expect("status").running);
+
         let _ = fs::remove_dir_all(root);
     }
 
