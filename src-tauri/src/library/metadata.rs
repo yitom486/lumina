@@ -296,6 +296,28 @@ pub fn episode_index_for_group(
     Ok(entries)
 }
 
+pub fn resolve_episode_media_file<'a>(
+    index: &'a LibraryIndex,
+    group_key: &str,
+    season: u32,
+    episode: u32,
+) -> Result<&'a IndexedMediaFile, LibraryError> {
+    if season == 0 || episode == 0 {
+        return Err(LibraryError::invalid_input("season 与 episode 须大于 0"));
+    }
+    index
+        .files
+        .iter()
+        .find(|file| {
+            file.group_key == group_key
+                && file.season == Some(season)
+                && file.episode == Some(episode)
+        })
+        .ok_or_else(|| {
+            LibraryError::group_not_found(Some(&format!("S{season:02}E{episode:02}")))
+        })
+}
+
 pub fn resolve_media_in_index<'a>(
     index: &'a LibraryIndex,
     media_path: &Path,
@@ -883,5 +905,40 @@ mod tests {
         assert_eq!(merged.episode_overview.as_deref(), Some("TMDb 分集简介"));
         assert_eq!(merged.wiki_episode_plot.as_deref(), Some("Wiki 分集 plot"));
         assert_eq!(merged.characters.as_ref().map(|items| items.len()), Some(1));
+    }
+
+    #[test]
+    fn resolve_episode_media_file_finds_matching_file() {
+        use crate::library::model::IndexedMediaFile;
+
+        let index = LibraryIndex {
+            schema_version: 1,
+            root: "library".into(),
+            updated_at_ms: 0,
+            files: vec![
+                IndexedMediaFile {
+                    relative_path: "Show/S01E01.mkv".into(),
+                    file_name: "S01E01.mkv".into(),
+                    size_bytes: 1,
+                    modified_at_ms: 0,
+                    group_key: "Show".into(),
+                    season: Some(1),
+                    episode: Some(1),
+                },
+                IndexedMediaFile {
+                    relative_path: "Show/S01E02.mkv".into(),
+                    file_name: "S01E02.mkv".into(),
+                    size_bytes: 1,
+                    modified_at_ms: 0,
+                    group_key: "Show".into(),
+                    season: Some(1),
+                    episode: Some(2),
+                },
+            ],
+            groups: Vec::new(),
+        };
+        let file = resolve_episode_media_file(&index, "Show", 1, 2).expect("episode");
+        assert_eq!(file.relative_path, "Show/S01E02.mkv");
+        assert!(resolve_episode_media_file(&index, "Show", 9, 9).is_err());
     }
 }

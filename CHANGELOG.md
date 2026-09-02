@@ -5,6 +5,7 @@
 ### MCP / ACP
 
 - **字幕窗口可指定时间点**：`lumina_get_transcript_window` 支持可选 `centerMs` / `atSec` 覆盖提问锚点，仍读取当前文件字幕；返回含 `anchorMs` 供 Agent 对照。
+- **跨集字幕**：新增 `lumina_get_episode_transcript`，按 `season` / `episode` 读取同剧集其它分集字幕，可选 `centerMs` / `atSec`（默认该集起点）与 `subtitleChoiceId`。
 
 ### 修复
 

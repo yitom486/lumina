@@ -121,6 +121,25 @@ fn tools_list_result(snapshot: &LuminaMcpSnapshot) -> Value {
                 "additionalProperties": false
             }
         }),
+        json!({
+            "name": "lumina_get_episode_transcript",
+            "description": "Return subtitle lines for another episode in the same series group. Requires season and episode. Defaults to the start of that episode (centerMs/atSec optional). Uses the anchor subtitle track unless subtitleChoiceId is provided. Window defaults to 60 seconds before and after (each side up to 300 seconds).",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "season": { "type": "integer", "minimum": 1 },
+                    "episode": { "type": "integer", "minimum": 1 },
+                    "centerMs": { "type": "integer", "minimum": 0 },
+                    "atSec": { "type": "integer", "minimum": 0 },
+                    "subtitleChoiceId": { "type": "string" },
+                    "beforeSec": { "type": "integer", "minimum": 0, "maximum": 300 },
+                    "afterSec": { "type": "integer", "minimum": 0, "maximum": 300 },
+                    "radiusSec": { "type": "integer", "minimum": 0, "maximum": 300 }
+                },
+                "required": ["season", "episode"],
+                "additionalProperties": false
+            }
+        }),
     ];
 
     if vision_capable(snapshot) {
@@ -208,6 +227,7 @@ mod tests {
             .collect();
         assert!(names.contains(&"lumina_get_playback_context"));
         assert!(names.contains(&"lumina_get_transcript_window"));
+        assert!(names.contains(&"lumina_get_episode_transcript"));
         assert!(!names.contains(&"lumina_capture_frames"));
     }
 

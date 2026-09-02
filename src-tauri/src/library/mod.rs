@@ -19,7 +19,8 @@ mod wikitext;
 pub use credentials::{CredentialKind, CredentialSaveInput, CredentialStatus};
 pub use error::{LibraryError, LibraryErrorCode};
 pub use metadata::{
-    episode_index_for_group, load_context_at_root, load_context_for_group, resolve_media_in_index,
+    episode_index_for_group, load_context_at_root, load_context_for_group, resolve_episode_media_file,
+    resolve_media_in_index,
     series_cache_from_context,
 };
 pub use model::{

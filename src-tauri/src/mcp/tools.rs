@@ -11,7 +11,7 @@ use tracing::warn;
 use crate::library::MergedMediaContext;
 use crate::library::{
     episode_index_for_group, load_context_at_root, load_context_for_group, load_library_index,
-    resolve_media_in_index, series_cache_from_context,
+    resolve_episode_media_file, resolve_media_in_index, series_cache_from_context,
 };
 use crate::mcp::snapshot::{ephemeral_tmp_dir, LuminaMcpSnapshot, PromptAnchor};
 use crate::media::frame_capture::{capture_frames, sample_times_for_window, MAX_CAPTURE_SPAN_SEC};
@@ -22,6 +22,12 @@ use crate::subtitle::SubtitleService;
 struct TranscriptWindowResult {
     center_ms: u64,
     anchor_ms: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    season: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    episode: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    media_file_name: Option<String>,
     before_sec: u32,
     after_sec: u32,
     lines: Vec<TranscriptLine>,
@@ -53,6 +59,7 @@ pub fn handle_tool_call(
         "lumina_get_library_context" => library_context(snapshot),
         "lumina_get_episode_index" => episode_index(snapshot),
         "lumina_get_transcript_window" => transcript_window(snapshot, args),
+        "lumina_get_episode_transcript" => episode_transcript(snapshot, args),
         "lumina_capture_frames" => capture_frame_tool(snapshot, args),
         other => Err(format!("Unknown tool: {other}")),
     };
@@ -131,34 +138,112 @@ fn transcript_window(snapshot: &LuminaMcpSnapshot, args: &Value) -> Result<Value
         .as_ref()
         .and_then(|playback| playback.duration_ms);
     let center_ms = parse_transcript_center_ms(args, anchor.position_ms, duration_ms);
-    let choice_id = anchor
-        .subtitle_choice_id
-        .as_deref()
-        .filter(|value| !value.trim().is_empty())
-        .ok_or_else(|| "当前未选择可解析字幕".to_string())?;
+    let choice_id = resolve_subtitle_choice_id(args, anchor)?;
     let media_path = PathBuf::from(&anchor.media_path);
+    let lines = fetch_transcript_lines(&media_path, &choice_id, center_ms, before_sec, after_sec)?;
+    let payload = TranscriptWindowResult {
+        center_ms,
+        anchor_ms: anchor.position_ms,
+        season: None,
+        episode: None,
+        media_file_name: None,
+        before_sec,
+        after_sec,
+        lines,
+    };
+    text_result(&payload)
+}
+
+fn episode_transcript(snapshot: &LuminaMcpSnapshot, args: &Value) -> Result<Value, String> {
+    let anchor = require_anchor(snapshot)?;
+    let (season, episode) = parse_required_season_episode(args)?;
+    let (before_sec, after_sec) = parse_window_args(args, 60, 60);
+    let center_ms = parse_transcript_center_ms(args, 0, None);
+    let choice_id = resolve_subtitle_choice_id(args, anchor)?;
+    let (root, media_path) = resolve_paths(anchor)?;
+    let group_key = resolve_group_key(&root, anchor, &media_path)?;
+    let index = load_library_index(&root)
+        .map_err(|error| error.message.clone())?
+        .ok_or_else(|| "当前媒体未加入媒体库".to_string())?;
+    let file = resolve_episode_media_file(&index, &group_key, season, episode)
+        .map_err(|error| error.message.clone())?;
+    let episode_media_path = root.join(&file.relative_path);
+    if !episode_media_path.is_file() {
+        return Err("无法打开该集媒体文件".to_string());
+    }
+    let lines = fetch_transcript_lines(
+        &episode_media_path,
+        &choice_id,
+        center_ms,
+        before_sec,
+        after_sec,
+    )?;
+    let payload = TranscriptWindowResult {
+        center_ms,
+        anchor_ms: anchor.position_ms,
+        season: Some(season),
+        episode: Some(episode),
+        media_file_name: Some(file.file_name.clone()),
+        before_sec,
+        after_sec,
+        lines,
+    };
+    text_result(&payload)
+}
+
+fn fetch_transcript_lines(
+    media_path: &Path,
+    choice_id: &str,
+    center_ms: u64,
+    before_sec: u32,
+    after_sec: u32,
+) -> Result<Vec<TranscriptLine>, String> {
     let cues = SubtitleService::excerpt_in_range(
-        &media_path,
+        media_path,
         choice_id,
         center_ms,
         u64::from(before_sec) * 1000,
         u64::from(after_sec) * 1000,
     )
     .map_err(|error| error.message.clone())?;
-    let payload = TranscriptWindowResult {
-        center_ms,
-        anchor_ms: anchor.position_ms,
-        before_sec,
-        after_sec,
-        lines: cues
-            .into_iter()
-            .map(|cue| TranscriptLine {
-                start_ms: cue.start_ms,
-                text: cue.text,
-            })
-            .collect(),
-    };
-    text_result(&payload)
+    Ok(cues
+        .into_iter()
+        .map(|cue| TranscriptLine {
+            start_ms: cue.start_ms,
+            text: cue.text,
+        })
+        .collect())
+}
+
+fn resolve_subtitle_choice_id(args: &Value, anchor: &PromptAnchor) -> Result<String, String> {
+    if let Some(choice_id) = args
+        .get("subtitleChoiceId")
+        .and_then(Value::as_str)
+        .filter(|value| !value.trim().is_empty())
+    {
+        return Ok(choice_id.to_string());
+    }
+    anchor
+        .subtitle_choice_id
+        .as_deref()
+        .filter(|value| !value.trim().is_empty())
+        .map(str::to_string)
+        .ok_or_else(|| "当前未选择可解析字幕".to_string())
+}
+
+fn parse_required_season_episode(args: &Value) -> Result<(u32, u32), String> {
+    let season = args
+        .get("season")
+        .and_then(Value::as_u64)
+        .ok_or_else(|| "缺少 season".to_string())? as u32;
+    let episode = args
+        .get("episode")
+        .and_then(Value::as_u64)
+        .ok_or_else(|| "缺少 episode".to_string())? as u32;
+    if season == 0 || episode == 0 {
+        return Err("season 与 episode 须大于 0".into());
+    }
+    Ok((season, episode))
 }
 
 fn capture_frame_tool(snapshot: &LuminaMcpSnapshot, args: &Value) -> Result<Value, String> {
@@ -381,6 +466,20 @@ mod tests {
         assert_eq!(
             parse_transcript_center_ms(&json!({ "centerMs": 9_000_000 }), 125_000, Some(3_600_000)),
             3_600_000
+        );
+    }
+
+    #[test]
+    fn parse_required_season_episode_rejects_missing_fields() {
+        assert!(parse_required_season_episode(&json!({})).is_err());
+        assert!(parse_required_season_episode(&json!({ "season": 1 })).is_err());
+    }
+
+    #[test]
+    fn parse_required_season_episode_accepts_positive_values() {
+        assert_eq!(
+            parse_required_season_episode(&json!({ "season": 2, "episode": 5 })).expect("values"),
+            (2, 5)
         );
     }
 }

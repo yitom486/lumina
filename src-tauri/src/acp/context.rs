@@ -96,12 +96,13 @@ pub fn session_prompt_params(
 fn context_pointer_text() -> &'static str {
     "【Lumina】用户正在本机观看上述媒体。可用 MCP 工具：\
 lumina_get_playback_context、lumina_get_library_context、lumina_get_episode_index、\
-lumina_get_transcript_window（识图模型另有 lumina_capture_frames）。\
+lumina_get_transcript_window、lumina_get_episode_transcript（识图模型另有 lumina_capture_frames）。\
 \n\n工具调用原则：\
 (1) 若当前对话、此前工具结果或问题本身已足够回答，直接作答，不要重复调用。\
 (2) 仅缺哪类信息再增量调用对应工具，避免每轮并行全量拉取。\
 (3) 未通过工具确认的剧情/角色/台词不要编造；上下文不足时，先调用工具补齐必要信息再回答。\
-(4) 问剧情、对话、人物关系：优先 lumina_get_transcript_window（默认以提问时进度为圆心；可用 centerMs 或 atSec 查看其它时间点，配合 beforeSec/afterSec 扩大窗口）；\
+(4) 问当前集剧情、对话、人物关系：优先 lumina_get_transcript_window（默认以提问时进度为圆心；可用 centerMs 或 atSec 查看其它时间点，配合 beforeSec/afterSec 扩大窗口）；\
+问其它集台词用 lumina_get_episode_transcript（season/episode 必填，可选 centerMs/atSec）；\
 单帧截图看不清台词或需要画面/场景/表情细节时，再用 lumina_capture_frames。\
 (5) 分集列表与媒体库背景分别用 lumina_get_episode_index、lumina_get_library_context。"
 }
@@ -172,8 +173,8 @@ mod tests {
         assert!(pointer.contains("增量调用"));
         assert!(pointer.contains("全量拉取"));
         assert!(pointer.contains("lumina_get_transcript_window"));
+        assert!(pointer.contains("lumina_get_episode_transcript"));
         assert!(pointer.contains("lumina_capture_frames"));
-        assert!(pointer.contains("字幕窗口通常很充裕"));
         assert!(pointer.contains("先调用工具补齐"));
         assert!(!pointer.contains("也不应出现"));
         assert_eq!(
