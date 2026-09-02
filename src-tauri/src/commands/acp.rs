@@ -8,6 +8,7 @@ use crate::acp::settings::AcpClientSettings;
 use crate::acp::{
     AcpError, AcpEvent, AcpStatus, AgentProfilesHint, SavedSessionHint, VideoPromptContext,
 };
+use crate::mcp::snapshot_path_for_cwd;
 use crate::state::AppState;
 
 #[tauri::command]
@@ -111,6 +112,14 @@ pub async fn acp_prompt(
         let session_cwd = resolve_session_cwd(cwd.as_deref())?;
         let snapshot =
             acp.build_prompt_snapshot(context.as_ref(), &library, settings.vision_capable)?;
+        if let Some(anchor) = snapshot.anchor.as_ref() {
+            tracing::info!(
+                position_ms = anchor.position_ms,
+                turn = snapshot.session.as_ref().map(|session| session.turn),
+                snapshot = %snapshot_path_for_cwd(&session_cwd).display(),
+                "ACP 提问锚点已写入 snapshot"
+            );
+        }
         acp.write_prompt_snapshot(&session_cwd, &snapshot)?;
         acp.prompt(
             text,

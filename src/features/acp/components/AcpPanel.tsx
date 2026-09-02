@@ -392,7 +392,13 @@ export function AcpPanel() {
   };
 
   const runMutation = useMutation({
-    mutationFn: async (text: string) => {
+    mutationFn: async ({
+      text,
+      anchorPositionMs,
+    }: {
+      text: string;
+      anchorPositionMs: number;
+    }) => {
       setBusy(true);
       setProgress(null);
       setPendingPermission(null);
@@ -409,7 +415,6 @@ export function AcpPanel() {
 
       try {
         const player = usePlayerStore.getState();
-        const anchorPositionMs = consumeAnchorPositionMs();
         const mediaPath = player.currentFile;
         const chapters = mediaPath
           ? queryClient.getQueryData<MediaInfo>(["mediaInfo", mediaPath])
@@ -473,8 +478,9 @@ export function AcpPanel() {
   const send = () => {
     const text = draft.trim();
     if (!text || busy || !available || connectionState !== "connected") return;
-    setDraftEmpty();
-    runMutation.mutate(text);
+    const anchorPositionMs = consumeAnchorPositionMs();
+    setDraft("");
+    runMutation.mutate({ text, anchorPositionMs });
   };
 
   const startNewChat = () => {
