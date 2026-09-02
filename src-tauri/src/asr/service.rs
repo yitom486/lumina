@@ -40,6 +40,35 @@ impl AsrService {
         self.busy.load(Ordering::SeqCst)
     }
 
+    /// Download CLI (if needed) + selected catalog model into app data.
+    pub fn install<F>(&self, model_id: &str, mut on_event: F) -> Result<AsrStatus, AsrError>
+    where
+        F: FnMut(crate::asr::model::AsrInstallEvent),
+    {
+        if self
+            .busy
+            .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+            .is_err()
+        {
+            return Err(AsrError::busy());
+        }
+
+        let result = crate::asr::download::install_bundle(model_id, |event| {
+            on_event(event);
+        });
+
+        self.busy.store(false, Ordering::SeqCst);
+
+        if let Err(error) = &result {
+            on_event(crate::asr::model::AsrInstallEvent::Failed {
+                code: format!("{:?}", error.code),
+                message: error.message.clone(),
+            });
+        }
+
+        result
+    }
+
     /// Runs extract + whisper-cli. Emits progress via callback. Never called implicitly.
     pub fn transcribe<F>(
         &self,

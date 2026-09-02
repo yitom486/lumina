@@ -15,7 +15,10 @@ pub use acp::{
     AgentProfileInput, AgentProfileStatus, AgentProfilesHint, PermissionMode, PermissionOption,
     SavedSessionHint, ThinkingLevel, VideoPromptContext,
 };
-pub use asr::{AsrError, AsrErrorCode, AsrEvent, AsrService, AsrStatus};
+pub use asr::{
+    AsrCatalogModel, AsrError, AsrErrorCode, AsrEvent, AsrInstallEvent, AsrModelInfo, AsrRange,
+    AsrService, AsrStatus,
+};
 pub use library::{
     AgentModelDiscoveryConfig, AgentModelDiscoveryResult, CredentialKind, CredentialSaveInput,
     CredentialStatus, CredentialValidationConfig, CredentialValidationItem,
@@ -48,7 +51,7 @@ use commands::acp::{
     acp_cancel, acp_close, acp_connect, acp_new_chat, acp_prompt, acp_respond_permission,
     acp_set_session_model, acp_status, acp_sync_mcp_capabilities,
 };
-use commands::asr::{asr_status, asr_transcribe};
+use commands::asr::{asr_install, asr_status, asr_transcribe};
 use commands::library::{
     library_agent_models_discover, library_apply_tmdb_match, library_context_for_media,
     library_credential_delete, library_credential_status, library_credentials_save,
@@ -117,6 +120,7 @@ pub fn run() {
             subtitle_translate_track,
             asr_status,
             asr_transcribe,
+            asr_install,
             library_watch_start,
             library_watch_stop,
             library_status,

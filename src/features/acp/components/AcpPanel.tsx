@@ -33,6 +33,7 @@ import {
   listConversationsForScope,
   useChatHistoryStore,
 } from "../chatHistoryStore";
+import { formatConversationHistoryContext } from "../conversationContext";
 import { useChatUiStore } from "../chatUiStore";
 import { buildAnchoredVideoPromptContext } from "../context";
 import { workspaceCwdFromMedia } from "../cwd";

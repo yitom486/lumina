@@ -62,8 +62,17 @@ pub fn handle_tool_call(
         "lumina_get_episode_index" => episode_index(snapshot),
         "lumina_get_transcript_window" => transcript_window(snapshot, args),
         "lumina_get_episode_transcript" => episode_transcript(snapshot, args),
-        "lumina_get_subtitle_cues" => subtitle_cues(snapshot, args),
-        "lumina_write_subtitle_track" => write_subtitle_track(snapshot, args),
+        "lumina_get_subtitle_cues" | "lumina_write_subtitle_track" => {
+            if !subtitle_workshop_enabled(snapshot) {
+                Err("该工具仅对字幕制作助手开放".to_string())
+            } else {
+                match name {
+                    "lumina_get_subtitle_cues" => subtitle_cues(snapshot, args),
+                    "lumina_write_subtitle_track" => write_subtitle_track(snapshot, args),
+                    _ => unreachable!(),
+                }
+            }
+        }
         "lumina_capture_frames" => capture_frame_tool(snapshot, args),
         other => Err(format!("Unknown tool: {other}")),
     };
@@ -78,6 +87,14 @@ pub fn vision_capable(snapshot: &LuminaMcpSnapshot) -> bool {
         .capabilities
         .as_ref()
         .map(|caps| caps.vision_capable)
+        .unwrap_or(false)
+}
+
+pub fn subtitle_workshop_enabled(snapshot: &LuminaMcpSnapshot) -> bool {
+    snapshot
+        .capabilities
+        .as_ref()
+        .map(|caps| caps.subtitle_workshop_enabled)
         .unwrap_or(false)
 }
 

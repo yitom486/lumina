@@ -5,11 +5,8 @@ import {
   useQueryClient,
 } from "@tanstack/react-query";
 
-import { getAsrStatus, transcribeOnDemand } from "@/features/asr";
+import { getAsrStatus, installAsrBundle, transcribeOnDemand } from "@/features/asr";
 import type { AsrRange } from "@/features/asr";
-import { useAcpProfilesStore } from "@/features/acp/acpProfilesStore";
-import { useAcpSettingsStore } from "@/features/acp/acpSettingsStore";
-import { profilesHintFromStore } from "@/features/acp/defaultAgentProfiles";
 import { useMediaInfoQuery } from "@/features/media";
 import type { MediaChapter } from "@/features/media";
 import type { Transcript } from "@/features/transcript";
@@ -25,6 +22,7 @@ import {
   loadSubtitleChoice,
   translateSubtitleTrack,
 } from "../api";
+import { useSubtitleWorkshopModels } from "../useSubtitleWorkshopModels";
 import type { Cue, SubtitleChoice } from "../types";
 
 function activeCueIndex(cues: Cue[], timeMs: number): number {
@@ -67,11 +65,6 @@ export function TranscriptPanel() {
     (s) => s.rememberSubtitleForMedia,
   );
 
-  const activeProfileId = useAcpProfilesStore((s) => s.activeProfileId);
-  const profiles = useAcpProfilesStore((s) => s.profiles);
-  const modelId = useAcpSettingsStore((s) => s.modelId);
-  const reasoningEffort = useAcpSettingsStore((s) => s.reasoningEffort);
-
   const mediaReady =
     Boolean(path) &&
     status !== "Idle" &&
@@ -80,6 +73,7 @@ export function TranscriptPanel() {
 
   const mediaInfoQuery = useMediaInfoQuery();
   const chapters = mediaInfoQuery.data?.chapters ?? [];
+  const workshopModels = useSubtitleWorkshopModels(mediaReady);
   const activeChapter = useMemo(
     () => findChapterAt(chapters, currentTimeMs),
     [chapters, currentTimeMs],
@@ -102,6 +96,10 @@ export function TranscriptPanel() {
 
   const [asrScope, setAsrScope] = useState<AsrScope>("full");
   const [asrModelId, setAsrModelId] = useState<string>("");
+  const [installModelId, setInstallModelId] = useState("base");
+  const [installBusy, setInstallBusy] = useState(false);
+  const [installProgress, setInstallProgress] = useState<string | null>(null);
+  const [installError, setInstallError] = useState<string | null>(null);
   const [asrTranscript, setAsrTranscript] = useState<Transcript | null>(null);
   const [asrBusy, setAsrBusy] = useState(false);
   const [asrProgress, setAsrProgress] = useState<string | null>(null);
@@ -120,6 +118,8 @@ export function TranscriptPanel() {
     setAsrError(null);
     setTranslateProgress(null);
     setTranslateError(null);
+    setInstallProgress(null);
+    setInstallError(null);
     setAsrScope("full");
   }, [path]);
 
@@ -213,6 +213,33 @@ export function TranscriptPanel() {
     return exported;
   }
 
+  async function handleInstallAsr() {
+    if (installBusy || asrBusy || translateBusy) return;
+    setInstallBusy(true);
+    setInstallError(null);
+    setInstallProgress("准备下载转写组件…");
+    try {
+      await installAsrBundle(installModelId, (event) => {
+        if (event.type === "Progress") {
+          setInstallProgress(event.payload.message);
+        } else if (event.type === "Failed") {
+          setInstallError(event.payload.message);
+        }
+      });
+      await queryClient.invalidateQueries({ queryKey: ["asrStatus"] });
+      setInstallProgress("转写组件已就绪，可生成字幕");
+    } catch (error) {
+      const message =
+        typeof error === "object" && error && "message" in error
+          ? String((error as { message: string }).message)
+          : String(error);
+      setInstallError(message);
+      setInstallProgress(null);
+    } finally {
+      setInstallBusy(false);
+    }
+  }
+
   async function handleAsr() {
     if (!path || asrBusy || translateBusy) return;
 
@@ -272,17 +299,16 @@ export function TranscriptPanel() {
     }
     setTranslateBusy(true);
     setTranslateError(null);
-    setTranslateProgress("准备用 Agent 翻译…");
+    setTranslateProgress("准备翻译字幕…");
     try {
-      const profilesHint = profilesHintFromStore(activeProfileId, profiles);
       const result = await translateSubtitleTrack({
         path,
         choiceId,
         targetLang,
-        profileId: activeProfileId,
-        profiles: profilesHint,
-        modelId: modelId || null,
-        reasoningEffort: reasoningEffort || null,
+        profileId: workshopModels.profileId,
+        profiles: workshopModels.profilesHint,
+        modelId: workshopModels.modelId || null,
+        reasoningEffort: workshopModels.reasoningEffort || null,
         onEvent: (event) => {
           if (event.type === "Progress") {
             setTranslateProgress(event.payload.message);
@@ -298,7 +324,7 @@ export function TranscriptPanel() {
       );
       setTranslateProgress(
         exported
-          ? `已写入 ${exported.label}（可用 Agent 设置中的模型）`
+          ? `已写入 ${exported.label}（字幕工坊模型：${workshopModels.modelLabel}）`
           : "翻译完成，请在字幕轨中手动选择",
       );
     } catch (error) {
@@ -325,11 +351,15 @@ export function TranscriptPanel() {
 
   const choices = choicesQuery.data ?? [];
   const asrAvailable = asrStatusQuery.data?.available === true;
+  const installSupported = asrStatusQuery.data?.installSupported === true;
+  const catalog = asrStatusQuery.data?.catalog ?? [];
   const canTranslate = Boolean(choiceId && selected?.supported);
-  const busy = asrBusy || translateBusy;
+  const busy = asrBusy || translateBusy || installBusy;
   const errorText = asrError
     ? asrError
-    : translateError
+    : installError
+      ? installError
+      : translateError
       ? translateError
       : transcriptQuery.isError && !asrTranscript && !transcriptQuery.isFetching
         ? String(
@@ -425,13 +455,17 @@ export function TranscriptPanel() {
             variant="outline"
             size="sm"
             disabled={
-              busy || (asrScope === "chapter" && !activeChapter)
+              busy ||
+              !asrAvailable ||
+              (asrScope === "chapter" && !activeChapter)
             }
             onClick={() => void handleAsr()}
             title={
               asrAvailable
                 ? "按需转写并保存为同目录外挂字幕"
-                : "未配置转写组件也可点，会提示如何放置"
+                : installSupported
+                  ? "请先一键下载转写组件"
+                  : "未配置转写组件"
             }
           >
             {asrBusy ? "生成中…" : "生成字幕 (ASR)"}
@@ -458,6 +492,63 @@ export function TranscriptPanel() {
           </p>
         ) : null}
 
+        {installSupported ? (
+          <div className="flex flex-wrap items-end gap-2 rounded-md border border-border/70 bg-muted/20 p-2">
+            <label className="flex min-w-[9rem] flex-1 flex-col gap-1 text-xs">
+              <span className="text-muted-foreground">
+                {asrAvailable ? "下载更多模型" : "一键安装转写"}
+              </span>
+              <select
+                className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm disabled:opacity-50"
+                value={installModelId}
+                disabled={busy}
+                onChange={(e) => setInstallModelId(e.target.value)}
+                aria-label="ASR model to download"
+              >
+                {(catalog.length > 0
+                  ? catalog
+                  : [
+                      {
+                        id: "tiny",
+                        label: "Tiny（快 · 约 75 MB）",
+                        installed: false,
+                      },
+                      {
+                        id: "base",
+                        label: "Base（推荐 · 约 142 MB）",
+                        installed: false,
+                      },
+                      {
+                        id: "small",
+                        label: "Small（更准 · 约 466 MB）",
+                        installed: false,
+                      },
+                    ]
+                ).map((item) => (
+                  <option key={item.id} value={item.id}>
+                    {item.label}
+                    {"installed" in item && item.installed ? " · 已安装" : ""}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <Button
+              type="button"
+              variant={asrAvailable ? "outline" : "default"}
+              size="sm"
+              disabled={busy}
+              onClick={() => void handleInstallAsr()}
+              title="下载转写引擎（若缺）与所选模型到本机应用数据目录"
+            >
+              {installBusy
+                ? "下载中…"
+                : asrAvailable
+                  ? "下载模型"
+                  : "一键下载"}
+            </Button>
+          </div>
+        ) : null}
+
         <div className="flex flex-wrap items-end gap-2 rounded-md border border-border/70 bg-muted/20 p-2">
           <label className="flex min-w-[7rem] flex-1 flex-col gap-1 text-xs">
             <span className="text-muted-foreground">翻译目标语言</span>
@@ -475,23 +566,86 @@ export function TranscriptPanel() {
               ))}
             </select>
           </label>
+          {workshopModels.hasModelOptions ? (
+            <label className="flex min-w-[8rem] flex-1 flex-col gap-1 text-xs">
+              <span className="text-muted-foreground">翻译模型</span>
+              <select
+                className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm disabled:opacity-50"
+                value={workshopModels.modelId}
+                disabled={busy}
+                onChange={(e) =>
+                  workshopModels.patchSettings({ modelId: e.target.value })
+                }
+                aria-label="Subtitle translation model"
+              >
+                <option value="">默认</option>
+                {workshopModels.modelOptions.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+          ) : (
+            <label className="flex min-w-[8rem] flex-1 flex-col gap-1 text-xs">
+              <span className="text-muted-foreground">翻译模型 ID</span>
+              <input
+                className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm disabled:opacity-50"
+                value={workshopModels.modelId}
+                disabled={busy}
+                placeholder="如 gpt-5.6-luna"
+                aria-label="Subtitle translation model id"
+                onChange={(e) =>
+                  workshopModels.patchSettings({ modelId: e.target.value })
+                }
+              />
+            </label>
+          )}
+          {workshopModels.hasReasoningOptions ? (
+            <label className="flex min-w-[6rem] flex-1 flex-col gap-1 text-xs">
+              <span className="text-muted-foreground">思考程度</span>
+              <select
+                className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm disabled:opacity-50"
+                value={workshopModels.reasoningEffort}
+                disabled={busy}
+                onChange={(e) =>
+                  workshopModels.patchSettings({
+                    reasoningEffort: e.target.value,
+                  })
+                }
+                aria-label="Subtitle translation reasoning effort"
+              >
+                <option value="">默认</option>
+                {workshopModels.reasoningOptions.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+          ) : null}
           <Button
             type="button"
             variant="outline"
             size="sm"
             disabled={busy || !canTranslate}
             onClick={() => void handleTranslate()}
-            title="使用当前 Agent 配置中的模型翻译并写成新外挂轨（可选）"
+            title="使用字幕工坊独立会话翻译（不与 AI 对话共用）"
           >
             {translateBusy ? "翻译中…" : "翻译字幕"}
           </Button>
         </div>
         <p className="text-[11px] leading-snug text-muted-foreground">
-          翻译使用 Agent 设置里的模型（如 GPT Luna）；也可在 AI 对话里让 Agent
-          用工具一句/一批翻译后回填。
-          {modelId ? ` 当前模型：${modelId}` : " 当前：Agent 默认模型"}
+          翻译走字幕工坊专用模型与隔离会话，不会写入 AI 对话历史；主聊天 Agent
+          也不能制作/写入外挂字幕。
+          {workshopModels.modelId.trim()
+            ? ` 当前：${workshopModels.modelLabel}`
+            : " 当前：默认模型"}
         </p>
 
+        {installProgress ? (
+          <p className="text-xs text-muted-foreground">{installProgress}</p>
+        ) : null}
         {asrProgress ? (
           <p className="text-xs text-muted-foreground">{asrProgress}</p>
         ) : null}
@@ -500,7 +654,10 @@ export function TranscriptPanel() {
         ) : null}
         {!asrAvailable && asrStatusQuery.data ? (
           <p className="text-[11px] leading-snug text-muted-foreground">
-            ASR 未配置：{asrStatusQuery.data.message}
+            {asrStatusQuery.data.message}
+            {installSupported
+              ? "。选择上方模型后点「一键下载」即可（无需手动找文件）。"
+              : ""}
           </p>
         ) : null}
       </div>

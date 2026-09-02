@@ -101,7 +101,10 @@ impl PromptSnapshotState {
                 library_warmed_turn: self.library_warmed_turn,
                 library_warm_every: LIBRARY_WARM_EVERY,
             }),
-            capabilities: Some(AgentCapabilities { vision_capable }),
+            capabilities: Some(AgentCapabilities {
+                vision_capable,
+                subtitle_workshop_enabled: false,
+            }),
             updated_at_ms: snapshot_now_ms(),
         })
     }

@@ -5,7 +5,7 @@ use std::io::{self, BufRead, Write};
 use serde_json::{json, Value};
 
 use super::snapshot::{read_snapshot, resolve_snapshot_path, LuminaMcpSnapshot};
-use super::tools::{handle_tool_call, vision_capable};
+use super::tools::{handle_tool_call, subtitle_workshop_enabled, vision_capable};
 
 const PROTOCOL_VERSION: &str = "2024-11-05";
 
@@ -140,7 +140,10 @@ fn tools_list_result(snapshot: &LuminaMcpSnapshot) -> Value {
                 "additionalProperties": false
             }
         }),
-        json!({
+    ];
+
+    if subtitle_workshop_enabled(snapshot) {
+        tools.push(json!({
             "name": "lumina_get_subtitle_cues",
             "description": "Return a page of full subtitle cues for the anchor media (for translation/workshop). Defaults to the frozen subtitleChoiceId. Use offset/limit (default 80, max 200) to batch line-by-line work.",
             "inputSchema": {
@@ -152,8 +155,8 @@ fn tools_list_result(snapshot: &LuminaMcpSnapshot) -> Value {
                 },
                 "additionalProperties": false
             }
-        }),
-        json!({
+        }));
+        tools.push(json!({
             "name": "lumina_write_subtitle_track",
             "description": "Write a new sidecar subtitle track beside the anchor media as {stem}.{lang}.srt. Provide lang token (e.g. en/zh) and cues with startMs/endMs/text (timings usually copied from source). Use after translating one batch or the full page.",
             "inputSchema": {
@@ -179,8 +182,8 @@ fn tools_list_result(snapshot: &LuminaMcpSnapshot) -> Value {
                 "required": ["lang", "cues"],
                 "additionalProperties": false
             }
-        }),
-    ];
+        }));
+    }
 
     if vision_capable(snapshot) {
         tools.push(json!({
@@ -255,6 +258,7 @@ mod tests {
             session: None,
             capabilities: Some(AgentCapabilities {
                 vision_capable: false,
+                subtitle_workshop_enabled: false,
             }),
             updated_at_ms: 0,
         };
@@ -270,9 +274,36 @@ mod tests {
         assert!(names.contains(&"lumina_get_playback_context"));
         assert!(names.contains(&"lumina_get_transcript_window"));
         assert!(names.contains(&"lumina_get_episode_transcript"));
+        assert!(!names.contains(&"lumina_get_subtitle_cues"));
+        assert!(!names.contains(&"lumina_write_subtitle_track"));
+        assert!(!names.contains(&"lumina_capture_frames"));
+    }
+
+    #[test]
+    fn tools_list_includes_workshop_tools_when_enabled() {
+        let snapshot = LuminaMcpSnapshot {
+            schema_version: SNAPSHOT_SCHEMA_VERSION,
+            anchor: None,
+            playback: None,
+            library: None,
+            session: None,
+            capabilities: Some(AgentCapabilities {
+                vision_capable: false,
+                subtitle_workshop_enabled: true,
+            }),
+            updated_at_ms: 0,
+        };
+        let tools = tools_list_result(&snapshot)
+            .get("tools")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+        let names: Vec<_> = tools
+            .iter()
+            .filter_map(|tool| tool.get("name").and_then(Value::as_str))
+            .collect();
         assert!(names.contains(&"lumina_get_subtitle_cues"));
         assert!(names.contains(&"lumina_write_subtitle_track"));
-        assert!(!names.contains(&"lumina_capture_frames"));
     }
 
     #[test]
@@ -285,6 +316,7 @@ mod tests {
             session: None,
             capabilities: Some(AgentCapabilities {
                 vision_capable: true,
+                subtitle_workshop_enabled: false,
             }),
             updated_at_ms: 0,
         };

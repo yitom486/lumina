@@ -8,9 +8,10 @@
 - **跨集字幕**：新增 `lumina_get_episode_transcript`，按 `season` / `episode` 读取同剧集其它分集字幕，可选 `centerMs` / `atSec`（默认该集起点）与 `subtitleChoiceId`。
 - **工具时间基准统一**：字幕窗口、截图、跨集字幕与 `lumina_get_playback_context` 共用提问锚点；锚点在用户**开始输入**时冻结（10 秒无输入后重新锚定），发送时写入 snapshot，章节/笔记摘要亦按锚点重算。
 - **ASR 导出外挂字幕**：按需转写成功后写入媒体同目录 `{stem}.asr.srt`，自动刷新字幕轨并选中，供播放器与 MCP 复用。
-- **字幕翻译工作流**：文稿面板可选「翻译字幕」（用 Agent 设置中的模型分批翻译并写成 `{stem}.{lang}.srt`）；MCP 新增 `lumina_get_subtitle_cues` / `lumina_write_subtitle_track`，可在对话里一句/一批翻译回填。
+- **字幕翻译工作流**：文稿面板可选「翻译字幕」（字幕工坊独立模型 + 隔离会话，不与 AI 对话共用）；主聊天 Agent 不再暴露字幕制作 MCP 工具。
 - **ASR 分范围转写**：`asr_transcribe` 支持可选 `range`（整片 / `window` / `chapter`）；章节结果写入 `{stem}.asr_ch{id}.srt`，cue 时间轴按媒体偏移回填。
-- **ASR 可选本地模型**：`asr_status` 列出已放置的 `ggml-*.bin`；文稿面板可切换模型后按需转写（仍不预加载、不捆绑下载）。
+- **ASR 可选本地模型**：`asr_status` 列出已放置的 `ggml-*.bin`；文稿面板可切换模型后按需转写（仍不预加载）。
+- **ASR 一键下载（Windows）**：文稿面板可选 Tiny / Base / Small，下载引擎与模型到 `%APPDATA%\lumina\whisper\`；未配置时引导安装，无需手动找文件。
 
 ### 修复
 

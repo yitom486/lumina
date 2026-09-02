@@ -15,6 +15,7 @@ pub enum SubtitleErrorCode {
     UnsupportedSubtitle,
     NoSubtitleTrack,
     ExportFailed,
+    TranslateNotConfigured,
     InternalError,
 }
 
@@ -93,6 +94,14 @@ impl SubtitleError {
         Self::new(
             SubtitleErrorCode::ExportFailed,
             "无法保存字幕文件",
+            details.map(str::to_string),
+        )
+    }
+
+    pub fn translate_not_configured(details: Option<&str>) -> Self {
+        Self::new(
+            SubtitleErrorCode::TranslateNotConfigured,
+            "未配置字幕翻译（可选）",
             details.map(str::to_string),
         )
     }

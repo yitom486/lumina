@@ -55,6 +55,9 @@ pub struct SessionPolicy {
 #[serde(rename_all = "camelCase")]
 pub struct AgentCapabilities {
     pub vision_capable: bool,
+    /// When false (default for main chat), subtitle workshop MCP tools are hidden.
+    #[serde(default)]
+    pub subtitle_workshop_enabled: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -128,7 +131,10 @@ pub fn sync_snapshot_capabilities(path: &Path, vision_capable: bool) -> Result<(
     } else {
         LuminaMcpSnapshot::empty()
     };
-    snapshot.capabilities = Some(AgentCapabilities { vision_capable });
+    snapshot.capabilities = Some(AgentCapabilities {
+        vision_capable,
+        subtitle_workshop_enabled: false,
+    });
     snapshot.updated_at_ms = now_ms();
     write_snapshot(path, &snapshot)
 }
@@ -210,6 +216,7 @@ mod tests {
             }),
             capabilities: Some(AgentCapabilities {
                 vision_capable: true,
+                subtitle_workshop_enabled: false,
             }),
             updated_at_ms: 1,
         };

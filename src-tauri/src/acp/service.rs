@@ -530,7 +530,7 @@ impl AcpService {
             AcpClientSettings {
                 permission_mode: PermissionMode::Ask,
                 thinking_level: crate::acp::settings::ThinkingLevel::Hidden,
-                agent_mode: "metadata-resolver".into(),
+                agent_mode: "subtitle-workshop".into(),
                 vision_capable: false,
                 model_id: None,
                 reasoning_effort: None,

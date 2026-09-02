@@ -14,6 +14,7 @@ pub enum AsrErrorCode {
     ExtractFailed,
     TranscribeFailed,
     ExportFailed,
+    DownloadFailed,
     Cancelled,
     InternalError,
 }
@@ -46,11 +47,19 @@ impl AsrError {
     }
 
     pub fn busy() -> Self {
-        Self::new(AsrErrorCode::Busy, "已有语音转写任务在运行", None)
+        Self::new(AsrErrorCode::Busy, "已有转写相关任务在运行", None)
     }
 
     pub fn invalid(message: impl Into<String>) -> Self {
         Self::new(AsrErrorCode::InvalidRequest, message, None)
+    }
+
+    pub fn download_failed(details: Option<&str>) -> Self {
+        Self::new(
+            AsrErrorCode::DownloadFailed,
+            "下载转写组件失败，请检查网络后重试",
+            details.map(str::to_string),
+        )
     }
 
     pub fn extract_failed(details: Option<&str>) -> Self {
@@ -115,6 +124,10 @@ mod tests {
         assert!(!AsrError::not_configured(None).message.contains("whisper"));
         assert!(has_cjk(&AsrError::busy().message));
         assert_eq!(AsrError::busy().code, AsrErrorCode::Busy);
+        assert!(!AsrError::busy().message.contains("whisper"));
+        let download = AsrError::download_failed(Some("http 500"));
+        assert_eq!(download.message, "下载转写组件失败，请检查网络后重试");
+        assert!(!download.message.contains("whisper"));
         let invalid = AsrError::invalid("转写时间范围无效");
         assert_eq!(invalid.code, AsrErrorCode::InvalidRequest);
         assert!(has_cjk(&invalid.message));

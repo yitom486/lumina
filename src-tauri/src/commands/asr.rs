@@ -3,7 +3,7 @@
 use tauri::ipc::Channel;
 use tauri::{AppHandle, Manager, State};
 
-use crate::asr::{AsrError, AsrEvent, AsrRange, AsrStatus};
+use crate::asr::{AsrError, AsrEvent, AsrInstallEvent, AsrRange, AsrStatus};
 use crate::state::AppState;
 use crate::subtitle::Transcript;
 
@@ -42,4 +42,23 @@ pub async fn asr_transcribe(
     })
     .await
     .map_err(|error| AsrError::internal(Some(&format!("asr transcribe join: {error}"))))?
+}
+
+/// Download optional CLI + catalog model into app data. User-initiated only.
+#[tauri::command]
+pub async fn asr_install(
+    state: State<'_, AppState>,
+    model_id: String,
+    on_event: Channel<AsrInstallEvent>,
+) -> Result<AsrStatus, AsrError> {
+    let asr = state.asr.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        asr.install(&model_id, |event| {
+            if let Err(error) = on_event.send(event) {
+                tracing::warn!(%error, "failed to send ASR install event");
+            }
+        })
+    })
+    .await
+    .map_err(|error| AsrError::internal(Some(&format!("asr install join: {error}"))))?
 }
