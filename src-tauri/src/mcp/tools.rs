@@ -21,6 +21,7 @@ use crate::subtitle::SubtitleService;
 #[serde(rename_all = "camelCase")]
 struct TranscriptWindowResult {
     center_ms: u64,
+    anchor_ms: u64,
     before_sec: u32,
     after_sec: u32,
     lines: Vec<TranscriptLine>,
@@ -125,6 +126,11 @@ fn episode_index(snapshot: &LuminaMcpSnapshot) -> Result<Value, String> {
 fn transcript_window(snapshot: &LuminaMcpSnapshot, args: &Value) -> Result<Value, String> {
     let anchor = require_anchor(snapshot)?;
     let (before_sec, after_sec) = parse_window_args(args, 60, 60);
+    let duration_ms = snapshot
+        .playback
+        .as_ref()
+        .and_then(|playback| playback.duration_ms);
+    let center_ms = parse_transcript_center_ms(args, anchor.position_ms, duration_ms);
     let choice_id = anchor
         .subtitle_choice_id
         .as_deref()
@@ -134,13 +140,14 @@ fn transcript_window(snapshot: &LuminaMcpSnapshot, args: &Value) -> Result<Value
     let cues = SubtitleService::excerpt_in_range(
         &media_path,
         choice_id,
-        anchor.position_ms,
+        center_ms,
         u64::from(before_sec) * 1000,
         u64::from(after_sec) * 1000,
     )
     .map_err(|error| error.message.clone())?;
     let payload = TranscriptWindowResult {
-        center_ms: anchor.position_ms,
+        center_ms,
+        anchor_ms: anchor.position_ms,
         before_sec,
         after_sec,
         lines: cues
@@ -236,6 +243,21 @@ fn resolve_group_key(
     Err("当前媒体未加入媒体库".to_string())
 }
 
+fn parse_transcript_center_ms(
+    args: &Value,
+    anchor_ms: u64,
+    duration_ms: Option<u64>,
+) -> u64 {
+    let center = if let Some(ms) = args.get("centerMs").and_then(Value::as_u64) {
+        ms
+    } else if let Some(sec) = args.get("atSec").and_then(Value::as_u64) {
+        sec.saturating_mul(1000)
+    } else {
+        anchor_ms
+    };
+    duration_ms.map_or(center, |duration| center.min(duration))
+}
+
 fn parse_window_args(args: &Value, default_before: u32, default_after: u32) -> (u32, u32) {
     if let Some(radius) = args.get("radiusSec").and_then(Value::as_u64) {
         let radius = radius.min(300) as u32;
@@ -316,5 +338,49 @@ mod tests {
     fn parse_asymmetric_window() {
         let (before, after) = parse_window_args(&json!({ "beforeSec": 3, "afterSec": 2 }), 60, 60);
         assert_eq!((before, after), (3, 2));
+    }
+
+    #[test]
+    fn parse_transcript_center_defaults_to_anchor() {
+        assert_eq!(
+            parse_transcript_center_ms(&json!({}), 125_000, Some(3_600_000)),
+            125_000
+        );
+    }
+
+    #[test]
+    fn parse_transcript_center_accepts_center_ms() {
+        assert_eq!(
+            parse_transcript_center_ms(&json!({ "centerMs": 90_000 }), 125_000, None),
+            90_000
+        );
+    }
+
+    #[test]
+    fn parse_transcript_center_accepts_at_sec() {
+        assert_eq!(
+            parse_transcript_center_ms(&json!({ "atSec": 120 }), 125_000, None),
+            120_000
+        );
+    }
+
+    #[test]
+    fn parse_transcript_center_prefers_center_ms_over_at_sec() {
+        assert_eq!(
+            parse_transcript_center_ms(
+                &json!({ "centerMs": 60_000, "atSec": 120 }),
+                125_000,
+                None,
+            ),
+            60_000
+        );
+    }
+
+    #[test]
+    fn parse_transcript_center_clamps_to_duration() {
+        assert_eq!(
+            parse_transcript_center_ms(&json!({ "centerMs": 9_000_000 }), 125_000, Some(3_600_000)),
+            3_600_000
+        );
     }
 }

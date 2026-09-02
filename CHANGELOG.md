@@ -2,6 +2,10 @@
 
 ## 0.2.4 — Private Preview
 
+### MCP / ACP
+
+- **字幕窗口可指定时间点**：`lumina_get_transcript_window` 支持可选 `centerMs` / `atSec` 覆盖提问锚点，仍读取当前文件字幕；返回含 `anchorMs` 供 Agent 对照。
+
 ### 修复
 
 - **窗口无法关闭**：移除会拦截 Tauri 原生关闭请求的前端监听；在 Rust 原生窗口层显式处理关闭与 `Alt+F4`，确保应用最迟在 1.5 秒内退出。

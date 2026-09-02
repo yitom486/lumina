@@ -108,10 +108,12 @@ fn tools_list_result(snapshot: &LuminaMcpSnapshot) -> Value {
         }),
         json!({
             "name": "lumina_get_transcript_window",
-            "description": "Return subtitle lines around the frozen anchor time. Defaults to 60 seconds before and after.",
+            "description": "Return subtitle lines around a time point on the current media file. Defaults to the frozen prompt anchor; optional centerMs or atSec overrides the center. Window defaults to 60 seconds before and after (each side up to 300 seconds).",
             "inputSchema": {
                 "type": "object",
                 "properties": {
+                    "centerMs": { "type": "integer", "minimum": 0 },
+                    "atSec": { "type": "integer", "minimum": 0 },
                     "beforeSec": { "type": "integer", "minimum": 0, "maximum": 300 },
                     "afterSec": { "type": "integer", "minimum": 0, "maximum": 300 },
                     "radiusSec": { "type": "integer", "minimum": 0, "maximum": 300 }
