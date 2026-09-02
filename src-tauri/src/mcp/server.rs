@@ -140,6 +140,46 @@ fn tools_list_result(snapshot: &LuminaMcpSnapshot) -> Value {
                 "additionalProperties": false
             }
         }),
+        json!({
+            "name": "lumina_get_subtitle_cues",
+            "description": "Return a page of full subtitle cues for the anchor media (for translation/workshop). Defaults to the frozen subtitleChoiceId. Use offset/limit (default 80, max 200) to batch line-by-line work.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "subtitleChoiceId": { "type": "string" },
+                    "offset": { "type": "integer", "minimum": 0 },
+                    "limit": { "type": "integer", "minimum": 1, "maximum": 200 }
+                },
+                "additionalProperties": false
+            }
+        }),
+        json!({
+            "name": "lumina_write_subtitle_track",
+            "description": "Write a new sidecar subtitle track beside the anchor media as {stem}.{lang}.srt. Provide lang token (e.g. en/zh) and cues with startMs/endMs/text (timings usually copied from source). Use after translating one batch or the full page.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "lang": { "type": "string", "minLength": 1, "maxLength": 24 },
+                    "cues": {
+                        "type": "array",
+                        "minItems": 1,
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "index": { "type": "integer", "minimum": 0 },
+                                "startMs": { "type": "integer", "minimum": 0 },
+                                "endMs": { "type": "integer", "minimum": 0 },
+                                "text": { "type": "string" }
+                            },
+                            "required": ["startMs", "endMs", "text"],
+                            "additionalProperties": false
+                        }
+                    }
+                },
+                "required": ["lang", "cues"],
+                "additionalProperties": false
+            }
+        }),
     ];
 
     if vision_capable(snapshot) {
@@ -230,6 +270,8 @@ mod tests {
         assert!(names.contains(&"lumina_get_playback_context"));
         assert!(names.contains(&"lumina_get_transcript_window"));
         assert!(names.contains(&"lumina_get_episode_transcript"));
+        assert!(names.contains(&"lumina_get_subtitle_cues"));
+        assert!(names.contains(&"lumina_write_subtitle_track"));
         assert!(!names.contains(&"lumina_capture_frames"));
     }
 

@@ -26,7 +26,7 @@ src-tauri/native/whisper/
 
 - 启动应用 **不会** 加载模型
 - `asr_status`：报告是否可用（有 cli + 至少一个 model）
-- `asr_transcribe`：首次调用才 spawn 进程；用项目本地 ffmpeg 抽 16 kHz mono wav
+- `asr_transcribe`：首次调用才 spawn 进程；用项目本地 ffmpeg 抽 16 kHz mono wav；成功后写出媒体同目录 `{stem}.asr.srt` 外挂字幕
 
 ## 获取示例（自行下载）
 

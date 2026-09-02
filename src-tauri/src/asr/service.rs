@@ -74,10 +74,21 @@ impl AsrService {
 
             on_event(AsrEvent::Progress {
                 stage: "transcribe".into(),
-                message: "正在运行 whisper-cli（按需加载）…".into(),
+                message: "正在转写语音…".into(),
             });
 
             let transcript = whisper_cli::transcribe_wav(&asr_paths, &wav, &work, media_path)?;
+
+            on_event(AsrEvent::Progress {
+                stage: "export".into(),
+                message: "正在保存外挂字幕…".into(),
+            });
+            let transcript = crate::subtitle::write::export_asr_sidecar(media_path, &transcript)
+                .map_err(|error| {
+                    tracing::warn!(%error, "ASR sidecar export failed");
+                    AsrError::export_failed(error.details.as_deref())
+                })?;
+
             on_event(AsrEvent::Finished {
                 transcript: transcript.clone(),
             });

@@ -15,6 +15,8 @@ use crate::library::{
 };
 use crate::mcp::snapshot::{ephemeral_tmp_dir, LuminaMcpSnapshot, PromptAnchor};
 use crate::media::frame_capture::{capture_frames, sample_times_for_window, MAX_CAPTURE_SPAN_SEC};
+use crate::subtitle::model::Cue;
+use crate::subtitle::write;
 use crate::subtitle::SubtitleService;
 
 #[derive(Debug, Serialize)]
@@ -60,6 +62,8 @@ pub fn handle_tool_call(
         "lumina_get_episode_index" => episode_index(snapshot),
         "lumina_get_transcript_window" => transcript_window(snapshot, args),
         "lumina_get_episode_transcript" => episode_transcript(snapshot, args),
+        "lumina_get_subtitle_cues" => subtitle_cues(snapshot, args),
+        "lumina_write_subtitle_track" => write_subtitle_track(snapshot, args),
         "lumina_capture_frames" => capture_frame_tool(snapshot, args),
         other => Err(format!("Unknown tool: {other}")),
     };
@@ -187,6 +191,109 @@ fn episode_transcript(snapshot: &LuminaMcpSnapshot, args: &Value) -> Result<Valu
         lines,
     };
     text_result(&payload)
+}
+
+fn subtitle_cues(snapshot: &LuminaMcpSnapshot, args: &Value) -> Result<Value, String> {
+    let anchor = require_anchor(snapshot)?;
+    let choice_id = resolve_subtitle_choice_id(args, anchor)?;
+    let media_path = PathBuf::from(&anchor.media_path);
+    let offset = args
+        .get("offset")
+        .and_then(Value::as_u64)
+        .unwrap_or(0) as usize;
+    let limit = args
+        .get("limit")
+        .and_then(Value::as_u64)
+        .map(|value| value.min(200) as usize)
+        .unwrap_or(80);
+    let transcript = SubtitleService::load_choice(&media_path, &choice_id)
+        .map_err(|error| error.message.clone())?;
+    let total = transcript.cues.len();
+    let slice: Vec<_> = transcript
+        .cues
+        .into_iter()
+        .skip(offset)
+        .take(limit)
+        .map(|cue| {
+            json!({
+                "index": cue.index,
+                "startMs": cue.start_ms,
+                "endMs": cue.end_ms,
+                "text": cue.text,
+            })
+        })
+        .collect();
+    text_result(&json!({
+        "choiceId": choice_id,
+        "total": total,
+        "offset": offset,
+        "limit": limit,
+        "cues": slice,
+        "hasMore": offset.saturating_add(slice.len()) < total,
+    }))
+}
+
+fn write_subtitle_track(snapshot: &LuminaMcpSnapshot, args: &Value) -> Result<Value, String> {
+    let anchor = require_anchor(snapshot)?;
+    let lang = args
+        .get("lang")
+        .and_then(Value::as_str)
+        .ok_or_else(|| "缺少 lang".to_string())?;
+    let cues = parse_write_cues(args)?;
+    let media_path = PathBuf::from(&anchor.media_path);
+    let transcript = write::export_sidecar_srt(&media_path, lang, &cues)
+        .map_err(|error| error.message.clone())?;
+    text_result(&json!({
+        "choiceId": transcript.choice_id,
+        "language": transcript.language,
+        "path": transcript.source_path,
+        "cueCount": transcript.cues.len(),
+    }))
+}
+
+fn parse_write_cues(args: &Value) -> Result<Vec<Cue>, String> {
+    let raw = args
+        .get("cues")
+        .and_then(Value::as_array)
+        .ok_or_else(|| "缺少 cues".to_string())?;
+    if raw.is_empty() {
+        return Err("cues 不能为空".into());
+    }
+    if raw.len() > 2000 {
+        return Err("单次写入字幕过多，请分批".into());
+    }
+    let mut cues = Vec::with_capacity(raw.len());
+    for (i, item) in raw.iter().enumerate() {
+        let start_ms = item
+            .get("startMs")
+            .and_then(Value::as_u64)
+            .ok_or_else(|| format!("cues[{i}] 缺少 startMs"))?;
+        let end_ms = item
+            .get("endMs")
+            .and_then(Value::as_u64)
+            .ok_or_else(|| format!("cues[{i}] 缺少 endMs"))?;
+        let text = item
+            .get("text")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .trim()
+            .to_string();
+        if text.is_empty() {
+            return Err(format!("cues[{i}] 文本为空"));
+        }
+        let index = item
+            .get("index")
+            .and_then(Value::as_u64)
+            .map(|value| value as u32)
+            .unwrap_or((i + 1) as u32);
+        cues.push(Cue {
+            index,
+            start_ms,
+            end_ms: end_ms.max(start_ms),
+            text,
+        });
+    }
+    Ok(cues)
 }
 
 fn fetch_transcript_lines(

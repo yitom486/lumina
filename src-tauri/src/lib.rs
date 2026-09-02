@@ -67,7 +67,10 @@ use commands::player::{
     player_set_rate, player_set_subtitle, player_set_surface_bounds, player_set_volume,
     player_stop, player_subscribe,
 };
-use commands::subtitle::{subtitle_list_choices, subtitle_load_choice};
+use commands::subtitle::{
+    subtitle_export_sidecar, subtitle_list_choices, subtitle_load_choice,
+    subtitle_translate_track,
+};
 use player::mpv::window::{parent_handle_from_webview, register_surface_app, VideoSurface};
 use state::AppState;
 use tauri::Manager;
@@ -110,6 +113,8 @@ pub fn run() {
             media_list_siblings,
             subtitle_list_choices,
             subtitle_load_choice,
+            subtitle_export_sidecar,
+            subtitle_translate_track,
             asr_status,
             asr_transcribe,
             library_watch_start,

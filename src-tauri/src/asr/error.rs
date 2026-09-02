@@ -12,6 +12,7 @@ pub enum AsrErrorCode {
     Busy,
     ExtractFailed,
     TranscribeFailed,
+    ExportFailed,
     Cancelled,
     InternalError,
 }
@@ -63,6 +64,14 @@ impl AsrError {
         )
     }
 
+    pub fn export_failed(details: Option<&str>) -> Self {
+        Self::new(
+            AsrErrorCode::ExportFailed,
+            "无法保存字幕文件",
+            details.map(str::to_string),
+        )
+    }
+
     pub fn cancelled() -> Self {
         Self::new(AsrErrorCode::Cancelled, "已取消语音转写", None)
     }
@@ -104,6 +113,9 @@ mod tests {
         let t = AsrError::transcribe_failed(Some("whisper-cli exit 1"));
         assert_eq!(t.message, "语音转写失败");
         assert_eq!(t.details.as_deref(), Some("whisper-cli exit 1"));
+        let export = AsrError::export_failed(Some("disk full"));
+        assert_eq!(export.message, "无法保存字幕文件");
+        assert!(!export.message.contains("whisper"));
         assert_eq!(
             AsrError::not_configured(None).code,
             AsrErrorCode::NotConfigured

@@ -96,7 +96,8 @@ pub fn session_prompt_params(
 fn context_pointer_text() -> &'static str {
     "【Lumina】用户正在本机观看上述媒体。可用 MCP 工具：\
 lumina_get_playback_context、lumina_get_library_context、lumina_get_episode_index、\
-lumina_get_transcript_window、lumina_get_episode_transcript（识图模型另有 lumina_capture_frames）。\
+lumina_get_transcript_window、lumina_get_episode_transcript、\
+lumina_get_subtitle_cues、lumina_write_subtitle_track（识图模型另有 lumina_capture_frames）。\
 \n\n工具调用原则：\
 (1) 若当前对话、此前工具结果或问题本身已足够回答，直接作答，不要重复调用。\
 (2) 仅缺哪类信息再增量调用对应工具，避免每轮并行全量拉取。\
@@ -105,7 +106,9 @@ lumina_get_transcript_window、lumina_get_episode_transcript（识图模型另�
 问当前集剧情、对话、人物关系：优先 lumina_get_transcript_window（配合 beforeSec/afterSec 扩大窗口）；\
 问其它集台词用 lumina_get_episode_transcript（season/episode 必填，可选 centerMs/atSec）；\
 单帧截图看不清台词或需要画面/场景/表情细节时，再用 lumina_capture_frames。\
-(5) 分集列表与媒体库背景分别用 lumina_get_episode_index、lumina_get_library_context。"
+(5) 分集列表与媒体库背景分别用 lumina_get_episode_index、lumina_get_library_context。\
+(6) 制作/翻译字幕：用 lumina_get_subtitle_cues 分页取源字幕（可一句或一批翻译）；保持 startMs/endMs，只改 text；\
+再用 lumina_write_subtitle_track(lang, cues) 写成 `{stem}.{lang}.srt` 外挂轨。可分批写入合并，或攒齐后一次写入。用户也可在文稿面板点「翻译字幕」自行操作。"
 }
 
 #[cfg(test)]
@@ -175,6 +178,8 @@ mod tests {
         assert!(pointer.contains("全量拉取"));
         assert!(pointer.contains("lumina_get_transcript_window"));
         assert!(pointer.contains("lumina_get_episode_transcript"));
+        assert!(pointer.contains("lumina_write_subtitle_track"));
+        assert!(pointer.contains("lumina_get_subtitle_cues"));
         assert!(pointer.contains("lumina_capture_frames"));
         assert!(pointer.contains("先调用工具补齐"));
         assert!(!pointer.contains("也不应出现"));

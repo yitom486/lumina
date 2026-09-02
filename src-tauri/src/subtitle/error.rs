@@ -14,6 +14,7 @@ pub enum SubtitleErrorCode {
     ParseFailed,
     UnsupportedSubtitle,
     NoSubtitleTrack,
+    ExportFailed,
     InternalError,
 }
 
@@ -88,6 +89,14 @@ impl SubtitleError {
         )
     }
 
+    pub fn export_failed(details: Option<&str>) -> Self {
+        Self::new(
+            SubtitleErrorCode::ExportFailed,
+            "无法保存字幕文件",
+            details.map(str::to_string),
+        )
+    }
+
     pub fn internal(details: Option<&str>) -> Self {
         Self::new(
             SubtitleErrorCode::InternalError,
@@ -137,6 +146,10 @@ mod tests {
             .contains("ffmpeg"));
         assert!(has_cjk(&SubtitleError::file_not_found("x").message));
         assert!(has_cjk(&SubtitleError::no_track().message));
+        assert_eq!(
+            SubtitleError::export_failed(Some("io")).message,
+            "无法保存字幕文件"
+        );
         let extract = SubtitleError::extract_failed(Some("ffmpeg spawn failed"));
         assert_eq!(extract.message, "无法提取字幕");
         assert_eq!(extract.details.as_deref(), Some("ffmpeg spawn failed"));
