@@ -11,11 +11,14 @@ import { useMediaInfoQuery } from "@/features/media";
 import type { MediaChapter } from "@/features/media";
 import type { Transcript } from "@/features/transcript";
 import { formatTime } from "@/lib/format";
+import { useNoteComposeStore } from "@/features/notes/noteComposeStore";
 import { usePlayerStore } from "@/features/player";
 import { applySubtitleChoice } from "@/features/player/hooks/useTrackControls";
+import { useUiStore } from "@/features/player/uiStore";
 import { useTrackStore } from "@/features/player/trackStore";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { cn } from "@/lib/utils";
 
 import {
   listSubtitleChoices,
@@ -64,6 +67,9 @@ export function TranscriptPanel() {
   const rememberSubtitleForMedia = useTrackStore(
     (s) => s.rememberSubtitleForMedia,
   );
+  const setSidebarTab = useUiStore((s) => s.setSidebarTab);
+  const noteQuoteIndices = useNoteComposeStore((s) => s.selectedIndices);
+  const pickFromTranscript = useNoteComposeStore((s) => s.pickFromTranscript);
 
   const mediaReady =
     Boolean(path) &&
@@ -685,15 +691,22 @@ export function TranscriptPanel() {
             <ul className="space-y-0.5">
               {transcript.cues.map((cue, i) => {
                 const active = !showStale && i === activeIndex;
+                const quoted = noteQuoteIndices.includes(cue.index);
                 return (
-                  <li key={`${transcript.choiceId}-${cue.index}`} id={`cue-${i}`}>
+                  <li
+                    key={`${transcript.choiceId}-${cue.index}`}
+                    id={`cue-${i}`}
+                    className="group flex items-stretch gap-1"
+                  >
                     <button
                       type="button"
-                      className={`w-full rounded-md px-2 py-1.5 text-left text-sm transition-colors ${
+                      className={cn(
+                        "min-w-0 flex-1 rounded-md px-2 py-1.5 text-left text-sm transition-colors",
                         active
                           ? "bg-accent font-medium text-accent-foreground"
-                          : "text-muted-foreground hover:bg-muted hover:text-foreground"
-                      }`}
+                          : "text-muted-foreground hover:bg-muted hover:text-foreground",
+                        quoted && !active && "ring-1 ring-primary/30",
+                      )}
                       onClick={() => void seek(cue.startMs)}
                     >
                       <span className="mr-2 tabular-nums text-[11px] opacity-70">
@@ -701,6 +714,28 @@ export function TranscriptPanel() {
                       </span>
                       {cue.text}
                     </button>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant={quoted ? "secondary" : "ghost"}
+                      className="h-auto shrink-0 px-2 py-1 text-[10px] opacity-70 group-hover:opacity-100"
+                      title="加入批注引用（Shift 连选一段）"
+                      disabled={!path || !choiceId}
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        if (!path || !choiceId) return;
+                        pickFromTranscript({
+                          mediaPath: path,
+                          subtitleChoiceId: choiceId,
+                          cues: transcript.cues,
+                          listIndex: i,
+                          shiftKey: event.shiftKey,
+                        });
+                        setSidebarTab("notes");
+                      }}
+                    >
+                      引用
+                    </Button>
                   </li>
                 );
               })}

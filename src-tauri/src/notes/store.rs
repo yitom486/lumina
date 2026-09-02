@@ -90,6 +90,7 @@ mod tests {
             media_path: "/a.mp4".into(),
             position_ms: 1200,
             body: "hello".into(),
+            quotes: Vec::new(),
             created_at: "t0".into(),
             updated_at: "t0".into(),
         }];

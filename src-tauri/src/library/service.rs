@@ -308,6 +308,33 @@ impl MediaLibraryService {
         library_root_for_media_path(roots.into_iter().map(PathBuf::from), &media_path)
     }
 
+    /// Group display label + parsed season/episode when the file is indexed but metadata is missing.
+    pub fn group_label_for_media(
+        &self,
+        media_path: &str,
+    ) -> Option<(String, Option<u32>, Option<u32>)> {
+        let media_path_buf = PathBuf::from(media_path);
+        let root = self.library_root_for_media(media_path)?;
+        let index = store::load(&root).ok()??;
+        let relative = crate::library::paths::relativize_under_root(&root, &media_path_buf).ok()?;
+        let file = index
+            .files
+            .iter()
+            .find(|entry| entry.relative_path == relative)?;
+        let group = index
+            .groups
+            .iter()
+            .find(|entry| entry.key == file.group_key)?;
+        let label = group
+            .manual_title
+            .as_deref()
+            .map(str::trim)
+            .filter(|title| !title.is_empty())
+            .unwrap_or(group.display_name.as_str())
+            .to_string();
+        Some((label, file.season, file.episode))
+    }
+
     pub fn list_groups(&self, root: String) -> Result<Vec<MediaGroup>, LibraryError> {
         self.ensure_configured_root(&root)?;
         let path = PathBuf::from(&root);

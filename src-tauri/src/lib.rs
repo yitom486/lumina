@@ -63,7 +63,9 @@ use commands::library::{
 };
 use commands::media::{media_inspect, media_list_siblings};
 use commands::notes::{
-    notes_create, notes_delete, notes_export_markdown, notes_list, notes_update,
+    notes_create, notes_delete, notes_export_markdown, notes_export_markdown_to_file,
+    notes_list, notes_preview_quotes,
+    notes_update,
 };
 use commands::player::{
     player_get_state, player_open, player_pause, player_play, player_seek, player_set_audio,
@@ -154,10 +156,12 @@ pub fn run() {
             acp_cancel,
             acp_close,
             notes_list,
+            notes_preview_quotes,
             notes_create,
             notes_update,
             notes_delete,
             notes_export_markdown,
+            notes_export_markdown_to_file,
         ])
         .setup(|app| {
             crate::player::mpv::native_library::ensure_libmpv_loaded(app.handle())?;
