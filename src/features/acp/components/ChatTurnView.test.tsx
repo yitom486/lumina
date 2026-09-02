@@ -1,3 +1,4 @@
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { cleanup, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
 
@@ -133,5 +134,51 @@ describe("ChatTurnView", () => {
     render(<ChatTurnView turn={turn} />);
     expect(screen.getByText("查看工具执行（1）")).toBeInTheDocument();
     expect(screen.queryByText("读取库信息")).not.toBeInTheDocument();
+  });
+
+  it("renders annotation proposal card below assistant bubble", () => {
+    const client = new QueryClient();
+    render(
+      <QueryClientProvider client={client}>
+        <ChatTurnView
+          turn={makeTurn({
+            id: "t6",
+            answer: "这是分析",
+            status: "done",
+            annotationProposal: {
+              proposalId: "proposal-1",
+              mediaPath: "D:\\show.mkv",
+              positionMs: 90_000,
+              body: "批注正文",
+              includeQuotes: true,
+              quotes: [],
+              previewMarkdown: "### 1:30\n\n批注正文",
+              createdAtMs: 1,
+            },
+          })}
+          annotationWorkspace="D:\\"
+          onDismissAnnotation={() => undefined}
+          onSaveAnnotation={() => undefined}
+        />
+      </QueryClientProvider>,
+    );
+    expect(screen.getByText("Agent 提议批注")).toBeInTheDocument();
+    expect(screen.getByText("确认保存")).toBeInTheDocument();
+    expect(screen.getByDisplayValue("批注正文")).toBeInTheDocument();
+  });
+
+  it("shows saved status after annotation is confirmed", () => {
+    render(
+      <ChatTurnView
+        turn={makeTurn({
+          id: "t7",
+          answer: "已生成批注提议，待确认。",
+          status: "done",
+          annotationProposalSaved: true,
+        })}
+      />,
+    );
+    expect(screen.getByText("批注已写入笔记库")).toBeInTheDocument();
+    expect(screen.queryByText("确认保存")).not.toBeInTheDocument();
   });
 });

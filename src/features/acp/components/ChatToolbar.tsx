@@ -1,6 +1,8 @@
-import { History, Plus } from "lucide-react";
+import { History, Plus, StickyNote } from "lucide-react";
+import { useRef } from "react";
 
 import { Button } from "@/components/ui/button";
+import { QuickNoteDialog } from "@/features/notes/components/QuickNoteDialog";
 import { cn } from "@/lib/utils";
 
 import type { AcpConnectionState } from "../types";
@@ -15,6 +17,10 @@ type Props = {
   loading?: boolean;
   busy?: boolean;
   historyCount?: number;
+  quickNoteDisabled?: boolean;
+  quickNoteOpen?: boolean;
+  onQuickNoteOpenChange?: (open: boolean) => void;
+  onQuickNoteSaved?: () => void;
   onNewChat: () => void;
   onOpenHistory?: () => void;
   onReconnect?: () => void;
@@ -38,12 +44,19 @@ export function ChatToolbar({
   loading,
   busy,
   historyCount = 0,
+  quickNoteDisabled,
+  quickNoteOpen = false,
+  onQuickNoteOpenChange,
+  onQuickNoteSaved,
   onNewChat,
   onOpenHistory,
   onReconnect,
 }: Props) {
+  const quickNoteAnchorRef = useRef<HTMLDivElement>(null);
+
   return (
     <ChatColumn className="shrink-0 space-y-1 border-b border-border py-2">
+      <div className="relative">
       <div className="flex items-start gap-2">
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
@@ -87,6 +100,22 @@ export function ChatToolbar({
         </div>
 
         <div className="flex shrink-0 items-center gap-1">
+          {onQuickNoteOpenChange ? (
+            <div ref={quickNoteAnchorRef}>
+              <Button
+                size="icon"
+                variant="ghost"
+                className="size-7"
+                disabled={busy || quickNoteDisabled}
+                aria-label="快速写批注"
+                aria-expanded={quickNoteOpen}
+                title="快速写批注"
+                onClick={() => onQuickNoteOpenChange(!quickNoteOpen)}
+              >
+                <StickyNote className="size-3.5" />
+              </Button>
+            </div>
+          ) : null}
           {onOpenHistory ? (
             <Button
               size="icon"
@@ -130,6 +159,16 @@ export function ChatToolbar({
             ) : null
           ) : null}
         </div>
+      </div>
+
+      {onQuickNoteOpenChange ? (
+        <QuickNoteDialog
+          open={quickNoteOpen}
+          onOpenChange={onQuickNoteOpenChange}
+          onSaved={onQuickNoteSaved}
+          anchorRef={quickNoteAnchorRef}
+        />
+      ) : null}
       </div>
 
       {statusError ? (

@@ -6,6 +6,9 @@ use crate::subtitle::model::Cue;
 pub const QUOTE_CONTEXT: usize = 3;
 pub const HINT_WINDOW_MS: u64 = 60_000;
 
+/// Minimum similarity (0..=1) for fuzzy hint matches after exact contains fails.
+const FUZZY_MIN_SCORE: f64 = 0.58;
+
 #[derive(Debug, Clone)]
 pub struct QuoteResolveInput<'a> {
     pub cues: &'a [Cue],
@@ -33,8 +36,8 @@ pub fn resolve_quotes(input: QuoteResolveInput<'_>) -> Vec<NoteQuote> {
         .and_then(|index| cues.iter().position(|cue| cue.index == index))
         .or_else(|| {
             let hint = input.quote_hint.filter(|text| !text.trim().is_empty());
-            if hint.is_some() {
-                find_by_hint(cues, input.position_ms, hint.unwrap())
+            if let Some(hint) = hint {
+                find_by_hint(cues, input.position_ms, hint)
             } else {
                 None
             }
@@ -90,39 +93,234 @@ fn collect_recent_before(cues: &[Cue], position_ms: u64) -> Vec<NoteQuote> {
 }
 
 fn find_by_hint(cues: &[Cue], position_ms: u64, hint: &str) -> Option<usize> {
-    let hint_lower = normalize_match_text(hint);
-    if hint_lower.is_empty() {
+    let fragments = hint_fragments(hint);
+    if fragments.is_empty() {
         return None;
     }
+
     let window_start = position_ms.saturating_sub(HINT_WINDOW_MS);
     let window_end = position_ms.saturating_add(HINT_WINDOW_MS);
 
-    let mut best: Option<(usize, u64)> = None;
+    let mut best: Option<HintCandidate> = None;
     for (index, cue) in cues.iter().enumerate() {
         if cue.end_ms <= window_start || cue.start_ms >= window_end {
             continue;
         }
-        let text_lower = normalize_match_text(&cue.text);
-        if !text_lower.contains(&hint_lower) {
+        let cue_norm = normalize_match_text(&cue.text);
+        if cue_norm.is_empty() {
             continue;
         }
         let distance = cue.start_ms.abs_diff(position_ms);
-        match best {
-            None => best = Some((index, distance)),
-            Some((_, best_distance)) if distance < best_distance => {
-                best = Some((index, distance));
+        for fragment in &fragments {
+            let score = match_score(fragment, &cue_norm);
+            if score < FUZZY_MIN_SCORE {
+                continue;
             }
-            _ => {}
+            let candidate = HintCandidate {
+                index,
+                score,
+                distance,
+            };
+            if is_better_candidate(&candidate, &best) {
+                best = Some(candidate);
+            }
         }
     }
-    best.map(|(index, _)| index)
+    best.map(|candidate| candidate.index)
+}
+
+#[derive(Debug, Clone, Copy)]
+struct HintCandidate {
+    index: usize,
+    score: f64,
+    distance: u64,
+}
+
+fn is_better_candidate(next: &HintCandidate, best: &Option<HintCandidate>) -> bool {
+    let Some(current) = best else {
+        return true;
+    };
+    // Prefer higher similarity; break ties by closer playback time.
+    if (next.score - current.score).abs() > 0.02 {
+        return next.score > current.score;
+    }
+    next.distance < current.distance
+}
+
+/// Split Agent / user hints into matchable fragments (full text + lines / clauses).
+fn hint_fragments(hint: &str) -> Vec<String> {
+    let mut fragments = Vec::new();
+    let push_unique = |out: &mut Vec<String>, raw: &str| {
+        let normalized = normalize_match_text(raw);
+        if normalized.is_empty() {
+            return;
+        }
+        if !out.iter().any(|existing| existing == &normalized) {
+            out.push(normalized);
+        }
+    };
+
+    push_unique(&mut fragments, hint);
+    for line in hint.split(['\n', '|', '；', ';']) {
+        push_unique(&mut fragments, line);
+    }
+    // Sentence-ish splits for long prose hints.
+    for part in hint.split(['。', '！', '？', '!', '?', '…']) {
+        push_unique(&mut fragments, part);
+    }
+    fragments
+}
+
+fn match_score(hint_norm: &str, cue_norm: &str) -> f64 {
+    if hint_norm.is_empty() || cue_norm.is_empty() {
+        return 0.0;
+    }
+    if cue_norm.contains(hint_norm) || hint_norm.contains(cue_norm) {
+        return 1.0;
+    }
+
+    // Compare against sliding windows when cue is longer than the hint.
+    let hint_chars: Vec<char> = hint_norm.chars().collect();
+    let cue_chars: Vec<char> = cue_norm.chars().collect();
+    let hint_len = hint_chars.len();
+    let cue_len = cue_chars.len();
+    if hint_len == 0 || cue_len == 0 {
+        return 0.0;
+    }
+
+    if cue_len <= hint_len {
+        return similarity_ratio(&hint_chars, &cue_chars);
+    }
+
+    let window = hint_len.max(1);
+    let mut best = 0.0_f64;
+    let last_start = cue_len.saturating_sub(window);
+    for start in 0..=last_start {
+        let slice = &cue_chars[start..start + window];
+        let score = similarity_ratio(&hint_chars, slice);
+        if score > best {
+            best = score;
+        }
+        if best >= 0.99 {
+            break;
+        }
+    }
+    // Also allow slightly longer windows for short OCR / punctuation remnants.
+    if window + 2 <= cue_len {
+        for start in 0..=(cue_len - (window + 2)) {
+            let slice = &cue_chars[start..start + window + 2];
+            let score = similarity_ratio(&hint_chars, slice);
+            if score > best {
+                best = score;
+            }
+        }
+    }
+    best
+}
+
+fn similarity_ratio(a: &[char], b: &[char]) -> f64 {
+    if a.is_empty() && b.is_empty() {
+        return 1.0;
+    }
+    let max_len = a.len().max(b.len());
+    if max_len == 0 {
+        return 0.0;
+    }
+    let distance = levenshtein(a, b);
+    1.0 - (distance as f64 / max_len as f64)
+}
+
+fn levenshtein(a: &[char], b: &[char]) -> usize {
+    let (a, b) = if a.len() >= b.len() { (a, b) } else { (b, a) };
+    let mut prev: Vec<usize> = (0..=b.len()).collect();
+    let mut curr = vec![0; b.len() + 1];
+    for (i, ca) in a.iter().enumerate() {
+        curr[0] = i + 1;
+        for (j, cb) in b.iter().enumerate() {
+            let cost = if ca == cb { 0 } else { 1 };
+            curr[j + 1] = (prev[j + 1] + 1)
+                .min(curr[j] + 1)
+                .min(prev[j] + cost);
+        }
+        std::mem::swap(&mut prev, &mut curr);
+    }
+    prev[b.len()]
 }
 
 fn normalize_match_text(text: &str) -> String {
-    text.to_lowercase()
-        .chars()
-        .filter(|ch| !ch.is_whitespace())
+    text.chars()
+        .filter_map(|ch| {
+            if ch.is_whitespace() {
+                return None;
+            }
+            if is_ignorable_punct(ch) {
+                return None;
+            }
+            Some(ch.to_lowercase().next().unwrap_or(ch))
+        })
         .collect()
+}
+
+fn is_ignorable_punct(ch: char) -> bool {
+    matches!(
+        ch,
+        ',' | '.'
+            | '!'
+            | '?'
+            | ';'
+            | ':'
+            | '"'
+            | '\''
+            | '`'
+            | '~'
+            | '('
+            | ')'
+            | '['
+            | ']'
+            | '{'
+            | '}'
+            | '<'
+            | '>'
+            | '/'
+            | '\\'
+            | '|'
+            | '-'
+            | '_'
+            | '*'
+            | '#'
+            | '@'
+            | '&'
+            | '%'
+            | '+'
+            | '='
+            | '，'
+            | '。'
+            | '！'
+            | '？'
+            | '；'
+            | '：'
+            | '“'
+            | '”'
+            | '‘'
+            | '’'
+            | '（'
+            | '）'
+            | '【'
+            | '】'
+            | '『'
+            | '』'
+            | '「'
+            | '」'
+            | '《'
+            | '》'
+            | '、'
+            | '…'
+            | '—'
+            | '–'
+            | '·'
+            | '〜'
+            | '～'
+    ) || ch.is_ascii_punctuation()
 }
 
 #[cfg(test)]
@@ -221,5 +419,114 @@ mod tests {
         assert_eq!(quotes[1].text, "e");
         assert!(quotes[1].anchor);
         assert_eq!(quotes[2].text, "g");
+    }
+
+    #[test]
+    fn hint_ignores_punctuation_and_case() {
+        let cues = vec![
+            cue(1, 10_000, 11_000, "Hello, world!"),
+            cue(2, 12_000, 13_000, "别的台词"),
+        ];
+        let quotes = resolve_quotes(QuoteResolveInput {
+            cues: &cues,
+            position_ms: 10_500,
+            anchor_cue_index: None,
+            quote_cue_indices: None,
+            quote_hint: Some("hello world"),
+        });
+        assert!(quotes.iter().any(|q| q.anchor && q.text.contains("Hello")));
+    }
+
+    #[test]
+    fn hint_fuzzy_tolerates_typo() {
+        let cues = vec![
+            cue(1, 20_000, 21_000, "前一句"),
+            cue(2, 22_000, 23_000, "她捂住了鼻子"),
+            cue(3, 24_000, 25_000, "后一句"),
+        ];
+        let quotes = resolve_quotes(QuoteResolveInput {
+            cues: &cues,
+            position_ms: 22_500,
+            anchor_cue_index: None,
+            quote_cue_indices: None,
+            // one character typo vs 鼻子
+            quote_hint: Some("她捂住了鼻了"),
+        });
+        assert!(
+            quotes
+                .iter()
+                .any(|q| q.anchor && q.text.contains("捂住了鼻子")),
+            "fuzzy typo should still anchor the intended cue"
+        );
+    }
+
+    #[test]
+    fn hint_multiline_matches_best_clause() {
+        let cues = vec![
+            cue(1, 30_000, 31_000, "化学反应"),
+            cue(2, 32_000, 33_000, "转变开始"),
+            cue(3, 34_000, 35_000, "别的"),
+        ];
+        let quotes = resolve_quotes(QuoteResolveInput {
+            cues: &cues,
+            position_ms: 32_200,
+            anchor_cue_index: None,
+            quote_cue_indices: None,
+            quote_hint: Some("东晚哥在开玩笑。\n转变开始。\n然后离开。"),
+        });
+        assert!(quotes.iter().any(|q| q.anchor && q.text.contains("转变开始")));
+    }
+
+    #[test]
+    fn hint_prefers_closer_cue_when_scores_tie() {
+        let cues = vec![
+            cue(1, 40_000, 41_000, "相同关键词"),
+            cue(2, 50_000, 51_000, "相同关键词"),
+        ];
+        let quotes = resolve_quotes(QuoteResolveInput {
+            cues: &cues,
+            position_ms: 49_500,
+            anchor_cue_index: None,
+            quote_cue_indices: None,
+            quote_hint: Some("相同关键词"),
+        });
+        assert!(quotes.iter().any(|q| q.anchor && q.index == 2));
+    }
+
+    #[test]
+    fn unmatched_hint_falls_back_to_recent_three() {
+        let cues = vec![
+            cue(1, 0, 1_000, "a"),
+            cue(2, 1_000, 2_000, "b"),
+            cue(3, 2_000, 3_000, "c"),
+            cue(4, 3_000, 4_000, "d"),
+        ];
+        let quotes = resolve_quotes(QuoteResolveInput {
+            cues: &cues,
+            position_ms: 3_500,
+            anchor_cue_index: None,
+            quote_cue_indices: None,
+            quote_hint: Some("完全不存在的台词片段xyz"),
+        });
+        assert_eq!(quotes.len(), 3);
+        assert!(!quotes.iter().any(|q| q.anchor));
+        assert_eq!(quotes[0].text, "b");
+        assert_eq!(quotes[2].text, "d");
+    }
+
+    #[test]
+    fn korean_substring_hint() {
+        let cues = vec![
+            cue(1, 10_000, 11_000, "안녕하세요"),
+            cue(2, 12_000, 13_000, "오늘 날씨가 좋아요"),
+        ];
+        let quotes = resolve_quotes(QuoteResolveInput {
+            cues: &cues,
+            position_ms: 12_200,
+            anchor_cue_index: None,
+            quote_cue_indices: None,
+            quote_hint: Some("날씨가"),
+        });
+        assert!(quotes.iter().any(|q| q.anchor && q.text.contains("날씨가")));
     }
 }

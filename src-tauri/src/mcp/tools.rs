@@ -13,8 +13,9 @@ use crate::library::{
     episode_index_for_group, load_context_at_root, load_context_for_group, load_library_index,
     resolve_episode_media_file, resolve_media_in_index, series_cache_from_context,
 };
-use crate::mcp::snapshot::{ephemeral_tmp_dir, LuminaMcpSnapshot, PromptAnchor};
+use crate::mcp::snapshot::{ephemeral_tmp_dir, resolve_snapshot_path, LuminaMcpSnapshot, PromptAnchor};
 use crate::media::frame_capture::{capture_frames, sample_times_for_window, MAX_CAPTURE_SPAN_SEC};
+use crate::notes::proposal::{build_proposal, save_latest_proposal};
 use crate::subtitle::model::Cue;
 use crate::subtitle::write;
 use crate::subtitle::SubtitleService;
@@ -74,6 +75,13 @@ pub fn handle_tool_call(
             }
         }
         "lumina_capture_frames" => capture_frame_tool(snapshot, args),
+        "lumina_propose_video_annotation" => {
+            if !video_annotations_enabled(snapshot) {
+                Err("该工具未对当前会话开放".to_string())
+            } else {
+                propose_video_annotation(snapshot, args)
+            }
+        }
         other => Err(format!("Unknown tool: {other}")),
     };
     if let Err(message) = result.as_ref() {
@@ -96,6 +104,14 @@ pub fn subtitle_workshop_enabled(snapshot: &LuminaMcpSnapshot) -> bool {
         .as_ref()
         .map(|caps| caps.subtitle_workshop_enabled)
         .unwrap_or(false)
+}
+
+pub fn video_annotations_enabled(snapshot: &LuminaMcpSnapshot) -> bool {
+    snapshot
+        .capabilities
+        .as_ref()
+        .map(|caps| caps.video_annotations_enabled)
+        .unwrap_or(true)
 }
 
 fn playback_context(snapshot: &LuminaMcpSnapshot) -> Result<Value, String> {
@@ -248,6 +264,76 @@ fn subtitle_cues(snapshot: &LuminaMcpSnapshot, args: &Value) -> Result<Value, St
         "cues": slice,
         "hasMore": offset.saturating_add(slice.len()) < total,
     }))
+}
+
+fn propose_video_annotation(snapshot: &LuminaMcpSnapshot, args: &Value) -> Result<Value, String> {
+    let anchor = require_anchor(snapshot)?;
+    let body = args
+        .get("body")
+        .and_then(Value::as_str)
+        .ok_or_else(|| "缺少 body".to_string())?;
+    let position_ms = args
+        .get("positionMs")
+        .and_then(Value::as_u64)
+        .unwrap_or(anchor.position_ms);
+    let include_quotes = args
+        .get("includeQuotes")
+        .and_then(Value::as_bool)
+        .unwrap_or(true);
+    let anchor_cue_index = args
+        .get("anchorCueIndex")
+        .and_then(Value::as_u64)
+        .map(|value| value as u32);
+    let quote_cue_indices = args.get("quoteCueIndices").and_then(|value| {
+        value.as_array().map(|items| {
+            items
+                .iter()
+                .filter_map(|item| item.as_u64().map(|index| index as u32))
+                .collect::<Vec<_>>()
+        })
+    });
+    let quote_hint = args
+        .get("quoteHint")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|text| !text.is_empty())
+        .map(str::to_string);
+    let subtitle_choice_id = args
+        .get("subtitleChoiceId")
+        .and_then(Value::as_str)
+        .map(str::to_string)
+        .or_else(|| anchor.subtitle_choice_id.clone());
+
+    let proposal = build_proposal(
+        &anchor.media_path,
+        position_ms,
+        body,
+        subtitle_choice_id,
+        anchor_cue_index,
+        quote_cue_indices.filter(|items| !items.is_empty()),
+        quote_hint,
+        include_quotes,
+    )?;
+
+    let workspace = workspace_from_snapshot_path()?;
+    save_latest_proposal(&workspace, &proposal)?;
+
+    text_result(&json!({
+        "status": "pending_confirmation",
+        "proposalId": proposal.proposal_id,
+        "message": "批注提议已生成，请用户在 Lumina 界面确认后再写入笔记库。",
+        "previewMarkdown": proposal.preview_markdown,
+    }))
+}
+
+fn workspace_from_snapshot_path() -> Result<PathBuf, String> {
+    let snapshot_path = resolve_snapshot_path()
+        .ok_or_else(|| "无法定位 Agent 工作目录".to_string())?;
+    snapshot_path
+        .parent()
+        .and_then(|path| path.parent())
+        .map(PathBuf::from)
+        .ok_or_else(|| "无法定位 Agent 工作目录".to_string())
 }
 
 fn write_subtitle_track(snapshot: &LuminaMcpSnapshot, args: &Value) -> Result<Value, String> {

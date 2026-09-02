@@ -63,8 +63,8 @@ use commands::library::{
 };
 use commands::media::{media_inspect, media_list_siblings};
 use commands::notes::{
-    notes_create, notes_delete, notes_export_markdown, notes_export_markdown_to_file,
-    notes_list, notes_preview_quotes,
+    notes_create, notes_delete, notes_dismiss_proposal, notes_export_markdown,
+    notes_export_markdown_to_file, notes_list, notes_load_latest_proposal, notes_preview_quotes,
     notes_update,
 };
 use commands::player::{
@@ -160,6 +160,8 @@ pub fn run() {
             notes_create,
             notes_update,
             notes_delete,
+            notes_load_latest_proposal,
+            notes_dismiss_proposal,
             notes_export_markdown,
             notes_export_markdown_to_file,
         ])

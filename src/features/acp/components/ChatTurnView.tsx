@@ -2,6 +2,8 @@ import { useState } from "react";
 
 import { cn } from "@/lib/utils";
 
+import { AnnotationProposalCard } from "@/features/notes/components/AnnotationProposalCard";
+
 import { waitingLabel, hasActiveToolActivity } from "../activityStatus";
 import type { ChatTurn } from "../types";
 import { ChatActivityFeed } from "./ChatActivityFeed";
@@ -11,9 +13,17 @@ import { ChatWaitingDots } from "./ChatWaitingDots";
 
 type Props = {
   turn: ChatTurn;
+  annotationWorkspace?: string | null;
+  onDismissAnnotation?: (turnId: string) => void;
+  onSaveAnnotation?: (turnId: string, proposalId?: string) => void;
 };
 
-export function ChatTurnView({ turn }: Props) {
+export function ChatTurnView({
+  turn,
+  annotationWorkspace,
+  onDismissAnnotation,
+  onSaveAnnotation,
+}: Props) {
   const [toolsOpen, setToolsOpen] = useState(false);
   const isError = turn.status === "error";
   const isStreaming = turn.status === "streaming";
@@ -87,6 +97,25 @@ export function ChatTurnView({ turn }: Props) {
           <p className="mt-1 text-[11px] leading-relaxed text-muted-foreground">
             {turn.errorHint}
           </p>
+        ) : null}
+
+        {turn.annotationProposalSaved ? (
+          <div className="mt-2 rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-[12px] text-emerald-800 dark:text-emerald-300">
+            批注已写入笔记库
+          </div>
+        ) : turn.annotationProposal && annotationWorkspace ? (
+          <AnnotationProposalCard
+            className="mt-2"
+            proposal={turn.annotationProposal}
+            workspace={annotationWorkspace}
+            onDismiss={() => onDismissAnnotation?.(turn.id)}
+            onSaved={() =>
+              onSaveAnnotation?.(
+                turn.id,
+                turn.annotationProposal?.proposalId,
+              )
+            }
+          />
         ) : null}
       </div>
     </ChatColumn>

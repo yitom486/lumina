@@ -8,12 +8,18 @@ type Props = {
   turns: ChatTurn[];
   notices: { id: string; content: string }[];
   emptyHint?: string;
+  annotationWorkspace?: string | null;
+  onDismissAnnotation?: (turnId: string) => void;
+  onSaveAnnotation?: (turnId: string, proposalId?: string) => void;
 };
 
 export function ChatTurnList({
   turns,
   notices,
   emptyHint = "向 AI Agent 提问。打开视频后会附带播放上下文。",
+  annotationWorkspace,
+  onDismissAnnotation,
+  onSaveAnnotation,
 }: Props) {
   const endRef = useRef<HTMLDivElement>(null);
 
@@ -37,7 +43,13 @@ export function ChatTurnList({
         </p>
       ))}
       {turns.map((turn) => (
-        <ChatTurnView key={turn.id} turn={turn} />
+        <ChatTurnView
+          key={turn.id}
+          turn={turn}
+          annotationWorkspace={annotationWorkspace}
+          onDismissAnnotation={onDismissAnnotation}
+          onSaveAnnotation={onSaveAnnotation}
+        />
       ))}
       <div ref={endRef} />
     </ChatColumn>

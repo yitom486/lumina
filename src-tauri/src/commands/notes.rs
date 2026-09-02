@@ -69,6 +69,28 @@ pub async fn notes_delete(app: AppHandle, id: String) -> Result<(), NoteError> {
 }
 
 #[tauri::command]
+pub async fn notes_dismiss_proposal(workspace: String) -> Result<(), NoteError> {
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::notes::proposal::dismiss_latest_proposal(std::path::Path::new(&workspace))
+            .map_err(|details| NoteError::io(Some(&details)))
+    })
+    .await
+    .map_err(|error| NoteError::internal(Some(&format!("notes dismiss proposal join: {error}"))))?
+}
+
+#[tauri::command]
+pub async fn notes_load_latest_proposal(
+    workspace: String,
+) -> Result<Option<crate::notes::VideoAnnotationProposal>, NoteError> {
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::notes::proposal::load_latest_proposal(std::path::Path::new(&workspace))
+            .map_err(|details| NoteError::io(Some(&details)))
+    })
+    .await
+    .map_err(|error| NoteError::internal(Some(&format!("notes load proposal join: {error}"))))?
+}
+
+#[tauri::command]
 pub async fn notes_export_markdown(
     app: AppHandle,
     media_path: String,

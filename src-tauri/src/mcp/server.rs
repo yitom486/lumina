@@ -5,7 +5,7 @@ use std::io::{self, BufRead, Write};
 use serde_json::{json, Value};
 
 use super::snapshot::{read_snapshot, resolve_snapshot_path, LuminaMcpSnapshot};
-use super::tools::{handle_tool_call, subtitle_workshop_enabled, vision_capable};
+use super::tools::{handle_tool_call, subtitle_workshop_enabled, video_annotations_enabled, vision_capable};
 
 const PROTOCOL_VERSION: &str = "2024-11-05";
 
@@ -203,6 +203,30 @@ fn tools_list_result(snapshot: &LuminaMcpSnapshot) -> Value {
         }));
     }
 
+    if video_annotations_enabled(snapshot) {
+        tools.push(json!({
+            "name": "lumina_propose_video_annotation",
+            "description": "Propose a timestamped video annotation with optional quoted subtitle lines. Does NOT write to the notes store — the user must confirm in Lumina UI before it is saved. Call after you have enough context (transcript window, playback anchor). Provide body (required); optional positionMs, anchorCueIndex, quoteCueIndices, quoteHint, includeQuotes, subtitleChoiceId.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "body": { "type": "string", "minLength": 1 },
+                    "positionMs": { "type": "integer", "minimum": 0 },
+                    "subtitleChoiceId": { "type": "string" },
+                    "anchorCueIndex": { "type": "integer", "minimum": 0 },
+                    "quoteCueIndices": {
+                        "type": "array",
+                        "items": { "type": "integer", "minimum": 0 }
+                    },
+                    "quoteHint": { "type": "string" },
+                    "includeQuotes": { "type": "boolean" }
+                },
+                "required": ["body"],
+                "additionalProperties": false
+            }
+        }));
+    }
+
     json!({ "tools": tools })
 }
 
@@ -259,6 +283,7 @@ mod tests {
             capabilities: Some(AgentCapabilities {
                 vision_capable: false,
                 subtitle_workshop_enabled: false,
+                video_annotations_enabled: true,
             }),
             updated_at_ms: 0,
         };
@@ -274,6 +299,7 @@ mod tests {
         assert!(names.contains(&"lumina_get_playback_context"));
         assert!(names.contains(&"lumina_get_transcript_window"));
         assert!(names.contains(&"lumina_get_episode_transcript"));
+        assert!(names.contains(&"lumina_propose_video_annotation"));
         assert!(!names.contains(&"lumina_get_subtitle_cues"));
         assert!(!names.contains(&"lumina_write_subtitle_track"));
         assert!(!names.contains(&"lumina_capture_frames"));
@@ -290,6 +316,7 @@ mod tests {
             capabilities: Some(AgentCapabilities {
                 vision_capable: false,
                 subtitle_workshop_enabled: true,
+                video_annotations_enabled: false,
             }),
             updated_at_ms: 0,
         };
@@ -317,6 +344,7 @@ mod tests {
             capabilities: Some(AgentCapabilities {
                 vision_capable: true,
                 subtitle_workshop_enabled: false,
+                video_annotations_enabled: true,
             }),
             updated_at_ms: 0,
         };

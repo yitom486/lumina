@@ -96,7 +96,7 @@ pub fn session_prompt_params(
 fn context_pointer_text() -> &'static str {
     "【Lumina】用户正在本机观看上述媒体。可用 MCP 工具：\
 lumina_get_playback_context、lumina_get_library_context、lumina_get_episode_index、\
-lumina_get_transcript_window、lumina_get_episode_transcript（识图模型另有 lumina_capture_frames）。\
+lumina_get_transcript_window、lumina_get_episode_transcript、lumina_propose_video_annotation（识图模型另有 lumina_capture_frames）。\
 \n\n工具调用原则：\
 (1) 若当前对话、此前工具结果或问题本身已足够回答，直接作答，不要重复调用。\
 (2) 仅缺哪类信息再增量调用对应工具，避免每轮并行全量拉取。\
@@ -106,6 +106,7 @@ lumina_get_transcript_window、lumina_get_episode_transcript（识图模型另�
 问其它集台词用 lumina_get_episode_transcript（season/episode 必填，可选 centerMs/atSec）；\
 单帧截图看不清台词或需要画面/场景/表情细节时，再用 lumina_capture_frames。\
 (5) 分集列表与媒体库背景分别用 lumina_get_episode_index、lumina_get_library_context。\
+(6) 写视频批注：先调用 lumina_propose_video_annotation 生成提议（含正文与引用台词预览），**禁止**直接写入笔记库；用户会在该条回复下方的确认卡片中保存或取消。保存成功后界面会显示「批注已写入笔记库」，无需反复提醒用户去别处确认。\
 制作/翻译外挂字幕请使用文稿面板的「翻译字幕」或 ASR，不要在本对话中尝试写入字幕轨。"
 }
 
@@ -176,6 +177,7 @@ mod tests {
         assert!(pointer.contains("全量拉取"));
         assert!(pointer.contains("lumina_get_transcript_window"));
         assert!(pointer.contains("lumina_get_episode_transcript"));
+        assert!(pointer.contains("lumina_propose_video_annotation"));
         assert!(pointer.contains("文稿面板"));
         assert!(!pointer.contains("lumina_write_subtitle_track"));
         assert!(!pointer.contains("lumina_get_subtitle_cues"));

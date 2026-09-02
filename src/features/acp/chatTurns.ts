@@ -9,6 +9,21 @@ function nextSeq(seq: { n: number }): string {
   return String(seq.n);
 }
 
+/** Keep new turn ids above any restored history ids (avoids duplicate turn-1, etc.). */
+export function syncTurnIdSeq(seq: { n: number }, turns: ChatTurn[]): void {
+  let max = seq.n;
+  for (const turn of turns) {
+    const match =
+      /^turn-(\d+)-\d+$/.exec(turn.id) ?? /^turn-(\d+)$/.exec(turn.id);
+    if (!match) continue;
+    const value = Number(match[1]);
+    if (Number.isFinite(value) && value > max) {
+      max = value;
+    }
+  }
+  seq.n = max;
+}
+
 /** Seal pre-tool agent text; only the post-tool segment stays visible. */
 function sealAgentSegment(turn: ChatTurn): ChatTurn {
   const pending = (turn.agentDraft ?? turn.answer).trim();
@@ -35,7 +50,7 @@ function lastAgentSegment(turn: ChatTurn): string {
 }
 
 export function createTurn(seq: { n: number }, userText: string): ChatTurn {
-  const id = `turn-${nextSeq(seq)}`;
+  const id = `turn-${nextSeq(seq)}-${Date.now()}`;
   return {
     id,
     userText,

@@ -104,6 +104,7 @@ impl PromptSnapshotState {
             capabilities: Some(AgentCapabilities {
                 vision_capable,
                 subtitle_workshop_enabled: false,
+                video_annotations_enabled: true,
             }),
             updated_at_ms: snapshot_now_ms(),
         })

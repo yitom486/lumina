@@ -1,3 +1,5 @@
+import type { VideoAnnotationProposal } from "@/features/notes/proposalTypes";
+
 export type AgentKind = "Codex" | "Claude" | "Custom";
 
 export type AgentProfileStatus = {
@@ -172,6 +174,10 @@ export type ChatTurn = {
   agentSegments?: string[];
   /** Shown under error answer — fixed business copy, not technical details. */
   errorHint?: string;
+  /** Agent-proposed annotation awaiting user confirmation under this turn. */
+  annotationProposal?: VideoAnnotationProposal;
+  /** User confirmed and saved the proposal for this turn. */
+  annotationProposalSaved?: boolean;
 };
 
 export type PendingPermission = {

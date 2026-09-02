@@ -8,6 +8,7 @@ import type {
   NoteQuote,
   NoteUpdate,
 } from "./types";
+import type { VideoAnnotationProposal } from "./proposalTypes";
 
 /** Default `{parentDir}/{seriesOrDir}.notes.md` next to the media file. */
 export function suggestNotesExportPath(
@@ -62,4 +63,14 @@ export async function exportNotesMarkdownToFile(
   if (!destPath) return null;
   await invoke("notes_export_markdown_to_file", { mediaPath, destPath });
   return destPath;
+}
+
+export function loadLatestAnnotationProposal(
+  workspace: string,
+): Promise<VideoAnnotationProposal | null> {
+  return invoke("notes_load_latest_proposal", { workspace });
+}
+
+export function dismissAnnotationProposal(workspace: string): Promise<void> {
+  return invoke("notes_dismiss_proposal", { workspace });
 }

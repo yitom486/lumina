@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { applyAcpEventToTurn, createTurn } from "./chatTurns";
+import { applyAcpEventToTurn, createTurn, syncTurnIdSeq } from "./chatTurns";
 
 describe("applyAcpEventToTurn", () => {
   it("keeps only final answer when finished", () => {
@@ -115,5 +115,31 @@ describe("applyAcpEventToTurn", () => {
     );
     expect(turn.answer).toBe("这段主要讲……");
     expect(turn.answer).not.toMatch(/Natural English/i);
+  });
+});
+
+describe("syncTurnIdSeq", () => {
+  it("bumps the counter above restored history ids", () => {
+    const seq = { n: 0 };
+    syncTurnIdSeq(seq, [
+      {
+        id: "turn-3",
+        userText: "a",
+        answer: "b",
+        status: "done",
+        activities: [],
+        showActivities: false,
+      },
+      {
+        id: "turn-4-1700000000000",
+        userText: "c",
+        answer: "d",
+        status: "done",
+        activities: [],
+        showActivities: false,
+      },
+    ]);
+    const next = createTurn(seq, "继续");
+    expect(next.id).toMatch(/^turn-5-/);
   });
 });

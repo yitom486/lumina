@@ -1,9 +1,26 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 
-import { usePlayerStore } from "@/features/player";
+import { loadLatestAnnotationProposal, dismissAnnotationProposal } from "@/features/notes/api";
+import {
+  shouldFetchAnnotationProposal,
+  shouldRescanTurnForProposal,
+  shouldTrackProposeToolCall,
+  turnNeedsProposalFetch,
+} from "@/features/notes/annotationProposal";
+import {
+  applyAttachAnnotationProposal,
+  applyClearTurnAnnotation,
+  applySaveAnnotation,
+  attachProposalBinding,
+  canAttachProposalToTurn,
+  createProposalBindings,
+  seedProposalBindingsFromTurns,
+  type ProposalBindings,
+} from "@/features/notes/annotationTurnState";
 import type { MediaInfo } from "@/features/media/types";
 import type { Note } from "@/features/notes/types";
+import { usePlayerStore } from "@/features/player";
 import { errorMessage } from "@/lib/format";
 
 import "../chat-motion.css";
@@ -27,6 +44,7 @@ import {
   applyAcpEventToTurn,
   createTurn,
   pushNotice,
+  syncTurnIdSeq,
   type SystemNotice,
 } from "../chatTurns";
 import {
@@ -38,6 +56,14 @@ import { useChatUiStore } from "../chatUiStore";
 import { buildAnchoredVideoPromptContext } from "../context";
 import { workspaceCwdFromMedia } from "../cwd";
 import { profilesSignature } from "../profilesSignature";
+import {
+  bargeInPrompt,
+  createQueuedPrompt,
+  dequeuePrompt,
+  enqueuePrompt,
+  removeQueuedPrompt,
+  type QueuedPrompt,
+} from "../promptQueue";
 import type {
   AcpConnectionState,
   AcpEvent,
@@ -96,6 +122,9 @@ export function AcpPanel() {
   const [turns, setTurns] = useState<ChatTurn[]>([]);
   const [notices, setNotices] = useState<SystemNotice[]>([]);
   const [busy, setBusy] = useState(false);
+  const busyRef = useRef(false);
+  const [promptQueue, setPromptQueue] = useState<QueuedPrompt[]>([]);
+  const promptQueueRef = useRef<QueuedPrompt[]>([]);
   const [progress, setProgress] = useState<string | null>(null);
   const [connectionState, setConnectionState] =
     useState<AcpConnectionState>("idle");
@@ -103,6 +132,18 @@ export function AcpPanel() {
   const prevConnectKeyRef = useRef<string | null>(null);
   const [pendingPermission, setPendingPermission] =
     useState<PendingPermission | null>(null);
+  const handledProposalIdsRef = useRef<Set<string>>(new Set());
+  const proposalTurnByIdRef = useRef<Map<string, string>>(new Map());
+  const proposeToolCallIdsRef = useRef<Set<string>>(new Set());
+  const proposalBindingsRef = useRef<ProposalBindings>(createProposalBindings());
+
+  const syncProposalBindings = () => {
+    proposalBindingsRef.current = {
+      handledProposalIds: handledProposalIdsRef.current,
+      proposalTurnById: proposalTurnByIdRef.current,
+    };
+  };
+  const [quickNoteOpen, setQuickNoteOpen] = useState(false);
   const [conversationId, setConversationId] = useState(
     () => `chat-${Date.now()}`,
   );
@@ -184,6 +225,12 @@ export function AcpPanel() {
         setNotices([]);
         setDraftEmpty();
         setHistoryInjectionActive(false);
+        promptQueueRef.current = [];
+        setPromptQueue([]);
+        handledProposalIdsRef.current.clear();
+        proposalTurnByIdRef.current.clear();
+        proposeToolCallIdsRef.current.clear();
+        proposalBindingsRef.current = createProposalBindings();
       }
       setProgress(null);
       setPendingPermission(null);
@@ -335,6 +382,84 @@ export function AcpPanel() {
     setConnectAttempt((attempt) => attempt + 1);
   };
 
+  const seedHandledProposals = (nextTurns: ChatTurn[]) => {
+    const bindings = seedProposalBindingsFromTurns(nextTurns);
+    handledProposalIdsRef.current = bindings.handledProposalIds;
+    proposalTurnByIdRef.current = bindings.proposalTurnById;
+    proposalBindingsRef.current = bindings;
+  };
+
+  const tryLoadAnnotationProposal = async (turnId: string) => {
+    if (!sessionCwd) return;
+    try {
+      const proposal = await loadLatestAnnotationProposal(sessionCwd);
+      if (!proposal) return;
+      syncProposalBindings();
+      if (
+        !canAttachProposalToTurn(
+          proposal.proposalId,
+          turnId,
+          proposalBindingsRef.current,
+        )
+      ) {
+        return;
+      }
+      attachProposalBinding(
+        proposal.proposalId,
+        turnId,
+        proposalBindingsRef.current,
+      );
+      handledProposalIdsRef.current =
+        proposalBindingsRef.current.handledProposalIds;
+      proposalTurnByIdRef.current =
+        proposalBindingsRef.current.proposalTurnById;
+      setTurns((prev) =>
+        applyAttachAnnotationProposal(prev, turnId, proposal),
+      );
+    } catch (error) {
+      pushSystem(errorMessage(error));
+    }
+  };
+
+  const clearTurnAnnotation = (turnId: string) => {
+    setTurns((prev) => applyClearTurnAnnotation(prev, turnId));
+  };
+
+  const handleDismissAnnotation = (turnId: string) => {
+    if (sessionCwd) {
+      void dismissAnnotationProposal(sessionCwd).catch((error) => {
+        pushSystem(errorMessage(error));
+      });
+    }
+    clearTurnAnnotation(turnId);
+  };
+
+  const handleSaveAnnotation = (turnId: string, proposalId?: string) => {
+    setTurns((prev) => applySaveAnnotation(prev, turnId, proposalId));
+    if (proposalId) {
+      syncProposalBindings();
+      attachProposalBinding(
+        proposalId,
+        turnId,
+        proposalBindingsRef.current,
+      );
+      handledProposalIdsRef.current =
+        proposalBindingsRef.current.handledProposalIds;
+      proposalTurnByIdRef.current =
+        proposalBindingsRef.current.proposalTurnById;
+    }
+    pushSystem("批注已写入笔记库");
+  };
+
+  useEffect(() => {
+    if (!sessionCwd) return;
+    const pendingTurn = [...turns]
+      .reverse()
+      .find((turn) => shouldRescanTurnForProposal(turn, turns));
+    if (!pendingTurn) return;
+    void tryLoadAnnotationProposal(pendingTurn.id);
+  }, [sessionCwd, turns]);
+
   const handleEvent = (
     event: AcpEvent,
     turnId: string,
@@ -374,12 +499,38 @@ export function AcpPanel() {
       case "agentThought":
       case "toolCall":
       case "toolCallUpdate":
-      case "plan":
-        setTurns((prev) =>
-          prev.map((t) =>
-            t.id === turnId ? applyAcpEventToTurn(t, event, level) : t,
-          ),
-        );
+      case "plan": {
+        if (event.type === "toolCall" && shouldTrackProposeToolCall(event)) {
+          proposeToolCallIdsRef.current.add(event.toolCallId);
+        }
+        let fetchProposal = false;
+        setTurns((prev) => {
+          const current = prev.find((turn) => turn.id === turnId);
+          const activities = current?.activities;
+          if (
+            event.type === "toolCallUpdate" &&
+            shouldFetchAnnotationProposal(event, {
+              trackedProposeToolCallIds: proposeToolCallIdsRef.current,
+              activities,
+            })
+          ) {
+            proposeToolCallIdsRef.current.delete(event.toolCallId);
+            fetchProposal = true;
+          }
+          const next = prev.map((turn) =>
+            turn.id === turnId ? applyAcpEventToTurn(turn, event, level) : turn,
+          );
+          if (event.type === "finished") {
+            const updated = next.find((turn) => turn.id === turnId);
+            if (updated && turnNeedsProposalFetch(updated)) {
+              fetchProposal = true;
+            }
+          }
+          return next;
+        });
+        if (fetchProposal) {
+          void tryLoadAnnotationProposal(turnId);
+        }
         if (event.type === "finished") {
           setProgress(null);
           void queryClient.invalidateQueries({ queryKey: ["acp-status"] });
@@ -389,7 +540,13 @@ export function AcpPanel() {
           void queryClient.invalidateQueries({ queryKey: ["acp-status"] });
         }
         break;
+      }
     }
+  };
+
+  const syncPromptQueue = (next: QueuedPrompt[]) => {
+    promptQueueRef.current = next;
+    setPromptQueue(next);
   };
 
   const runMutation = useMutation({
@@ -400,6 +557,7 @@ export function AcpPanel() {
       text: string;
       anchorPositionMs: number;
     }) => {
+      busyRef.current = true;
       setBusy(true);
       setProgress(null);
       setPendingPermission(null);
@@ -468,6 +626,7 @@ export function AcpPanel() {
       }
     },
     onSettled: () => {
+      busyRef.current = false;
       setBusy(false);
       setProgress(null);
       void queryClient.invalidateQueries({ queryKey: ["acp-status"] });
@@ -476,12 +635,71 @@ export function AcpPanel() {
     },
   });
 
+  const launchNextQueuedPrompt = () => {
+    if (busyRef.current || runMutation.isPending || newChatMutation.isPending) {
+      return;
+    }
+    if (!available || connectionState !== "connected") return;
+    const { next, rest } = dequeuePrompt(promptQueueRef.current);
+    if (!next) return;
+    syncPromptQueue(rest);
+    runMutation.mutate({
+      text: next.text,
+      anchorPositionMs: next.anchorPositionMs,
+    });
+  };
+
+  useEffect(() => {
+    if (busy || composerBusy) return;
+    if (!available || connectionState !== "connected") return;
+    if (promptQueue.length === 0) return;
+    launchNextQueuedPrompt();
+  }, [
+    available,
+    busy,
+    composerBusy,
+    connectionState,
+    promptQueue,
+  ]);
+
   const send = () => {
     const text = draft.trim();
-    if (!text || busy || !available || connectionState !== "connected") return;
+    if (!text || !available || connectionState !== "connected") return;
     const anchorPositionMs = consumeAnchorPositionMs();
+    if (busy || busyRef.current || runMutation.isPending) {
+      syncPromptQueue(
+        enqueuePrompt(
+          promptQueueRef.current,
+          createQueuedPrompt(text, anchorPositionMs),
+        ),
+      );
+      setDraft("");
+      return;
+    }
     setDraft("");
     runMutation.mutate({ text, anchorPositionMs });
+  };
+
+  const bargeIn = () => {
+    const text = draft.trim();
+    if (!text || !available || connectionState !== "connected") return;
+    if (!(busy || busyRef.current || runMutation.isPending)) {
+      send();
+      return;
+    }
+    const anchorPositionMs = consumeAnchorPositionMs();
+    syncPromptQueue(
+      bargeInPrompt(
+        promptQueueRef.current,
+        createQueuedPrompt(text, anchorPositionMs),
+      ),
+    );
+    setDraft("");
+    void acpCancel();
+  };
+
+  const cancelCurrentTurn = () => {
+    void acpCancel();
   };
 
   const startNewChat = () => {
@@ -499,9 +717,11 @@ export function AcpPanel() {
       setDraftEmpty();
       setProgress(null);
       setPendingPermission(null);
+      syncPromptQueue([]);
       clearSavedSession();
       return;
     }
+    syncPromptQueue([]);
     newChatMutation.mutate();
   };
 
@@ -510,6 +730,9 @@ export function AcpPanel() {
     if (!item) return;
     setConversationId(item.id);
     setActiveConversationId(item.id);
+    syncTurnIdSeq(idSeq, item.turns);
+    seedHandledProposals(item.turns);
+    syncPromptQueue([]);
     setTurns(item.turns);
     setNotices([]);
     setDraftEmpty();
@@ -556,7 +779,17 @@ export function AcpPanel() {
           busy={composerBusy}
           historyCount={scopedHistory.length}
           onNewChat={startNewChat}
-          onOpenHistory={() => setHistoryOpen((open) => !open)}
+          onOpenHistory={() => {
+            setQuickNoteOpen(false);
+            setHistoryOpen((open) => !open);
+          }}
+          quickNoteDisabled={!currentFile}
+          quickNoteOpen={quickNoteOpen}
+          onQuickNoteOpenChange={(open) => {
+            if (open) setHistoryOpen(false);
+            setQuickNoteOpen(open);
+          }}
+          onQuickNoteSaved={() => pushSystem("批注已保存")}
           onReconnect={handleReconnect}
         />
         <ChatHistorySheet
@@ -576,7 +809,13 @@ export function AcpPanel() {
         ref={turnListRef}
         className="chat-scroll min-h-0 flex-1 overflow-y-auto overscroll-y-contain"
       >
-        <ChatTurnList turns={turns} notices={notices} />
+        <ChatTurnList
+          turns={turns}
+          notices={notices}
+          annotationWorkspace={sessionCwd}
+          onDismissAnnotation={handleDismissAnnotation}
+          onSaveAnnotation={handleSaveAnnotation}
+        />
       </div>
 
       {pendingPermission ? (
@@ -611,10 +850,14 @@ export function AcpPanel() {
                   : "输入问题（Enter 发送，Shift+Enter 换行）"
         }
         onChange={onDraftChange}
+        queue={promptQueue}
         onSend={send}
-        onCancel={() => {
-          void acpCancel();
+        onBargeIn={bargeIn}
+        onCancel={cancelCurrentTurn}
+        onRemoveQueued={(id) => {
+          syncPromptQueue(removeQueuedPrompt(promptQueueRef.current, id));
         }}
+        onClearQueue={() => syncPromptQueue([])}
       />
 
       <AgentSettingsPanel

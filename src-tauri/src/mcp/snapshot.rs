@@ -58,6 +58,13 @@ pub struct AgentCapabilities {
     /// When false (default for main chat), subtitle workshop MCP tools are hidden.
     #[serde(default)]
     pub subtitle_workshop_enabled: bool,
+    /// When true (default for main chat), Agent may propose video annotations.
+    #[serde(default = "default_video_annotations_enabled")]
+    pub video_annotations_enabled: bool,
+}
+
+fn default_video_annotations_enabled() -> bool {
+    true
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -134,6 +141,7 @@ pub fn sync_snapshot_capabilities(path: &Path, vision_capable: bool) -> Result<(
     snapshot.capabilities = Some(AgentCapabilities {
         vision_capable,
         subtitle_workshop_enabled: false,
+        video_annotations_enabled: true,
     });
     snapshot.updated_at_ms = now_ms();
     write_snapshot(path, &snapshot)
@@ -217,6 +225,7 @@ mod tests {
             capabilities: Some(AgentCapabilities {
                 vision_capable: true,
                 subtitle_workshop_enabled: false,
+                video_annotations_enabled: true,
             }),
             updated_at_ms: 1,
         };
