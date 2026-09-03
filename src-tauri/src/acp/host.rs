@@ -589,10 +589,21 @@ mod tests {
             .terminal_wait_for_exit(&json!({ "terminalId": tid }))
             .expect("wait");
         assert!(wait.get("exitCode").and_then(Value::as_i64).is_some());
-        let out = host
-            .terminal_output(&json!({ "terminalId": tid }))
-            .expect("output");
-        let text = out.get("output").and_then(Value::as_str).unwrap_or("");
+        let mut text = String::new();
+        for _ in 0..20 {
+            let out = host
+                .terminal_output(&json!({ "terminalId": tid }))
+                .expect("output");
+            text = out
+                .get("output")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_string();
+            if text.contains("lumina-term") {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
         assert!(text.contains("lumina-term"), "got: {text}");
         host.terminal_release(&json!({ "terminalId": tid }))
             .expect("release");
