@@ -195,6 +195,13 @@ jobs:
 
           **冒烟**：安装后打开本地视频；Linux 需 X11 会话（Wayland 暂不支持原生视频面）。"
 
+          # 从 CHANGELOG.md 提取当前版本的变更说明
+          VERSION="${TAG#v}"
+          CHANGELOG_BODY=$(awk "/^## ${VERSION}[[:space:]]/{found=1; next} found && /^## /{exit} found{print}" CHANGELOG.md)
+          if [ -n "$CHANGELOG_BODY" ]; then
+            BODY="${CHANGELOG_BODY}"
+          fi
+
           # 确保 release 存在（首个平台创建，后续平台跳过）
           gh release view "$TAG" --repo "$REPO" >/dev/null 2>&1 || \
             gh release create "$TAG" --repo "$REPO" \

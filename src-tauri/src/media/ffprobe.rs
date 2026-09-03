@@ -1,12 +1,12 @@
 //! Resolve and run project-local ffprobe.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
 
 use crate::media::error::MediaError;
 use crate::media::model::{MediaChapter, MediaInfo, MediaStream, StreamKind};
-use crate::media::tools::resolve_ffprobe;
+use crate::media::tools::resolve_ffprobe_with;
 use crate::process_util::command;
 
 #[derive(Debug, Deserialize)]
@@ -58,12 +58,24 @@ struct ProbeChapter {
     tags: Option<ProbeTags>,
 }
 
-pub fn probe_file(path: &Path) -> Result<MediaInfo, MediaError> {
+/// 带 resource_dir 的版本，打包后调用。
+pub fn probe_file_with(
+    path: &Path,
+    resource_dir: Option<&PathBuf>,
+) -> Result<MediaInfo, MediaError> {
     if !path.is_file() {
         return Err(MediaError::file_not_found(&path.to_string_lossy()));
     }
 
-    let ffprobe = resolve_ffprobe()?;
+    let ffprobe = resolve_ffprobe_with(resource_dir)?;
+    run_probe(path, &ffprobe)
+}
+
+pub fn probe_file(path: &Path) -> Result<MediaInfo, MediaError> {
+    probe_file_with(path, None)
+}
+
+fn run_probe(path: &Path, ffprobe: &PathBuf) -> Result<MediaInfo, MediaError> {
     tracing::info!(
         ffprobe = %ffprobe.display(),
         path = %path.display(),

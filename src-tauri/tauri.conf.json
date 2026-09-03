@@ -25,7 +25,9 @@
     "active": true,
     "targets": "all",
     "resources": {
-      "native/mpv/runtime/": "mpv/"
+      "native/mpv/runtime/": "mpv/",
+      "native/ffmpeg/ffprobe.exe": "ffmpeg/ffprobe.exe",
+      "native/ffmpeg/ffmpeg.exe": "ffmpeg/ffmpeg.exe"
     },
     "icon": [
       "icons/32x32.png",
