@@ -89,7 +89,32 @@ jobs:
         run: |
           brew install mpv pkg-config
           mkdir -p src-tauri/native/mpv/runtime
-          cp "$(brew --prefix mpv)/lib/libmpv"*.dylib src-tauri/native/mpv/runtime/
+          # brew 的 libmpv*.dylib 多为指向 Cellar 的 symlink；tauri_build 打包资源时
+          # 跟随 symlink 可能 Permission denied。解引用成可读写实体文件。
+          python3 - <<'PY'
+          import os
+          import shutil
+          import subprocess
+          from pathlib import Path
+
+          prefix = subprocess.check_output(["brew", "--prefix", "mpv"], text=True).strip()
+          src = Path(prefix) / "lib"
+          dst = Path("src-tauri/native/mpv/runtime")
+          dst.mkdir(parents=True, exist_ok=True)
+          staged = False
+          for path in sorted(src.glob("libmpv*.dylib")):
+              target = path.resolve()
+              out = dst / path.name
+              if out.exists() or out.is_symlink():
+                  out.unlink()
+              shutil.copy2(target, out)
+              os.chmod(out, 0o755)
+              print(f"staged {out} <- {target} ({out.stat().st_size} bytes)")
+              staged = True
+          if not staged:
+              raise SystemExit(f"no libmpv*.dylib under {src}")
+          PY
+          ls -la src-tauri/native/mpv/runtime/
 
       - name: Install build deps (Linux)
         if: matrix.platform == 'linux'
@@ -105,9 +130,18 @@ jobs:
             patchelf
           mkdir -p src-tauri/native/mpv/runtime
           shopt -s nullglob
+          staged=0
           for lib in /usr/lib/x86_64-linux-gnu/libmpv.so*; do
-            cp "$lib" src-tauri/native/mpv/runtime/
+            # -L 解引用，避免把指向系统路径的 symlink 交给 tauri resources
+            cp -L "$lib" src-tauri/native/mpv/runtime/
+            chmod a+rX "src-tauri/native/mpv/runtime/$(basename "$lib")"
+            staged=1
           done
+          if [ "$staged" -ne 1 ]; then
+            echo "no libmpv.so* found under /usr/lib/x86_64-linux-gnu" >&2
+            exit 1
+          fi
+          ls -la src-tauri/native/mpv/runtime/
 
       - name: Install frontend dependencies
         run: bun install --frozen-lockfile
