@@ -45,3 +45,8 @@ windows = { version = "0.61", features = [
     "Win32_Storage_FileSystem",
     "Win32_UI_WindowsAndMessaging",
 ] }
+
+# objc `msg_send!` / `class!` 宏会展开 `cfg(feature = "cargo-clippy")`；
+# 必须在消费 crate 声明，否则 macOS 上 `clippy -D warnings` 会失败。
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(feature, values("cargo-clippy"))'] }

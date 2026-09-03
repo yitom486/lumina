@@ -1,10 +1,15 @@
 //! macOS NSView child surface for libmpv `wid`.
 
+// cocoa 已标 deprecated（建议迁 objc2）；当前 surface 路径仍依赖它。
+// objc 宏会展开 `cfg(feature = "cargo-clippy")`，由 Cargo.toml check-cfg 声明。
+#![allow(deprecated)]
+
 use std::sync::OnceLock;
 
 use cocoa::appkit::NSView;
 use cocoa::base::{id, nil, NO, YES};
 use cocoa::foundation::{NSPoint, NSRect, NSSize};
+#[allow(unused_imports)] // sel / sel_impl 供 msg_send! 宏展开使用
 use objc::{class, msg_send, sel, sel_impl};
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 use tauri::{AppHandle, WebviewWindow};
