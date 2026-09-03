@@ -167,7 +167,7 @@ jobs:
           cargo test --lib
           cargo clippy --all-targets -- -D warnings
 
-      - name: Build installers and upload to GitHub Release
+      - name: Build installers
         uses: tauri-apps/tauri-action@v0.6.2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -175,16 +175,49 @@ jobs:
           tauriScript: bun run tauri
           tagName: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
           releaseName: Lumina ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
-          releaseBody: |
-            私有预览发布。完整变更见仓库 [CHANGELOG.md](https://github.com/${{ github.repository }}/blob/master/CHANGELOG.md)。
-
-            **资产**
-            - Windows x64：MSI / NSIS
-            - macOS：DMG
-            - Linux x64：AppImage / deb
-
-            **冒烟**：安装后打开本地视频；Linux 需 X11 会话（Wayland 暂不支持原生视频面）。
-          releaseDraft: false
+          releaseBody: "internal"
+          releaseDraft: true
           prerelease: false
-          uploadWorkflowArtifacts: true
-          workflowArtifactNamePattern: Lumina-[platform]-[arch]-[bundle]
+
+      - name: Upload assets to public release repo
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_REPO_TOKEN }}
+        shell: bash
+        run: |
+          TAG="${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}"
+          REPO="yitom486/lumina-app"
+          BODY="Lumina ${TAG} 发布。
+
+          **安装包**
+          - Windows x64：MSI / NSIS
+          - macOS aarch64：DMG
+          - Linux x64：AppImage / deb
+
+          **冒烟**：安装后打开本地视频；Linux 需 X11 会话（Wayland 暂不支持原生视频面）。"
+
+          # 确保 release 存在（首个平台创建，后续平台跳过）
+          gh release view "$TAG" --repo "$REPO" >/dev/null 2>&1 || \
+            gh release create "$TAG" --repo "$REPO" \
+              --title "Lumina ${TAG}" \
+              --notes "$BODY"
+
+          # 收集 tauri-action 构建的安装包
+          shopt -s nullglob
+          FILES=(
+            src-tauri/target/release/bundle/nsis/*.exe
+            src-tauri/target/release/bundle/msi/*.msi
+            src-tauri/target/release/bundle/dmg/*.dmg
+            src-tauri/target/release/bundle/macos/*.tar.gz
+            src-tauri/target/release/bundle/appimage/*.AppImage
+            src-tauri/target/release/bundle/deb/*.deb
+          )
+
+          if [ ${#FILES[@]} -eq 0 ]; then
+            echo "::warning::No installer artifacts found for this platform"
+            exit 0
+          fi
+
+          for f in "${FILES[@]}"; do
+            echo "Uploading $(basename "$f") ..."
+            gh release upload "$TAG" "$f" --repo "$REPO" --clobber
+          done
