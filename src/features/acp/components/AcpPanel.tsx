@@ -123,6 +123,7 @@ export function AcpPanel() {
   const [notices, setNotices] = useState<SystemNotice[]>([]);
   const [busy, setBusy] = useState(false);
   const busyRef = useRef(false);
+  const drainLockRef = useRef(false);
   const [promptQueue, setPromptQueue] = useState<QueuedPrompt[]>([]);
   const promptQueueRef = useRef<QueuedPrompt[]>([]);
   const [progress, setProgress] = useState<string | null>(null);
@@ -627,6 +628,7 @@ export function AcpPanel() {
     },
     onSettled: () => {
       busyRef.current = false;
+      drainLockRef.current = false;
       setBusy(false);
       setProgress(null);
       void queryClient.invalidateQueries({ queryKey: ["acp-status"] });
@@ -636,12 +638,19 @@ export function AcpPanel() {
   });
 
   const launchNextQueuedPrompt = () => {
-    if (busyRef.current || runMutation.isPending || newChatMutation.isPending) {
+    if (
+      drainLockRef.current ||
+      busyRef.current ||
+      runMutation.isPending ||
+      newChatMutation.isPending
+    ) {
       return;
     }
     if (!available || connectionState !== "connected") return;
     const { next, rest } = dequeuePrompt(promptQueueRef.current);
     if (!next) return;
+    drainLockRef.current = true;
+    busyRef.current = true;
     syncPromptQueue(rest);
     runMutation.mutate({
       text: next.text,
@@ -699,7 +708,11 @@ export function AcpPanel() {
   };
 
   const cancelCurrentTurn = () => {
+    const queued = promptQueueRef.current.length;
     void acpCancel();
+    if (queued > 0) {
+      pushSystem(`已取消当前回合，将继续发送排队中的 ${queued} 条`);
+    }
   };
 
   const startNewChat = () => {
@@ -755,8 +768,12 @@ export function AcpPanel() {
   const statusLine = statusQuery.isLoading
     ? null
     : busy
-      ? "回合进行中…"
-      : connectionState === "connected" && sessionCwd
+      ? promptQueue.length > 0
+        ? `回合进行中…（已排队 ${promptQueue.length} 条）`
+        : "回合进行中…"
+      : promptQueue.length > 0
+        ? `排队 ${promptQueue.length} 条，即将发送…`
+        : connectionState === "connected" && sessionCwd
         ? `工作目录：${sessionCwd}`
         : connectionState === "connecting"
           ? null

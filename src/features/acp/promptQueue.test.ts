@@ -40,8 +40,10 @@ describe("promptQueue", () => {
 
   it("previews long queued text", () => {
     expect(previewQueuedText("短")).toBe("短");
-    expect(previewQueuedText("这是一段很长很长很长很长很长的排队文本")).toContain(
-      "…",
-    );
+    expect(
+      previewQueuedText(
+        "这是一段用来测试排队预览截断的很长很长很长很长很长很长的文本内容",
+      ),
+    ).toContain("…");
   });
 });
