@@ -82,7 +82,7 @@ fn run_probe(path: &Path, ffprobe: &PathBuf) -> Result<MediaInfo, MediaError> {
         "running ffprobe"
     );
 
-    let output = command(&ffprobe)
+    let output = command(ffprobe)
         .args([
             "-v",
             "error",
