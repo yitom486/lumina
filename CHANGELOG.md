@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.2.6 — 修复版
+
+### 修复
+
+- **媒体分析组件未就绪**：将 `ffprobe.exe` / `ffmpeg` 打入安装包 resources，修复安装后「媒体分析组件未就绪」提示；路径查找优先 Tauri resource_dir，兼顾 Windows、macOS `.app` bundle 与 Linux。
+- **发布仓库分离**：安装包自动上传至公开仓库 [lumina-app](https://github.com/yitom486/lumina-app/releases)，源码保持私有。
+
 ## 0.2.5 — Private Preview
 
 ### MCP / ACP

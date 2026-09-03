@@ -7,10 +7,7 @@ use tauri::{AppHandle, Manager};
 use crate::media::{list_sibling_videos, MediaError, MediaInfo, MediaInspector};
 
 #[tauri::command]
-pub async fn media_inspect(
-    app: AppHandle,
-    path: String,
-) -> Result<MediaInfo, MediaError> {
+pub async fn media_inspect(app: AppHandle, path: String) -> Result<MediaInfo, MediaError> {
     let resource_dir: Option<PathBuf> = app.path().resource_dir().ok();
     tauri::async_runtime::spawn_blocking(move || {
         MediaInspector::inspect_with(path, resource_dir.as_ref())
