@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::library::error::LibraryError;
 
+#[cfg(windows)]
 const SERVICE_NAME: &str = "com.lumina.desktop.media-metadata";
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -19,6 +20,7 @@ pub enum CredentialKind {
 }
 
 impl CredentialKind {
+    #[cfg_attr(not(windows), allow(dead_code))]
     fn account_name(self) -> &'static str {
         match self {
             Self::ModelApiKey => "model-api-key",

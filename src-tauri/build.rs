@@ -92,11 +92,26 @@ fn link_with_search_path(dir: &Path) {
 
 fn stage_runtime_dir(source_dir: &Path, file: &Path) {
     let runtime_dir = source_dir.join("runtime");
+    let Some(name) = file.file_name() else {
+        return;
+    };
+    let dest = runtime_dir.join(name);
+    // Already living in runtime/ (common on macOS/Linux CI after brew copy).
+    if same_path(file, &dest) {
+        return;
+    }
     let _ = fs::create_dir_all(&runtime_dir);
-    stage_file(
-        file,
-        &runtime_dir.join(file.file_name().unwrap_or_default()),
-    );
+    stage_file(file, &dest);
+}
+
+fn same_path(left: &Path, right: &Path) -> bool {
+    if left == right {
+        return true;
+    }
+    match (fs::canonicalize(left), fs::canonicalize(right)) {
+        (Ok(a), Ok(b)) => a == b,
+        _ => false,
+    }
 }
 
 fn profile_dir() -> PathBuf {
@@ -130,7 +145,7 @@ fn find_file(dir: &Path, expected_name: &str) -> Option<PathBuf> {
 }
 
 fn stage_file(src: &Path, dest: &Path) {
-    if !src.is_file() {
+    if !src.is_file() || same_path(src, dest) {
         return;
     }
     if dest.exists() {
@@ -148,15 +163,15 @@ fn stage_file(src: &Path, dest: &Path) {
         }
     }
 
-    let _ = fs::remove_file(dest);
-    if fs::hard_link(src, dest).is_ok() {
-        return;
-    }
-    if let Err(error) = fs::copy(src, dest) {
-        println!(
-            "cargo:warning=failed to copy {} to {}: {error}",
-            src.display(),
-            dest.display()
-        );
+    // Prefer copy over hard_link: CI dylibs may be read-only or cross-device.
+    match fs::copy(src, dest) {
+        Ok(_) => {}
+        Err(error) => {
+            println!(
+                "cargo:warning=failed to copy {} to {}: {error}",
+                src.display(),
+                dest.display()
+            );
+        }
     }
 }

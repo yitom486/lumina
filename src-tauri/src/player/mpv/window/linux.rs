@@ -1,7 +1,5 @@
 //! Linux X11 child window for libmpv `wid`.
 
-use std::ffi::CString;
-use std::ptr;
 use std::sync::OnceLock;
 
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle, RawDisplayHandle, RawWindowHandle};

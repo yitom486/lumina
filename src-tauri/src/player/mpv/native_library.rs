@@ -112,7 +112,7 @@ mod unix {
     use tauri::AppHandle;
     use tauri::Manager;
 
-    use crate::player::error::{PlayerError, PlayerErrorCode};
+    use crate::player::error::PlayerError;
 
     pub fn libmpv_candidates(app: &AppHandle) -> Vec<PathBuf> {
         let mut candidates = Vec::new();
