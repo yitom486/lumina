@@ -1,0 +1,9 @@
+{
+  "bundle": {
+    "resources": {
+      "native/mpv/runtime/": "mpv/",
+      "native/ffmpeg/ffprobe.exe": "ffmpeg/ffprobe.exe",
+      "native/ffmpeg/ffmpeg.exe": "ffmpeg/ffmpeg.exe"
+    }
+  }
+}

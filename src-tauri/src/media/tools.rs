@@ -58,7 +58,7 @@ fn tool_candidates(
 
     if let Ok(exe) = std::env::current_exe() {
         if let Some(dir) = exe.parent() {
-            // 2. Windows/Linux 安装后：exe 同目录或 ffmpeg/ 子目录
+            // 2. Windows 安装后：exe 同目录或 ffmpeg/ 子目录
             paths.push(dir.join(windows_name));
             paths.push(dir.join(unix_name));
             paths.push(dir.join("ffmpeg").join(windows_name));
@@ -72,5 +72,11 @@ fn tool_candidates(
             }
         }
     }
+
+    // 4. macOS/Linux：系统 PATH（brew / apt 安装的 ffmpeg）
+    if let Ok(p) = which::which(unix_name) {
+        paths.push(p);
+    }
+
     paths
 }

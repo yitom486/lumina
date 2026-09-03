@@ -25,6 +25,7 @@ zip = { version = "2", default-features = false, features = ["deflate"] }
 url = "2"
 libmpv2 = "6"
 libloading = "0.8"
+which = "7"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 raw-window-handle = "0.6"
