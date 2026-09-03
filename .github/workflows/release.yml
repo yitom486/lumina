@@ -92,6 +92,32 @@ jobs:
           New-Item -ItemType Directory -Force -Path $runtimeDir | Out-Null
           Copy-Item "$mpvDir/libmpv-2.dll" "$runtimeDir/libmpv-2.dll" -Force
 
+      - name: Install ffmpeg (Windows)
+        if: matrix.platform == 'windows'
+        shell: pwsh
+        run: |
+          $ffmpegDir = 'src-tauri/native/ffmpeg'
+          $metadata = @{}
+          Get-Content "$ffmpegDir/VERSION" | ForEach-Object {
+            if ($_ -match '^([^=]+)=(.*)$') { $metadata[$matches[1]] = $matches[2] }
+          }
+          if (-not (Test-Path "$ffmpegDir/ffprobe.exe") -or -not (Test-Path "$ffmpegDir/ffmpeg.exe")) {
+            $archive = Join-Path $env:RUNNER_TEMP 'ffmpeg-essentials.zip'
+            $extractDir = Join-Path $env:RUNNER_TEMP 'lumina-ffmpeg-extract'
+            curl.exe -L --fail --retry 3 -o $archive $metadata['url']
+            New-Item -ItemType Directory -Force -Path $extractDir | Out-Null
+            tar.exe -xf $archive -C $extractDir
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            $ffprobe = Get-ChildItem -Path $extractDir -Recurse -Filter 'ffprobe.exe' -File | Select-Object -First 1
+            $ffmpeg = Get-ChildItem -Path $extractDir -Recurse -Filter 'ffmpeg.exe' -File | Select-Object -First 1
+            if ($null -eq $ffprobe -or $null -eq $ffmpeg) {
+              throw 'The ffmpeg archive did not contain ffprobe.exe / ffmpeg.exe.'
+            }
+            Copy-Item $ffprobe.FullName "$ffmpegDir/ffprobe.exe" -Force
+            Copy-Item $ffmpeg.FullName "$ffmpegDir/ffmpeg.exe" -Force
+          }
+          Get-ChildItem $ffmpegDir -Filter '*.exe' | ForEach-Object { "{0} {1}" -f $_.Name, $_.Length }
+
       - name: Install libmpv (macOS)
         if: matrix.platform == 'macos'
         run: |
