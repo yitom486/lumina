@@ -13,7 +13,9 @@ use crate::library::{
     episode_index_for_group, load_context_at_root, load_context_for_group, load_library_index,
     resolve_episode_media_file, resolve_media_in_index, series_cache_from_context,
 };
-use crate::mcp::snapshot::{ephemeral_tmp_dir, resolve_snapshot_path, LuminaMcpSnapshot, PromptAnchor};
+use crate::mcp::snapshot::{
+    ephemeral_tmp_dir, resolve_snapshot_path, LuminaMcpSnapshot, PromptAnchor,
+};
 use crate::media::frame_capture::{capture_frames, sample_times_for_window, MAX_CAPTURE_SPAN_SEC};
 use crate::notes::proposal::{build_proposal, save_latest_proposal};
 use crate::subtitle::model::Cue;
@@ -230,10 +232,7 @@ fn subtitle_cues(snapshot: &LuminaMcpSnapshot, args: &Value) -> Result<Value, St
     let anchor = require_anchor(snapshot)?;
     let choice_id = resolve_subtitle_choice_id(args, anchor)?;
     let media_path = PathBuf::from(&anchor.media_path);
-    let offset = args
-        .get("offset")
-        .and_then(Value::as_u64)
-        .unwrap_or(0) as usize;
+    let offset = args.get("offset").and_then(Value::as_u64).unwrap_or(0) as usize;
     let limit = args
         .get("limit")
         .and_then(Value::as_u64)
@@ -327,8 +326,8 @@ fn propose_video_annotation(snapshot: &LuminaMcpSnapshot, args: &Value) -> Resul
 }
 
 fn workspace_from_snapshot_path() -> Result<PathBuf, String> {
-    let snapshot_path = resolve_snapshot_path()
-        .ok_or_else(|| "无法定位 Agent 工作目录".to_string())?;
+    let snapshot_path =
+        resolve_snapshot_path().ok_or_else(|| "无法定位 Agent 工作目录".to_string())?;
     snapshot_path
         .parent()
         .and_then(|path| path.parent())
@@ -549,11 +548,7 @@ fn snapshot_duration_ms(snapshot: &LuminaMcpSnapshot) -> Option<u64> {
 
 /// Shared time center for transcript + capture tools. Defaults to `default_center_ms`
 /// (usually the frozen prompt anchor) unless `centerMs` / `atSec` is provided.
-fn parse_time_center_ms(
-    args: &Value,
-    default_center_ms: u64,
-    duration_ms: Option<u64>,
-) -> u64 {
+fn parse_time_center_ms(args: &Value, default_center_ms: u64, duration_ms: Option<u64>) -> u64 {
     let center = if let Some(ms) = args.get("centerMs").and_then(Value::as_u64) {
         ms
     } else if let Some(sec) = args.get("atSec").and_then(Value::as_u64) {
@@ -681,11 +676,7 @@ mod tests {
     #[test]
     fn parse_time_center_prefers_center_ms_over_at_sec() {
         assert_eq!(
-            parse_time_center_ms(
-                &json!({ "centerMs": 60_000, "atSec": 120 }),
-                125_000,
-                None,
-            ),
+            parse_time_center_ms(&json!({ "centerMs": 60_000, "atSec": 120 }), 125_000, None,),
             60_000
         );
     }

@@ -38,9 +38,7 @@ pub fn status() -> AsrStatus {
             AsrStatus {
                 available: true,
                 cli_path: Some(cli.to_string_lossy().to_string()),
-                model_path: default
-                    .as_ref()
-                    .map(|p| p.to_string_lossy().to_string()),
+                model_path: default.as_ref().map(|p| p.to_string_lossy().to_string()),
                 models,
                 catalog,
                 cli_ready,
@@ -136,7 +134,9 @@ pub fn resolve_catalog_model(model_id: &str) -> Result<&'static CatalogDef, AsrE
             return Ok(def);
         }
     }
-    Err(AsrError::invalid("不支持的转写模型，请选择 Tiny / Base / Small"))
+    Err(AsrError::invalid(
+        "不支持的转写模型，请选择 Tiny / Base / Small",
+    ))
 }
 
 const CATALOG: &[CatalogDef] = &[
@@ -208,7 +208,9 @@ fn pick_model(models: &[AsrModelInfo], model_id: Option<&str>) -> Result<PathBuf
             .find(|m| {
                 m.id.eq_ignore_ascii_case(id)
                     || m.path == id
-                    || m.id.to_ascii_lowercase().contains(&format!("ggml-{key_stem}"))
+                    || m.id
+                        .to_ascii_lowercase()
+                        .contains(&format!("ggml-{key_stem}"))
             })
             .map(|m| PathBuf::from(&m.path))
             .ok_or_else(|| AsrError::invalid("找不到所选转写模型"));
@@ -362,10 +364,10 @@ mod tests {
 
     #[test]
     fn resolve_catalog_accepts_aliases() {
-        assert_eq!(resolve_catalog_model("base").unwrap().file_name, "ggml-base.bin");
         assert_eq!(
-            resolve_catalog_model("ggml-tiny.bin").unwrap().id,
-            "tiny"
+            resolve_catalog_model("base").unwrap().file_name,
+            "ggml-base.bin"
         );
+        assert_eq!(resolve_catalog_model("ggml-tiny.bin").unwrap().id, "tiny");
     }
 }

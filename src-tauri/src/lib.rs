@@ -73,8 +73,7 @@ use commands::player::{
     player_stop, player_subscribe,
 };
 use commands::subtitle::{
-    subtitle_export_sidecar, subtitle_list_choices, subtitle_load_choice,
-    subtitle_translate_track,
+    subtitle_export_sidecar, subtitle_list_choices, subtitle_load_choice, subtitle_translate_track,
 };
 use player::mpv::window::{parent_handle_from_webview, register_surface_app, VideoSurface};
 use state::AppState;

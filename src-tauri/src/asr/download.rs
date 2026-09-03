@@ -36,17 +36,11 @@ where
         AsrError::download_failed(Some(&format!("create install root: {error}")))
     })?;
     let models_dir = models_install_dir();
-    fs::create_dir_all(&models_dir).map_err(|error| {
-        AsrError::download_failed(Some(&format!("create models dir: {error}")))
-    })?;
+    fs::create_dir_all(&models_dir)
+        .map_err(|error| AsrError::download_failed(Some(&format!("create models dir: {error}"))))?;
 
     if find_cli_any().is_none() {
-        on_event(progress(
-            "download_cli",
-            "正在下载转写引擎…",
-            None,
-            None,
-        ));
+        on_event(progress("download_cli", "正在下载转写引擎…", None, None));
         download_and_extract_cli(&root, &mut on_event)?;
         if find_cli_any().is_none() {
             return Err(AsrError::download_failed(Some(
@@ -63,7 +57,11 @@ where
     }
 
     let model_path = models_dir.join(catalog.file_name);
-    if model_path.is_file() && model_path.metadata().map(|m| m.len() > 1_000_000).unwrap_or(false)
+    if model_path.is_file()
+        && model_path
+            .metadata()
+            .map(|m| m.len() > 1_000_000)
+            .unwrap_or(false)
     {
         on_event(progress(
             "download_model",
@@ -136,15 +134,12 @@ where
     F: FnMut(AsrInstallEvent),
 {
     if let Some(parent) = dest.parent() {
-        fs::create_dir_all(parent).map_err(|error| {
-            AsrError::download_failed(Some(&format!("create parent: {error}")))
-        })?;
+        fs::create_dir_all(parent)
+            .map_err(|error| AsrError::download_failed(Some(&format!("create parent: {error}"))))?;
     }
     let partial = dest.with_extension(format!(
         "{}.partial",
-        dest.extension()
-            .and_then(|e| e.to_str())
-            .unwrap_or("bin")
+        dest.extension().and_then(|e| e.to_str()).unwrap_or("bin")
     ));
     // Prefer "*.partial" beside final name when extension rewrite is awkward.
     let partial = if dest.extension().is_some() {
@@ -191,19 +186,16 @@ where
     let mut received = 0_u64;
     let mut last_emit = 0_u64;
     loop {
-        let n = reader.read(&mut buf).map_err(|error| {
-            AsrError::download_failed(Some(&format!("read body: {error}")))
-        })?;
+        let n = reader
+            .read(&mut buf)
+            .map_err(|error| AsrError::download_failed(Some(&format!("read body: {error}"))))?;
         if n == 0 {
             break;
         }
         file.write_all(&buf[..n])
             .map_err(|error| AsrError::download_failed(Some(&format!("write: {error}"))))?;
         received += n as u64;
-        if received == n as u64
-            || received - last_emit >= 2 * 1024 * 1024
-            || received >= total
-        {
+        if received == n as u64 || received - last_emit >= 2 * 1024 * 1024 || received >= total {
             last_emit = received;
             let pct = if total > 0 {
                 ((received.min(total) as f64 / total as f64) * 100.0).round() as u64
@@ -241,17 +233,15 @@ where
 }
 
 fn extract_cli_zip(zip_path: &Path, root: &Path) -> Result<(), AsrError> {
-    let file = File::open(zip_path).map_err(|error| {
-        AsrError::download_failed(Some(&format!("open zip: {error}")))
-    })?;
-    let mut archive = ZipArchive::new(file).map_err(|error| {
-        AsrError::download_failed(Some(&format!("read zip: {error}")))
-    })?;
+    let file = File::open(zip_path)
+        .map_err(|error| AsrError::download_failed(Some(&format!("open zip: {error}"))))?;
+    let mut archive = ZipArchive::new(file)
+        .map_err(|error| AsrError::download_failed(Some(&format!("read zip: {error}"))))?;
 
     for i in 0..archive.len() {
-        let mut entry = archive.by_index(i).map_err(|error| {
-            AsrError::download_failed(Some(&format!("zip entry: {error}")))
-        })?;
+        let mut entry = archive
+            .by_index(i)
+            .map_err(|error| AsrError::download_failed(Some(&format!("zip entry: {error}"))))?;
         let name = entry.name().replace('\\', "/");
         if name.ends_with('/') {
             continue;

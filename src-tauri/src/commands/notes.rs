@@ -19,7 +19,10 @@ where
     work(&state.notes)
 }
 
-fn resolve_headings(app: &AppHandle, media_path: &str) -> Result<crate::notes::NotesExportHeadings, NoteError> {
+fn resolve_headings(
+    app: &AppHandle,
+    media_path: &str,
+) -> Result<crate::notes::NotesExportHeadings, NoteError> {
     let Some(state) = app.try_state::<AppState>() else {
         return Err(NoteError::internal(Some("app state unavailable")));
     };
@@ -97,7 +100,9 @@ pub async fn notes_export_markdown(
 ) -> Result<String, NoteError> {
     let headings = resolve_headings(&app, &media_path)?;
     tauri::async_runtime::spawn_blocking(move || {
-        with_notes(app, move |notes| notes.export_markdown(&media_path, &headings))
+        with_notes(app, move |notes| {
+            notes.export_markdown(&media_path, &headings)
+        })
     })
     .await
     .map_err(|error| NoteError::internal(Some(&format!("notes export join: {error}"))))?
@@ -112,11 +117,7 @@ pub async fn notes_export_markdown_to_file(
     let headings = resolve_headings(&app, &media_path)?;
     tauri::async_runtime::spawn_blocking(move || {
         with_notes(app, move |notes| {
-            notes.export_markdown_to_file(
-                &media_path,
-                std::path::Path::new(&dest_path),
-                &headings,
-            )
+            notes.export_markdown_to_file(&media_path, std::path::Path::new(&dest_path), &headings)
         })
     })
     .await

@@ -313,9 +313,7 @@ pub fn resolve_episode_media_file<'a>(
                 && file.season == Some(season)
                 && file.episode == Some(episode)
         })
-        .ok_or_else(|| {
-            LibraryError::group_not_found(Some(&format!("S{season:02}E{episode:02}")))
-        })
+        .ok_or_else(|| LibraryError::group_not_found(Some(&format!("S{season:02}E{episode:02}"))))
 }
 
 pub fn resolve_media_in_index<'a>(

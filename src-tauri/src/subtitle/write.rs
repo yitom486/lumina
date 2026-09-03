@@ -83,9 +83,9 @@ pub fn normalize_lang_token(token: &str) -> Result<String, SubtitleError> {
 
 pub fn sidecar_path(media_path: &Path, lang_token: &str) -> Result<PathBuf, SubtitleError> {
     let token = normalize_lang_token(lang_token)?;
-    let parent = media_path.parent().ok_or_else(|| {
-        SubtitleError::export_failed(Some("media path has no parent directory"))
-    })?;
+    let parent = media_path
+        .parent()
+        .ok_or_else(|| SubtitleError::export_failed(Some("media path has no parent directory")))?;
     let stem = media_path
         .file_stem()
         .and_then(|s| s.to_str())

@@ -24,10 +24,7 @@ pub fn resolve_quotes(input: QuoteResolveInput<'_>) -> Vec<NoteQuote> {
         return Vec::new();
     }
 
-    if let Some(indices) = input
-        .quote_cue_indices
-        .filter(|items| !items.is_empty())
-    {
+    if let Some(indices) = input.quote_cue_indices.filter(|items| !items.is_empty()) {
         return collect_manual(cues, indices, input.anchor_cue_index);
     }
 
@@ -238,9 +235,7 @@ fn levenshtein(a: &[char], b: &[char]) -> usize {
         curr[0] = i + 1;
         for (j, cb) in b.iter().enumerate() {
             let cost = if ca == cb { 0 } else { 1 };
-            curr[j + 1] = (prev[j + 1] + 1)
-                .min(curr[j] + 1)
-                .min(prev[j] + cost);
+            curr[j + 1] = (prev[j + 1] + 1).min(curr[j] + 1).min(prev[j] + cost);
         }
         std::mem::swap(&mut prev, &mut curr);
     }
@@ -474,7 +469,9 @@ mod tests {
             quote_cue_indices: None,
             quote_hint: Some("东晚哥在开玩笑。\n转变开始。\n然后离开。"),
         });
-        assert!(quotes.iter().any(|q| q.anchor && q.text.contains("转变开始")));
+        assert!(quotes
+            .iter()
+            .any(|q| q.anchor && q.text.contains("转变开始")));
     }
 
     #[test]

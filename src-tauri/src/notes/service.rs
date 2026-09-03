@@ -7,7 +7,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use crate::notes::error::NoteError;
 use crate::notes::headings::NotesExportHeadings;
 use crate::notes::model::{Note, NoteCreate, NotePreviewQuotes, NoteQuote, NoteUpdate};
-use crate::notes::quotes::{QuoteResolveInput, resolve_quotes};
+use crate::notes::quotes::{resolve_quotes, QuoteResolveInput};
 use crate::notes::store::{self, default_store_path};
 use crate::subtitle::service::SubtitleService;
 
@@ -171,7 +171,11 @@ impl NoteService {
                 for (index, quote) in note.quotes.iter().enumerate() {
                     let text = quote.text.replace('\n', " ");
                     // Trailing two spaces = hard line break inside one blockquote paragraph.
-                    let line_break = if index + 1 < quote_count { "  \n" } else { "\n" };
+                    let line_break = if index + 1 < quote_count {
+                        "  \n"
+                    } else {
+                        "\n"
+                    };
                     let line = if quote.anchor {
                         format!("> **{text}**{line_break}")
                     } else {
@@ -360,19 +364,22 @@ mod tests {
             media_path: r"D:\movie\ShowName\clip.mkv".into(),
             position_ms: 90_000,
             body: "这段很打动我".into(),
-            quotes: vec![NoteQuote {
-                index: 2,
-                start_ms: 88_000,
-                end_ms: 89_000,
-                text: "前一句".into(),
-                anchor: false,
-            }, NoteQuote {
-                index: 3,
-                start_ms: 89_000,
-                end_ms: 90_000,
-                text: "锚点句".into(),
-                anchor: true,
-            }],
+            quotes: vec![
+                NoteQuote {
+                    index: 2,
+                    start_ms: 88_000,
+                    end_ms: 89_000,
+                    text: "前一句".into(),
+                    anchor: false,
+                },
+                NoteQuote {
+                    index: 3,
+                    start_ms: 89_000,
+                    end_ms: 90_000,
+                    text: "锚点句".into(),
+                    anchor: true,
+                },
+            ],
             created_at: "1".into(),
             updated_at: "1".into(),
         });

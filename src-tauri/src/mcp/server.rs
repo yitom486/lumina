@@ -5,7 +5,9 @@ use std::io::{self, BufRead, Write};
 use serde_json::{json, Value};
 
 use super::snapshot::{read_snapshot, resolve_snapshot_path, LuminaMcpSnapshot};
-use super::tools::{handle_tool_call, subtitle_workshop_enabled, video_annotations_enabled, vision_capable};
+use super::tools::{
+    handle_tool_call, subtitle_workshop_enabled, video_annotations_enabled, vision_capable,
+};
 
 const PROTOCOL_VERSION: &str = "2024-11-05";
 

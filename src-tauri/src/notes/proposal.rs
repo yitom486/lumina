@@ -7,7 +7,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use serde::{Deserialize, Serialize};
 
 use crate::notes::model::NoteQuote;
-use crate::notes::quotes::{QuoteResolveInput, resolve_quotes};
+use crate::notes::quotes::{resolve_quotes, QuoteResolveInput};
 use crate::subtitle::SubtitleService;
 
 pub const LATEST_PROPOSAL_FILE: &str = "latest-annotation-proposal.json";
@@ -43,12 +43,19 @@ pub fn proposal_path(workspace: &Path) -> PathBuf {
 
 fn resolve_workspace_dir(workspace: &Path) -> PathBuf {
     if workspace.is_dir() {
-        return workspace.canonicalize().unwrap_or_else(|_| workspace.to_path_buf());
+        return workspace
+            .canonicalize()
+            .unwrap_or_else(|_| workspace.to_path_buf());
     }
-    workspace.canonicalize().unwrap_or_else(|_| workspace.to_path_buf())
+    workspace
+        .canonicalize()
+        .unwrap_or_else(|_| workspace.to_path_buf())
 }
 
-pub fn save_latest_proposal(workspace: &Path, proposal: &VideoAnnotationProposal) -> Result<(), String> {
+pub fn save_latest_proposal(
+    workspace: &Path,
+    proposal: &VideoAnnotationProposal,
+) -> Result<(), String> {
     let workspace = resolve_workspace_dir(workspace);
     let path = proposal_path(&workspace);
     if let Some(parent) = path.parent() {
@@ -66,7 +73,8 @@ pub fn load_latest_proposal(workspace: &Path) -> Result<Option<VideoAnnotationPr
         return Ok(None);
     }
     let raw = fs::read_to_string(&path).map_err(|error| format!("read proposal: {error}"))?;
-    let proposal = serde_json::from_str(&raw).map_err(|error| format!("parse proposal: {error}"))?;
+    let proposal =
+        serde_json::from_str(&raw).map_err(|error| format!("parse proposal: {error}"))?;
     Ok(Some(proposal))
 }
 
@@ -138,10 +146,8 @@ fn resolve_proposal_quotes(
     let Some(choice_id) = subtitle_choice_id.filter(|id| !id.trim().is_empty()) else {
         return Vec::new();
     };
-    let transcript = match SubtitleService::load_choice(
-        std::path::Path::new(media_path),
-        choice_id,
-    ) {
+    let transcript = match SubtitleService::load_choice(std::path::Path::new(media_path), choice_id)
+    {
         Ok(transcript) => transcript,
         Err(error) => {
             tracing::warn!(%error, "failed to load subtitle for annotation proposal");
@@ -164,7 +170,11 @@ pub fn render_proposal_preview(body: &str, position_ms: u64, quotes: &[NoteQuote
         out.push_str("\n**引用台词**\n\n");
         let quote_count = quotes.len();
         for (index, quote) in quotes.iter().enumerate() {
-            let line_break = if index + 1 < quote_count { "  \n" } else { "\n" };
+            let line_break = if index + 1 < quote_count {
+                "  \n"
+            } else {
+                "\n"
+            };
             let line = if quote.anchor {
                 format!("> **{}**{line_break}", quote.text.replace('\n', " "))
             } else {
@@ -234,10 +244,7 @@ mod tests {
 
     #[test]
     fn roundtrip_latest_proposal_file() {
-        let dir = std::env::temp_dir().join(format!(
-            "lumina-proposal-test-{}",
-            std::process::id()
-        ));
+        let dir = std::env::temp_dir().join(format!("lumina-proposal-test-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).expect("dir");
         let proposal = VideoAnnotationProposal {
@@ -261,9 +268,7 @@ mod tests {
             created_at_ms: 1,
         };
         save_latest_proposal(&dir, &proposal).expect("save");
-        let loaded = load_latest_proposal(&dir)
-            .expect("load")
-            .expect("some");
+        let loaded = load_latest_proposal(&dir).expect("load").expect("some");
         assert_eq!(loaded, proposal);
         dismiss_latest_proposal(&dir).expect("dismiss");
         assert!(load_latest_proposal(&dir).expect("load").is_none());

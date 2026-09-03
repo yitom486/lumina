@@ -50,15 +50,7 @@ pub fn extract_wav_16k_mono(
     } else {
         cmd.arg("-i").arg(media_path);
     }
-    cmd.args([
-        "-vn",
-        "-ac",
-        "1",
-        "-ar",
-        "16000",
-        "-c:a",
-        "pcm_s16le",
-    ]);
+    cmd.args(["-vn", "-ac", "1", "-ar", "16000", "-c:a", "pcm_s16le"]);
     cmd.arg(out_wav);
 
     let output = cmd.output().map_err(|error| {
