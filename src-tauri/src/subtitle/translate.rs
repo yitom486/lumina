@@ -25,6 +25,7 @@ struct TranslatedBatch {
     cues: Vec<TranslatedCueText>,
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn translate_and_export_track(
     media_path: &str,
     choice_id: &str,

@@ -87,6 +87,7 @@ pub fn dismiss_latest_proposal(workspace: &Path) -> Result<(), String> {
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn build_proposal(
     media_path: &str,
     position_ms: u64,

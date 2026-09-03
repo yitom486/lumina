@@ -9,7 +9,7 @@ use zip::ZipArchive;
 use crate::asr::error::AsrError;
 use crate::asr::model::{AsrInstallEvent, AsrStatus};
 use crate::asr::paths::{
-    self, find_cli_any, install_root, install_supported, models_install_dir, resolve_catalog_model,
+    find_cli_any, install_root, install_supported, models_install_dir, resolve_catalog_model,
     status,
 };
 
@@ -284,6 +284,8 @@ mod tests {
     #[test]
     fn catalog_resolve_used_by_install_guard() {
         assert!(resolve_catalog_model("base").is_ok());
-        assert!(paths::install_root().to_string_lossy().contains("whisper"));
+        assert!(crate::asr::paths::install_root()
+            .to_string_lossy()
+            .contains("whisper"));
     }
 }

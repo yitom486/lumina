@@ -391,7 +391,7 @@ mod tests {
             quote_hint: Some("鼻子"),
         });
         assert!(quotes.iter().any(|q| q.anchor && q.text.contains("鼻子")));
-        assert!(quotes.len() >= 1);
+        assert!(!quotes.is_empty());
     }
 
     #[test]
