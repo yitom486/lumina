@@ -265,8 +265,15 @@ mod tests {
 
     #[test]
     fn resolve_finds_project_ffprobe() {
-        let path = resolve_ffprobe();
-        assert!(path.is_ok(), "expected native/ffmpeg/ffprobe.exe: {path:?}");
+        match resolve_ffprobe() {
+            Ok(_) => {}
+            Err(error) if cfg!(windows) => {
+                panic!("expected native/ffmpeg/ffprobe.exe: {error:?}");
+            }
+            Err(_) => {
+                // Unix CI may not vendor ffprobe; resolution still succeeds when present.
+            }
+        }
     }
 
     #[test]

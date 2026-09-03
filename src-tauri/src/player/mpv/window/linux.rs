@@ -4,7 +4,7 @@ use std::ffi::CString;
 use std::ptr;
 use std::sync::OnceLock;
 
-use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+use raw_window_handle::{HasDisplayHandle, HasWindowHandle, RawDisplayHandle, RawWindowHandle};
 use tauri::{AppHandle, WebviewWindow};
 use x11::xlib::{XCreateSimpleWindow, XDestroyWindow, XMapWindow, XMoveResizeWindow, XUnmapWindow};
 
@@ -88,22 +88,39 @@ pub struct ParentX11 {
 }
 
 pub fn parent_x11_from_webview(window: &WebviewWindow) -> Result<ParentX11, PlayerError> {
-    let handle = window
+    let window_handle = window
         .window_handle()
         .map_err(|error| native_error("无法获取窗口句柄", Some(error.to_string())))?;
+    let display_handle = window
+        .display_handle()
+        .map_err(|error| native_error("无法获取显示句柄", Some(error.to_string())))?;
 
-    match handle.as_raw() {
-        RawWindowHandle::Xlib(xlib) => Ok(ParentX11 {
-            display: xlib.display.as_ptr() as isize,
-            window: xlib.window,
-        }),
-        RawWindowHandle::Wayland(_) => Err(native_error(
+    match (window_handle.as_raw(), display_handle.as_raw()) {
+        (RawWindowHandle::Xlib(xlib), RawDisplayHandle::Xlib(display)) => {
+            let display_ptr = display
+                .display
+                .map(|ptr| ptr.as_ptr() as isize)
+                .unwrap_or(0);
+            if display_ptr == 0 {
+                return Err(native_error(
+                    "父窗口无效",
+                    Some("Xlib display pointer is null".into()),
+                ));
+            }
+            Ok(ParentX11 {
+                display: display_ptr,
+                window: xlib.window,
+            })
+        }
+        (_, RawDisplayHandle::Wayland(_)) | (RawWindowHandle::Wayland(_), _) => Err(native_error(
             "当前 Linux 会话为 Wayland，暂不支持原生视频窗口",
             Some("use an X11 session or XWayland for native playback".into()),
         )),
-        other => Err(native_error(
+        (other_window, other_display) => Err(native_error(
             "窗口句柄类型不正确",
-            Some(format!("expected Xlib, got {other:?}")),
+            Some(format!(
+                "expected Xlib window+display, got window={other_window:?} display={other_display:?}"
+            )),
         )),
     }
 }

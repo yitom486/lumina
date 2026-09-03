@@ -127,14 +127,14 @@ mod tests {
 
     #[test]
     fn lumina_paths_share_one_dir_name() {
-        let root = PathBuf::from(r"D:\movie\Show");
+        let root = PathBuf::from("movie").join("Show");
         assert_eq!(
             lumina_index_path(&root),
-            PathBuf::from(r"D:\movie\Show\.lumina\index.json")
+            root.join(".lumina").join("index.json")
         );
         assert_eq!(
             lumina_agent_context_path(&root),
-            PathBuf::from(r"D:\movie\Show\.lumina\agent-context.json")
+            root.join(".lumina").join("agent-context.json")
         );
     }
 
@@ -148,10 +148,22 @@ mod tests {
         );
     }
 
+    #[cfg(windows)]
     #[test]
     fn relativize_is_case_insensitive_on_windows() {
         let root = PathBuf::from(r"D:\Movie\Show");
         let media = PathBuf::from(r"d:\movie\show\ep.mkv");
+        assert_eq!(
+            relativize_under_root(&root, &media).expect("relative"),
+            "ep.mkv"
+        );
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn relativize_nested_media_on_unix_paths() {
+        let root = PathBuf::from("/movie/Show");
+        let media = PathBuf::from("/movie/Show/ep.mkv");
         assert_eq!(
             relativize_under_root(&root, &media).expect("relative"),
             "ep.mkv"
