@@ -42,14 +42,6 @@ pub async fn ytdl_install(
 
 #[tauri::command]
 pub async fn ytdl_resolve(app: AppHandle, url: String) -> Result<YtdlResolveResult, YtdlError> {
-    on_worker(app, move |state| {
-        let mut resolved = state.ytdl().resolve(&url)?;
-        // Never send signed CDN URLs to the WebView / Agent path.
-        resolved.recommended_url = None;
-        for format in &mut resolved.formats {
-            format.url = None;
-        }
-        Ok(resolved)
-    })
-    .await
+    // Service caches full URLs in-process and returns a sanitized IPC copy.
+    on_worker(app, move |state| state.ytdl().resolve(&url)).await
 }

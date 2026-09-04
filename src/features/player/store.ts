@@ -53,6 +53,7 @@ type PlayerStore = PlayerSnapshot & {
   restartFromBeginning: () => Promise<void>;
 
   openFile: () => Promise<void>;
+  openUrl: (url: string) => Promise<void>;
   openPath: (
     path: string,
     options?: { rebuildPlaylist?: boolean; restorePaused?: boolean },
@@ -68,6 +69,7 @@ type PlayerStore = PlayerSnapshot & {
   seek: (positionMs: number) => Promise<void>;
   setVolume: (volume: number) => Promise<void>;
   setRate: (rate: number) => Promise<void>;
+  setPlaybackFormat: (formatId: string) => Promise<void>;
   setSubtitle: (args: {
     source: "Embedded" | "Sidecar" | "None";
     streamIndex?: number | null;
@@ -76,8 +78,21 @@ type PlayerStore = PlayerSnapshot & {
   setAudio: (streamIndex: number) => Promise<void>;
 };
 
+function isRemotePath(path: string): boolean {
+  const lower = path.trim().toLowerCase();
+  return lower.startsWith("https://") || lower.startsWith("http://");
+}
+
 function fileName(path: string | null): string | null {
   if (!path) return null;
+  if (isRemotePath(path)) {
+    try {
+      const host = new URL(path).hostname;
+      return host || path;
+    } catch {
+      return path;
+    }
+  }
   const parts = path.split(/[/\\]/);
   return parts[parts.length - 1] || path;
 }
@@ -216,6 +231,7 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
       currentFile: snapshot.currentFile,
       mediaId: snapshot.mediaId ?? null,
       sourceKind: snapshot.sourceKind ?? null,
+      playbackFormatId: snapshot.playbackFormatId ?? null,
       error: snapshot.error,
     }));
   },
@@ -304,7 +320,24 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
     }
   },
 
+  openUrl: async (url) => {
+    const trimmed = url.trim();
+    if (!trimmed) return;
+    set({ busy: true });
+    try {
+      await get().openPath(trimmed, { rebuildPlaylist: true });
+      useUiStore.getState().setSidebarTab("playlist");
+    } finally {
+      set({ busy: false });
+    }
+  },
+
   syncPlaylistForPath: async (path) => {
+    if (isRemotePath(path)) {
+      set({ playlist: [path], playlistIndex: 0 });
+      return;
+    }
+
     const idx = indexOfPath(get().playlist, path);
     if (get().playlist.length > 0 && idx >= 0) {
       if (get().playlistIndex !== idx) {
@@ -478,6 +511,19 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
       get().applySnapshot(await api.setPlayerRate(rate));
     } catch (error) {
       set({ statusMessage: errorMessage(error) });
+    }
+  },
+
+  setPlaybackFormat: async (formatId) => {
+    set({ busy: true });
+    try {
+      const snapshot = await api.setPlaybackFormat(formatId);
+      get().applySnapshot(snapshot);
+      set({ statusMessage: "已切换清晰度" });
+    } catch (error) {
+      set({ statusMessage: errorMessage(error) });
+    } finally {
+      set({ busy: false });
     }
   },
 

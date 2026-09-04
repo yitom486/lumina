@@ -40,6 +40,27 @@ export function openPlayer(path: string): Promise<PlayerSnapshot> {
   return invoke<PlayerSnapshot>("player_open", { path });
 }
 
+export type PlaybackFormatOption = {
+  formatId: string;
+  label: string;
+  height?: number | null;
+};
+
+export type PlaybackFormatsResponse = {
+  formats: PlaybackFormatOption[];
+  currentFormatId: string | null;
+};
+
+export function listPlaybackFormats(): Promise<PlaybackFormatsResponse> {
+  return invoke<PlaybackFormatsResponse>("player_list_playback_formats");
+}
+
+export function setPlaybackFormat(
+  formatId: string,
+): Promise<PlayerSnapshot> {
+  return invoke<PlayerSnapshot>("player_set_playback_format", { formatId });
+}
+
 export function playPlayer(): Promise<PlayerSnapshot> {
   return invoke<PlayerSnapshot>("player_play");
 }

@@ -42,10 +42,20 @@ impl LibMpvPlayer {
     }
 
     pub fn open(&self, path: &str) -> Result<(), PlayerError> {
-        tracing::info!(path, "libmpv loadfile");
+        self.open_media(path, None)
+    }
+
+    /// Load a media URL/path, optionally attaching a separate audio stream (DASH pair).
+    pub fn open_media(&self, path: &str, audio_url: Option<&str>) -> Result<(), PlayerError> {
+        tracing::info!(path, has_audio_url = audio_url.is_some(), "libmpv loadfile");
         self.mpv
             .command("loadfile", &[path, "replace"])
             .map_err(map_load_error)?;
+        if let Some(audio) = audio_url {
+            if let Err(error) = self.mpv.command("audio-add", &[audio, "select"]) {
+                tracing::warn!(%error, "audio-add failed; continuing with video-only");
+            }
+        }
         self.mpv
             .set_property("pause", false)
             .map_err(map_playback_error)?;

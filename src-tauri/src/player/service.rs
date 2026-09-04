@@ -84,10 +84,6 @@ impl PlayerService {
         &mut self,
         path: String,
     ) -> Result<(PlayerSnapshot, Vec<PlayerEvent>), PlayerError> {
-        if self.snapshot.status == PlayerState::Loading {
-            return Err(PlayerError::invalid_state("open", self.snapshot.status));
-        }
-
         let source = match crate::player::source::MediaSource::parse(&path) {
             Ok(source) => source,
             Err(error) => {
@@ -98,23 +94,48 @@ impl PlayerService {
                 return Err(error);
             }
         };
+        self.open_source(source, None, None, None, None, false)
+    }
 
-        let playback_target = source.playback_target().to_string();
+    /// Open a validated source. `playback_override` is a resolved stream URL for
+    /// remote pages; `current_file` / `media_id` stay tied to `source`.
+    /// `audio_url` pairs a separate audio stream (DASH). Rate is always restored.
+    pub fn open_source(
+        &mut self,
+        source: crate::player::source::MediaSource,
+        playback_override: Option<String>,
+        playback_format_id: Option<String>,
+        audio_url: Option<String>,
+        resume_ms: Option<u64>,
+        resume_paused: bool,
+    ) -> Result<(PlayerSnapshot, Vec<PlayerEvent>), PlayerError> {
+        if self.snapshot.status == PlayerState::Loading {
+            return Err(PlayerError::invalid_state("open", self.snapshot.status));
+        }
+
+        let display_path = source.playback_target().to_string();
         let media_id = source.media_id();
         let source_kind = source.kind();
+        let playback_target = playback_override
+            .as_ref()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| display_path.clone());
 
         if let Err(error) = source.validate() {
-            self.snapshot.current_file = Some(playback_target);
+            self.snapshot.current_file = Some(display_path);
             self.snapshot.media_id = Some(media_id);
             self.snapshot.source_kind = Some(source_kind);
+            self.snapshot.playback_format_id = None;
             self.fail(error.clone());
             return Err(error);
         }
 
         if self.backend.is_none() {
-            self.snapshot.current_file = Some(playback_target);
+            self.snapshot.current_file = Some(display_path);
             self.snapshot.media_id = Some(media_id);
             self.snapshot.source_kind = Some(source_kind);
+            self.snapshot.playback_format_id = None;
             let err = PlayerError::backend_missing();
             self.fail(err.clone());
             return Err(err);
@@ -133,18 +154,27 @@ impl PlayerService {
         }
 
         self.snapshot.status = PlayerState::Loading;
-        self.snapshot.current_file = Some(playback_target.clone());
+        self.snapshot.current_file = Some(display_path.clone());
         self.snapshot.media_id = Some(media_id.clone());
         self.snapshot.source_kind = Some(source_kind);
+        self.snapshot.playback_format_id = playback_format_id.clone();
         self.snapshot.current_time_ms = 0;
         self.snapshot.duration_ms = 0;
         self.snapshot.error = None;
-        tracing::info!(%playback_target, %media_id, ?source_kind, "open");
+        tracing::info!(
+            %playback_target,
+            %display_path,
+            %media_id,
+            ?source_kind,
+            ?playback_format_id,
+            resume_ms,
+            "open"
+        );
 
         let open_result = self
             .backend
             .as_ref()
-            .map(|backend| backend.open(&playback_target))
+            .map(|backend| backend.open_media(&playback_target, audio_url.as_deref()))
             .unwrap_or_else(|| Err(PlayerError::backend_missing()));
 
         if let Err(error) = open_result {
@@ -162,19 +192,41 @@ impl PlayerService {
             let _ = backend.set_rate(self.snapshot.rate);
         }
 
-        self.snapshot.status = PlayerState::Playing;
-        tracing::info!(%playback_target, %media_id, duration_ms, "file opened → Playing");
-
-        let events = vec![
+        let mut events = vec![
             PlayerEvent::FileLoaded {
-                path: playback_target,
+                path: display_path,
                 duration_ms,
             },
             PlayerEvent::DurationChanged { duration_ms },
-            PlayerEvent::StateChanged {
-                status: PlayerState::Playing,
-            },
         ];
+
+        // Seek requires a playable state — mark Playing before resume seek.
+        self.snapshot.status = PlayerState::Playing;
+
+        if let Some(position_ms) = resume_ms.filter(|ms| *ms > 0) {
+            match self.seek(position_ms) {
+                Ok((_, seek_events)) => events.extend(seek_events),
+                Err(error) => tracing::warn!(%error, position_ms, "resume seek after open failed"),
+            }
+        }
+
+        if resume_paused {
+            match self.pause() {
+                Ok((_, pause_events)) => events.extend(pause_events),
+                Err(error) => {
+                    tracing::warn!(%error, "resume pause after open failed");
+                    events.push(PlayerEvent::StateChanged {
+                        status: PlayerState::Playing,
+                    });
+                }
+            }
+        } else {
+            events.push(PlayerEvent::StateChanged {
+                status: PlayerState::Playing,
+            });
+        }
+
+        tracing::info!(%playback_target, %media_id, duration_ms, "file opened");
         Ok((self.snapshot(), events))
     }
 
@@ -516,6 +568,38 @@ mod tests {
             player.snapshot().source_kind,
             Some(crate::player::source::MediaSourceKind::Remote)
         );
+    }
+
+    #[test]
+    fn open_source_override_keeps_page_identity() {
+        let mut player = PlayerService::new();
+        let source = crate::player::source::MediaSource::parse(
+            "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+        )
+        .unwrap();
+        let err = player
+            .open_source(
+                source,
+                Some("https://cdn.example/stream.mp4".into()),
+                Some("22".into()),
+                None,
+                None,
+                false,
+            )
+            .expect_err("backend missing");
+        assert_eq!(err.code, PlayerErrorCode::InternalError);
+        let snap = player.snapshot();
+        assert_eq!(
+            snap.current_file.as_deref(),
+            Some("https://www.youtube.com/watch?v=dQw4w9WgXcQ")
+        );
+        assert_eq!(snap.media_id.as_deref(), Some("youtube:dQw4w9WgXcQ"));
+        assert_eq!(
+            snap.source_kind,
+            Some(crate::player::source::MediaSourceKind::Remote)
+        );
+        // Format id is cleared when open fails before backend.
+        assert!(snap.playback_format_id.is_none());
     }
 
     #[test]

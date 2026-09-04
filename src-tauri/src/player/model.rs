@@ -32,6 +32,9 @@ pub struct PlayerSnapshot {
     pub media_id: Option<String>,
     #[serde(default)]
     pub source_kind: Option<MediaSourceKind>,
+    /// Active online format id when `source_kind` is remote; local stays `None`.
+    #[serde(default)]
+    pub playback_format_id: Option<String>,
     pub error: Option<PlayerError>,
 }
 
@@ -46,6 +49,7 @@ impl PlayerSnapshot {
             current_file: None,
             media_id: None,
             source_kind: None,
+            playback_format_id: None,
             error: None,
         }
     }

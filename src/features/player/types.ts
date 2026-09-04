@@ -18,6 +18,8 @@ export type PlayerSnapshot = {
   /** Stable id for notes / history (`path` or `youtube:…` / `bilibili:…`). */
   mediaId?: string | null;
   sourceKind?: MediaSourceKind | null;
+  /** Active online format id when remote; local stays null. */
+  playbackFormatId?: string | null;
   error: PlayerErrorDto | null;
 };
 
@@ -40,5 +42,6 @@ export const IDLE_SNAPSHOT: PlayerSnapshot = {
   currentFile: null,
   mediaId: null,
   sourceKind: null,
+  playbackFormatId: null,
   error: null,
 };

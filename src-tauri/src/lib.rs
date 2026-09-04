@@ -69,9 +69,10 @@ use commands::notes::{
     notes_update,
 };
 use commands::player::{
-    player_get_state, player_open, player_pause, player_play, player_seek, player_set_audio,
-    player_set_rate, player_set_subtitle, player_set_surface_bounds, player_set_volume,
-    player_stop, player_subscribe,
+    player_get_state, player_list_playback_formats, player_open, player_pause, player_play,
+    player_seek, player_set_audio, player_set_playback_format, player_set_rate,
+    player_set_subtitle, player_set_surface_bounds, player_set_volume, player_stop,
+    player_subscribe,
 };
 use commands::subtitle::{
     subtitle_export_sidecar, subtitle_list_choices, subtitle_load_choice, subtitle_translate_track,
@@ -106,6 +107,8 @@ pub fn run() {
             player_subscribe,
             player_get_state,
             player_open,
+            player_list_playback_formats,
+            player_set_playback_format,
             player_play,
             player_pause,
             player_stop,

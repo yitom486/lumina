@@ -15,6 +15,7 @@ import {
 } from "@/components/ui/tooltip";
 
 import { usePlayerStore } from "../store";
+import { OpenUrlButton } from "./OpenUrlButton";
 
 export function TransportControls() {
   const busy = usePlayerStore((s) => s.busy);
@@ -54,6 +55,8 @@ export function TransportControls() {
         </TooltipTrigger>
         <TooltipContent>打开视频（同目录加入播放列表）</TooltipContent>
       </Tooltip>
+
+      <OpenUrlButton />
 
       <Tooltip>
         <TooltipTrigger asChild>
