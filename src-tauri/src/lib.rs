@@ -9,6 +9,7 @@ pub mod player;
 mod process_util;
 mod state;
 pub mod subtitle;
+pub mod ytdl;
 
 pub use acp::{
     AcpClientSettings, AcpError, AcpErrorCode, AcpEvent, AcpService, AcpStatus, AgentKind,
@@ -75,6 +76,7 @@ use commands::player::{
 use commands::subtitle::{
     subtitle_export_sidecar, subtitle_list_choices, subtitle_load_choice, subtitle_translate_track,
 };
+use commands::ytdl::{ytdl_install, ytdl_resolve, ytdl_status};
 use player::mpv::window::{parent_handle_from_webview, register_surface_app, VideoSurface};
 use state::AppState;
 use tauri::Manager;
@@ -122,6 +124,9 @@ pub fn run() {
             asr_status,
             asr_transcribe,
             asr_install,
+            ytdl_status,
+            ytdl_install,
+            ytdl_resolve,
             library_watch_start,
             library_watch_stop,
             library_status,

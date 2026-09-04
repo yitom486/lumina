@@ -60,6 +60,9 @@ src-tauri/native/ffmpeg/*
 src-tauri/native/whisper/*
 !src-tauri/native/whisper/README.md
 !src-tauri/native/whisper/VERSION
+# Native yt-dlp (optional online source; keep README only)
+src-tauri/native/ytdl/*
+!src-tauri/native/ytdl/README.md
 
 src-tauri/native/acp/*
 !src-tauri/native/acp/README.md
