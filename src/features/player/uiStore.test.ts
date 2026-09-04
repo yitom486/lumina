@@ -29,6 +29,8 @@ describe("useUiStore sidebar", () => {
   it("switches sidebar tabs without chat state", () => {
     useUiStore.getState().setSidebarTab("notes");
     expect(useUiStore.getState().sidebarTab).toBe("notes");
+    useUiStore.getState().setSidebarTab("online");
+    expect(useUiStore.getState().sidebarTab).toBe("online");
     useUiStore.getState().setSidebarTab("transcript");
     expect(useUiStore.getState().sidebarTab).toBe("transcript");
   });

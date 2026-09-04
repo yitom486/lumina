@@ -9,10 +9,11 @@
  *      │   │   ├─ VideoSurface  ← ONLY this rect maps to libmpv HWND
  *      │   │   └─ PlayerBar     ← HTML only (transport / seek / volume)
  *      │   │   (fullscreen: pt-12 top strip + hover chrome above HWND)
- *      │   └─ aside (sidebar)   ← playlist / transcript / notes / chapters only
+ *      │   └─ aside (sidebar)   ← playlist / transcript / notes / chapters / online
  *      │   └─ ChatDock           ← layout sibling; never overlays the HWND
  *
- * Never put upward-opening menus on PlayerBar — HWND always paints above WebView.
+ * Never put upward-opening menus or center dialogs on PlayerBar — HWND always
+ * paints above WebView. Online URL entry lives in the sidebar「在线」tab.
  */
 
 import { PanelErrorBoundary } from "@/components/PanelErrorBoundary";
@@ -39,6 +40,7 @@ import {
   VideoSurface,
 } from "@/features/player";
 import { TranscriptPanel } from "@/features/transcript";
+import { OnlineSourcePanel } from "@/features/ytdl/components/OnlineSourcePanel";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 
@@ -48,6 +50,7 @@ const TABS: { id: SidebarTab; label: string }[] = [
   { id: "notes", label: "笔记" },
   { id: "chapters", label: "章节" },
   { id: "library", label: "媒体库" },
+  { id: "online", label: "在线" },
 ];
 
 function SidebarTabPanel({ tab }: { tab: SidebarTab }) {
@@ -62,6 +65,8 @@ function SidebarTabPanel({ tab }: { tab: SidebarTab }) {
       return <ChaptersPanel />;
     case "library":
       return <MediaLibraryPanel />;
+    case "online":
+      return <OnlineSourcePanel />;
     default:
       return null;
   }

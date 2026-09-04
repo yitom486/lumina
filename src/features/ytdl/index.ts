@@ -17,3 +17,5 @@ export {
   resolveYtdlUrl,
   setYtdlCookies,
 } from "./api";
+export { OnlineSourcePanel } from "./components/OnlineSourcePanel";
+export { OnlineSourceSettings } from "./components/OnlineSourceSettings";

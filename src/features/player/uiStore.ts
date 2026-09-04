@@ -10,7 +10,8 @@ export type SidebarTab =
   | "transcript"
   | "notes"
   | "chapters"
-  | "library";
+  | "library"
+  | "online";
 
 type UiState = {
   fullscreen: boolean;
