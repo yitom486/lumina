@@ -434,11 +434,21 @@ pub fn test_cookies(settings: &CookieSettings) -> Result<YtdlCookieTestResult, Y
 
     let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
     tracing::warn!(%stderr, "cookie test failed");
-    let classified = classify_resolve_stderr(&if stderr.is_empty() {
+    let mut classified = classify_resolve_stderr(&if stderr.is_empty() {
         "cookie test failed".into()
     } else {
         stderr
     });
+    if matches!(settings.mode, CookieMode::Browser)
+        && browser_process_running(settings.browser)
+        && classified.code == crate::ytdl::YtdlErrorCode::LoginRequired
+    {
+        classified.message = format!(
+            "{}（检测到 {} 仍在后台运行，请在任务管理器结束进程）",
+            classified.message,
+            settings.browser.label()
+        );
+    }
     Ok(YtdlCookieTestResult {
         ok: false,
         message: classified.message,
@@ -448,11 +458,25 @@ pub fn test_cookies(settings: &CookieSettings) -> Result<YtdlCookieTestResult, Y
 /// Map resolver stderr into LoginRequired when it looks like auth / cookie failure.
 pub fn classify_resolve_stderr(stderr: &str) -> YtdlError {
     let lower = stderr.to_ascii_lowercase();
-    let cookie_read = lower.contains("could not copy")
-        || lower.contains("failed to load cookies")
-        || lower.contains("unable to load cookies")
+
+    // Chrome/Edge App-Bound Encryption — closing the window is not enough.
+    if lower.contains("dpapi")
+        || lower.contains("failed to decrypt")
+        || lower.contains("app-bound")
+        || lower.contains("app bound")
+    {
+        return YtdlError::cookie_encrypted(Some(stderr));
+    }
+
+    let cookie_locked = lower.contains("could not copy")
         || lower.contains("browser is open")
-        || lower.contains("dpapi")
+        || (lower.contains("database is locked"));
+    if cookie_locked {
+        return YtdlError::cookie_unavailable(Some(stderr));
+    }
+
+    let cookie_read = lower.contains("failed to load cookies")
+        || lower.contains("unable to load cookies")
         || (lower.contains("could not find") && lower.contains("cookie"));
     if cookie_read {
         return YtdlError::cookie_unavailable(Some(stderr));
@@ -471,6 +495,32 @@ pub fn classify_resolve_stderr(stderr: &str) -> YtdlError {
     }
 
     YtdlError::resolve_failed(Some(stderr))
+}
+
+/// Best-effort: Chromium often keeps background processes after the window closes.
+pub fn browser_process_running(browser: CookieBrowser) -> bool {
+    let names: &[&str] = match browser {
+        CookieBrowser::Chrome => &["chrome.exe"],
+        CookieBrowser::Edge => &["msedge.exe"],
+        CookieBrowser::Firefox => &["firefox.exe"],
+    };
+    names.iter().any(|name| process_running(name))
+}
+
+fn process_running(exe_name: &str) -> bool {
+    #[cfg(windows)]
+    {
+        let Ok(output) = command("tasklist").args(["/FI", &format!("IMAGENAME eq {exe_name}"), "/NH"]).output() else {
+            return false;
+        };
+        let stdout = String::from_utf8_lossy(&output.stdout).to_ascii_lowercase();
+        return stdout.contains(&exe_name.to_ascii_lowercase());
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = exe_name;
+        false
+    }
 }
 
 #[cfg(test)]
@@ -511,7 +561,11 @@ mod tests {
 
         let cookie = classify_resolve_stderr("ERROR: Could not copy cookies from chrome");
         assert_eq!(cookie.code, crate::ytdl::YtdlErrorCode::LoginRequired);
-        assert!(cookie.message.contains("浏览器") || cookie.message.contains("登录"));
+        assert!(cookie.message.contains("浏览器") || cookie.message.contains("登录") || cookie.message.contains("任务管理器"));
+
+        let encrypted = classify_resolve_stderr("ERROR: Failed to decrypt with DPAPI. See issues/10927");
+        assert_eq!(encrypted.code, crate::ytdl::YtdlErrorCode::LoginRequired);
+        assert!(encrypted.message.contains("加密") || encrypted.message.contains("Cookie"));
     }
 
     #[test]

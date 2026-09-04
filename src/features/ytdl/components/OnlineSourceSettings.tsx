@@ -149,8 +149,8 @@ export function OnlineSourceSettings() {
         {cookie?.message ?? "登录态可选；仅本机使用，不会交给 AI。"}
       </p>
       <p className="text-[11px] leading-relaxed text-muted-foreground">
-        读不到登录态时：请先完全退出对应浏览器再测。多账号请选不同「配置档案」（Chrome
-        人物 1/2），同一档案里切换的 Google 账号无法分别导出。
+        关闭窗口往往不够：Chrome/Edge 可能仍在任务管理器里后台运行，且新版加密可能导致应用无法直接读登录态。推荐用扩展导出
+        cookies.txt 后点「导入 Cookie 文件」。同一档案里切换的 Google 账号无法分别选择。
       </p>
       <div className="flex flex-wrap gap-1.5">
         <Button

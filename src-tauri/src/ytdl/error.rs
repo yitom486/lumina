@@ -76,7 +76,16 @@ impl YtdlError {
     pub fn cookie_unavailable(details: Option<&str>) -> Self {
         Self::new(
             YtdlErrorCode::LoginRequired,
-            "无法读取浏览器登录态，请关闭浏览器后重试或改用 Cookie 文件",
+            "无法读取浏览器登录态。请在任务管理器中结束 chrome.exe / msedge.exe 后重试，或改用「导入 Cookie 文件」",
+            details.map(str::to_string),
+        )
+    }
+
+    /// Chrome/Edge App-Bound Encryption: yt-dlp cannot DPAPI-decrypt cookies.
+    pub fn cookie_encrypted(details: Option<&str>) -> Self {
+        Self::new(
+            YtdlErrorCode::LoginRequired,
+            "当前 Chrome/Edge 登录态受系统加密保护，本机解析组件无法直接读取。请改用「导入 Cookie 文件」（推荐）",
             details.map(str::to_string),
         )
     }
@@ -119,5 +128,9 @@ mod tests {
         let login = YtdlError::login_required(Some("use --cookies"));
         assert_eq!(login.code, YtdlErrorCode::LoginRequired);
         assert!(!login.message.contains("--cookies"));
+
+        let enc = YtdlError::cookie_encrypted(Some("DPAPI"));
+        assert!(enc.message.contains("加密"));
+        assert!(!enc.message.contains("DPAPI"));
     }
 }
