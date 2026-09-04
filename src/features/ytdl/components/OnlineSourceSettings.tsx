@@ -22,6 +22,15 @@ const BROWSERS: { id: CookieBrowser; label: string }[] = [
   { id: "firefox", label: "Firefox" },
 ];
 
+function recommendsCookieFile(message: string | undefined): boolean {
+  if (!message) return false;
+  return (
+    message.includes("加密") ||
+    message.includes("Cookie 文件") ||
+    message.includes("任务管理器")
+  );
+}
+
 export function OnlineSourceSettings() {
   const queryClient = useQueryClient();
   const statusQuery = useQuery({
@@ -36,6 +45,7 @@ export function OnlineSourceSettings() {
   const cookie = cookieQuery.data;
   const selectedBrowser = cookie?.browser ?? "chrome";
   const browserMode = cookie?.mode === "browser";
+  const fileMode = cookie?.mode === "file";
 
   const profilesQuery = useQuery({
     queryKey: ["ytdl-browser-profiles", selectedBrowser],
@@ -123,9 +133,14 @@ export function OnlineSourceSettings() {
       browserProfile: null,
       filePath: path,
     });
+    // Verify the imported file immediately.
+    await testCookies.mutateAsync();
   };
 
   const profiles = profilesQuery.data ?? [];
+  const showCookieFileGuide =
+    recommendsCookieFile(testCookies.data?.message) ||
+    (browserMode && testCookies.data && !testCookies.data.ok);
 
   return (
     <div className="mt-3 space-y-2 rounded-md border border-border/70 bg-muted/30 p-3 text-left text-xs">
@@ -148,10 +163,32 @@ export function OnlineSourceSettings() {
       <p className="pt-1 text-muted-foreground">
         {cookie?.message ?? "登录态可选；仅本机使用，不会交给 AI。"}
       </p>
-      <p className="text-[11px] leading-relaxed text-muted-foreground">
-        关闭窗口往往不够：Chrome/Edge 可能仍在任务管理器里后台运行，且新版加密可能导致应用无法直接读登录态。推荐用扩展导出
-        cookies.txt 后点「导入 Cookie 文件」。同一档案里切换的 Google 账号无法分别选择。
-      </p>
+
+      {showCookieFileGuide ? (
+        <div className="space-y-2 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-[11px] leading-relaxed text-foreground">
+          <p className="font-medium">推荐处理：导入 Cookie 文件</p>
+          <ol className="list-decimal space-y-1 pl-4 text-muted-foreground">
+            <li>在 Chrome 扩展商店安装可导出 Netscape cookies.txt 的扩展</li>
+            <li>打开 youtube.com，用目标账号登录后，导出 cookies.txt</li>
+            <li>回到这里点「导入 Cookie 文件」，再点「测试登录态是否可读」</li>
+            <li>测试通过后再打开视频链接</li>
+          </ol>
+          <Button
+            type="button"
+            size="sm"
+            disabled={busy}
+            onClick={() => void importFile()}
+          >
+            选择并导入 cookies.txt
+          </Button>
+        </div>
+      ) : (
+        <p className="text-[11px] leading-relaxed text-muted-foreground">
+          新版 Chrome/Edge 常因系统加密无法直接读取。多账号请用不同配置档案导出；同一档案内切换的
+          Google 账号无法分别识别。
+        </p>
+      )}
+
       <div className="flex flex-wrap gap-1.5">
         <Button
           type="button"
@@ -181,7 +218,7 @@ export function OnlineSourceSettings() {
         <Button
           type="button"
           size="sm"
-          variant={cookie?.mode === "file" ? "default" : "outline"}
+          variant={fileMode ? "default" : "outline"}
           disabled={busy}
           onClick={() => void importFile()}
         >
@@ -196,7 +233,7 @@ export function OnlineSourceSettings() {
             <p className="text-muted-foreground">正在扫描本机配置档案…</p>
           ) : profiles.length === 0 ? (
             <p className="text-muted-foreground">
-              未找到可用配置档案，可改用「导入 Cookie 文件」。
+              未找到可用配置档案，请改用「导入 Cookie 文件」。
             </p>
           ) : (
             <div className="flex flex-wrap gap-1.5">
