@@ -133,14 +133,10 @@ export function OnlineSourceSettings() {
       browserProfile: null,
       filePath: path,
     });
-    // Verify the imported file immediately.
     await testCookies.mutateAsync();
   };
 
   const profiles = profilesQuery.data ?? [];
-  const showCookieFileGuide =
-    recommendsCookieFile(testCookies.data?.message) ||
-    (browserMode && testCookies.data && !testCookies.data.ok);
 
   return (
     <div className="mt-3 space-y-2 rounded-md border border-border/70 bg-muted/30 p-3 text-left text-xs">
@@ -161,100 +157,98 @@ export function OnlineSourceSettings() {
       ) : null}
 
       <p className="pt-1 text-muted-foreground">
-        {cookie?.message ?? "登录态可选；仅本机使用，不会交给 AI。"}
+        {cookie?.message ??
+          "登录态仅本机使用，不会交给 AI。公开视频可不导入。"}
       </p>
 
-      {showCookieFileGuide ? (
-        <div className="space-y-2 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-[11px] leading-relaxed text-foreground">
-          <p className="font-medium">推荐处理：导入 Cookie 文件</p>
-          <ol className="list-decimal space-y-1 pl-4 text-muted-foreground">
-            <li>在 Chrome 扩展商店安装可导出 Netscape cookies.txt 的扩展</li>
-            <li>打开 youtube.com，用目标账号登录后，导出 cookies.txt</li>
-            <li>回到这里点「导入 Cookie 文件」，再点「测试登录态是否可读」</li>
-            <li>测试通过后再打开视频链接</li>
-          </ol>
-          <Button
-            type="button"
-            size="sm"
-            disabled={busy}
-            onClick={() => void importFile()}
-          >
-            选择并导入 cookies.txt
-          </Button>
-        </div>
-      ) : (
-        <p className="text-[11px] leading-relaxed text-muted-foreground">
-          新版 Chrome/Edge 常因系统加密无法直接读取。多账号请用不同配置档案导出；同一档案内切换的
-          Google 账号无法分别识别。
+      <div className="space-y-2 rounded-md border border-border bg-background/60 px-3 py-2 text-[11px] leading-relaxed">
+        <p className="font-medium text-foreground">
+          Chrome 无法直读时：三步导入 cookies.txt
         </p>
-      )}
-
-      <div className="flex flex-wrap gap-1.5">
+        <ol className="list-decimal space-y-1 pl-4 text-muted-foreground">
+          <li>扩展商店安装可导出 Netscape cookies.txt 的扩展</li>
+          <li>在 youtube.com（或 B 站）用目标账号登录后导出文件</li>
+          <li>点下方按钮导入 →「测试登录态是否可读」→ 再打开链接</li>
+        </ol>
+        <p className="text-muted-foreground">
+          说明：这不是 Google / B 站官方 OAuth；只是把浏览器里的登录态文件交给本机解析。路径会记住，过期后再导出一次即可。
+        </p>
         <Button
           type="button"
           size="sm"
-          variant={cookie?.mode === "none" ? "default" : "outline"}
-          disabled={busy}
-          onClick={() => setMode("none")}
-        >
-          不使用
-        </Button>
-        {BROWSERS.map((b) => (
-          <Button
-            key={b.id}
-            type="button"
-            size="sm"
-            variant={
-              cookie?.mode === "browser" && cookie.browser === b.id
-                ? "default"
-                : "outline"
-            }
-            disabled={busy}
-            onClick={() => setBrowser(b.id)}
-          >
-            {b.label}
-          </Button>
-        ))}
-        <Button
-          type="button"
-          size="sm"
-          variant={fileMode ? "default" : "outline"}
           disabled={busy}
           onClick={() => void importFile()}
         >
-          导入 Cookie 文件
+          {fileMode ? "重新导入 cookies.txt" : "导入 cookies.txt（推荐）"}
         </Button>
       </div>
 
-      {browserMode ? (
-        <div className="space-y-1.5 pt-1">
-          <p className="text-[11px] text-muted-foreground">选择配置档案</p>
-          {profilesQuery.isLoading ? (
-            <p className="text-muted-foreground">正在扫描本机配置档案…</p>
-          ) : profiles.length === 0 ? (
-            <p className="text-muted-foreground">
-              未找到可用配置档案，请改用「导入 Cookie 文件」。
-            </p>
-          ) : (
-            <div className="flex flex-wrap gap-1.5">
-              {profiles.map((profile) => (
-                <Button
-                  key={profile.id}
-                  type="button"
-                  size="sm"
-                  variant={
-                    cookie?.browserProfile === profile.id ? "default" : "outline"
-                  }
-                  disabled={busy}
-                  onClick={() => setProfile(profile.id)}
-                >
-                  {profile.label}
-                </Button>
-              ))}
+      <details className="rounded-md border border-border/60 px-2 py-1.5">
+        <summary className="cursor-pointer text-[11px] text-muted-foreground">
+          高级：尝试从浏览器直接读取（多数 Chrome 会失败）
+        </summary>
+        <div className="mt-2 space-y-2">
+          <div className="flex flex-wrap gap-1.5">
+            <Button
+              type="button"
+              size="sm"
+              variant={cookie?.mode === "none" ? "default" : "outline"}
+              disabled={busy}
+              onClick={() => setMode("none")}
+            >
+              不使用
+            </Button>
+            {BROWSERS.map((b) => (
+              <Button
+                key={b.id}
+                type="button"
+                size="sm"
+                variant={
+                  cookie?.mode === "browser" && cookie.browser === b.id
+                    ? "default"
+                    : "outline"
+                }
+                disabled={busy}
+                onClick={() => setBrowser(b.id)}
+              >
+                {b.label}
+              </Button>
+            ))}
+          </div>
+
+          {browserMode ? (
+            <div className="space-y-1.5">
+              <p className="text-[11px] text-muted-foreground">选择配置档案</p>
+              {profilesQuery.isLoading ? (
+                <p className="text-muted-foreground">正在扫描本机配置档案…</p>
+              ) : profiles.length === 0 ? (
+                <p className="text-muted-foreground">
+                  未找到可用配置档案，请改用上方导入 cookies.txt。
+                </p>
+              ) : (
+                <div className="flex flex-wrap gap-1.5">
+                  {profiles.map((profile) => (
+                    <Button
+                      key={profile.id}
+                      type="button"
+                      size="sm"
+                      variant={
+                        cookie?.browserProfile === profile.id
+                          ? "default"
+                          : "outline"
+                      }
+                      disabled={busy}
+                      onClick={() => setProfile(profile.id)}
+                    >
+                      {profile.label}
+                    </Button>
+                  ))}
+                </div>
+              )}
             </div>
-          )}
+          ) : null}
         </div>
-      ) : null}
+      </details>
 
       {cookie?.mode !== "none" ? (
         <div className="flex flex-wrap items-center gap-2 pt-1">
@@ -277,6 +271,15 @@ export function OnlineSourceSettings() {
             </span>
           ) : null}
         </div>
+      ) : null}
+
+      {testCookies.data &&
+      !testCookies.data.ok &&
+      recommendsCookieFile(testCookies.data.message) ? (
+        <p className="text-[11px] text-amber-600 dark:text-amber-400">
+          浏览器直读失败时，请按上方三步导入 cookies.txt（不要期待 Google
+          一键授权）。
+        </p>
       ) : null}
 
       {(saveCookies.error || install.error || testCookies.error) && (

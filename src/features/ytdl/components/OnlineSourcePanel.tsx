@@ -38,7 +38,8 @@ export function OnlineSourcePanel() {
       <div className="space-y-2">
         <h2 className="text-sm font-medium">打开在线视频</h2>
         <p className="text-xs text-muted-foreground">
-          粘贴完整链接后点「打开链接」。首次需先安装下方的在线解析组件；失败时左侧可能仍显示上一段画面。
+          粘贴完整链接后点「打开链接」。公开视频通常可直接播；若提示需要登录，请用下方「导入
+          cookies.txt」（不是 Google 一键授权）。
         </p>
         <input
           type="url"
@@ -77,7 +78,8 @@ export function OnlineSourcePanel() {
             <p className="font-medium">未能打开在线视频</p>
             <p className="mt-1 leading-relaxed">{error?.message}</p>
             <p className="mt-1 text-muted-foreground">
-              请先确认下方已安装解析组件；若需更高清晰度，再授权浏览器登录态后重试。
+              若提示登录或登录态失败：用浏览器扩展导出 cookies.txt → 下方导入 →
+              测试可读 → 再打开链接。失败时左侧可能仍显示上一段画面。
             </p>
           </div>
         ) : null}
