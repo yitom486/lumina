@@ -18,6 +18,9 @@ const ERROR_FALLBACK: Record<string, string> = {
   PlaybackError: "播放操作失败，请重试",
   InvalidState: "当前状态无法执行该操作",
   InternalError: "内部错误，请重试",
+  LoginRequired: "需要登录或登录态已失效，请授权浏览器登录态或导入 Cookie 文件",
+  ResolveFailed: "无法解析该在线视频",
+  DownloadFailed: "下载在线解析组件失败，请检查网络后重试",
   // Media
   ProbeNotFound: "媒体分析组件未就绪",
   FileNotFound: "找不到媒体文件或无法访问",

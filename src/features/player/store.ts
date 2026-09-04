@@ -57,7 +57,7 @@ type PlayerStore = PlayerSnapshot & {
   openPath: (
     path: string,
     options?: { rebuildPlaylist?: boolean; restorePaused?: boolean },
-  ) => Promise<void>;
+  ) => Promise<boolean>;
   /** Rebuild same-folder playlist when UI resyncs but list was lost (HMR / remount). */
   syncPlaylistForPath: (path: string) => Promise<void>;
   playNext: () => Promise<void>;
@@ -323,10 +323,13 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
   openUrl: async (url) => {
     const trimmed = url.trim();
     if (!trimmed) return;
-    set({ busy: true });
+    set({ busy: true, error: null });
     try {
-      await get().openPath(trimmed, { rebuildPlaylist: true });
-      useUiStore.getState().setSidebarTab("playlist");
+      const ok = await get().openPath(trimmed, { rebuildPlaylist: true });
+      // Stay on「在线」so install/cookie errors remain visible; do not jump to 列表.
+      if (ok) {
+        useUiStore.getState().setSidebarTab("online");
+      }
     } finally {
       set({ busy: false });
     }
@@ -409,6 +412,7 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
         }
       }
       await ensureSurfaceBounds();
+      return true;
     } catch (error) {
       const message = errorMessage(error);
       set({
@@ -416,6 +420,7 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
         error: toErrorDto(error),
         statusMessage: message,
       });
+      return false;
     }
   },
 
