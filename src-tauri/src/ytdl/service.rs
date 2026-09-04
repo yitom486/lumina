@@ -47,6 +47,18 @@ impl YtdlService {
         Ok(status)
     }
 
+    pub fn list_browser_profiles(
+        &self,
+        browser: crate::ytdl::CookieBrowser,
+    ) -> Result<Vec<crate::ytdl::BrowserProfileOption>, YtdlError> {
+        crate::ytdl::cookies::list_browser_profiles(browser)
+    }
+
+    pub fn test_cookies(&self) -> Result<crate::ytdl::YtdlCookieTestResult, YtdlError> {
+        let settings = crate::ytdl::cookies::load();
+        self.with_busy(|| crate::ytdl::cookies::test_cookies(&settings))
+    }
+
     pub fn install<F>(&self, on_event: F) -> Result<YtdlStatus, YtdlError>
     where
         F: FnMut(YtdlInstallEvent),

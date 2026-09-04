@@ -1,4 +1,7 @@
 //! Optional login cookies for online resolve. Preference only — never log cookie bodies.
+//!
+//! Multi-account on desktop browsers = **profiles** (Chrome/Edge Person 1/2…),
+//! not accounts inside one profile. yt-dlp: `--cookies-from-browser chrome:Profile 1`.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -6,8 +9,12 @@ use std::process::Command;
 
 use serde::{Deserialize, Serialize};
 
+use crate::process_util::command;
 use crate::ytdl::error::YtdlError;
 use crate::ytdl::paths;
+
+/// Tiny public clip used only to verify cookie DB decrypt + network auth path.
+const COOKIE_TEST_URL: &str = "https://www.youtube.com/watch?v=jNQXAC9IVRw";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
@@ -51,6 +58,9 @@ pub struct CookieSettings {
     pub mode: CookieMode,
     #[serde(default)]
     pub browser: CookieBrowser,
+    /// Chrome/Edge folder name (`Default`, `Profile 1`) or Firefox profile name.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub browser_profile: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub file_path: Option<String>,
 }
@@ -60,6 +70,7 @@ pub struct CookieSettings {
 pub struct YtdlCookieStatus {
     pub mode: CookieMode,
     pub browser: CookieBrowser,
+    pub browser_profile: Option<String>,
     pub file_path: Option<String>,
     pub message: String,
 }
@@ -69,7 +80,23 @@ pub struct YtdlCookieStatus {
 pub struct YtdlCookieConfigInput {
     pub mode: CookieMode,
     pub browser: Option<CookieBrowser>,
+    pub browser_profile: Option<String>,
     pub file_path: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BrowserProfileOption {
+    /// Value passed to yt-dlp after `browser:` (e.g. `Default`, `Profile 1`).
+    pub id: String,
+    pub label: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct YtdlCookieTestResult {
+    pub ok: bool,
+    pub message: String,
 }
 
 fn settings_path() -> PathBuf {
@@ -80,10 +107,18 @@ pub fn status() -> YtdlCookieStatus {
     let settings = load();
     let message = match settings.mode {
         CookieMode::None => "未使用登录态（公开视频通常可播）".into(),
-        CookieMode::Browser => format!(
-            "解析时从 {} 读取登录态（仅本机；不进入 AI 上下文）",
-            settings.browser.label()
-        ),
+        CookieMode::Browser => {
+            let profile = settings
+                .browser_profile
+                .as_deref()
+                .filter(|p| !p.is_empty())
+                .unwrap_or("默认配置档案");
+            format!(
+                "解析时从 {}「{}」读取登录态（请先关闭该浏览器；仅本机，不进 AI）",
+                settings.browser.label(),
+                profile
+            )
+        }
         CookieMode::File => match settings.file_path.as_deref() {
             Some(path) if !path.trim().is_empty() => {
                 let name = Path::new(path)
@@ -98,6 +133,7 @@ pub fn status() -> YtdlCookieStatus {
     YtdlCookieStatus {
         mode: settings.mode,
         browser: settings.browser,
+        browser_profile: settings.browser_profile.clone(),
         file_path: settings.file_path,
         message,
     }
@@ -115,6 +151,10 @@ pub fn save(input: YtdlCookieConfigInput) -> Result<YtdlCookieStatus, YtdlError>
     let mut settings = CookieSettings {
         mode: input.mode,
         browser: input.browser.unwrap_or_default(),
+        browser_profile: input
+            .browser_profile
+            .map(|p| p.trim().to_string())
+            .filter(|p| !p.is_empty()),
         file_path: input
             .file_path
             .map(|p| p.trim().to_string())
@@ -123,12 +163,14 @@ pub fn save(input: YtdlCookieConfigInput) -> Result<YtdlCookieStatus, YtdlError>
 
     match settings.mode {
         CookieMode::None => {
+            settings.browser_profile = None;
             settings.file_path = None;
         }
         CookieMode::Browser => {
             settings.file_path = None;
         }
         CookieMode::File => {
+            settings.browser_profile = None;
             let path = settings
                 .file_path
                 .as_deref()
@@ -144,18 +186,32 @@ pub fn save(input: YtdlCookieConfigInput) -> Result<YtdlCookieStatus, YtdlError>
         YtdlError::internal(Some(&format!("create cookie settings dir: {error}")))
     })?;
 
-    let json = serde_json::to_string_pretty(&settings)
-        .map_err(|error| YtdlError::internal(Some(&format!("serialize cookie settings: {error}"))))?;
+    let json = serde_json::to_string_pretty(&settings).map_err(|error| {
+        YtdlError::internal(Some(&format!("serialize cookie settings: {error}")))
+    })?;
     fs::write(settings_path(), json)
         .map_err(|error| YtdlError::internal(Some(&format!("write cookie settings: {error}"))))?;
 
     tracing::info!(
         mode = ?settings.mode,
         browser = ?settings.browser,
+        has_profile = settings.browser_profile.is_some(),
         has_file = settings.file_path.is_some(),
         "ytdl cookie settings saved"
     );
     Ok(status())
+}
+
+fn browser_cookie_spec(settings: &CookieSettings) -> String {
+    match settings
+        .browser_profile
+        .as_deref()
+        .map(str::trim)
+        .filter(|p| !p.is_empty())
+    {
+        Some(profile) => format!("{}:{profile}", settings.browser.as_yt_dlp()),
+        None => settings.browser.as_yt_dlp().to_string(),
+    }
 }
 
 /// Append cookie-related args. Never logs cookie file contents.
@@ -164,7 +220,7 @@ pub fn apply_to_command(cmd: &mut Command, settings: &CookieSettings) -> Result<
         CookieMode::None => Ok(()),
         CookieMode::Browser => {
             cmd.arg("--cookies-from-browser");
-            cmd.arg(settings.browser.as_yt_dlp());
+            cmd.arg(browser_cookie_spec(settings));
             Ok(())
         }
         CookieMode::File => {
@@ -181,6 +237,212 @@ pub fn apply_to_command(cmd: &mut Command, settings: &CookieSettings) -> Result<
             Ok(())
         }
     }
+}
+
+/// List local browser profiles for the given browser (Windows-first paths).
+pub fn list_browser_profiles(browser: CookieBrowser) -> Result<Vec<BrowserProfileOption>, YtdlError> {
+    match browser {
+        CookieBrowser::Chrome | CookieBrowser::Edge => list_chromium_profiles(browser),
+        CookieBrowser::Firefox => list_firefox_profiles(),
+    }
+}
+
+fn list_chromium_profiles(browser: CookieBrowser) -> Result<Vec<BrowserProfileOption>, YtdlError> {
+    let Some(user_data) = chromium_user_data_dir(browser) else {
+        return Ok(Vec::new());
+    };
+    if !user_data.is_dir() {
+        return Ok(Vec::new());
+    }
+
+    let mut name_by_id = std::collections::HashMap::new();
+    let local_state = user_data.join("Local State");
+    if let Ok(raw) = fs::read_to_string(&local_state) {
+        if let Ok(json) = serde_json::from_str::<serde_json::Value>(&raw) {
+            if let Some(cache) = json
+                .pointer("/profile/info_cache")
+                .and_then(|v| v.as_object())
+            {
+                for (id, meta) in cache {
+                    if let Some(name) = meta.get("name").and_then(|v| v.as_str()) {
+                        name_by_id.insert(id.clone(), name.to_string());
+                    }
+                }
+            }
+        }
+    }
+
+    let mut out = Vec::new();
+    let Ok(entries) = fs::read_dir(&user_data) else {
+        return Ok(out);
+    };
+    for entry in entries.flatten() {
+        let Ok(file_type) = entry.file_type() else {
+            continue;
+        };
+        if !file_type.is_dir() {
+            continue;
+        }
+        let name = entry.file_name();
+        let Some(id) = name.to_str() else {
+            continue;
+        };
+        if id != "Default" && !id.starts_with("Profile ") {
+            continue;
+        }
+        // Cookie DB present ⇒ usable profile.
+        if !entry.path().join("Network").join("Cookies").is_file()
+            && !entry.path().join("Cookies").is_file()
+        {
+            continue;
+        }
+        let label = name_by_id
+            .get(id)
+            .cloned()
+            .unwrap_or_else(|| id.to_string());
+        out.push(BrowserProfileOption {
+            id: id.to_string(),
+            label: if label == *id {
+                label
+            } else {
+                format!("{label}（{id}）")
+            },
+        });
+    }
+    out.sort_by(|a, b| a.id.cmp(&b.id));
+    Ok(out)
+}
+
+fn chromium_user_data_dir(browser: CookieBrowser) -> Option<PathBuf> {
+    let local = std::env::var_os("LOCALAPPDATA").map(PathBuf::from)?;
+    Some(match browser {
+        CookieBrowser::Chrome => local.join("Google").join("Chrome").join("User Data"),
+        CookieBrowser::Edge => local.join("Microsoft").join("Edge").join("User Data"),
+        CookieBrowser::Firefox => return None,
+    })
+}
+
+fn list_firefox_profiles() -> Result<Vec<BrowserProfileOption>, YtdlError> {
+    let Some(ini_path) = firefox_profiles_ini() else {
+        return Ok(Vec::new());
+    };
+    let Ok(raw) = fs::read_to_string(&ini_path) else {
+        return Ok(Vec::new());
+    };
+
+    let mut out = Vec::new();
+    let mut current_name: Option<String> = None;
+    for line in raw.lines() {
+        let line = line.trim();
+        if line.starts_with('[') && line.ends_with(']') {
+            current_name = None;
+            continue;
+        }
+        if let Some(name) = line.strip_prefix("Name=") {
+            current_name = Some(name.to_string());
+        }
+        if line.starts_with("Path=") {
+            if let Some(name) = current_name.take() {
+                out.push(BrowserProfileOption {
+                    id: name.clone(),
+                    label: name,
+                });
+            }
+        }
+    }
+    out.sort_by(|a, b| a.label.cmp(&b.label));
+    Ok(out)
+}
+
+fn firefox_profiles_ini() -> Option<PathBuf> {
+    #[cfg(windows)]
+    {
+        let appdata = std::env::var_os("APPDATA").map(PathBuf::from)?;
+        let path = appdata
+            .join("Mozilla")
+            .join("Firefox")
+            .join("profiles.ini");
+        return path.is_file().then_some(path);
+    }
+    #[cfg(target_os = "macos")]
+    {
+        let home = std::env::var_os("HOME").map(PathBuf::from)?;
+        let path = home
+            .join("Library/Application Support/Firefox/profiles.ini");
+        return path.is_file().then_some(path);
+    }
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        let home = std::env::var_os("HOME").map(PathBuf::from)?;
+        let path = home.join(".mozilla/firefox/profiles.ini");
+        return path.is_file().then_some(path);
+    }
+    #[allow(unreachable_code)]
+    None
+}
+
+/// Probe whether the current cookie settings can be read (and used for a short public URL).
+pub fn test_cookies(settings: &CookieSettings) -> Result<YtdlCookieTestResult, YtdlError> {
+    if matches!(settings.mode, CookieMode::None) {
+        return Ok(YtdlCookieTestResult {
+            ok: false,
+            message: "尚未选择登录态来源，请先选浏览器配置档案或导入 Cookie 文件".into(),
+        });
+    }
+
+    let cli = paths::require_cli()?;
+    let mut cmd = command(&cli);
+    cmd.args([
+        "--skip-download",
+        "--no-playlist",
+        "--no-warnings",
+        "--print",
+        "%(id)s",
+    ]);
+    apply_to_command(&mut cmd, settings)?;
+    cmd.arg(COOKIE_TEST_URL);
+
+    let output = cmd.output().map_err(|error| {
+        tracing::warn!(%error, "cookie test spawn failed");
+        YtdlError::resolve_failed(Some(&error.to_string()))
+    })?;
+
+    if output.status.success() {
+        let id = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        let ok = !id.is_empty();
+        return Ok(YtdlCookieTestResult {
+            ok,
+            message: if ok {
+                match settings.mode {
+                    CookieMode::Browser => format!(
+                        "可以读取 {} 登录态（配置档案：{}）",
+                        settings.browser.label(),
+                        settings
+                            .browser_profile
+                            .as_deref()
+                            .filter(|p| !p.is_empty())
+                            .unwrap_or("默认")
+                    ),
+                    CookieMode::File => "可以读取 Cookie 文件登录态".into(),
+                    CookieMode::None => "未使用登录态".into(),
+                }
+            } else {
+                "登录态读取结果异常，请关闭浏览器后重试".into()
+            },
+        });
+    }
+
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    tracing::warn!(%stderr, "cookie test failed");
+    let classified = classify_resolve_stderr(&if stderr.is_empty() {
+        "cookie test failed".into()
+    } else {
+        stderr
+    });
+    Ok(YtdlCookieTestResult {
+        ok: false,
+        message: classified.message,
+    })
 }
 
 /// Map resolver stderr into LoginRequired when it looks like auth / cookie failure.
@@ -223,6 +485,21 @@ mod tests {
     }
 
     #[test]
+    fn browser_spec_includes_profile() {
+        let settings = CookieSettings {
+            mode: CookieMode::Browser,
+            browser: CookieBrowser::Chrome,
+            browser_profile: Some("Profile 1".into()),
+            file_path: None,
+        };
+        assert_eq!(browser_cookie_spec(&settings), "chrome:Profile 1");
+        let mut cmd = Command::new("yt-dlp");
+        apply_to_command(&mut cmd, &settings).unwrap();
+        let debug = format!("{cmd:?}");
+        assert!(debug.contains("chrome:Profile 1"));
+    }
+
+    #[test]
     fn classify_login_and_cookie_errors() {
         let login = classify_resolve_stderr("ERROR: Sign in to confirm you're not a bot");
         assert_eq!(login.code, crate::ytdl::YtdlErrorCode::LoginRequired);
@@ -243,6 +520,7 @@ mod tests {
         let settings = CookieSettings {
             mode: CookieMode::Browser,
             browser: CookieBrowser::Edge,
+            browser_profile: None,
             file_path: None,
         };
         apply_to_command(&mut cmd, &settings).unwrap();

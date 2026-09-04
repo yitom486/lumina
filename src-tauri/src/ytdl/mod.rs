@@ -10,7 +10,8 @@ pub mod resolve;
 pub mod service;
 
 pub use cookies::{
-    CookieBrowser, CookieMode, YtdlCookieConfigInput, YtdlCookieStatus,
+    BrowserProfileOption, CookieBrowser, CookieMode, YtdlCookieConfigInput, YtdlCookieStatus,
+    YtdlCookieTestResult,
 };
 pub use error::{YtdlError, YtdlErrorCode};
 pub use model::{YtdlFormat, YtdlInstallEvent, YtdlResolveResult, YtdlStatus, YtdlSubtitleTrack};

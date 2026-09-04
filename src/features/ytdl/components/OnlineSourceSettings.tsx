@@ -7,8 +7,10 @@ import {
   getYtdlCookieStatus,
   getYtdlStatus,
   installYtdl,
+  listBrowserProfiles,
   pickCookiesFile,
   setYtdlCookies,
+  testYtdlCookies,
   type CookieBrowser,
   type CookieMode,
   type YtdlInstallEvent,
@@ -31,6 +33,16 @@ export function OnlineSourceSettings() {
     queryFn: getYtdlCookieStatus,
   });
 
+  const cookie = cookieQuery.data;
+  const selectedBrowser = cookie?.browser ?? "chrome";
+  const browserMode = cookie?.mode === "browser";
+
+  const profilesQuery = useQuery({
+    queryKey: ["ytdl-browser-profiles", selectedBrowser],
+    queryFn: () => listBrowserProfiles(selectedBrowser),
+    enabled: browserMode,
+  });
+
   const saveCookies = useMutation({
     mutationFn: setYtdlCookies,
     onSuccess: (status) => {
@@ -48,22 +60,57 @@ export function OnlineSourceSettings() {
     },
   });
 
-  const cookie = cookieQuery.data;
+  const testCookies = useMutation({
+    mutationFn: testYtdlCookies,
+  });
+
   const ytdl = statusQuery.data;
-  const busy = saveCookies.isPending || install.isPending;
+  const busy =
+    saveCookies.isPending || install.isPending || testCookies.isPending;
+
+  const persist = (input: {
+    mode: CookieMode;
+    browser?: CookieBrowser;
+    browserProfile?: string | null;
+    filePath?: string | null;
+  }) =>
+    saveCookies.mutateAsync({
+      mode: input.mode,
+      browser: input.browser ?? cookie?.browser ?? "chrome",
+      browserProfile:
+        input.browserProfile === undefined
+          ? (cookie?.browserProfile ?? null)
+          : input.browserProfile,
+      filePath:
+        input.filePath === undefined ? (cookie?.filePath ?? null) : input.filePath,
+    });
 
   const setMode = (mode: CookieMode) => {
-    void saveCookies.mutateAsync({
+    void persist({
       mode,
-      browser: cookie?.browser ?? "chrome",
-      filePath: cookie?.filePath ?? null,
+      filePath: mode === "file" ? cookie?.filePath ?? null : null,
+      browserProfile: mode === "browser" ? cookie?.browserProfile ?? null : null,
     });
   };
 
   const setBrowser = (browser: CookieBrowser) => {
-    void saveCookies.mutateAsync({
+    void persist({
       mode: "browser",
       browser,
+      browserProfile: null,
+      filePath: null,
+    }).then(() => {
+      void queryClient.invalidateQueries({
+        queryKey: ["ytdl-browser-profiles", browser],
+      });
+    });
+  };
+
+  const setProfile = (browserProfile: string) => {
+    void persist({
+      mode: "browser",
+      browser: selectedBrowser,
+      browserProfile,
       filePath: null,
     });
   };
@@ -71,12 +118,14 @@ export function OnlineSourceSettings() {
   const importFile = async () => {
     const path = await pickCookiesFile();
     if (!path) return;
-    await saveCookies.mutateAsync({
+    await persist({
       mode: "file",
-      browser: cookie?.browser ?? "chrome",
+      browserProfile: null,
       filePath: path,
     });
   };
+
+  const profiles = profilesQuery.data ?? [];
 
   return (
     <div className="mt-3 space-y-2 rounded-md border border-border/70 bg-muted/30 p-3 text-left text-xs">
@@ -98,6 +147,10 @@ export function OnlineSourceSettings() {
 
       <p className="pt-1 text-muted-foreground">
         {cookie?.message ?? "登录态可选；仅本机使用，不会交给 AI。"}
+      </p>
+      <p className="text-[11px] leading-relaxed text-muted-foreground">
+        读不到登录态时：请先完全退出对应浏览器再测。多账号请选不同「配置档案」（Chrome
+        人物 1/2），同一档案里切换的 Google 账号无法分别导出。
       </p>
       <div className="flex flex-wrap gap-1.5">
         <Button
@@ -135,9 +188,65 @@ export function OnlineSourceSettings() {
           导入 Cookie 文件
         </Button>
       </div>
-      {(saveCookies.error || install.error) && (
+
+      {browserMode ? (
+        <div className="space-y-1.5 pt-1">
+          <p className="text-[11px] text-muted-foreground">选择配置档案</p>
+          {profilesQuery.isLoading ? (
+            <p className="text-muted-foreground">正在扫描本机配置档案…</p>
+          ) : profiles.length === 0 ? (
+            <p className="text-muted-foreground">
+              未找到可用配置档案，可改用「导入 Cookie 文件」。
+            </p>
+          ) : (
+            <div className="flex flex-wrap gap-1.5">
+              {profiles.map((profile) => (
+                <Button
+                  key={profile.id}
+                  type="button"
+                  size="sm"
+                  variant={
+                    cookie?.browserProfile === profile.id ? "default" : "outline"
+                  }
+                  disabled={busy}
+                  onClick={() => setProfile(profile.id)}
+                >
+                  {profile.label}
+                </Button>
+              ))}
+            </div>
+          )}
+        </div>
+      ) : null}
+
+      {cookie?.mode !== "none" ? (
+        <div className="flex flex-wrap items-center gap-2 pt-1">
+          <Button
+            type="button"
+            size="sm"
+            variant="secondary"
+            disabled={busy || !ytdl?.cliReady}
+            onClick={() => void testCookies.mutateAsync()}
+          >
+            {testCookies.isPending ? "测试中…" : "测试登录态是否可读"}
+          </Button>
+          {testCookies.data ? (
+            <span
+              className={
+                testCookies.data.ok ? "text-emerald-500" : "text-destructive"
+              }
+            >
+              {testCookies.data.message}
+            </span>
+          ) : null}
+        </div>
+      ) : null}
+
+      {(saveCookies.error || install.error || testCookies.error) && (
         <p className="text-destructive">
-          {errorMessage(saveCookies.error ?? install.error)}
+          {errorMessage(
+            saveCookies.error ?? install.error ?? testCookies.error,
+          )}
         </p>
       )}
     </div>

@@ -19,6 +19,7 @@ export type CookieBrowser = "chrome" | "edge" | "firefox";
 export type YtdlCookieStatus = {
   mode: CookieMode;
   browser: CookieBrowser;
+  browserProfile: string | null;
   filePath: string | null;
   message: string;
 };
@@ -26,7 +27,18 @@ export type YtdlCookieStatus = {
 export type YtdlCookieConfigInput = {
   mode: CookieMode;
   browser?: CookieBrowser | null;
+  browserProfile?: string | null;
   filePath?: string | null;
+};
+
+export type BrowserProfileOption = {
+  id: string;
+  label: string;
+};
+
+export type YtdlCookieTestResult = {
+  ok: boolean;
+  message: string;
 };
 
 export type YtdlFormat = {
@@ -83,6 +95,18 @@ export function setYtdlCookies(
   config: YtdlCookieConfigInput,
 ): Promise<YtdlCookieStatus> {
   return invoke<YtdlCookieStatus>("ytdl_set_cookies", { config });
+}
+
+export function listBrowserProfiles(
+  browser: CookieBrowser,
+): Promise<BrowserProfileOption[]> {
+  return invoke<BrowserProfileOption[]>("ytdl_list_browser_profiles", {
+    browser,
+  });
+}
+
+export function testYtdlCookies(): Promise<YtdlCookieTestResult> {
+  return invoke<YtdlCookieTestResult>("ytdl_test_cookies");
 }
 
 export function installYtdl(
