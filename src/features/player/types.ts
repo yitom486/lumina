@@ -6,6 +6,8 @@ export type PlayerErrorDto = {
   details?: string;
 };
 
+export type MediaSourceKind = "local" | "remote";
+
 export type PlayerSnapshot = {
   status: string;
   currentTimeMs: number;
@@ -13,6 +15,9 @@ export type PlayerSnapshot = {
   volume: number;
   rate: number;
   currentFile: string | null;
+  /** Stable id for notes / history (`path` or `youtube:…` / `bilibili:…`). */
+  mediaId?: string | null;
+  sourceKind?: MediaSourceKind | null;
   error: PlayerErrorDto | null;
 };
 
@@ -33,5 +38,7 @@ export const IDLE_SNAPSHOT: PlayerSnapshot = {
   volume: 100,
   rate: 1,
   currentFile: null,
+  mediaId: null,
+  sourceKind: null,
   error: null,
 };

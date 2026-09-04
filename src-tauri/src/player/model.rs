@@ -3,6 +3,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::player::error::PlayerError;
+use crate::player::source::MediaSourceKind;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "PascalCase")]
@@ -24,7 +25,13 @@ pub struct PlayerSnapshot {
     pub duration_ms: u64,
     pub volume: f64,
     pub rate: f64,
+    /// Playback target shown to UI (local path or original URL).
     pub current_file: Option<String>,
+    /// Stable id for notes / history (`path` or `youtube:…` / `bilibili:…`).
+    #[serde(default)]
+    pub media_id: Option<String>,
+    #[serde(default)]
+    pub source_kind: Option<MediaSourceKind>,
     pub error: Option<PlayerError>,
 }
 
@@ -37,6 +44,8 @@ impl PlayerSnapshot {
             volume: 100.0,
             rate: 1.0,
             current_file: None,
+            media_id: None,
+            source_kind: None,
             error: None,
         }
     }

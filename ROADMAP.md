@@ -9,6 +9,7 @@
 | 5 | Codex ACP（按需本机 CLI；未配置不影响播放） |
 | 5b | 笔记 + Markdown 导出（时间戳锚点） |
 | 5c | 容器章节导航（仅元数据；无则静默） |
+| 5d | Online Source（**进行中** — 按需 yt-dlp；浏览器 Cookie；Agent 只吃本机上下文） |
 | 6 | AI Video Reader |
 | 7 | Multimodal Video Understanding |
 | 8 | Unified GPU Composition（远期研究：视频画面与 Web UI 可组合叠加） |
@@ -42,6 +43,15 @@
 - 未配置 → `NotConfigured`；播放 / 字幕 / 笔记仍可用
 - **bun 仅开发/CI**；不要求终端用户装 bun 才能播放
 - 不把 Codex / Node 打进默认安装包
+
+## Phase 5d — Online Source（进行中）
+
+- **可选**：未配置 yt-dlp 不影响本地播放
+- **按需**：yt-dlp 下载到用户数据目录（不进默认安装包）；可更新
+- **登录**：显式支持从 Chrome / Edge / Firefox 读 Cookie（提清晰度）；cookies.txt 兜底；**永不**进 Agent prompt
+- **上下文**：字幕窗 / 截帧 / 章节仍由本机准备后交给 Agent；禁止 Agent 自行爬站
+- **播放**：继续 libmpv（非 HTML `<video>`）；倍速复用现有 `set_rate`；清晰度新增领域 API
+- **工具**：对齐现有 MCP 语义；契约抽离便于日后去掉 MCP
 
 ## 笔记 + 导出
 

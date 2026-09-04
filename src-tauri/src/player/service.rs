@@ -88,14 +88,33 @@ impl PlayerService {
             return Err(PlayerError::invalid_state("open", self.snapshot.status));
         }
 
-        if let Err(error) = validate_media_path(&path) {
-            self.snapshot.current_file = Some(path);
+        let source = match crate::player::source::MediaSource::parse(&path) {
+            Ok(source) => source,
+            Err(error) => {
+                self.snapshot.current_file = Some(path);
+                self.snapshot.media_id = None;
+                self.snapshot.source_kind = None;
+                self.fail(error.clone());
+                return Err(error);
+            }
+        };
+
+        let playback_target = source.playback_target().to_string();
+        let media_id = source.media_id();
+        let source_kind = source.kind();
+
+        if let Err(error) = source.validate() {
+            self.snapshot.current_file = Some(playback_target);
+            self.snapshot.media_id = Some(media_id);
+            self.snapshot.source_kind = Some(source_kind);
             self.fail(error.clone());
             return Err(error);
         }
 
         if self.backend.is_none() {
-            self.snapshot.current_file = Some(path);
+            self.snapshot.current_file = Some(playback_target);
+            self.snapshot.media_id = Some(media_id);
+            self.snapshot.source_kind = Some(source_kind);
             let err = PlayerError::backend_missing();
             self.fail(err.clone());
             return Err(err);
@@ -114,16 +133,18 @@ impl PlayerService {
         }
 
         self.snapshot.status = PlayerState::Loading;
-        self.snapshot.current_file = Some(path.clone());
+        self.snapshot.current_file = Some(playback_target.clone());
+        self.snapshot.media_id = Some(media_id.clone());
+        self.snapshot.source_kind = Some(source_kind);
         self.snapshot.current_time_ms = 0;
         self.snapshot.duration_ms = 0;
         self.snapshot.error = None;
-        tracing::info!(path = %path, "open");
+        tracing::info!(%playback_target, %media_id, ?source_kind, "open");
 
         let open_result = self
             .backend
             .as_ref()
-            .map(|backend| backend.open(&path))
+            .map(|backend| backend.open(&playback_target))
             .unwrap_or_else(|| Err(PlayerError::backend_missing()));
 
         if let Err(error) = open_result {
@@ -142,11 +163,11 @@ impl PlayerService {
         }
 
         self.snapshot.status = PlayerState::Playing;
-        tracing::info!(path = %path, duration_ms, "file opened → Playing");
+        tracing::info!(%playback_target, %media_id, duration_ms, "file opened → Playing");
 
         let events = vec![
             PlayerEvent::FileLoaded {
-                path: path.clone(),
+                path: playback_target,
                 duration_ms,
             },
             PlayerEvent::DurationChanged { duration_ms },
@@ -417,30 +438,6 @@ impl PlayerService {
     }
 }
 
-fn validate_media_path(path: &str) -> Result<(), PlayerError> {
-    let trimmed = path.trim();
-    if trimmed.is_empty() {
-        return Err(PlayerError::load(Some("empty media path")));
-    }
-
-    let meta = std::fs::metadata(trimmed)
-        .map_err(|error| PlayerError::load(Some(&format!("path not accessible: {error}"))))?;
-
-    if !meta.is_file() {
-        return Err(PlayerError::load(Some(&format!(
-            "not a regular file: {trimmed}"
-        ))));
-    }
-
-    if meta.len() == 0 {
-        return Err(PlayerError::unsupported(Some(&format!(
-            "empty file: {trimmed}"
-        ))));
-    }
-
-    Ok(())
-}
-
 impl Default for PlayerService {
     fn default() -> Self {
         Self::new()
@@ -497,6 +494,27 @@ mod tests {
         assert_eq!(
             player.snapshot().current_file.as_deref(),
             Some(path_str.as_str())
+        );
+    }
+
+    #[test]
+    fn open_remote_url_without_backend_is_internal() {
+        let mut player = PlayerService::new();
+        let url = "https://www.youtube.com/watch?v=dQw4w9WgXcQ".to_string();
+        let err = player.open(url.clone()).expect_err("backend missing");
+        assert_eq!(err.code, PlayerErrorCode::InternalError);
+        assert_eq!(player.get_state(), PlayerState::Error);
+        assert_eq!(
+            player.snapshot().current_file.as_deref(),
+            Some(url.as_str())
+        );
+        assert_eq!(
+            player.snapshot().media_id.as_deref(),
+            Some("youtube:dQw4w9WgXcQ")
+        );
+        assert_eq!(
+            player.snapshot().source_kind,
+            Some(crate::player::source::MediaSourceKind::Remote)
         );
     }
 

@@ -4,7 +4,9 @@ pub mod error;
 pub mod model;
 pub mod mpv;
 pub mod service;
+pub mod source;
 
 pub use error::{PlayerError, PlayerErrorCode};
 pub use model::{PlayerEvent, PlayerSnapshot, PlayerState};
 pub use service::PlayerService;
+pub use source::{MediaSource, MediaSourceKind};

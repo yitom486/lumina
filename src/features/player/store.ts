@@ -214,6 +214,8 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
       volume: snapshot.volume,
       rate: snapshot.rate,
       currentFile: snapshot.currentFile,
+      mediaId: snapshot.mediaId ?? null,
+      sourceKind: snapshot.sourceKind ?? null,
       error: snapshot.error,
     }));
   },
