@@ -9,6 +9,7 @@ export type YtdlStatus = {
   available: boolean;
   cliReady: boolean;
   cliPath: string | null;
+  version: string | null;
   installSupported: boolean;
   message: string;
 };

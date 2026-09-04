@@ -9,15 +9,22 @@ export function SeekBar() {
   const status = usePlayerStore((s) => s.status);
   const currentTimeMs = usePlayerStore((s) => s.currentTimeMs);
   const durationMs = usePlayerStore((s) => s.durationMs);
+  const durationHintMs = usePlayerStore((s) => s.durationHintMs);
   const setSeeking = usePlayerStore((s) => s.setSeeking);
   const setPreviewTime = usePlayerStore((s) => s.setPreviewTime);
   const seek = usePlayerStore((s) => s.seek);
   const mediaInfo = useMediaInfoQuery();
 
-  // Prefer Rust/mpv duration; fall back to ffprobe so the bar isn't stuck at 0:00.
+  // Prefer mpv demux duration; then yt-dlp hint; then local ffprobe.
   const probeDuration = mediaInfo.data?.durationMs ?? 0;
   const effectiveDuration =
-    durationMs > 0 ? durationMs : probeDuration > 0 ? probeDuration : 0;
+    durationMs > 0
+      ? durationMs
+      : (durationHintMs ?? 0) > 0
+        ? (durationHintMs as number)
+        : probeDuration > 0
+          ? probeDuration
+          : 0;
 
   const canSeek =
     status !== "Idle" &&

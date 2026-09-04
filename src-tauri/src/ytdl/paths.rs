@@ -2,6 +2,7 @@
 
 use std::path::PathBuf;
 
+use crate::process_util::command;
 use crate::ytdl::error::YtdlError;
 use crate::ytdl::model::YtdlStatus;
 
@@ -25,17 +26,26 @@ pub fn status() -> YtdlStatus {
     let cli = find_cli_any();
     let install_supported = install_supported();
     match cli {
-        Some(path) => YtdlStatus {
-            available: true,
-            cli_ready: true,
-            cli_path: Some(path.to_string_lossy().to_string()),
-            install_supported,
-            message: "在线视频解析已就绪（仅在打开链接时使用）".into(),
-        },
+        Some(path) => {
+            let version = cli_version(&path);
+            let message = version
+                .as_deref()
+                .map(|value| format!("在线视频解析已就绪（版本 {value}）"))
+                .unwrap_or_else(|| "在线视频解析已就绪（版本未知）".into());
+            YtdlStatus {
+                available: true,
+                cli_ready: true,
+                cli_path: Some(path.to_string_lossy().to_string()),
+                version,
+                install_supported,
+                message,
+            }
+        }
         None => YtdlStatus {
             available: false,
             cli_ready: false,
             cli_path: None,
+            version: None,
             install_supported,
             message: if install_supported {
                 "尚未安装在线解析组件，可一键下载".into()
@@ -44,6 +54,17 @@ pub fn status() -> YtdlStatus {
             },
         },
     }
+}
+
+pub fn cli_version(path: &std::path::Path) -> Option<String> {
+    let output = command(path).arg("--version").output().ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    String::from_utf8(output.stdout)
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
 }
 
 pub fn require_cli() -> Result<PathBuf, YtdlError> {

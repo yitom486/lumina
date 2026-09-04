@@ -4,4 +4,4 @@ pub mod native_library;
 pub mod player;
 pub mod window;
 
-pub use player::LibMpvPlayer;
+pub use player::{LibMpvPlayer, NetworkPlaybackOpts};

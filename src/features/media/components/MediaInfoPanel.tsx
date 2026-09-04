@@ -1,5 +1,6 @@
 import { errorMessage, formatTime } from "@/lib/format";
 import { Separator } from "@/components/ui/separator";
+import { usePlayerStore } from "@/features/player";
 
 import { useMediaInfoQuery } from "../hooks/useMediaInfoQuery";
 import type { MediaStream } from "../types";
@@ -27,7 +28,20 @@ function shortStream(stream: MediaStream): string {
 
 /** Compact media summary for the reader sidebar. */
 export function MediaInfoPanel() {
+  const sourceKind = usePlayerStore((s) => s.sourceKind);
+  const currentFile = usePlayerStore((s) => s.currentFile);
   const query = useMediaInfoQuery();
+
+  if (sourceKind === "remote" || (currentFile?.startsWith("http") ?? false)) {
+    return (
+      <div className="space-y-1 px-3 py-2 text-xs text-muted-foreground">
+        <p className="font-medium text-foreground">在线视频</p>
+        <p className="break-all">{currentFile}</p>
+        <p>媒体信息由在线解析提供；容器探测仅用于本地文件。</p>
+        <Separator className="mt-2" />
+      </div>
+    );
+  }
 
   if (!query.isEnabled) {
     return (

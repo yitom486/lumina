@@ -18,7 +18,11 @@ export function flushPlaybackPersistence(): void {
   }
 
   if (status === "Playing" || status === "Paused" || status === "Ready") {
-    useProgressStore.getState().saveProgress(path, pos);
+    // Avoid binding another file's ghost position onto a fresh remote URL.
+    const { durationMs, sourceKind } = usePlayerStore.getState();
+    if (!(sourceKind === "remote" && durationMs <= 0)) {
+      useProgressStore.getState().saveProgress(path, pos);
+    }
     useSessionStore.getState().saveSession({
       path,
       positionMs: pos,
@@ -35,6 +39,8 @@ export function useSessionPersistence(): void {
   useEffect(() => {
     if (!currentFile) return;
     if (status === "Playing" || status === "Paused" || status === "Ready") {
+      const { durationMs, sourceKind } = usePlayerStore.getState();
+      if (sourceKind === "remote" && durationMs <= 0) return;
       useSessionStore.getState().saveSession({
         path: currentFile,
         positionMs: currentTimeMs,

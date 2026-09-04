@@ -4,6 +4,7 @@ import { formatTime } from "@/lib/format";
 
 export function ChaptersPanel() {
   const mediaPath = usePlayerStore((s) => s.currentFile);
+  const sourceKind = usePlayerStore((s) => s.sourceKind);
   const seek = usePlayerStore((s) => s.seek);
   const positionMs = usePlayerStore((s) => s.currentTimeMs);
   const { data, isLoading, error } = useMediaInfoQuery();
@@ -11,6 +12,14 @@ export function ChaptersPanel() {
   if (!mediaPath) {
     return (
       <div className="p-3 text-xs text-muted-foreground">打开含章节元数据的视频后显示。</div>
+    );
+  }
+
+  if (sourceKind === "remote" || mediaPath.startsWith("http")) {
+    return (
+      <div className="p-3 text-xs text-muted-foreground">
+        在线视频的章节将由解析结果提供（后续版本）；本地容器章节探测不适用于网页链接。
+      </div>
     );
   }
 

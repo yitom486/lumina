@@ -39,6 +39,8 @@ type PlayerStore = PlayerSnapshot & {
   resumeToast: ResumeToast | null;
   /** Skip auto-resume once after handled for this open. */
   resumeHandledForPath: string | null;
+  /** Resume deferred until duration is known (remote / early demux). */
+  pendingResumePath: string | null;
   /** Same-folder videos (sorted). */
   playlist: string[];
   playlistIndex: number;
@@ -107,6 +109,7 @@ function indexOfPath(playlist: string[], path: string): number {
 /** MX Player style: seek first, show chip only when position actually resumed. */
 function maybeResume(
   path: string,
+  /** Must be mpv demux duration — never yt-dlp hint alone. */
   durationMs: number,
   get: () => PlayerStore,
   set: (
@@ -118,12 +121,22 @@ function maybeResume(
   if (get().resumeHandledForPath === path) return;
 
   const saved = useProgressStore.getState().getProgress(path);
-  set({ resumeHandledForPath: path });
-
-  if (!saved || !shouldOfferResume(saved.positionMs, durationMs)) {
-    set({ resumeToast: null });
+  if (!saved || !shouldOfferResume(saved.positionMs, durationMs || Number.POSITIVE_INFINITY)) {
+    if (saved && durationMs <= 0 && shouldOfferResume(saved.positionMs, Number.POSITIVE_INFINITY)) {
+      set({ pendingResumePath: path, resumeToast: null });
+      return;
+    }
+    set({ resumeHandledForPath: path, pendingResumePath: null, resumeToast: null });
     return;
   }
+
+  // Remote CDN demux lags; never seek until mpv reports a real duration.
+  if (durationMs <= 0) {
+    set({ pendingResumePath: path, resumeToast: null });
+    return;
+  }
+
+  set({ resumeHandledForPath: path, pendingResumePath: null });
 
   const targetMs = saved.positionMs;
 
@@ -134,11 +147,17 @@ function maybeResume(
         get().applySnapshot(snapshot);
         return snapshot;
       });
+      if (actualMs == null) {
+        // Stale progress (e.g. ghost position from another file) — drop it.
+        useProgressStore.getState().clearProgress(path);
+        set({ resumeToast: null });
+        return;
+      }
       const resolvedDurationMs = get().durationMs || durationMs;
       const planned = planResumeToast(
         targetMs,
         resolvedDurationMs,
-        actualMs ?? 0,
+        actualMs,
       );
       if (planned.kind === "toast") {
         set({ resumeToast: { path, positionMs: planned.positionMs } });
@@ -149,6 +168,7 @@ function maybeResume(
         set({ resumeToast: null });
       }
     } catch (error) {
+      useProgressStore.getState().clearProgress(path);
       set({ resumeToast: null, statusMessage: errorMessage(error) });
     }
   })();
@@ -183,7 +203,8 @@ async function restorePausedPosition(
 
   set({ resumeHandledForPath: path, resumeToast: null });
 
-  if (shouldRestoreSessionPosition(positionMs, durationMs)) {
+  // Cold demux (duration still 0): do not spam seek — stay at start, paused.
+  if (durationMs > 0 && shouldRestoreSessionPosition(positionMs, durationMs)) {
     try {
       await seekForResume(positionMs, async (targetMs) => {
         const snapshot = await api.seekPlayer(targetMs);
@@ -210,30 +231,39 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
   isSeeking: false,
   resumeToast: null,
   resumeHandledForPath: null,
+  pendingResumePath: null,
   playlist: [],
   playlistIndex: -1,
 
   applySnapshot: (snapshot) => {
-    set((state) => ({
-      status: snapshot.status,
-      currentTimeMs: snapshot.currentTimeMs,
-      // Never clobber a known duration with 0 (mpv often reports 0 until demux settles;
-      // a later seek/play snapshot would otherwise wipe DurationChanged).
-      // Exception: resync with a real file + positive duration from Rust always wins.
-      durationMs:
-        snapshot.durationMs > 0
+    set((state) => {
+      const fileChanged =
+        (snapshot.currentFile ?? null) !== (state.currentFile ?? null);
+      return {
+        status: snapshot.status,
+        currentTimeMs: snapshot.currentTimeMs,
+        // Same file: never clobber a known duration with 0 (mpv demux lag).
+        // New file: always take snapshot duration (even 0) — never keep the previous video's length.
+        durationMs: fileChanged
           ? snapshot.durationMs
-          : snapshot.currentFile
-            ? state.durationMs
-            : 0,
-      volume: snapshot.volume,
-      rate: snapshot.rate,
-      currentFile: snapshot.currentFile,
-      mediaId: snapshot.mediaId ?? null,
-      sourceKind: snapshot.sourceKind ?? null,
-      playbackFormatId: snapshot.playbackFormatId ?? null,
-      error: snapshot.error,
-    }));
+          : snapshot.durationMs > 0
+            ? snapshot.durationMs
+            : snapshot.currentFile
+              ? state.durationMs
+              : 0,
+        volume: snapshot.volume,
+        rate: snapshot.rate,
+        currentFile: snapshot.currentFile,
+        mediaId: snapshot.mediaId ?? null,
+        sourceKind: snapshot.sourceKind ?? null,
+        playbackFormatId: snapshot.playbackFormatId ?? null,
+        durationHintMs: snapshot.durationHintMs ?? null,
+        error: snapshot.error,
+        ...(fileChanged
+          ? { pendingResumePath: null, resumeHandledForPath: null }
+          : {}),
+      };
+    });
   },
 
   applyEvent: (event) => {
@@ -244,13 +274,23 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
       case "PositionChanged":
         // Ignore ghost ticks after HMR reset (Zustand idle, mpv still ticking).
         if (!get().currentFile) break;
+        // Remote streams often report 0 duration until HLS/DASH settles; ignore
+        // stale position ticks so we don't persist another file's offset onto this URL.
+        if (get().sourceKind === "remote" && get().durationMs <= 0) break;
         if (!get().isSeeking) {
           set({ currentTimeMs: event.payload.positionMs });
         }
         break;
-      case "DurationChanged":
-        set({ durationMs: event.payload.durationMs });
+      case "DurationChanged": {
+        const durationMs = event.payload.durationMs;
+        set({ durationMs });
+        const pending = get().pendingResumePath;
+        const path = get().currentFile;
+        if (pending && path && pending === path && durationMs > 0) {
+          maybeResume(path, durationMs, get, set);
+        }
         break;
+      }
       case "FileLoaded": {
         const path = event.payload.path;
         const durationMs = event.payload.durationMs;
@@ -265,6 +305,12 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
         }));
         if (get().playlist.length === 0 || idx < 0) {
           void get().syncPlaylistForPath(path);
+        }
+        if (durationMs > 0) {
+          const pending = get().pendingResumePath;
+          if (pending && pending === path) {
+            maybeResume(path, durationMs, get, set);
+          }
         }
         break;
       }
@@ -367,6 +413,7 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
     const restorePaused = options?.restorePaused ?? false;
     set({
       resumeHandledForPath: null,
+      pendingResumePath: null,
       resumeToast: null,
     });
 
@@ -395,7 +442,26 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
           path: snapshot.currentFile,
           positionMs: get().currentTimeMs,
         });
-        if (restorePaused) {
+        const remote =
+          snapshot.sourceKind === "remote" ||
+          isRemotePath(snapshot.currentFile);
+        if (remote) {
+          // Stale localStorage progress + yt-dlp duration hint caused seek storms
+          // (Raw(-12)) before CDN demux. Skip auto-resume for remote; play from start.
+          useProgressStore.getState().clearProgress(snapshot.currentFile);
+          set({
+            resumeHandledForPath: snapshot.currentFile,
+            pendingResumePath: null,
+            resumeToast: null,
+          });
+          if (restorePaused) {
+            try {
+              await get().pause();
+            } catch (error) {
+              set({ statusMessage: errorMessage(error) });
+            }
+          }
+        } else if (restorePaused) {
           await restorePausedPosition(
             snapshot.currentFile,
             get().durationMs || snapshot.durationMs,

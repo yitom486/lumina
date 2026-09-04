@@ -20,6 +20,8 @@ export type PlayerSnapshot = {
   sourceKind?: MediaSourceKind | null;
   /** Active online format id when remote; local stays null. */
   playbackFormatId?: string | null;
+  /** yt-dlp duration for UI only — not demux-ready. */
+  durationHintMs?: number | null;
   error: PlayerErrorDto | null;
 };
 
@@ -43,5 +45,6 @@ export const IDLE_SNAPSHOT: PlayerSnapshot = {
   mediaId: null,
   sourceKind: null,
   playbackFormatId: null,
+  durationHintMs: null,
   error: null,
 };

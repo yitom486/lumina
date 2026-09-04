@@ -1,11 +1,25 @@
 //! LibMpvPlayer — the only module that talks to libmpv.
 
+use std::ffi::CString;
+
+use libmpv2::events::Event;
 use libmpv2::Mpv;
 
 use crate::player::error::{PlayerError, PlayerErrorCode};
 
 pub struct LibMpvPlayer {
     mpv: Mpv,
+}
+
+/// Network auth for remote CDN / page URLs (YouTube etc.). Never log cookie contents.
+#[derive(Debug, Clone, Default)]
+pub struct NetworkPlaybackOpts {
+    pub referrer: Option<String>,
+    pub cookies_file: Option<String>,
+    /// Full path to yt-dlp.exe — when set, `path` should be the **page** URL.
+    pub ytdl_cli: Option<String>,
+    /// e.g. `18` or `137+bestaudio/best`
+    pub ytdl_format: Option<String>,
 }
 
 impl LibMpvPlayer {
@@ -19,6 +33,7 @@ impl LibMpvPlayer {
             Ok(())
         })
         .map_err(map_init_error)?;
+        enable_diagnostic_events(&mpv);
         log_version(&mpv);
         Ok(Self { mpv })
     }
@@ -37,17 +52,31 @@ impl LibMpvPlayer {
             Ok(())
         })
         .map_err(map_init_error)?;
+        enable_diagnostic_events(&mpv);
         log_version(&mpv);
         Ok(Self { mpv })
     }
 
     pub fn open(&self, path: &str) -> Result<(), PlayerError> {
-        self.open_media(path, None)
+        self.open_media(path, None, NetworkPlaybackOpts::default())
     }
 
     /// Load a media URL/path, optionally attaching a separate audio stream (DASH pair).
-    pub fn open_media(&self, path: &str, audio_url: Option<&str>) -> Result<(), PlayerError> {
-        tracing::info!(path, has_audio_url = audio_url.is_some(), "libmpv loadfile");
+    pub fn open_media(
+        &self,
+        path: &str,
+        audio_url: Option<&str>,
+        network: NetworkPlaybackOpts,
+    ) -> Result<(), PlayerError> {
+        self.apply_network_opts(&network)?;
+        tracing::info!(
+            path,
+            has_audio_url = audio_url.is_some(),
+            has_ytdl = network.ytdl_cli.is_some(),
+            has_cookies_file = network.cookies_file.is_some(),
+            has_referrer = network.referrer.is_some(),
+            "libmpv loadfile"
+        );
         self.mpv
             .command("loadfile", &[path, "replace"])
             .map_err(map_load_error)?;
@@ -59,6 +88,86 @@ impl LibMpvPlayer {
         self.mpv
             .set_property("pause", false)
             .map_err(map_playback_error)?;
+        Ok(())
+    }
+
+    fn apply_network_opts(&self, network: &NetworkPlaybackOpts) -> Result<(), PlayerError> {
+        const UA: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
+        if let Err(error) = self.mpv.set_property("user-agent", UA) {
+            tracing::warn!(%error, "set user-agent failed");
+        }
+        if let Some(referrer) = network
+            .referrer
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+        {
+            self.mpv
+                .set_property("referrer", referrer)
+                .map_err(|error| map_network_property_error("referrer", error))?;
+        }
+
+        let cookies = network
+            .cookies_file
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty());
+
+        if let Some(cli) = network
+            .ytdl_cli
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+        {
+            // Prefer yt-dlp hook for page URLs: it applies cookies/PO token; bare CDN often 403s.
+            self.mpv
+                .set_property("ytdl", "yes")
+                .map_err(|error| map_network_property_error("ytdl", error))?;
+            // The executable path belongs to the ytdl_hook script. `ytdl-path`
+            // is not an mpv property and returns MPV_ERROR_PROPERTY_NOT_FOUND.
+            let normalized_cli = cli.replace('\\', "/").replace(',', "\\,");
+            let script_opts = format!("ytdl_hook-ytdl_path={normalized_cli}");
+            self.mpv
+                .set_property("script-opts", script_opts.as_str())
+                .map_err(|error| map_network_property_error("script-opts", error))?;
+            if let Some(fmt) = network
+                .ytdl_format
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+            {
+                self.mpv
+                    .set_property("ytdl-format", fmt)
+                    .map_err(|error| map_network_property_error("ytdl-format", error))?;
+            }
+            if let Some(cookies_path) = cookies {
+                // ytdl-raw-options is key=value; normalize slashes for Windows paths.
+                let normalized = cookies_path.replace('\\', "/");
+                let raw = format!("cookies={normalized}");
+                if let Err(error) = self.mpv.set_property("ytdl-raw-options", raw.as_str()) {
+                    tracing::warn!(%error, "set ytdl-raw-options cookies failed");
+                }
+            }
+            tracing::info!(
+                ytdl_path = cli,
+                format = network.ytdl_format.as_deref().unwrap_or(""),
+                has_cookies = cookies.is_some(),
+                "libmpv ytdl hook configured for remote page"
+            );
+        } else {
+            let _ = self.mpv.set_property("ytdl", "no");
+            if let Some(cookies_path) = cookies {
+                self.mpv
+                    .set_property("cookies", "yes")
+                    .map_err(|error| map_network_property_error("cookies", error))?;
+                self.mpv
+                    .set_property("cookies-file", cookies_path)
+                    .map_err(|error| map_network_property_error("cookies-file", error))?;
+                tracing::info!("libmpv cookies-file configured for remote stream");
+            } else {
+                let _ = self.mpv.set_property("cookies", "no");
+            }
+        }
         Ok(())
     }
 
@@ -128,6 +237,56 @@ impl LibMpvPlayer {
         self.mpv
             .get_property("eof-reached")
             .map_err(map_playback_error)
+    }
+
+    /// Drain libmpv's asynchronous event queue and forward diagnostics to tracing.
+    /// `loadfile` only confirms that the command was accepted; remote extractor and
+    /// network failures arrive later through this queue.
+    pub fn drain_diagnostic_events(&self) {
+        const MAX_EVENTS_PER_TICK: usize = 256;
+
+        for _ in 0..MAX_EVENTS_PER_TICK {
+            let Some(event) = self.mpv.wait_event(0.0) else {
+                return;
+            };
+            match event {
+                Ok(Event::StartFile) => tracing::info!("libmpv start-file"),
+                Ok(Event::FileLoaded) => tracing::info!("libmpv file-loaded"),
+                Ok(Event::PlaybackRestart) => tracing::info!("libmpv playback-restart"),
+                Ok(Event::EndFile(reason)) => {
+                    tracing::warn!(?reason, "libmpv end-file");
+                }
+                Ok(Event::LogMessage {
+                    prefix,
+                    level,
+                    text,
+                    ..
+                }) => {
+                    let text = sanitize_mpv_log(text);
+                    match level {
+                        "fatal" | "error" | "warn" => {
+                            tracing::warn!(target: "lumina::mpv", prefix, level, message = %text);
+                        }
+                        _ => {
+                            tracing::info!(target: "lumina::mpv", prefix, level, message = %text);
+                        }
+                    }
+                }
+                Ok(Event::QueueOverflow) => {
+                    tracing::warn!("libmpv event queue overflow");
+                }
+                Ok(_) => {}
+                Err(error) => {
+                    // libmpv2 reports an END_FILE error here before exposing its reason.
+                    tracing::error!(%error, "libmpv asynchronous event failed");
+                }
+            }
+        }
+
+        tracing::warn!(
+            limit = MAX_EVENTS_PER_TICK,
+            "libmpv event drain limit reached"
+        );
     }
 
     /// Select embedded subtitle by FFmpeg/ffprobe stream index.
@@ -205,6 +364,39 @@ impl LibMpvPlayer {
             "no matching audio track (ff-index {ff_stream_index})"
         ))))
     }
+}
+
+fn enable_diagnostic_events(mpv: &Mpv) {
+    // libmpv2 exposes LogMessage events but not mpv_request_log_messages(), so
+    // request them through the matching sys crate. The Mpv context is public.
+    let Ok(level) = CString::new("info") else {
+        tracing::warn!("failed to construct libmpv log level");
+        return;
+    };
+    let result = unsafe { libmpv2_sys::mpv_request_log_messages(mpv.ctx.as_ptr(), level.as_ptr()) };
+    if result < 0 {
+        tracing::warn!(result, "failed to enable libmpv diagnostic messages");
+    } else {
+        tracing::info!(level = "info", "libmpv diagnostic messages enabled");
+    }
+}
+
+/// Avoid persisting signed CDN URLs/tokens emitted by ffmpeg/mpv/ytdl_hook.
+fn sanitize_mpv_log(message: &str) -> String {
+    message
+        .split_whitespace()
+        .map(|part| {
+            let trimmed = part.trim_start_matches(['(', '[', '{', '\'', '"']);
+            if trimmed.starts_with("http://") || trimmed.starts_with("https://") {
+                "<url-redacted>"
+            } else {
+                part
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+        .trim()
+        .to_string()
 }
 
 impl Drop for LibMpvPlayer {
@@ -368,6 +560,13 @@ fn map_playback_error(error: libmpv2::Error) -> PlayerError {
     PlayerError::new(PlayerErrorCode::PlaybackError, message, Some(details))
 }
 
+fn map_network_property_error(property: &str, error: libmpv2::Error) -> PlayerError {
+    tracing::warn!(property, %error, "failed to configure libmpv network property");
+    PlayerError::playback(Some(&format!(
+        "set libmpv network property {property}: {error}"
+    )))
+}
+
 #[cfg(test)]
 mod tests {
     #[test]
@@ -388,5 +587,26 @@ mod tests {
             err.message
         );
         assert!(err.details.is_some());
+    }
+
+    #[test]
+    fn ytdl_runtime_options_are_accepted() {
+        let player = super::LibMpvPlayer::initialize().expect("libmpv should initialize");
+        player
+            .apply_network_opts(&super::NetworkPlaybackOpts {
+                ytdl_cli: Some("C:/diagnostic/yt-dlp.exe".into()),
+                ytdl_format: Some("18".into()),
+                ..Default::default()
+            })
+            .expect("libmpv should accept ytdl runtime options");
+    }
+
+    #[test]
+    fn diagnostic_log_redacts_signed_urls() {
+        let message =
+            "Failed to open https://googlevideo.example/videoplayback?sig=secret (HTTP 403)";
+        let clean = super::sanitize_mpv_log(message);
+        assert_eq!(clean, "Failed to open <url-redacted> (HTTP 403)");
+        assert!(!clean.contains("secret"));
     }
 }

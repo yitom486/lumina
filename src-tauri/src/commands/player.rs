@@ -99,14 +99,18 @@ fn open_remote(
         .play_target(&page_url, format_id.as_deref())
         .map_err(|error| emit_open_error(state, ytdl_to_player(error)))?;
 
+    let network = remote_ytdl_network_opts(&target)?;
+    // Play the **page** URL via mpv's yt-dlp hook (cookies/PO). Bare googlevideo CDN 403s.
     let open_result = state.with_player(|player| {
-        player.open_source(
+        player.open_source_with_network(
             source,
-            Some(target.stream_url),
+            Some(target.page_url.clone()),
             Some(target.format_id),
-            target.audio_url,
+            None,
             None,
             false,
+            target.duration_ms,
+            network,
         )
     });
 
@@ -117,6 +121,30 @@ fn open_remote(
         }
         Err(error) => Err(emit_open_error(state, error)),
     }
+}
+
+fn remote_ytdl_network_opts(
+    target: &crate::ytdl::YtdlPlayTarget,
+) -> Result<crate::player::mpv::NetworkPlaybackOpts, PlayerError> {
+    let cli = crate::ytdl::paths::require_cli().map_err(|error| {
+        PlayerError::new(
+            crate::player::PlayerErrorCode::LoadError,
+            "在线解析组件未就绪",
+            error.details.or(Some(error.message)),
+        )
+    })?;
+    let ytdl_format = if target.audio_url.is_some() {
+        format!("{}+bestaudio/best", target.format_id)
+    } else {
+        target.format_id.clone()
+    };
+    Ok(crate::player::mpv::NetworkPlaybackOpts {
+        referrer: Some(target.page_url.clone()),
+        cookies_file: crate::ytdl::cookies::cookies_file_for_player()
+            .map(|p| p.to_string_lossy().into_owned()),
+        ytdl_cli: Some(cli.to_string_lossy().into_owned()),
+        ytdl_format: Some(ytdl_format),
+    })
 }
 
 #[tauri::command]
@@ -174,14 +202,17 @@ fn set_playback_format(state: &AppState, format_id: String) -> Result<PlayerSnap
         })?;
 
     let source = MediaSource::parse(&target.page_url)?;
+    let network = remote_ytdl_network_opts(&target)?;
     let open_result = state.with_player(|player| {
-        player.open_source(
+        player.open_source_with_network(
             source,
-            Some(target.stream_url),
+            Some(target.page_url.clone()),
             Some(target.format_id),
-            target.audio_url,
+            None,
             Some(position_ms).filter(|ms| *ms > 0),
             was_paused,
+            target.duration_ms,
+            network,
         )
     });
 

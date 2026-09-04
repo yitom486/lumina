@@ -88,13 +88,13 @@ fn run_dump_json(
         let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
         // Never log cookie file contents — stderr from yt-dlp is OK for tracing.
         tracing::warn!(%stderr, "yt-dlp non-zero exit");
-        return Err(crate::ytdl::cookies::classify_resolve_stderr(&if stderr
-            .is_empty()
-        {
-            "yt-dlp non-zero exit".into()
-        } else {
-            stderr
-        }));
+        return Err(crate::ytdl::cookies::classify_resolve_stderr(
+            &if stderr.is_empty() {
+                "yt-dlp non-zero exit".into()
+            } else {
+                stderr
+            },
+        ));
     }
 
     String::from_utf8(output.stdout)
@@ -216,13 +216,13 @@ fn pick_recommended(
     formats: &[YtdlFormat],
     top_url: Option<&str>,
 ) -> (Option<String>, Option<String>) {
-    // Prefer progressive (video+audio) around 720p, else best with both codecs, else top_url.
+    // Prefer progressive (video+audio) around 720p; skip HLS manifests (mpv seek/load is flaky).
     let progressive: Vec<&YtdlFormat> = formats
         .iter()
         .filter(|f| {
             let v = f.vcodec.as_deref().unwrap_or("none");
             let a = f.acodec.as_deref().unwrap_or("none");
-            v != "none" && a != "none" && f.url.is_some()
+            v != "none" && a != "none" && f.url.is_some() && !is_hls_format(f)
         })
         .collect();
 
@@ -238,6 +238,30 @@ fn pick_recommended(
                 .copied()
         })
         .or_else(|| {
+            // Video-only + separate audio (DASH) before HLS.
+            formats
+                .iter()
+                .filter(|f| {
+                    let v = f.vcodec.as_deref().unwrap_or("none");
+                    v != "none"
+                        && f.url.is_some()
+                        && !is_hls_format(f)
+                        && formats.iter().any(|a| {
+                            let ac = a.acodec.as_deref().unwrap_or("none");
+                            let vc = a.vcodec.as_deref().unwrap_or("none");
+                            ac != "none" && vc == "none" && a.url.is_some()
+                        })
+                })
+                .filter(|f| f.height.unwrap_or(0) <= 720)
+                .max_by_key(|f| f.height.unwrap_or(0))
+        })
+        .or_else(|| {
+            formats
+                .iter()
+                .filter(|f| f.url.is_some() && !is_hls_format(f))
+                .max_by_key(|f| f.height.unwrap_or(0))
+        })
+        .or_else(|| {
             formats
                 .iter()
                 .filter(|f| f.url.is_some())
@@ -250,9 +274,80 @@ fn pick_recommended(
     (None, top_url.map(str::to_string))
 }
 
+fn is_hls_format(f: &YtdlFormat) -> bool {
+    if f.ext.as_deref() == Some("m3u8") {
+        return true;
+    }
+    f.url.as_deref().is_some_and(|u| {
+        let lower = u.to_ascii_lowercase();
+        lower.contains(".m3u8") || lower.contains("/manifest/hls")
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Real network smoke test for the native online playback path.
+    ///
+    /// Kept ignored because it depends on YouTube, the locally installed
+    /// extractor, and libmpv. It intentionally uses `CookieSettings::default()`
+    /// so a passing result proves that a public video works without login state.
+    #[test]
+    #[ignore = "requires network, local yt-dlp, and libmpv"]
+    fn public_youtube_resolves_and_reaches_mpv_demux_without_cookies() {
+        use std::time::{Duration, Instant};
+
+        const DEFAULT_PUBLIC_VIDEO: &str = "https://www.youtube.com/watch?v=jNQXAC9IVRw";
+        const DEMUX_TIMEOUT: Duration = Duration::from_secs(30);
+
+        let page_url = std::env::var("LUMINA_ONLINE_E2E_URL")
+            .ok()
+            .filter(|value| !value.trim().is_empty())
+            .unwrap_or_else(|| DEFAULT_PUBLIC_VIDEO.to_string());
+        let cli = require_cli().expect("online E2E requires a local yt-dlp executable");
+        let raw = run_dump_json(
+            &cli,
+            &page_url,
+            &crate::ytdl::cookies::CookieSettings::default(),
+        )
+        .expect("public YouTube metadata should resolve without cookies");
+        let parsed: YtdlJson = serde_json::from_str(&raw).expect("yt-dlp should return valid JSON");
+        let resolved = map_result(parsed, "youtube:e2e");
+        let target = crate::ytdl::playback::play_target(&resolved, &page_url, None)
+            .expect("resolved public video should have a playable format");
+        let format = if target.audio_url.is_some() {
+            format!("{}+bestaudio/best", target.format_id)
+        } else {
+            target.format_id.clone()
+        };
+
+        let player =
+            crate::player::mpv::LibMpvPlayer::initialize().expect("online E2E requires libmpv");
+        player
+            .open_media(
+                &page_url,
+                None,
+                crate::player::mpv::NetworkPlaybackOpts {
+                    ytdl_cli: Some(cli.to_string_lossy().into_owned()),
+                    ytdl_format: Some(format),
+                    ..Default::default()
+                },
+            )
+            .expect("libmpv should accept the public page URL");
+
+        let deadline = Instant::now() + DEMUX_TIMEOUT;
+        while Instant::now() < deadline {
+            player.drain_diagnostic_events();
+            if player.duration_ms().is_ok_and(|duration| duration > 0) {
+                player.stop().expect("online E2E should stop cleanly");
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(200));
+        }
+
+        panic!("libmpv did not demux the public YouTube video within {DEMUX_TIMEOUT:?}");
+    }
 
     #[test]
     fn map_fixture_chapters_and_formats() {
@@ -297,5 +392,41 @@ mod tests {
         assert_eq!(result.chapters[0].end_ms, Some(10_500));
         assert_eq!(result.recommended_format_id.as_deref(), Some("22"));
         assert_eq!(result.subtitles.len(), 1);
+    }
+
+    #[test]
+    fn pick_recommended_skips_hls_when_progressive_exists() {
+        let formats = vec![
+            YtdlFormat {
+                format_id: "95".into(),
+                ext: Some("mp4".into()),
+                height: Some(720),
+                width: None,
+                fps: None,
+                vcodec: Some("avc1".into()),
+                acodec: Some("mp4a".into()),
+                tbr: Some(2000.0),
+                format_note: None,
+                url: Some(
+                    "https://manifest.googlevideo.com/api/manifest/hls_playlist/x/index.m3u8"
+                        .into(),
+                ),
+            },
+            YtdlFormat {
+                format_id: "22".into(),
+                ext: Some("mp4".into()),
+                height: Some(720),
+                width: None,
+                fps: None,
+                vcodec: Some("avc1".into()),
+                acodec: Some("mp4a".into()),
+                tbr: Some(1000.0),
+                format_note: None,
+                url: Some("https://cdn/v.mp4".into()),
+            },
+        ];
+        let (id, url) = pick_recommended(&formats, None);
+        assert_eq!(id.as_deref(), Some("22"));
+        assert_eq!(url.as_deref(), Some("https://cdn/v.mp4"));
     }
 }

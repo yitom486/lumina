@@ -35,6 +35,9 @@ pub struct PlayerSnapshot {
     /// Active online format id when `source_kind` is remote; local stays `None`.
     #[serde(default)]
     pub playback_format_id: Option<String>,
+    /// yt-dlp duration for UI only — not proof that mpv demux succeeded.
+    #[serde(default)]
+    pub duration_hint_ms: Option<u64>,
     pub error: Option<PlayerError>,
 }
 
@@ -50,6 +53,7 @@ impl PlayerSnapshot {
             media_id: None,
             source_kind: None,
             playback_format_id: None,
+            duration_hint_ms: None,
             error: None,
         }
     }

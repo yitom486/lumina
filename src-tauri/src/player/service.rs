@@ -1,18 +1,25 @@
 //! PlayerService — domain API. Does not depend on libmpv FFI types.
 
+use std::time::{Duration, Instant};
+
 use crate::player::error::PlayerError;
 use crate::player::model::{PlayerEvent, PlayerSnapshot, PlayerState};
 use crate::player::mpv::LibMpvPlayer;
+use crate::player::source::MediaSourceKind;
 
 const VOLUME_MIN: f64 = 0.0;
 const VOLUME_MAX: f64 = 100.0;
 const RATE_MIN: f64 = 0.25;
 const RATE_MAX: f64 = 4.0;
+/// Remote yt-dlp hook can take several seconds before demux; after this, surface a soft error.
+const REMOTE_DEMUX_TIMEOUT: Duration = Duration::from_secs(12);
 
 pub struct PlayerService {
     snapshot: PlayerSnapshot,
     backend: Option<LibMpvPlayer>,
     shutdown: bool,
+    /// When set, remote open is waiting for mpv demux (duration/position).
+    remote_demux_deadline: Option<Instant>,
 }
 
 impl PlayerService {
@@ -21,6 +28,7 @@ impl PlayerService {
             snapshot: PlayerSnapshot::idle(),
             backend: None,
             shutdown: false,
+            remote_demux_deadline: None,
         }
     }
 
@@ -109,6 +117,30 @@ impl PlayerService {
         resume_ms: Option<u64>,
         resume_paused: bool,
     ) -> Result<(PlayerSnapshot, Vec<PlayerEvent>), PlayerError> {
+        self.open_source_with_network(
+            source,
+            playback_override,
+            playback_format_id,
+            audio_url,
+            resume_ms,
+            resume_paused,
+            None,
+            crate::player::mpv::NetworkPlaybackOpts::default(),
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn open_source_with_network(
+        &mut self,
+        source: crate::player::source::MediaSource,
+        playback_override: Option<String>,
+        playback_format_id: Option<String>,
+        audio_url: Option<String>,
+        resume_ms: Option<u64>,
+        resume_paused: bool,
+        duration_hint_ms: Option<u64>,
+        network: crate::player::mpv::NetworkPlaybackOpts,
+    ) -> Result<(PlayerSnapshot, Vec<PlayerEvent>), PlayerError> {
         if self.snapshot.status == PlayerState::Loading {
             return Err(PlayerError::invalid_state("open", self.snapshot.status));
         }
@@ -159,8 +191,15 @@ impl PlayerService {
         self.snapshot.source_kind = Some(source_kind);
         self.snapshot.playback_format_id = playback_format_id.clone();
         self.snapshot.current_time_ms = 0;
+        // Never treat yt-dlp hint as demux-ready duration (that triggers premature seek).
         self.snapshot.duration_ms = 0;
+        self.snapshot.duration_hint_ms = duration_hint_ms.filter(|ms| *ms > 0);
         self.snapshot.error = None;
+        self.remote_demux_deadline = if source_kind == MediaSourceKind::Remote {
+            Some(Instant::now() + REMOTE_DEMUX_TIMEOUT)
+        } else {
+            None
+        };
         tracing::info!(
             %playback_target,
             %display_path,
@@ -168,13 +207,14 @@ impl PlayerService {
             ?source_kind,
             ?playback_format_id,
             resume_ms,
+            duration_hint_ms,
             "open"
         );
 
         let open_result = self
             .backend
             .as_ref()
-            .map(|backend| backend.open_media(&playback_target, audio_url.as_deref()))
+            .map(|backend| backend.open_media(&playback_target, audio_url.as_deref(), network))
             .unwrap_or_else(|| Err(PlayerError::backend_missing()));
 
         if let Err(error) = open_result {
@@ -185,8 +225,10 @@ impl PlayerService {
         let mut duration_ms = 0;
         if let Some(backend) = self.backend.as_ref() {
             if let Ok(duration) = backend.duration_ms() {
-                duration_ms = duration;
-                self.snapshot.duration_ms = duration;
+                if duration > 0 {
+                    duration_ms = duration;
+                    self.snapshot.duration_ms = duration;
+                }
             }
             let _ = backend.set_volume(self.snapshot.volume);
             let _ = backend.set_rate(self.snapshot.rate);
@@ -381,6 +423,10 @@ impl PlayerService {
             return events;
         };
 
+        // Remote load/extractor failures are asynchronous. Drain before polling
+        // properties so the diagnostic that caused a 0:00 black screen is kept.
+        backend.drain_diagnostic_events();
+
         if matches!(
             self.snapshot.status,
             PlayerState::Loading | PlayerState::Ready | PlayerState::Playing | PlayerState::Paused
@@ -388,6 +434,7 @@ impl PlayerService {
             if let Ok(duration_ms) = backend.duration_ms() {
                 if duration_ms > 0 && duration_ms != self.snapshot.duration_ms {
                     self.snapshot.duration_ms = duration_ms;
+                    self.remote_demux_deadline = None;
                     events.push(PlayerEvent::DurationChanged { duration_ms });
                 }
             }
@@ -400,6 +447,9 @@ impl PlayerService {
             if let Ok(position_ms) = backend.position_ms() {
                 if position_ms != self.snapshot.current_time_ms {
                     self.snapshot.current_time_ms = position_ms;
+                    if position_ms > 0 {
+                        self.remote_demux_deadline = None;
+                    }
                     events.push(PlayerEvent::PositionChanged { position_ms });
                 }
             }
@@ -409,6 +459,7 @@ impl PlayerService {
             match backend.eof_reached() {
                 Ok(true) => {
                     self.snapshot.status = PlayerState::Ended;
+                    self.remote_demux_deadline = None;
                     tracing::info!("playback ended");
                     events.push(PlayerEvent::StateChanged {
                         status: PlayerState::Ended,
@@ -417,6 +468,34 @@ impl PlayerService {
                 }
                 Ok(false) => {}
                 Err(_) => {}
+            }
+        }
+
+        if let Some(deadline) = self.remote_demux_deadline {
+            if Instant::now() >= deadline
+                && self.snapshot.source_kind == Some(MediaSourceKind::Remote)
+                && self.snapshot.duration_ms == 0
+                && self.snapshot.current_time_ms == 0
+                && matches!(
+                    self.snapshot.status,
+                    PlayerState::Playing | PlayerState::Paused | PlayerState::Loading
+                )
+            {
+                self.remote_demux_deadline = None;
+                let error = PlayerError::new(
+                    crate::player::PlayerErrorCode::LoadError,
+                    "无法拉取在线视频流，请更新登录态后重试",
+                    Some("remote demux timeout (yt-dlp/mpv)".into()),
+                );
+                tracing::warn!(
+                    details = error.details.as_deref().unwrap_or(""),
+                    "remote stream stall"
+                );
+                self.fail(error.clone());
+                events.push(PlayerEvent::Error { error });
+                events.push(PlayerEvent::StateChanged {
+                    status: PlayerState::Error,
+                });
             }
         }
 

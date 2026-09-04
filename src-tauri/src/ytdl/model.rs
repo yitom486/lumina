@@ -10,6 +10,7 @@ pub struct YtdlStatus {
     pub available: bool,
     pub cli_ready: bool,
     pub cli_path: Option<String>,
+    pub version: Option<String>,
     pub install_supported: bool,
     pub message: String,
 }

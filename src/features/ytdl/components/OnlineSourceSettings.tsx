@@ -144,7 +144,7 @@ export function OnlineSourceSettings() {
       <p className="text-muted-foreground">
         {ytdl?.message ?? "正在检查解析组件…"}
       </p>
-      {ytdl && !ytdl.cliReady && ytdl.installSupported ? (
+      {ytdl?.installSupported ? (
         <Button
           type="button"
           size="sm"
@@ -152,7 +152,13 @@ export function OnlineSourceSettings() {
           disabled={busy}
           onClick={() => void install.mutateAsync()}
         >
-          {install.isPending ? "正在安装…" : "安装在线解析组件"}
+          {install.isPending
+            ? ytdl.cliReady
+              ? "正在更新…"
+              : "正在安装…"
+            : ytdl.cliReady
+              ? "更新在线解析组件"
+              : "安装在线解析组件"}
         </Button>
       ) : null}
 

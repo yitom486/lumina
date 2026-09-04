@@ -221,6 +221,9 @@ pub fn apply_to_command(cmd: &mut Command, settings: &CookieSettings) -> Result<
         CookieMode::Browser => {
             cmd.arg("--cookies-from-browser");
             cmd.arg(browser_cookie_spec(settings));
+            // Also dump a Netscape jar for libmpv CDN fetches (same auth as resolve).
+            cmd.arg("--cookies");
+            cmd.arg(mpv_cookies_export_path());
             Ok(())
         }
         CookieMode::File => {
@@ -235,6 +238,32 @@ pub fn apply_to_command(cmd: &mut Command, settings: &CookieSettings) -> Result<
             cmd.arg("--cookies");
             cmd.arg(path);
             Ok(())
+        }
+    }
+}
+
+/// Netscape cookies file path used by the player for googlevideo / CDN requests.
+pub fn mpv_cookies_export_path() -> PathBuf {
+    paths::install_root().join("mpv-cookies.txt")
+}
+
+/// Cookie jar path for libmpv (never read or log contents).
+pub fn cookies_file_for_player() -> Option<PathBuf> {
+    let settings = load();
+    match settings.mode {
+        CookieMode::None => None,
+        CookieMode::File => settings
+            .file_path
+            .as_ref()
+            .map(PathBuf::from)
+            .filter(|p| p.is_file()),
+        CookieMode::Browser => {
+            let exported = mpv_cookies_export_path();
+            if exported.is_file() {
+                Some(exported)
+            } else {
+                None
+            }
         }
     }
 }

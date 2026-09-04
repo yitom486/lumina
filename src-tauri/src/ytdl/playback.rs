@@ -12,6 +12,8 @@ pub struct YtdlPlayTarget {
     pub format_id: String,
     pub stream_url: String,
     pub audio_url: Option<String>,
+    /// yt-dlp known duration; mpv often reports 0 until demux settles.
+    pub duration_ms: Option<u64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -83,6 +85,7 @@ pub fn play_target(
         format_id: chosen_id,
         stream_url,
         audio_url,
+        duration_ms: resolved.duration_ms,
     })
 }
 
@@ -92,6 +95,9 @@ pub fn progressive_options(formats: &[YtdlFormat]) -> Vec<PlaybackFormatOption> 
     let mut candidates: Vec<&YtdlFormat> = formats
         .iter()
         .filter(|f| {
+            if is_hls_url(f.url.as_deref()) || f.ext.as_deref() == Some("m3u8") {
+                return false;
+            }
             if !has_video(f) || f.url.as_ref().is_none_or(|u| u.is_empty()) {
                 return false;
             }
@@ -151,6 +157,13 @@ fn has_video(format: &YtdlFormat) -> bool {
         None | Some("none") => false,
         Some(_) => true,
     }
+}
+
+fn is_hls_url(url: Option<&str>) -> bool {
+    url.is_some_and(|u| {
+        let lower = u.to_ascii_lowercase();
+        lower.contains(".m3u8") || lower.contains("/manifest/hls")
+    })
 }
 
 fn pick_best_audio_url(formats: &[YtdlFormat]) -> Option<String> {
@@ -330,5 +343,30 @@ mod tests {
         assert_eq!(opts[1].format_id, "22");
         assert_eq!(opts[1].label, "720p · mp4");
         assert_eq!(opts[2].format_id, "18");
+    }
+
+    #[test]
+    fn progressive_options_skips_hls_manifest() {
+        let formats = vec![
+            fmt(
+                "95",
+                Some(720),
+                "avc1",
+                "mp4a",
+                "https://manifest.googlevideo.com/api/manifest/hls_playlist/x/playlist/index.m3u8",
+                Some(2000.0),
+            ),
+            fmt(
+                "22",
+                Some(720),
+                "avc1",
+                "mp4a",
+                "https://cdn/v.mp4",
+                Some(1000.0),
+            ),
+        ];
+        let opts = progressive_options(&formats);
+        assert_eq!(opts.len(), 1);
+        assert_eq!(opts[0].format_id, "22");
     }
 }

@@ -11,6 +11,7 @@
     "typecheck": "tsc --noEmit",
     "lint": "tsc --noEmit",
     "test": "vitest run",
+    "test:e2e:online": "cd src-tauri && cargo test --lib public_youtube_resolves_and_reaches_mpv_demux_without_cookies -- --ignored --nocapture",
     "test:unit": "vitest run --project unit",
     "test:ui": "vitest run --project ui",
     "tauri": "tauri"
