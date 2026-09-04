@@ -59,7 +59,8 @@ pub fn resolve_url(page_url: &str) -> Result<YtdlResolveResult, YtdlError> {
         .map_err(|e| YtdlError::invalid(e.message))?;
 
     let cli = require_cli()?;
-    let raw = run_dump_json(&cli, source.playback_target())?;
+    let cookies = crate::ytdl::cookies::load();
+    let raw = run_dump_json(&cli, source.playback_target(), &cookies)?;
     let parsed: YtdlJson = serde_json::from_str(&raw).map_err(|error| {
         tracing::warn!(%error, "yt-dlp json parse failed");
         YtdlError::resolve_failed(Some(&format!("json parse: {error}")))
@@ -68,29 +69,32 @@ pub fn resolve_url(page_url: &str) -> Result<YtdlResolveResult, YtdlError> {
     Ok(map_result(parsed, &source.media_id()))
 }
 
-fn run_dump_json(cli: &Path, url: &str) -> Result<String, YtdlError> {
-    let output = command(cli)
-        .args([
-            "-J",
-            "--no-playlist",
-            "--no-warnings",
-            "--skip-download",
-            url,
-        ])
-        .output()
-        .map_err(|error| {
-            tracing::warn!(%error, "yt-dlp spawn failed");
-            YtdlError::resolve_failed(Some(&error.to_string()))
-        })?;
+fn run_dump_json(
+    cli: &Path,
+    url: &str,
+    cookies: &crate::ytdl::cookies::CookieSettings,
+) -> Result<String, YtdlError> {
+    let mut cmd = command(cli);
+    cmd.args(["-J", "--no-playlist", "--no-warnings", "--skip-download"]);
+    crate::ytdl::cookies::apply_to_command(&mut cmd, cookies)?;
+    cmd.arg(url);
+
+    let output = cmd.output().map_err(|error| {
+        tracing::warn!(%error, "yt-dlp spawn failed");
+        YtdlError::resolve_failed(Some(&error.to_string()))
+    })?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        // Never log cookie file contents — stderr from yt-dlp is OK for tracing.
         tracing::warn!(%stderr, "yt-dlp non-zero exit");
-        return Err(YtdlError::resolve_failed(Some(&if stderr.is_empty() {
+        return Err(crate::ytdl::cookies::classify_resolve_stderr(&if stderr
+            .is_empty()
+        {
             "yt-dlp non-zero exit".into()
         } else {
             stderr
-        })));
+        }));
     }
 
     String::from_utf8(output.stdout)

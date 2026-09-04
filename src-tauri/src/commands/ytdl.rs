@@ -6,6 +6,7 @@ use tauri::{AppHandle, Manager};
 use crate::state::AppState;
 use crate::ytdl::error::YtdlError;
 use crate::ytdl::model::{YtdlInstallEvent, YtdlResolveResult, YtdlStatus};
+use crate::ytdl::{YtdlCookieConfigInput, YtdlCookieStatus};
 
 async fn on_worker<R, F>(app: AppHandle, work: F) -> Result<R, YtdlError>
 where
@@ -25,6 +26,19 @@ where
 #[tauri::command]
 pub async fn ytdl_status(app: AppHandle) -> Result<YtdlStatus, YtdlError> {
     on_worker(app, |state| Ok(state.ytdl().status())).await
+}
+
+#[tauri::command]
+pub async fn ytdl_cookie_status(app: AppHandle) -> Result<YtdlCookieStatus, YtdlError> {
+    on_worker(app, |state| Ok(state.ytdl().cookie_status())).await
+}
+
+#[tauri::command]
+pub async fn ytdl_set_cookies(
+    app: AppHandle,
+    config: YtdlCookieConfigInput,
+) -> Result<YtdlCookieStatus, YtdlError> {
+    on_worker(app, move |state| state.ytdl().set_cookies(config)).await
 }
 
 #[tauri::command]

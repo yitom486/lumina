@@ -12,6 +12,7 @@ pub enum YtdlErrorCode {
     InvalidRequest,
     ResolveFailed,
     DownloadFailed,
+    LoginRequired,
     InternalError,
 }
 
@@ -64,6 +65,22 @@ impl YtdlError {
         )
     }
 
+    pub fn login_required(details: Option<&str>) -> Self {
+        Self::new(
+            YtdlErrorCode::LoginRequired,
+            "需要登录或登录态已失效，请授权浏览器登录态或导入 Cookie 文件",
+            details.map(str::to_string),
+        )
+    }
+
+    pub fn cookie_unavailable(details: Option<&str>) -> Self {
+        Self::new(
+            YtdlErrorCode::LoginRequired,
+            "无法读取浏览器登录态，请关闭浏览器后重试或改用 Cookie 文件",
+            details.map(str::to_string),
+        )
+    }
+
     pub fn internal(details: Option<&str>) -> Self {
         Self::new(
             YtdlErrorCode::InternalError,
@@ -98,5 +115,9 @@ mod tests {
         let d = YtdlError::download_failed(Some("HTTP 404"));
         assert!(!d.message.contains("HTTP"));
         assert_eq!(d.code, YtdlErrorCode::DownloadFailed);
+
+        let login = YtdlError::login_required(Some("use --cookies"));
+        assert_eq!(login.code, YtdlErrorCode::LoginRequired);
+        assert!(!login.message.contains("--cookies"));
     }
 }

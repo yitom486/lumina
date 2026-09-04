@@ -18,6 +18,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import { OnlineSourceSettings } from "@/features/ytdl/components/OnlineSourceSettings";
 
 import { usePlayerStore } from "../store";
 
@@ -49,11 +50,11 @@ export function OpenUrlButton() {
         <TooltipContent>打开在线视频链接</TooltipContent>
       </Tooltip>
 
-      <AlertDialogContent>
+      <AlertDialogContent className="max-h-[90vh] overflow-y-auto">
         <AlertDialogHeader>
           <AlertDialogTitle>打开在线视频</AlertDialogTitle>
           <AlertDialogDescription>
-            粘贴 YouTube / Bilibili 等页面链接。首次使用可能需要安装在线解析组件。
+            粘贴 YouTube / Bilibili 等页面链接。可选授权浏览器登录态以获取更高清晰度。
           </AlertDialogDescription>
         </AlertDialogHeader>
         <input
@@ -73,6 +74,7 @@ export function OpenUrlButton() {
             }
           }}
         />
+        <OnlineSourceSettings />
         <AlertDialogFooter>
           <AlertDialogCancel>取消</AlertDialogCancel>
           <AlertDialogAction

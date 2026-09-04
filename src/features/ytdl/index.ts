@@ -1,8 +1,19 @@
 export type {
+  CookieBrowser,
+  CookieMode,
+  YtdlCookieConfigInput,
+  YtdlCookieStatus,
   YtdlFormat,
   YtdlInstallEvent,
   YtdlResolveResult,
   YtdlStatus,
   YtdlSubtitleTrack,
 } from "./api";
-export { getYtdlStatus, installYtdl, resolveYtdlUrl } from "./api";
+export {
+  getYtdlCookieStatus,
+  getYtdlStatus,
+  installYtdl,
+  pickCookiesFile,
+  resolveYtdlUrl,
+  setYtdlCookies,
+} from "./api";

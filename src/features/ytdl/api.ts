@@ -1,6 +1,7 @@
 /** Optional yt-dlp (online source) — mirrors ASR on-demand pattern. */
 
 import { Channel, invoke } from "@tauri-apps/api/core";
+import { open } from "@tauri-apps/plugin-dialog";
 
 import type { MediaChapter } from "@/features/media/types";
 
@@ -10,6 +11,22 @@ export type YtdlStatus = {
   cliPath: string | null;
   installSupported: boolean;
   message: string;
+};
+
+export type CookieMode = "none" | "browser" | "file";
+export type CookieBrowser = "chrome" | "edge" | "firefox";
+
+export type YtdlCookieStatus = {
+  mode: CookieMode;
+  browser: CookieBrowser;
+  filePath: string | null;
+  message: string;
+};
+
+export type YtdlCookieConfigInput = {
+  mode: CookieMode;
+  browser?: CookieBrowser | null;
+  filePath?: string | null;
 };
 
 export type YtdlFormat = {
@@ -58,6 +75,16 @@ export function getYtdlStatus(): Promise<YtdlStatus> {
   return invoke<YtdlStatus>("ytdl_status");
 }
 
+export function getYtdlCookieStatus(): Promise<YtdlCookieStatus> {
+  return invoke<YtdlCookieStatus>("ytdl_cookie_status");
+}
+
+export function setYtdlCookies(
+  config: YtdlCookieConfigInput,
+): Promise<YtdlCookieStatus> {
+  return invoke<YtdlCookieStatus>("ytdl_set_cookies", { config });
+}
+
 export function installYtdl(
   onEvent: Channel<YtdlInstallEvent>,
 ): Promise<YtdlStatus> {
@@ -66,4 +93,18 @@ export function installYtdl(
 
 export function resolveYtdlUrl(url: string): Promise<YtdlResolveResult> {
   return invoke<YtdlResolveResult>("ytdl_resolve", { url });
+}
+
+export async function pickCookiesFile(): Promise<string | null> {
+  const selected = await open({
+    multiple: false,
+    filters: [
+      { name: "Cookies", extensions: ["txt"] },
+      { name: "All", extensions: ["*"] },
+    ],
+  });
+  if (!selected || Array.isArray(selected)) {
+    return null;
+  }
+  return selected;
 }

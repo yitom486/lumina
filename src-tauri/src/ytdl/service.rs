@@ -33,6 +33,20 @@ impl YtdlService {
         paths::status()
     }
 
+    pub fn cookie_status(&self) -> crate::ytdl::YtdlCookieStatus {
+        crate::ytdl::cookies::status()
+    }
+
+    pub fn set_cookies(
+        &self,
+        input: crate::ytdl::YtdlCookieConfigInput,
+    ) -> Result<crate::ytdl::YtdlCookieStatus, YtdlError> {
+        // Changing cookies invalidates prior resolve cache (signed URLs / auth).
+        let status = crate::ytdl::cookies::save(input)?;
+        self.clear_cache()?;
+        Ok(status)
+    }
+
     pub fn install<F>(&self, on_event: F) -> Result<YtdlStatus, YtdlError>
     where
         F: FnMut(YtdlInstallEvent),
@@ -161,6 +175,15 @@ impl YtdlService {
         if let Some(cached) = guard.as_mut() {
             cached.current_format_id = Some(format_id.to_string());
         }
+        Ok(())
+    }
+
+    fn clear_cache(&self) -> Result<(), YtdlError> {
+        let mut guard = self
+            .cache
+            .lock()
+            .map_err(|_| YtdlError::internal(Some("ytdl cache mutex poisoned")))?;
+        *guard = None;
         Ok(())
     }
 
