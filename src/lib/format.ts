@@ -38,6 +38,7 @@ const ERROR_FALLBACK: Record<string, string> = {
   TranscribeFailed: "语音转写失败",
   Cancelled: "已取消",
   // Acp
+  WorkspaceUnavailable: "Agent 工作目录不可用，请重新打开视频后重试",
   SpawnFailed: "无法启动 AI Agent",
   ProtocolError: "与 Agent 通信失败",
   // Media library

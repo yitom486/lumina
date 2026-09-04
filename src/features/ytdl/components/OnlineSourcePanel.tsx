@@ -1,10 +1,12 @@
 /** Online URL open + cookie settings — lives in sidebar (never over HWND). */
 
 import { useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 
 import { Button } from "@/components/ui/button";
 import { OnlineSourceSettings } from "@/features/ytdl/components/OnlineSourceSettings";
 import { usePlayerStore } from "@/features/player";
+import { getCachedYtdlResolve } from "../api";
 
 export function OnlineSourcePanel() {
   const busy = usePlayerStore((s) => s.busy);
@@ -32,6 +34,12 @@ export function OnlineSourcePanel() {
   const openFailed = status === "Error" && Boolean(error?.message);
   const playingRemote =
     sourceKind === "remote" && Boolean(currentFile) && status !== "Error";
+  const mediaQuery = useQuery({
+    queryKey: ["ytdl-resolve", currentFile],
+    queryFn: () => getCachedYtdlResolve(currentFile as string),
+    enabled: playingRemote,
+    staleTime: Infinity,
+  });
 
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-y-auto p-3">
@@ -84,9 +92,16 @@ export function OnlineSourcePanel() {
           </div>
         ) : null}
         {playingRemote ? (
-          <p className="text-[11px] text-muted-foreground">
-            当前在线源：{currentFile}
-          </p>
+          <div className="space-y-1 text-[11px] text-muted-foreground">
+            <p>当前在线源：{currentFile}</p>
+            {mediaQuery.data ? (
+              <p>
+                {mediaQuery.data.title ?? "在线视频"} ·{" "}
+                {mediaQuery.data.chapters.length} 个章节 ·{" "}
+                {mediaQuery.data.subtitles.length} 条字幕轨道
+              </p>
+            ) : null}
+          </div>
         ) : null}
         {!openFailed && statusMessage ? (
           <p className="truncate text-[11px] text-muted-foreground">

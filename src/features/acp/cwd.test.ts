@@ -12,4 +12,13 @@ describe("workspaceCwdFromMedia", () => {
     expect(workspaceCwdFromMedia(null)).toBeUndefined();
     expect(workspaceCwdFromMedia("video.mp4")).toBeUndefined();
   });
+
+  it("never treats an online media URL as a filesystem workspace", () => {
+    expect(
+      workspaceCwdFromMedia(
+        "https://www.youtube.com/watch?v=NAiqDPEMNtE",
+      ),
+    ).toBeUndefined();
+    expect(workspaceCwdFromMedia("HTTP://example.com/video.mp4")).toBeUndefined();
+  });
 });

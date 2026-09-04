@@ -287,6 +287,7 @@ mod tests {
                 subtitle_workshop_enabled: false,
                 video_annotations_enabled: true,
             }),
+            online: None,
             updated_at_ms: 0,
         };
         let tools = tools_list_result(&snapshot)
@@ -320,6 +321,7 @@ mod tests {
                 subtitle_workshop_enabled: true,
                 video_annotations_enabled: false,
             }),
+            online: None,
             updated_at_ms: 0,
         };
         let tools = tools_list_result(&snapshot)
@@ -348,6 +350,7 @@ mod tests {
                 subtitle_workshop_enabled: false,
                 video_annotations_enabled: true,
             }),
+            online: None,
             updated_at_ms: 0,
         };
         let tools = tools_list_result(&snapshot)

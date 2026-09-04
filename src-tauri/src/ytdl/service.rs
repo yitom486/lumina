@@ -3,6 +3,7 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 
+use crate::subtitle::{SubtitleChoice, SubtitleError, Transcript};
 use crate::ytdl::download;
 use crate::ytdl::error::YtdlError;
 use crate::ytdl::model::{YtdlInstallEvent, YtdlResolveResult, YtdlStatus};
@@ -137,6 +138,51 @@ impl YtdlService {
             formats: playback::progressive_options(&cached.resolved.formats),
             current_format_id: cached.current_format_id.clone(),
         })
+    }
+
+    /// Return the sanitized in-memory resolve for the currently opened page.
+    pub fn cached_resolve(&self, page_url: &str) -> Result<Option<YtdlResolveResult>, YtdlError> {
+        Ok(self
+            .cached_full_resolve(page_url)?
+            .map(|resolved| resolved.sanitized_for_ipc()))
+    }
+
+    fn cached_full_resolve(&self, page_url: &str) -> Result<Option<YtdlResolveResult>, YtdlError> {
+        let guard = self
+            .cache
+            .lock()
+            .map_err(|_| YtdlError::internal(Some("ytdl cache mutex poisoned")))?;
+        Ok(guard
+            .as_ref()
+            .filter(|cached| cache_matches(cached, page_url))
+            .map(|cached| cached.resolved.clone()))
+    }
+
+    pub fn list_subtitle_choices(
+        &self,
+        page_url: &str,
+    ) -> Result<Vec<SubtitleChoice>, SubtitleError> {
+        let resolved = self
+            .cached_full_resolve(page_url)
+            .map_err(|error| SubtitleError::extract_failed(error.details.as_deref()))?;
+        let resolved = resolved.ok_or_else(|| {
+            SubtitleError::extract_failed(Some("online resolve cache unavailable"))
+        })?;
+        Ok(crate::ytdl::subtitle::list_choices(&resolved))
+    }
+
+    pub fn load_subtitle_choice(
+        &self,
+        page_url: &str,
+        choice_id: &str,
+    ) -> Result<Transcript, SubtitleError> {
+        let resolved = self
+            .cached_resolve(page_url)
+            .map_err(|error| SubtitleError::extract_failed(error.details.as_deref()))?;
+        let resolved = resolved.ok_or_else(|| {
+            SubtitleError::extract_failed(Some("online resolve cache unavailable"))
+        })?;
+        crate::ytdl::subtitle::load_choice(page_url, &resolved, choice_id)
     }
 
     fn try_play_from_cache(

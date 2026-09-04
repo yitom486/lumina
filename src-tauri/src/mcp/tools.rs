@@ -117,11 +117,24 @@ pub fn video_annotations_enabled(snapshot: &LuminaMcpSnapshot) -> bool {
 }
 
 fn playback_context(snapshot: &LuminaMcpSnapshot) -> Result<Value, String> {
+    let online = snapshot.online.as_ref().map(|online| {
+        json!({
+            "mediaId": online.media_id,
+            "title": online.title,
+            "durationMs": online.duration_ms,
+            "webpageUrl": online.webpage_url,
+            "extractor": online.extractor,
+            "chapters": online.chapters,
+            "subtitles": online.subtitles,
+            "transcriptAvailable": online.transcript.is_some(),
+        })
+    });
     text_result(&json!({
         "anchor": snapshot.anchor,
         "playback": snapshot.playback,
         "session": snapshot.session,
         "libraryCached": snapshot.library.is_some(),
+        "online": online,
     }))
 }
 
@@ -175,8 +188,17 @@ fn transcript_window(snapshot: &LuminaMcpSnapshot, args: &Value) -> Result<Value
     let duration_ms = snapshot_duration_ms(snapshot);
     let center_ms = parse_time_center_ms(args, anchor.position_ms, duration_ms);
     let choice_id = resolve_subtitle_choice_id(args, anchor)?;
-    let media_path = PathBuf::from(&anchor.media_path);
-    let lines = fetch_transcript_lines(&media_path, &choice_id, center_ms, before_sec, after_sec)?;
+    let lines = if let Some(online) = snapshot.online.as_ref() {
+        let transcript = online
+            .transcript
+            .as_ref()
+            .filter(|transcript| transcript.choice_id == choice_id)
+            .ok_or_else(|| "当前在线字幕尚未缓存，请先在文稿面板选择字幕后重试".to_string())?;
+        transcript_lines_from_cues(&transcript.cues, center_ms, before_sec, after_sec)
+    } else {
+        let media_path = PathBuf::from(&anchor.media_path);
+        fetch_transcript_lines(&media_path, &choice_id, center_ms, before_sec, after_sec)?
+    };
     let payload = TranscriptWindowResult {
         center_ms,
         anchor_ms: anchor.position_ms,
@@ -420,6 +442,23 @@ fn fetch_transcript_lines(
             text: cue.text,
         })
         .collect())
+}
+
+fn transcript_lines_from_cues(
+    cues: &[Cue],
+    center_ms: u64,
+    before_sec: u32,
+    after_sec: u32,
+) -> Vec<TranscriptLine> {
+    let start_ms = center_ms.saturating_sub(u64::from(before_sec) * 1000);
+    let end_ms = center_ms.saturating_add(u64::from(after_sec) * 1000);
+    cues.iter()
+        .filter(|cue| cue.end_ms > start_ms && cue.start_ms < end_ms)
+        .map(|cue| TranscriptLine {
+            start_ms: cue.start_ms,
+            text: cue.text.clone(),
+        })
+        .collect()
 }
 
 fn resolve_subtitle_choice_id(args: &Value, anchor: &PromptAnchor) -> Result<String, String> {
@@ -717,5 +756,32 @@ mod tests {
             parse_required_season_episode(&json!({ "season": 2, "episode": 5 })).expect("values"),
             (2, 5)
         );
+    }
+
+    #[test]
+    fn online_transcript_lines_are_windowed_without_reading_a_media_path() {
+        let cues = vec![
+            Cue {
+                index: 1,
+                start_ms: 1_000,
+                end_ms: 2_000,
+                text: "before".into(),
+            },
+            Cue {
+                index: 2,
+                start_ms: 9_000,
+                end_ms: 11_000,
+                text: "active".into(),
+            },
+            Cue {
+                index: 3,
+                start_ms: 30_000,
+                end_ms: 31_000,
+                text: "after".into(),
+            },
+        ];
+        let lines = transcript_lines_from_cues(&cues, 10_000, 2, 2);
+        assert_eq!(lines.len(), 1);
+        assert_eq!(lines[0].text, "active");
     }
 }

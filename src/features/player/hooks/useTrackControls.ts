@@ -2,7 +2,10 @@ import { useEffect, useRef } from "react";
 import { useQuery } from "@tanstack/react-query";
 
 import { useMediaInfoQuery } from "@/features/media";
-import { listSubtitleChoices } from "@/features/transcript/api";
+import {
+  listSubtitleChoices,
+  loadSubtitleChoice,
+} from "@/features/transcript/api";
 import type { SubtitleChoice } from "@/features/transcript/types";
 
 import { usePlayerStore } from "../store";
@@ -20,6 +23,7 @@ export async function applySubtitleChoice(
     streamIndex?: number | null;
     externalPath?: string | null;
   }) => Promise<void>,
+  mediaPath?: string,
 ) {
   if (!choice) {
     await setSubtitle({ source: "None" });
@@ -29,6 +33,15 @@ export async function applySubtitleChoice(
     await setSubtitle({
       source: "Embedded",
       streamIndex: choice.streamIndex,
+    });
+    return;
+  }
+  if (choice.id.startsWith("online:") && !choice.externalPath) {
+    if (!mediaPath) return;
+    const transcript = await loadSubtitleChoice(mediaPath, choice.id);
+    await setSubtitle({
+      source: "Sidecar",
+      externalPath: transcript.sourcePath,
     });
     return;
   }
@@ -137,7 +150,7 @@ export function useTrackControls() {
       }
       return;
     }
-    void applySubtitleChoice(choice, setSubtitle);
+    void applySubtitleChoice(choice, setSubtitle, path ?? undefined);
   }, [
     choices,
     mediaReady,

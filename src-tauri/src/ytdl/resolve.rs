@@ -123,10 +123,15 @@ fn map_result(json: YtdlJson, fallback_media_id: &str) -> YtdlResolveResult {
 
     let chapters = map_chapters(json.chapters.unwrap_or_default());
     let formats = map_formats(json.formats.unwrap_or_default());
-    let subtitles = map_subtitle_langs(json.subtitles.as_ref())
-        .into_iter()
-        .chain(map_subtitle_langs(json.automatic_captions.as_ref()))
-        .collect();
+    let mut subtitles = map_subtitle_langs(json.subtitles.as_ref());
+    for track in map_subtitle_langs(json.automatic_captions.as_ref()) {
+        if !subtitles
+            .iter()
+            .any(|existing| existing.language.eq_ignore_ascii_case(&track.language))
+        {
+            subtitles.push(track);
+        }
+    }
 
     let (recommended_format_id, recommended_url) = pick_recommended(&formats, json.url.as_deref());
 
@@ -187,9 +192,15 @@ fn map_subtitle_langs(
     };
     map.iter()
         .map(|(lang, value)| {
-            let (ext, name) = match value {
+            let (ext, name, url) = match value {
                 serde_json::Value::Array(arr) => {
-                    let first = arr.first().and_then(|v| v.as_object());
+                    let first = arr
+                        .iter()
+                        .filter_map(|value| value.as_object())
+                        .find(|item| {
+                            item.get("ext").and_then(|value| value.as_str()) == Some("vtt")
+                        })
+                        .or_else(|| arr.first().and_then(|value| value.as_object()));
                     (
                         first
                             .and_then(|o| o.get("ext"))
@@ -199,14 +210,19 @@ fn map_subtitle_langs(
                             .and_then(|o| o.get("name"))
                             .and_then(|v| v.as_str())
                             .map(str::to_string),
+                        first
+                            .and_then(|o| o.get("url"))
+                            .and_then(|v| v.as_str())
+                            .map(str::to_string),
                     )
                 }
-                _ => (None, None),
+                _ => (None, None, None),
             };
             YtdlSubtitleTrack {
                 language: lang.clone(),
                 ext,
                 name,
+                url,
             }
         })
         .collect()

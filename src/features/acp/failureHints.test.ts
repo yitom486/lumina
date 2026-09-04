@@ -9,5 +9,6 @@ describe("hintForAcpFailure", () => {
     expect(hint).not.toMatch(/JSON|stderr/i);
     const auth = hintForAcpFailure("NotConfigured");
     expect(auth).toMatch(/codex login|登录/);
+    expect(hintForAcpFailure("WorkspaceUnavailable")).toMatch(/重新打开|工作目录/);
   });
 });

@@ -2,14 +2,23 @@
 
 use serde::Serialize;
 use tauri::ipc::Channel;
+use tauri::{AppHandle, Manager};
 
 use crate::acp::AgentProfilesHint;
+use crate::state::AppState;
 use crate::subtitle::model::Cue;
 use crate::subtitle::translate;
 use crate::subtitle::write;
 use crate::subtitle::{
     SubtitleChoice, SubtitleError, SubtitleErrorCode, SubtitleService, Transcript,
 };
+
+fn is_remote(path: &str) -> bool {
+    matches!(
+        crate::player::source::MediaSource::parse(path).map(|source| source.kind()),
+        Ok(crate::player::source::MediaSourceKind::Remote)
+    )
+}
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(
@@ -25,33 +34,55 @@ pub enum SubtitleTranslateEvent {
 }
 
 #[tauri::command]
-pub async fn subtitle_list_choices(path: String) -> Result<Vec<SubtitleChoice>, SubtitleError> {
-    tauri::async_runtime::spawn_blocking(move || SubtitleService::list_choices(path))
-        .await
-        .map_err(|error| {
-            SubtitleError::new(
-                SubtitleErrorCode::InternalError,
-                "列出字幕任务异常结束",
-                Some(error.to_string()),
-            )
-        })?
+pub async fn subtitle_list_choices(
+    app: AppHandle,
+    path: String,
+) -> Result<Vec<SubtitleChoice>, SubtitleError> {
+    tauri::async_runtime::spawn_blocking(move || {
+        if is_remote(&path) {
+            let state = app
+                .try_state::<AppState>()
+                .ok_or_else(|| SubtitleError::internal(Some("app state unavailable")))?;
+            state.ytdl().list_subtitle_choices(&path)
+        } else {
+            SubtitleService::list_choices(path)
+        }
+    })
+    .await
+    .map_err(|error| {
+        SubtitleError::new(
+            SubtitleErrorCode::InternalError,
+            "列出字幕任务异常结束",
+            Some(error.to_string()),
+        )
+    })?
 }
 
 /// Heavy ffmpeg extract — must not block the UI thread.
 #[tauri::command]
 pub async fn subtitle_load_choice(
+    app: AppHandle,
     path: String,
     choice_id: String,
 ) -> Result<Transcript, SubtitleError> {
-    tauri::async_runtime::spawn_blocking(move || SubtitleService::load_choice(path, choice_id))
-        .await
-        .map_err(|error| {
-            SubtitleError::new(
-                SubtitleErrorCode::InternalError,
-                "加载字幕任务异常结束",
-                Some(error.to_string()),
-            )
-        })?
+    tauri::async_runtime::spawn_blocking(move || {
+        if is_remote(&path) {
+            let state = app
+                .try_state::<AppState>()
+                .ok_or_else(|| SubtitleError::internal(Some("app state unavailable")))?;
+            state.ytdl().load_subtitle_choice(&path, &choice_id)
+        } else {
+            SubtitleService::load_choice(path, choice_id)
+        }
+    })
+    .await
+    .map_err(|error| {
+        SubtitleError::new(
+            SubtitleErrorCode::InternalError,
+            "加载字幕任务异常结束",
+            Some(error.to_string()),
+        )
+    })?
 }
 
 #[tauri::command]

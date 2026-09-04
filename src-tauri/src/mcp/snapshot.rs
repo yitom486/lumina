@@ -8,11 +8,13 @@ use serde::{Deserialize, Serialize};
 
 use crate::library::SeriesLibraryCache;
 use crate::library::{lumina_agent_context_path, lumina_tmp_dir};
+use crate::media::MediaChapter;
+use crate::subtitle::{SubtitleChoice, Transcript};
 
 /// Relative path under session cwd; must stay aligned with [`lumina_agent_context_path`].
 pub const SNAPSHOT_RELATIVE_PATH: &str = ".lumina/agent-context.json";
 pub const CONTEXT_FILE_ENV: &str = "LUMINA_MCP_CONTEXT_FILE";
-pub const SNAPSHOT_SCHEMA_VERSION: u32 = 2;
+pub const SNAPSHOT_SCHEMA_VERSION: u32 = 3;
 pub const LIBRARY_WARM_EVERY: u32 = 5;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -69,6 +71,20 @@ fn default_video_annotations_enabled() -> bool {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
+pub struct OnlineMediaSnapshot {
+    pub media_id: String,
+    pub title: Option<String>,
+    pub duration_ms: Option<u64>,
+    pub webpage_url: Option<String>,
+    pub extractor: Option<String>,
+    pub chapters: Vec<MediaChapter>,
+    pub subtitles: Vec<SubtitleChoice>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub transcript: Option<Transcript>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
 pub struct LuminaMcpSnapshot {
     #[serde(default = "default_schema_version")]
     pub schema_version: u32,
@@ -77,6 +93,8 @@ pub struct LuminaMcpSnapshot {
     pub library: Option<SeriesLibraryCache>,
     pub session: Option<SessionPolicy>,
     pub capabilities: Option<AgentCapabilities>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub online: Option<OnlineMediaSnapshot>,
     pub updated_at_ms: u128,
 }
 
@@ -93,6 +111,7 @@ impl LuminaMcpSnapshot {
             library: None,
             session: None,
             capabilities: None,
+            online: None,
             updated_at_ms: now_ms(),
         }
     }
@@ -227,6 +246,7 @@ mod tests {
                 subtitle_workshop_enabled: false,
                 video_annotations_enabled: true,
             }),
+            online: None,
             updated_at_ms: 1,
         };
         write_snapshot(&path, &snapshot).expect("write");

@@ -10,7 +10,7 @@ pub enum SubtitleSource {
 }
 
 /// One row in the subtitle dropdown — embedded track or auto-discovered sidecar file.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct SubtitleChoice {
     /// Stable id: `embedded:{streamIndex}` or `sidecar:{absolutePath}`.
@@ -25,7 +25,7 @@ pub struct SubtitleChoice {
     pub language: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct Cue {
     pub index: u32,
@@ -34,7 +34,7 @@ pub struct Cue {
     pub text: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct Transcript {
     pub source_path: String,

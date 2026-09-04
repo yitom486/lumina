@@ -78,8 +78,8 @@ use commands::subtitle::{
     subtitle_export_sidecar, subtitle_list_choices, subtitle_load_choice, subtitle_translate_track,
 };
 use commands::ytdl::{
-    ytdl_cookie_status, ytdl_install, ytdl_list_browser_profiles, ytdl_resolve, ytdl_set_cookies,
-    ytdl_status, ytdl_test_cookies,
+    ytdl_cached_resolve, ytdl_cookie_status, ytdl_install, ytdl_list_browser_profiles,
+    ytdl_resolve, ytdl_set_cookies, ytdl_status, ytdl_test_cookies,
 };
 use player::mpv::window::{parent_handle_from_webview, register_surface_app, VideoSurface};
 use state::AppState;
@@ -137,6 +137,7 @@ pub fn run() {
             ytdl_test_cookies,
             ytdl_install,
             ytdl_resolve,
+            ytdl_cached_resolve,
             library_watch_start,
             library_watch_stop,
             library_status,

@@ -106,6 +106,7 @@ impl PromptSnapshotState {
                 subtitle_workshop_enabled: false,
                 video_annotations_enabled: true,
             }),
+            online: None,
             updated_at_ms: snapshot_now_ms(),
         })
     }

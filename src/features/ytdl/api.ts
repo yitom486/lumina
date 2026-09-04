@@ -120,6 +120,12 @@ export function resolveYtdlUrl(url: string): Promise<YtdlResolveResult> {
   return invoke<YtdlResolveResult>("ytdl_resolve", { url });
 }
 
+export function getCachedYtdlResolve(
+  url: string,
+): Promise<YtdlResolveResult | null> {
+  return invoke<YtdlResolveResult | null>("ytdl_cached_resolve", { url });
+}
+
 export async function pickCookiesFile(): Promise<string | null> {
   const selected = await open({
     multiple: false,

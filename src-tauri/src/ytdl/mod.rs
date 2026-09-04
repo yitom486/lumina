@@ -8,6 +8,7 @@ pub mod paths;
 pub mod playback;
 pub mod resolve;
 pub mod service;
+pub mod subtitle;
 
 pub use cookies::{
     BrowserProfileOption, CookieBrowser, CookieMode, YtdlCookieConfigInput, YtdlCookieStatus,

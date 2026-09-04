@@ -16,6 +16,7 @@ import { usePlayerStore } from "@/features/player";
 import { applySubtitleChoice } from "@/features/player/hooks/useTrackControls";
 import { useUiStore } from "@/features/player/uiStore";
 import { useTrackStore } from "@/features/player/trackStore";
+import { getCachedYtdlResolve } from "@/features/ytdl";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { cn } from "@/lib/utils";
@@ -78,7 +79,14 @@ export function TranscriptPanel() {
     status !== "Error";
 
   const mediaInfoQuery = useMediaInfoQuery();
-  const chapters = mediaInfoQuery.data?.chapters ?? [];
+  const onlineInfoQuery = useQuery({
+    queryKey: ["ytdl-resolve", path],
+    queryFn: () => getCachedYtdlResolve(path as string),
+    enabled: mediaReady && /^https?:\/\//i.test(path ?? ""),
+    staleTime: Infinity,
+  });
+  const chapters =
+    mediaInfoQuery.data?.chapters ?? onlineInfoQuery.data?.chapters ?? [];
   const workshopModels = useSubtitleWorkshopModels(mediaReady);
   const activeChapter = useMemo(
     () => findChapterAt(chapters, currentTimeMs),

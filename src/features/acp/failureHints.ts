@@ -2,6 +2,8 @@
 
 export function hintForAcpFailure(code: string | undefined): string {
   switch (code) {
+    case "WorkspaceUnavailable":
+      return "请重新打开当前视频后重试；在线视频会使用 Lumina 自己的工作目录。";
     case "ProtocolError":
       return "Windows 上请确认 Codex 已登录（codex login），且 Bun 能拉取 ACP 适配器；然后点击「新建对话」重试。";
     case "SpawnFailed":

@@ -5,6 +5,7 @@ import { useMediaInfoQuery } from "@/features/media";
 import { listNotes } from "@/features/notes/api";
 import { usePlayerStore } from "@/features/player";
 import { useTrackStore } from "@/features/player/trackStore";
+import { getCachedYtdlResolve } from "@/features/ytdl";
 
 import { buildVideoPromptContext } from "./context";
 import type { VideoPromptContext } from "./types";
@@ -24,6 +25,12 @@ export function useVideoPromptContext(): VideoPromptContext | undefined {
     status !== "Error";
 
   const mediaQuery = useMediaInfoQuery();
+  const onlineQuery = useQuery({
+    queryKey: ["ytdl-resolve", path],
+    queryFn: () => getCachedYtdlResolve(path as string),
+    enabled: mediaReady && /^https?:\/\//i.test(path ?? ""),
+    staleTime: Infinity,
+  });
 
   const notesQuery = useQuery({
     queryKey: ["notes", path],
@@ -36,14 +43,18 @@ export function useVideoPromptContext(): VideoPromptContext | undefined {
     () =>
       buildVideoPromptContext({
         mediaPath: path,
+        mediaTitle: onlineQuery.data?.title,
         positionMs,
-        durationMs,
-        chapters: mediaQuery.data?.chapters,
+        durationMs: durationMs || onlineQuery.data?.durationMs || undefined,
+        chapters: mediaQuery.data?.chapters ?? onlineQuery.data?.chapters,
         subtitleChoiceId,
         notes: notesQuery.data,
       }),
     [
       path,
+      onlineQuery.data?.title,
+      onlineQuery.data?.durationMs,
+      onlineQuery.data?.chapters,
       positionMs,
       durationMs,
       mediaQuery.data?.chapters,

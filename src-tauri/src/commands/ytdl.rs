@@ -49,7 +49,10 @@ pub async fn ytdl_list_browser_profiles(
     app: AppHandle,
     browser: CookieBrowser,
 ) -> Result<Vec<BrowserProfileOption>, YtdlError> {
-    on_worker(app, move |state| state.ytdl().list_browser_profiles(browser)).await
+    on_worker(app, move |state| {
+        state.ytdl().list_browser_profiles(browser)
+    })
+    .await
 }
 
 #[tauri::command]
@@ -74,4 +77,12 @@ pub async fn ytdl_install(
 pub async fn ytdl_resolve(app: AppHandle, url: String) -> Result<YtdlResolveResult, YtdlError> {
     // Service caches full URLs in-process and returns a sanitized IPC copy.
     on_worker(app, move |state| state.ytdl().resolve(&url)).await
+}
+
+#[tauri::command]
+pub async fn ytdl_cached_resolve(
+    app: AppHandle,
+    url: String,
+) -> Result<Option<YtdlResolveResult>, YtdlError> {
+    on_worker(app, move |state| state.ytdl().cached_resolve(&url)).await
 }

@@ -16,7 +16,7 @@ pub struct MediaInfo {
     pub chapters: Vec<MediaChapter>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct MediaChapter {
     pub id: u32,

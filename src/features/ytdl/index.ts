@@ -12,6 +12,7 @@ export type {
   YtdlSubtitleTrack,
 } from "./api";
 export {
+  getCachedYtdlResolve,
   getYtdlCookieStatus,
   getYtdlStatus,
   installYtdl,

@@ -11,6 +11,7 @@ use serde::{Deserialize, Serialize};
 pub enum AcpErrorCode {
     NotConfigured,
     Busy,
+    WorkspaceUnavailable,
     SpawnFailed,
     ProtocolError,
     Cancelled,
@@ -46,6 +47,14 @@ impl AcpError {
 
     pub fn busy() -> Self {
         Self::new(AcpErrorCode::Busy, "已有 AI 会话在运行", None)
+    }
+
+    pub fn workspace_unavailable(details: Option<&str>) -> Self {
+        Self::new(
+            AcpErrorCode::WorkspaceUnavailable,
+            "Agent 工作目录不可用，请重新打开视频后重试",
+            details.map(str::to_string),
+        )
     }
 
     pub fn spawn_failed(details: Option<&str>) -> Self {
@@ -117,6 +126,13 @@ mod tests {
         assert!(has_cjk(&AcpError::busy().message));
         assert!(has_cjk(&AcpError::cancelled().message));
         assert_eq!(AcpError::busy().code, AcpErrorCode::Busy);
+        let workspace = AcpError::workspace_unavailable(Some("invalid cwd"));
+        assert_eq!(workspace.code, AcpErrorCode::WorkspaceUnavailable);
+        assert_eq!(
+            workspace.message,
+            "Agent 工作目录不可用，请重新打开视频后重试"
+        );
+        assert!(!workspace.message.contains("cwd"));
         let p = AcpError::protocol(Some("json parse failed"));
         assert_eq!(p.message, "与 Agent 通信失败");
         assert_eq!(p.details.as_deref(), Some("json parse failed"));

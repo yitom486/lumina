@@ -8,7 +8,7 @@ use crate::acp::settings::AcpClientSettings;
 use crate::acp::{
     AcpError, AcpEvent, AcpStatus, AgentProfilesHint, SavedSessionHint, VideoPromptContext,
 };
-use crate::mcp::snapshot_path_for_cwd;
+use crate::mcp::{snapshot_path_for_cwd, OnlineMediaSnapshot};
 use crate::state::AppState;
 
 #[tauri::command]
@@ -107,11 +107,64 @@ pub async fn acp_prompt(
 ) -> Result<String, AcpError> {
     let acp = state.acp.clone();
     let library = state.library.clone();
+    let ytdl = state.ytdl.clone();
     let settings = client_settings.unwrap_or_default();
     tauri::async_runtime::spawn_blocking(move || {
         let session_cwd = resolve_session_cwd(cwd.as_deref())?;
-        let snapshot =
+        let mut snapshot =
             acp.build_prompt_snapshot(context.as_ref(), &library, settings.vision_capable)?;
+        if let Some(page_url) = context
+            .as_ref()
+            .and_then(|value| value.media_path.as_deref())
+            .filter(|value| value.starts_with("http://") || value.starts_with("https://"))
+        {
+            match ytdl.cached_resolve(page_url) {
+                Ok(Some(resolved)) => {
+                    let choices = crate::ytdl::subtitle::list_choices(&resolved);
+                    let selected = context
+                        .as_ref()
+                        .and_then(|value| value.subtitle_choice_id.as_deref())
+                        .filter(|id| choices.iter().any(|choice| choice.id == *id))
+                        .map(str::to_string)
+                        .or_else(|| choices.first().map(|choice| choice.id.clone()));
+                    let transcript = selected.as_deref().and_then(|choice_id| {
+                        match ytdl.load_subtitle_choice(page_url, choice_id) {
+                            Ok(transcript) => Some(transcript),
+                            Err(error) => {
+                                tracing::warn!(
+                                    code = ?error.code,
+                                    details = ?error.details,
+                                    "online transcript unavailable for ACP snapshot"
+                                );
+                                None
+                            }
+                        }
+                    });
+                    if let Some(anchor) = snapshot.anchor.as_mut() {
+                        anchor.subtitle_choice_id = selected;
+                    }
+                    if let Some(playback) = snapshot.playback.as_mut() {
+                        playback.media_title =
+                            resolved.title.clone().or(playback.media_title.take());
+                        playback.duration_ms = resolved.duration_ms.or(playback.duration_ms);
+                    }
+                    snapshot.online = Some(OnlineMediaSnapshot {
+                        media_id: resolved.media_id,
+                        title: resolved.title,
+                        duration_ms: resolved.duration_ms,
+                        webpage_url: resolved.webpage_url,
+                        extractor: resolved.extractor,
+                        chapters: resolved.chapters,
+                        subtitles: choices,
+                        transcript,
+                    });
+                }
+                Ok(None) => tracing::warn!("online resolve cache unavailable for ACP snapshot"),
+                Err(error) => {
+                    tracing::warn!(details = ?error.details, "online resolve cache failed")
+                }
+            }
+        }
         if let Some(anchor) = snapshot.anchor.as_ref() {
             tracing::info!(
                 position_ms = anchor.position_ms,

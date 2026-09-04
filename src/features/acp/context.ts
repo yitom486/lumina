@@ -71,6 +71,7 @@ export function notesExcerptNear(
 
 export function buildVideoPromptContext(input: {
   mediaPath?: string | null;
+  mediaTitle?: string | null;
   positionMs?: number;
   durationMs?: number;
   chapters?: MediaChapter[];
@@ -82,7 +83,7 @@ export function buildVideoPromptContext(input: {
 
   const context: VideoPromptContext = {
     mediaPath,
-    mediaTitle: fileNameFromPath(mediaPath),
+    mediaTitle: input.mediaTitle?.trim() || fileNameFromPath(mediaPath),
     positionMs: input.positionMs,
     durationMs: input.durationMs,
     chapterTitle: activeChapterTitle(input.chapters, input.positionMs ?? 0),
@@ -106,6 +107,7 @@ export function buildAnchoredVideoPromptContext(input: {
 
   return buildVideoPromptContext({
     mediaPath,
+    mediaTitle: input.base?.mediaTitle,
     positionMs: input.anchorPositionMs,
     durationMs: input.durationMs ?? input.base?.durationMs ?? undefined,
     chapters: input.chapters,

@@ -42,6 +42,9 @@ describe("formatPlayerError", () => {
       "当前状态无法执行该操作",
     );
     expect(formatPlayerError({ code: "SpawnFailed" })).toBe("无法启动 AI Agent");
+    expect(formatPlayerError({ code: "WorkspaceUnavailable" })).toBe(
+      "Agent 工作目录不可用，请重新打开视频后重试",
+    );
     expect(formatPlayerError({ code: "ProtocolError" })).toBe("与 Agent 通信失败");
     expect(formatPlayerError({ code: "ToolNotFound" })).toBe("字幕工具未就绪");
   });

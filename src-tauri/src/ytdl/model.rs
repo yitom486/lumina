@@ -28,16 +28,19 @@ pub struct YtdlFormat {
     pub tbr: Option<f64>,
     pub format_note: Option<String>,
     /// Direct media URL from resolver — for player only; never put in Agent snapshot.
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing)]
     pub url: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct YtdlSubtitleTrack {
     pub language: String,
     pub ext: Option<String>,
     pub name: Option<String>,
+    /// Signed subtitle resource URL. In-process only; stripped before IPC/snapshot.
+    #[serde(default, skip_serializing)]
+    pub url: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -39,6 +39,9 @@ impl YtdlResolveResult {
         for format in &mut clone.formats {
             format.url = None;
         }
+        for subtitle in &mut clone.subtitles {
+            subtitle.url = None;
+        }
         clone
     }
 }
@@ -91,7 +94,9 @@ pub fn play_target(
 
 /// Progressive or video-only (pairable) options with a URL, highest first, one per height.
 pub fn progressive_options(formats: &[YtdlFormat]) -> Vec<PlaybackFormatOption> {
-    let has_audio_track = formats.iter().any(|f| has_audio(f) && !has_video(f) && f.url.is_some());
+    let has_audio_track = formats
+        .iter()
+        .any(|f| has_audio(f) && !has_video(f) && f.url.is_some());
     let mut candidates: Vec<&YtdlFormat> = formats
         .iter()
         .filter(|f| {
@@ -284,13 +289,19 @@ mod tests {
             extractor: None,
             chapters: vec![],
             formats: vec![fmt("22", Some(720), "avc1", "mp4a", "https://secret", None)],
-            subtitles: vec![],
+            subtitles: vec![crate::ytdl::YtdlSubtitleTrack {
+                language: "en".into(),
+                ext: Some("vtt".into()),
+                name: None,
+                url: Some("https://secret/subtitle".into()),
+            }],
             recommended_url: Some("https://secret".into()),
             recommended_format_id: Some("22".into()),
         };
         let clean = resolved.sanitized_for_ipc();
         assert!(clean.recommended_url.is_none());
         assert!(clean.formats[0].url.is_none());
+        assert!(clean.subtitles[0].url.is_none());
     }
 
     #[test]

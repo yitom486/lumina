@@ -34,6 +34,15 @@ describe("buildVideoPromptContext", () => {
     expect(ctx?.subtitleChoiceId).toBe("embedded:0");
     expect(ctx?.notesExcerpt).toContain("重点");
   });
+
+  it("uses resolved online title instead of the URL tail", () => {
+    const ctx = buildVideoPromptContext({
+      mediaPath: "https://www.youtube.com/watch?v=demo",
+      mediaTitle: "Resolved video title",
+    });
+
+    expect(ctx?.mediaTitle).toBe("Resolved video title");
+  });
 });
 
 describe("buildAnchoredVideoPromptContext", () => {

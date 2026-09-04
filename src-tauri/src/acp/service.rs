@@ -796,9 +796,32 @@ impl AcpService {
             command.env(key, value);
         }
 
+        tracing::info!(
+            profile_id = %profile.id,
+            profile_kind = ?profile.kind,
+            program = %launch.program.display(),
+            argument_count = launch.args.len(),
+            cwd = %workspace.display(),
+            "ACP launch prepared"
+        );
         let mut child = command.spawn().map_err(|error| {
-            tracing::warn!(%error, cwd = %cwd, "ACP spawn failed");
-            AcpError::spawn_failed(Some(&error.to_string()))
+            tracing::warn!(
+                stage = "spawn",
+                profile_id = %profile.id,
+                program = %launch.program.display(),
+                cwd = %workspace.display(),
+                error_kind = ?error.kind(),
+                os_error = ?error.raw_os_error(),
+                %error,
+                "ACP spawn failed"
+            );
+            AcpError::spawn_failed(Some(&format!(
+                "stage=spawn; program={}; cwd={}; kind={:?}; os_error={:?}; error={error}",
+                launch.program.display(),
+                workspace.display(),
+                error.kind(),
+                error.raw_os_error()
+            )))
         })?;
 
         // Drain stderr so the pipe never blocks the agent.

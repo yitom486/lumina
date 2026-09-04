@@ -269,7 +269,9 @@ pub fn cookies_file_for_player() -> Option<PathBuf> {
 }
 
 /// List local browser profiles for the given browser (Windows-first paths).
-pub fn list_browser_profiles(browser: CookieBrowser) -> Result<Vec<BrowserProfileOption>, YtdlError> {
+pub fn list_browser_profiles(
+    browser: CookieBrowser,
+) -> Result<Vec<BrowserProfileOption>, YtdlError> {
     match browser {
         CookieBrowser::Chrome | CookieBrowser::Edge => list_chromium_profiles(browser),
         CookieBrowser::Firefox => list_firefox_profiles(),
@@ -387,17 +389,13 @@ fn firefox_profiles_ini() -> Option<PathBuf> {
     #[cfg(windows)]
     {
         let appdata = std::env::var_os("APPDATA").map(PathBuf::from)?;
-        let path = appdata
-            .join("Mozilla")
-            .join("Firefox")
-            .join("profiles.ini");
+        let path = appdata.join("Mozilla").join("Firefox").join("profiles.ini");
         return path.is_file().then_some(path);
     }
     #[cfg(target_os = "macos")]
     {
         let home = std::env::var_os("HOME").map(PathBuf::from)?;
-        let path = home
-            .join("Library/Application Support/Firefox/profiles.ini");
+        let path = home.join("Library/Application Support/Firefox/profiles.ini");
         return path.is_file().then_some(path);
     }
     #[cfg(all(unix, not(target_os = "macos")))]
@@ -539,7 +537,10 @@ pub fn browser_process_running(browser: CookieBrowser) -> bool {
 fn process_running(exe_name: &str) -> bool {
     #[cfg(windows)]
     {
-        let Ok(output) = command("tasklist").args(["/FI", &format!("IMAGENAME eq {exe_name}"), "/NH"]).output() else {
+        let Ok(output) = command("tasklist")
+            .args(["/FI", &format!("IMAGENAME eq {exe_name}"), "/NH"])
+            .output()
+        else {
             return false;
         };
         let stdout = String::from_utf8_lossy(&output.stdout).to_ascii_lowercase();
@@ -590,9 +591,14 @@ mod tests {
 
         let cookie = classify_resolve_stderr("ERROR: Could not copy cookies from chrome");
         assert_eq!(cookie.code, crate::ytdl::YtdlErrorCode::LoginRequired);
-        assert!(cookie.message.contains("浏览器") || cookie.message.contains("登录") || cookie.message.contains("任务管理器"));
+        assert!(
+            cookie.message.contains("浏览器")
+                || cookie.message.contains("登录")
+                || cookie.message.contains("任务管理器")
+        );
 
-        let encrypted = classify_resolve_stderr("ERROR: Failed to decrypt with DPAPI. See issues/10927");
+        let encrypted =
+            classify_resolve_stderr("ERROR: Failed to decrypt with DPAPI. See issues/10927");
         assert_eq!(encrypted.code, crate::ytdl::YtdlErrorCode::LoginRequired);
         assert!(encrypted.message.contains("加密") || encrypted.message.contains("Cookie"));
     }
