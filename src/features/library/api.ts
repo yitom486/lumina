@@ -21,6 +21,7 @@ import type {
   ResolverPreview,
   ResolverRunConfig,
   SaveMetadataCredentialsInput,
+  SeriesReading,
   TmdbConfig,
   CredentialValidationItem,
   WikiEnrichmentCandidate,
@@ -187,6 +188,18 @@ export function getMediaMetadataContext(
   mediaPath: string,
 ): Promise<MediaMetadataContext | null> {
   return invoke<MediaMetadataContext | null>("library_context_for_media", {
+    mediaPath,
+  });
+}
+
+/**
+ * Series reading shelf (P6). Null when the media is not indexed —
+ * the shelf stays silent instead of erroring.
+ */
+export function getSeriesForMedia(
+  mediaPath: string,
+): Promise<SeriesReading | null> {
+  return invoke<SeriesReading | null>("library_series_for_media", {
     mediaPath,
   });
 }

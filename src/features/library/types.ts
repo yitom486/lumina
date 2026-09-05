@@ -45,6 +45,20 @@ export type IndexedMediaFile = {
   episode?: number | null;
 };
 
+export type EpisodeFile = {
+  season: number;
+  episode: number;
+  title: string;
+  path: string;
+};
+
+export type SeriesReading = {
+  root: string;
+  groupKey: string;
+  label: string;
+  episodes: EpisodeFile[];
+};
+
 export type MediaGroup = {
   key: string;
   displayName: string;

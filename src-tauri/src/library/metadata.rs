@@ -8,10 +8,10 @@ use serde_json::Value;
 
 use crate::library::error::LibraryError;
 use crate::library::model::{
-    EpisodeIndexEntry, GroupResolution, IndexedMediaFile, LibraryIndex, MediaGroup,
+    EpisodeFile, EpisodeIndexEntry, GroupResolution, IndexedMediaFile, LibraryIndex, MediaGroup,
     MediaMetadataContext, MergedMediaContext, MetadataCastMember, MetadataMediaType,
-    MetadataWriteResult, SeriesLibraryCache, StoredMetadata, StoredMetadataKind, TmdbConfig,
-    TmdbGroupStatus, WikiEnrichmentCandidate, WikiEnrichmentPreview, WikiGroupStatus,
+    MetadataWriteResult, SeriesLibraryCache, SeriesReading, StoredMetadata, StoredMetadataKind,
+    TmdbConfig, TmdbGroupStatus, WikiEnrichmentCandidate, WikiEnrichmentPreview, WikiGroupStatus,
     WikiMatchMethod, WikiMetadata, WikiWriteResult, METADATA_SCHEMA_VERSION,
 };
 use crate::library::paths::{display_relative_path, relativize_under_root};
@@ -314,6 +314,55 @@ pub fn resolve_episode_media_file<'a>(
                 && file.episode == Some(episode)
         })
         .ok_or_else(|| LibraryError::group_not_found(Some(&format!("S{season:02}E{episode:02}"))))
+}
+
+/// Assemble the P6 reading shelf for one series group: indexed episode files
+/// with titles (metadata or `SxxExx` fallback), sorted. IO-free apart from
+/// the episode title lookup, which tolerates a missing group dir.
+pub fn assemble_series(
+    root: &Path,
+    index: &LibraryIndex,
+    group_key: &str,
+    label: String,
+) -> SeriesReading {
+    use std::collections::HashMap;
+
+    let titles: HashMap<(u32, u32), String> = episode_index_for_group(root, group_key)
+        .unwrap_or_default()
+        .into_iter()
+        .map(|entry| ((entry.season, entry.episode), entry.title))
+        .collect();
+    let mut episodes: Vec<EpisodeFile> = index
+        .files
+        .iter()
+        .filter(|file| file.group_key == group_key)
+        .filter_map(|file| {
+            let (season, episode) = match (file.season, file.episode) {
+                (Some(season), Some(episode)) if season > 0 && episode > 0 => (season, episode),
+                _ => return None,
+            };
+            let title = titles
+                .get(&(season, episode))
+                .cloned()
+                .unwrap_or_else(|| format!("S{season:02}E{episode:02}"));
+            Some(EpisodeFile {
+                season,
+                episode,
+                title,
+                path: root
+                    .join(&file.relative_path)
+                    .to_string_lossy()
+                    .into_owned(),
+            })
+        })
+        .collect();
+    episodes.sort_by_key(|episode| (episode.season, episode.episode));
+    SeriesReading {
+        root: root.to_string_lossy().into_owned(),
+        group_key: group_key.to_owned(),
+        label,
+        episodes,
+    }
 }
 
 pub fn resolve_media_in_index<'a>(
@@ -830,6 +879,76 @@ mod tests {
         assert_eq!(entries[1].title, "S01E02");
 
         let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn assemble_series_joins_index_files_with_titles() {
+        use std::time::{SystemTime, UNIX_EPOCH};
+
+        use crate::library::model::IndexedMediaFile;
+
+        let suffix = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|duration| duration.as_nanos())
+            .unwrap_or_default();
+        let root = std::env::temp_dir().join(format!("lumina-assemble-{suffix}"));
+        let group_key = "Show";
+        let dir = store::group_dir(&root, group_key);
+        std::fs::create_dir_all(&dir).expect("mkdir group dir");
+        // Only S01E01 gets a metadata title; S01E02 falls back to `SxxExx`.
+        let doc = StoredMetadata {
+            schema_version: 1,
+            kind: StoredMetadataKind::Episode,
+            tmdb_id: 1,
+            series_tmdb_id: None,
+            title: "开篇".into(),
+            original_title: None,
+            overview: None,
+            year: None,
+            season: Some(1),
+            episode: Some(1),
+            genres: Vec::new(),
+            cast: Vec::new(),
+            creators: Vec::new(),
+            network: None,
+            status: None,
+            updated_at_ms: 1,
+        };
+        store::save_group_json(&root, group_key, "S01E01.json", &doc).expect("write ep1");
+
+        let file = |name: &str, season: Option<u32>, episode: Option<u32>| IndexedMediaFile {
+            relative_path: format!("Show/{name}"),
+            file_name: name.into(),
+            size_bytes: 1,
+            modified_at_ms: 0,
+            group_key: group_key.into(),
+            season,
+            episode,
+        };
+        let index = LibraryIndex {
+            schema_version: 1,
+            root: root.to_string_lossy().into_owned(),
+            updated_at_ms: 0,
+            files: vec![
+                file("S01E02.mkv", Some(1), Some(2)),
+                file("S01E01.mkv", Some(1), Some(1)),
+                file("extra.mkv", None, None),
+                IndexedMediaFile {
+                    relative_path: "Other/M01.mkv".into(),
+                    group_key: "Other".into(),
+                    ..file("M01.mkv", Some(1), Some(1))
+                },
+            ],
+            groups: Vec::new(),
+        };
+        let shelf = assemble_series(&root, &index, group_key, "剧名".into());
+        assert_eq!(shelf.label, "剧名");
+        assert_eq!(shelf.group_key, "Show");
+        assert_eq!(shelf.episodes.len(), 2);
+        assert_eq!(shelf.episodes[0].title, "开篇");
+        assert_eq!(shelf.episodes[1].title, "S01E02");
+        assert!(shelf.episodes[0].path.ends_with("S01E01.mkv"));
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]

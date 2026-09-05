@@ -8,9 +8,9 @@ use crate::library::error::LibraryError;
 use crate::library::model::{
     GroupResolution, LibraryIndex, LibraryScanEvent, LibraryScanIssue, LibraryStatus,
     LibraryWatchConfig, MediaGroup, MediaMetadataContext, MetadataMediaType, MetadataWriteResult,
-    PendingMediaGroup, ResolverPreview, ResolverRunConfig, TmdbConfig, TmdbGroupStatus,
-    WikiEnrichmentCandidate, WikiEnrichmentPreview, WikiGroupStatus, WikiMatchMethod,
-    WikiWriteResult,
+    PendingMediaGroup, ResolverPreview, ResolverRunConfig, SeriesReading, TmdbConfig,
+    TmdbGroupStatus, WikiEnrichmentCandidate, WikiEnrichmentPreview, WikiGroupStatus,
+    WikiMatchMethod, WikiWriteResult,
 };
 use crate::library::paths::library_root_for_media_path;
 use crate::library::{metadata, scanner, store, RemoteResolver};
@@ -368,6 +368,38 @@ impl MediaLibraryService {
             .join(&target.relative_path)
             .to_string_lossy()
             .into_owned())
+    }
+
+    /// Series reading shelf for one media file. `Ok(None)` when the file is not
+    /// indexed (sidebar stays silent); series groups only, never movies.
+    pub fn series_for_media(
+        &self,
+        media_path: String,
+    ) -> Result<Option<SeriesReading>, LibraryError> {
+        let media_path_buf = PathBuf::from(&media_path);
+        let Some(root) = self.library_root_for_media(&media_path) else {
+            return Ok(None);
+        };
+        let Some(index) = store::load(&root)? else {
+            return Ok(None);
+        };
+        let Some((_, group)) = metadata::resolve_media_in_index(&index, &media_path_buf, &root)?
+        else {
+            return Ok(None);
+        };
+        if group.kind != crate::library::model::MediaGroupKind::Series {
+            return Ok(None);
+        }
+        let label = group
+            .manual_title
+            .as_deref()
+            .map(str::trim)
+            .filter(|title| !title.is_empty())
+            .unwrap_or(group.display_name.as_str())
+            .to_string();
+        Ok(Some(metadata::assemble_series(
+            &root, &index, &group.key, label,
+        )))
     }
 
     pub fn list_groups(&self, root: String) -> Result<Vec<MediaGroup>, LibraryError> {
@@ -760,6 +792,15 @@ mod tests {
             .message
             .chars()
             .any(|c| ('\u{4e00}'..='\u{9fff}').contains(&c)));
+    }
+
+    #[test]
+    fn series_for_media_is_none_without_index() {
+        let service = MediaLibraryService::new();
+        let shelf = service
+            .series_for_media(r"C:\nope\Show.S01E01.mkv".into())
+            .expect("miss is not an error");
+        assert!(shelf.is_none());
     }
 
     #[test]

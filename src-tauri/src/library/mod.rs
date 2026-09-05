@@ -24,15 +24,15 @@ pub use metadata::{
 };
 pub use model::{
     AgentModelDiscoveryConfig, AgentModelDiscoveryResult, CredentialValidationConfig,
-    CredentialValidationItem, CredentialValidationResult, EpisodeIndexEntry, GroupResolution,
-    LibraryIndex, LibraryScanEvent, LibraryStatus, LibraryWatchConfig, MediaGroup, MediaGroupKind,
-    MediaMetadataContext, MergedMediaContext, MetadataMediaType, MetadataWriteResult,
-    ModelDiscoveryConfig, ModelDiscoveryResult, ModelResolverConfig, PendingMediaGroup,
-    ResolverIntent, ResolverPreview, ResolverProviderConfig, ResolverRunConfig, ResolverSelection,
-    SeriesLibraryCache, StoredMetadata, StoredMetadataKind, TmdbCandidate, TmdbConfig,
-    TmdbGroupStatus, WikiCharacter, WikiEnrichmentCandidate, WikiEnrichmentPreview,
-    WikiEpisodeSummary, WikiGroupStatus, WikiMatchMethod, WikiMetadata, WikiWriteResult,
-    WikiZhReference, WIKI_STALE_AFTER_MS,
+    CredentialValidationItem, CredentialValidationResult, EpisodeFile, EpisodeIndexEntry,
+    GroupResolution, LibraryIndex, LibraryScanEvent, LibraryStatus, LibraryWatchConfig, MediaGroup,
+    MediaGroupKind, MediaMetadataContext, MergedMediaContext, MetadataMediaType,
+    MetadataWriteResult, ModelDiscoveryConfig, ModelDiscoveryResult, ModelResolverConfig,
+    PendingMediaGroup, ResolverIntent, ResolverPreview, ResolverProviderConfig, ResolverRunConfig,
+    ResolverSelection, SeriesLibraryCache, SeriesReading, StoredMetadata, StoredMetadataKind,
+    TmdbCandidate, TmdbConfig, TmdbGroupStatus, WikiCharacter, WikiEnrichmentCandidate,
+    WikiEnrichmentPreview, WikiEpisodeSummary, WikiGroupStatus, WikiMatchMethod, WikiMetadata,
+    WikiWriteResult, WikiZhReference, WIKI_STALE_AFTER_MS,
 };
 pub use paths::discover_library_root_for_media;
 pub(crate) use paths::{lumina_agent_context_path, lumina_tmp_dir};

@@ -9,6 +9,7 @@ import { usePlayerStore } from "@/features/player";
 import { errorMessage } from "@/lib/format";
 
 import { libraryRootFromPlaybackPath } from "../playbackRoot";
+import { SeriesReadingSection } from "./SeriesReadingSection";
 
 import {
   applyTmdbMediaMatch,
@@ -316,6 +317,7 @@ export function MediaLibraryPanel() {
 
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-auto p-3 text-xs">
+      <SeriesReadingSection />
       <section className="space-y-2">
         <div className="flex items-center justify-between gap-2">
           <p className="font-medium">媒体库守护</p>

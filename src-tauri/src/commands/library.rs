@@ -146,6 +146,18 @@ pub async fn library_list_groups(
         .map_err(|error| LibraryError::internal(Some(&format!("library groups join: {error}"))))?
 }
 
+/// Series reading shelf (P6); `None` when the media is not indexed.
+#[tauri::command]
+pub async fn library_series_for_media(
+    state: State<'_, AppState>,
+    media_path: String,
+) -> Result<Option<crate::library::SeriesReading>, LibraryError> {
+    let service = state.library.clone();
+    tauri::async_runtime::spawn_blocking(move || service.series_for_media(media_path))
+        .await
+        .map_err(|error| LibraryError::internal(Some(&format!("library series join: {error}"))))?
+}
+
 #[tauri::command]
 pub async fn library_wikipedia_preview(
     state: State<'_, AppState>,

@@ -114,6 +114,26 @@ pub struct PendingMediaGroup {
     pub group: MediaGroup,
 }
 
+/// One episode file for the P6 series reading shelf.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct EpisodeFile {
+    pub season: u32,
+    pub episode: u32,
+    pub title: String,
+    pub path: String,
+}
+
+/// Series context for the reading shelf; `None` when the media is not indexed.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct SeriesReading {
+    pub root: String,
+    pub group_key: String,
+    pub label: String,
+    pub episodes: Vec<EpisodeFile>,
+}
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub enum MediaGroupKind {
