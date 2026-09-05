@@ -675,6 +675,135 @@ fn text_result<T: Serialize>(payload: &T) -> Result<Value, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::mcp::snapshot::{AgentCapabilities, CONTEXT_FILE_ENV};
+
+    #[test]
+    fn capture_tool_refuses_without_vision() {
+        let snapshot = LuminaMcpSnapshot {
+            capabilities: Some(AgentCapabilities {
+                vision_capable: false,
+                subtitle_workshop_enabled: false,
+                video_annotations_enabled: true,
+            }),
+            ..LuminaMcpSnapshot::empty()
+        };
+        let err = capture_frame_tool(&snapshot, &json!({})).expect_err("vision gate");
+        assert!(err.contains("识图"));
+    }
+
+    /// P7-S1 chain shape: text(anchor) + image/text(frame label) pairs.
+    /// Needs ffmpeg; SKIP otherwise (same convention as the codec matrix).
+    #[test]
+    fn capture_tool_returns_labeled_image_blocks() {
+        let ffmpeg = match crate::media::tools::resolve_ffmpeg() {
+            Ok(path) => path,
+            Err(_) => {
+                eprintln!("SKIP capture chain: ffmpeg not vendored on this machine");
+                return;
+            }
+        };
+        let dir = std::env::temp_dir().join(format!("lumina-capture-chain-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("chain temp dir");
+        let media = dir.join("chain-20s.mp4");
+        let status = crate::process_util::command(&ffmpeg)
+            .args([
+                "-y",
+                "-f",
+                "lavfi",
+                "-i",
+                "testsrc=duration=20:size=640x360:rate=30",
+                "-c:v",
+                "libx264",
+                "-preset",
+                "veryfast",
+                "-pix_fmt",
+                "yuv420p",
+                "-an",
+            ])
+            .arg(&media)
+            .output()
+            .expect("spawn ffmpeg");
+        assert!(status.status.success(), "chain fixture failed to encode");
+
+        // snapshot_cwd() follows LUMINA_MCP_CONTEXT_FILE; restore afterwards.
+        let previous = std::env::var(CONTEXT_FILE_ENV).ok();
+        std::env::set_var(
+            CONTEXT_FILE_ENV,
+            dir.join(".lumina").join("agent-context.json"),
+        );
+        let snapshot = LuminaMcpSnapshot {
+            anchor: Some(PromptAnchor {
+                media_path: media.to_string_lossy().into_owned(),
+                library_root: None,
+                group_key: None,
+                season: None,
+                episode: None,
+                position_ms: 10_000,
+                sent_at_ms: 7,
+                subtitle_choice_id: None,
+            }),
+            playback: Some(crate::mcp::snapshot::PlaybackLite {
+                media_path: Some(media.to_string_lossy().into_owned()),
+                media_title: Some("chain-20s.mp4".into()),
+                position_ms: Some(10_000),
+                duration_ms: Some(20_000),
+                chapter_title: None,
+                notes_excerpt: None,
+            }),
+            capabilities: Some(AgentCapabilities {
+                vision_capable: true,
+                subtitle_workshop_enabled: false,
+                video_annotations_enabled: true,
+            }),
+            ..LuminaMcpSnapshot::empty()
+        };
+        let result = capture_frame_tool(&snapshot, &json!({ "beforeSec": 2, "afterSec": 2 }));
+        match previous {
+            Some(value) => std::env::set_var(CONTEXT_FILE_ENV, value),
+            None => std::env::remove_var(CONTEXT_FILE_ENV),
+        }
+        let value = result.expect("capture chain");
+        let content = value
+            .get("content")
+            .and_then(Value::as_array)
+            .expect("content blocks");
+        // text(anchor) + 5 × (image + label).
+        assert_eq!(content.len(), 1 + 5 * 2, "blocks: {content:?}");
+        assert!(content[0]
+            .get("text")
+            .and_then(Value::as_str)
+            .is_some_and(|text| text.contains("anchorMs") && text.contains("centerMs")));
+        let mut labels = Vec::new();
+        for pair in content[1..].chunks(2) {
+            let (image, label) = (&pair[0], &pair[1]);
+            assert_eq!(image.get("type").and_then(Value::as_str), Some("image"));
+            assert_eq!(
+                image.get("mimeType").and_then(Value::as_str),
+                Some("image/jpeg")
+            );
+            let data = image.get("data").and_then(Value::as_str).unwrap_or("");
+            assert!(data.starts_with("/9j/"), "expected JPEG bytes");
+            assert_eq!(label.get("type").and_then(Value::as_str), Some("text"));
+            labels.push(
+                label
+                    .get("text")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .to_string(),
+            );
+        }
+        assert_eq!(
+            labels,
+            vec![
+                "frame 0 @ 8.0s",
+                "frame 1 @ 9.0s",
+                "frame 2 @ 10.0s",
+                "frame 3 @ 11.0s",
+                "frame 4 @ 12.0s",
+            ]
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     #[test]
     fn parse_radius_argument() {
