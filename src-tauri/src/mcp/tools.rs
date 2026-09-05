@@ -16,7 +16,10 @@ use crate::library::{
 use crate::mcp::snapshot::{
     ephemeral_tmp_dir, resolve_snapshot_path, LuminaMcpSnapshot, PromptAnchor,
 };
-use crate::media::frame_capture::{capture_frames, sample_times_for_window, MAX_CAPTURE_SPAN_SEC};
+use crate::media::frame_capture::{
+    capture_frames, detect_scene_times, sample_times_for_window, select_keyframes,
+    DEFAULT_FRAME_BUDGET, DEFAULT_SCENE_THRESHOLD, MAX_CAPTURE_SPAN_SEC,
+};
 use crate::notes::proposal::{build_proposal, save_latest_proposal};
 use crate::subtitle::model::Cue;
 use crate::subtitle::write;
@@ -504,7 +507,22 @@ fn capture_frame_tool(snapshot: &LuminaMcpSnapshot, args: &Value) -> Result<Valu
     }
     let duration_ms = snapshot_duration_ms(snapshot);
     let center_ms = parse_time_center_ms(args, anchor.position_ms, duration_ms);
-    let sample_times = sample_times_for_window(center_ms, duration_ms, before_sec, after_sec);
+    let coverage = sample_times_for_window(center_ms, duration_ms, before_sec, after_sec);
+    // Scene mode merges detected cuts into the grid, still capped by budget.
+    // Detection failure degrades to uniform coverage, never to an error.
+    // `sample_times` are seconds; the tool labels below print them as-is.
+    let sample_times = if parse_capture_mode(args) {
+        let window_start = coverage.first().copied().unwrap_or(0.0);
+        let window_end = coverage.last().copied().unwrap_or(f64::MAX);
+        let scenes: Vec<f64> = detect_scene_times(&media_path, parse_scene_threshold(args))
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|time| *time >= window_start && *time <= window_end)
+            .collect();
+        select_keyframes(&coverage, &scenes, DEFAULT_FRAME_BUDGET.max_frames)
+    } else {
+        coverage
+    };
     let cwd = snapshot_cwd()?;
     let output_dir = ephemeral_tmp_dir(&cwd).join(format!("capture-{}", anchor.sent_at_ms));
     let frames = capture_frames(&media_path, &sample_times, &output_dir)
@@ -630,6 +648,21 @@ fn parse_capture_window_args(args: &Value) -> (u32, u32) {
         before.min(MAX_CAPTURE_SPAN_SEC),
         after.min(MAX_CAPTURE_SPAN_SEC),
     )
+}
+
+/// P7-M1 opt-in sampling: `"scene"` merges scene cuts into the coverage grid.
+/// Anything else (or absent) keeps the uniform behavior unchanged.
+fn parse_capture_mode(args: &Value) -> bool {
+    args.get("mode")
+        .and_then(Value::as_str)
+        .is_some_and(|mode| mode.eq_ignore_ascii_case("scene"))
+}
+
+fn parse_scene_threshold(args: &Value) -> f32 {
+    args.get("sceneThreshold")
+        .and_then(Value::as_f64)
+        .map(|value| (value as f32).clamp(0.1, 0.9))
+        .unwrap_or(DEFAULT_SCENE_THRESHOLD)
 }
 
 fn require_anchor(snapshot: &LuminaMcpSnapshot) -> Result<&PromptAnchor, String> {
@@ -802,6 +835,143 @@ mod tests {
                 "frame 4 @ 12.0s",
             ]
         );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn parse_capture_mode_and_threshold() {
+        assert!(parse_capture_mode(&json!({ "mode": "scene" })));
+        assert!(parse_capture_mode(&json!({ "mode": "Scene" })));
+        assert!(!parse_capture_mode(&json!({})));
+        assert!(!parse_capture_mode(&json!({ "mode": "uniform" })));
+        assert_eq!(parse_scene_threshold(&json!({})), DEFAULT_SCENE_THRESHOLD);
+        assert_eq!(
+            parse_scene_threshold(&json!({ "sceneThreshold": 0.7 })),
+            0.7
+        );
+        assert_eq!(
+            parse_scene_threshold(&json!({ "sceneThreshold": 5.0 })),
+            0.9
+        );
+        assert_eq!(
+            parse_scene_threshold(&json!({ "sceneThreshold": -1.0 })),
+            0.1
+        );
+        assert_eq!(
+            parse_scene_threshold(&json!({ "sceneThreshold": "high" })),
+            DEFAULT_SCENE_THRESHOLD
+        );
+    }
+
+    /// P7-M1 scene chain: cuts merge into the grid, budget still caps.
+    /// Needs ffmpeg; SKIP otherwise.
+    #[test]
+    fn capture_tool_scene_mode_merges_cuts() {
+        let ffmpeg = match crate::media::tools::resolve_ffmpeg() {
+            Ok(path) => path,
+            Err(_) => {
+                eprintln!("SKIP scene chain: ffmpeg not vendored on this machine");
+                return;
+            }
+        };
+        let dir = std::env::temp_dir().join(format!("lumina-scene-chain-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("chain temp dir");
+        let media = dir.join("cut.mp4");
+        let status = crate::process_util::command(&ffmpeg)
+            .args([
+                "-y",
+                "-f",
+                "lavfi",
+                "-i",
+                "color=c=red:duration=2:size=320x240:rate=10",
+                "-f",
+                "lavfi",
+                "-i",
+                "color=c=blue:duration=2:size=320x240:rate=10",
+                "-filter_complex",
+                "[0:v][1:v]concat=n=2:v=1",
+                "-c:v",
+                "libx264",
+                "-preset",
+                "veryfast",
+                "-pix_fmt",
+                "yuv420p",
+                "-an",
+            ])
+            .arg(&media)
+            .output()
+            .expect("spawn ffmpeg");
+        assert!(status.status.success(), "cut fixture failed to encode");
+
+        let previous = std::env::var(CONTEXT_FILE_ENV).ok();
+        std::env::set_var(
+            CONTEXT_FILE_ENV,
+            dir.join(".lumina").join("agent-context.json"),
+        );
+        let snapshot = LuminaMcpSnapshot {
+            anchor: Some(PromptAnchor {
+                media_path: media.to_string_lossy().into_owned(),
+                library_root: None,
+                group_key: None,
+                season: None,
+                episode: None,
+                position_ms: 2_000,
+                sent_at_ms: 9,
+                subtitle_choice_id: None,
+            }),
+            playback: Some(crate::mcp::snapshot::PlaybackLite {
+                media_path: Some(media.to_string_lossy().into_owned()),
+                media_title: Some("cut.mp4".into()),
+                position_ms: Some(2_000),
+                duration_ms: Some(4_000),
+                chapter_title: None,
+                notes_excerpt: None,
+            }),
+            capabilities: Some(AgentCapabilities {
+                vision_capable: true,
+                subtitle_workshop_enabled: false,
+                video_annotations_enabled: true,
+            }),
+            ..LuminaMcpSnapshot::empty()
+        };
+        let result = capture_frame_tool(
+            &snapshot,
+            &json!({ "beforeSec": 2, "afterSec": 2, "mode": "scene" }),
+        );
+        match previous {
+            Some(value) => std::env::set_var(CONTEXT_FILE_ENV, value),
+            None => std::env::remove_var(CONTEXT_FILE_ENV),
+        }
+        let value = result.expect("scene chain");
+        let content = value
+            .get("content")
+            .and_then(Value::as_array)
+            .expect("content blocks");
+        // text(anchor) + N × (image + label), N within budget and ≥ coverage.
+        assert!(!content.is_empty());
+        let images = content
+            .iter()
+            .filter(|block| block.get("type").and_then(Value::as_str) == Some("image"))
+            .count();
+        assert!((1..=DEFAULT_FRAME_BUDGET.max_frames).contains(&images));
+        let labels: Vec<String> = content
+            .iter()
+            .filter_map(|block| {
+                (block.get("type").and_then(Value::as_str) == Some("text"))
+                    .then(|| {
+                        block
+                            .get("text")
+                            .and_then(Value::as_str)
+                            .unwrap_or("")
+                            .to_string()
+                    })
+                    .filter(|text| text.starts_with("frame "))
+            })
+            .collect();
+        assert_eq!(labels.len(), images);
+        let mut sorted = labels.clone();
+        sorted.sort();
+        assert_eq!(labels, sorted, "frame labels stay time-ordered");
         let _ = std::fs::remove_dir_all(&dir);
     }
 

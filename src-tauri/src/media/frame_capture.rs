@@ -19,6 +19,65 @@ const MAX_FRAME_WIDTH: u32 = 640;
 pub const MAX_CAPTURE_FRAMES: usize = 15;
 /// Per-direction span cap at 1 fps → up to 7 + anchor + 7 = 15 frames.
 pub const MAX_CAPTURE_SPAN_SEC: u32 = 7;
+/// Default scene-cut threshold for `detect_scene_times` (fixed, configurable
+/// per call; clamped to 0.1..=0.9). Duration is NOT a density proxy, so no
+/// auto-adaptation by media length (review decision).
+pub const DEFAULT_SCENE_THRESHOLD: f32 = 0.4;
+
+/// Scene-cut timestamps (seconds) via ffmpeg `select` + `showinfo`.
+/// Sorted, possibly empty. Missing ffmpeg propagates the tool error.
+pub fn detect_scene_times(media_path: &Path, threshold: f32) -> Result<Vec<f64>, MediaError> {
+    let ffmpeg = resolve_ffmpeg()?;
+    let threshold = threshold.clamp(0.1, 0.9);
+    let output = command(&ffmpeg)
+        .args(["-hide_banner", "-i"])
+        .arg(media_path)
+        .args([
+            "-vf",
+            &format!("select='gt(scene,{threshold:.2})',showinfo"),
+            "-f",
+            "null",
+            "-",
+        ])
+        .output()
+        .map_err(|error| MediaError::internal(Some(&format!("spawn ffmpeg: {error}"))))?;
+    if !output.status.success() {
+        return Err(MediaError::internal(Some("scene detection failed")));
+    }
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let mut times: Vec<f64> = stderr
+        .split_whitespace()
+        .filter_map(|token| {
+            token
+                .strip_prefix("pts_time:")
+                .and_then(|value| value.parse::<f64>().ok())
+                .filter(|value| value.is_finite() && *value >= 0.0)
+        })
+        .collect();
+    times.sort_by(|left, right| left.partial_cmp(right).unwrap_or(std::cmp::Ordering::Equal));
+    times.dedup_by(|left, right| (*left - *right).abs() < 0.05);
+    Ok(times)
+}
+
+/// Merge coverage grid + scene candidates, dedupe (0.5 s), then stride down
+/// to budget keeping first/last. Pure; budget comes from `DEFAULT_FRAME_BUDGET`.
+pub fn select_keyframes(coverage: &[f64], scenes: &[f64], budget_frames: usize) -> Vec<f64> {
+    let mut merged: Vec<f64> = coverage
+        .iter()
+        .chain(scenes.iter())
+        .copied()
+        .filter(|value| value.is_finite() && *value >= 0.0)
+        .collect();
+    merged.sort_by(|left, right| left.partial_cmp(right).unwrap_or(std::cmp::Ordering::Equal));
+    merged.dedup_by(|left, right| (*left - *right).abs() < 0.5);
+    if budget_frames == 0 {
+        return Vec::new();
+    }
+    if merged.len() <= budget_frames {
+        return merged;
+    }
+    subsample_times(merged, budget_frames)
+}
 
 /// P7-S1 measured budget model. Spike (2026-09-06, 640px JPEG q:v 5):
 /// 15 frames = 143 KiB total (~9.5 KiB/frame) in 1.8 s wall.
@@ -109,7 +168,11 @@ pub fn sample_times_for_window(
     after_sec: u32,
 ) -> Vec<f64> {
     let center_sec = center_ms as f64 / 1000.0;
-    let max_sec = duration_ms.map(|ms| ms as f64 / 1000.0).unwrap_or(f64::MAX);
+    // Never sample exactly at EOF: decoders yield zero frames there and the
+    // whole capture fails. 100 ms is invisible; unknown duration stays open.
+    let max_sec = duration_ms
+        .map(|ms| (ms as f64 / 1000.0 - 0.1).max(0.0))
+        .unwrap_or(f64::MAX);
     if before_sec == 0 && after_sec == 0 {
         return vec![center_sec.clamp(0.0, max_sec)];
     }
@@ -183,6 +246,15 @@ mod tests {
     }
 
     #[test]
+    fn sample_times_never_touch_eof() {
+        // 4 s media, ±2 s window: 4.0 itself must not be sampled (zero frames).
+        let times = sample_times_for_window(3_500, Some(4_000), 2, 2);
+        assert!(!times.is_empty());
+        assert!(times.iter().all(|time| *time < 4.0));
+        assert!(times.contains(&3.0));
+    }
+
+    #[test]
     fn budget_judges_count_bulk_width_and_window() {
         let ok = DEFAULT_FRAME_BUDGET;
         assert!(within_budget(15, 143_000, 640, 14, ok));
@@ -191,6 +263,70 @@ mod tests {
         assert!(!within_budget(15, 9 * 1024 * 1024, 640, 14, ok));
         assert!(!within_budget(15, 143_000, 1280, 14, ok));
         assert!(!within_budget(15, 143_000, 640, 15, ok));
+    }
+
+    #[test]
+    fn select_keyframes_merges_dedupes_and_strides() {
+        // Under budget: union, sorted, 0.5 s dedupe.
+        let picked = select_keyframes(&[0.0, 5.0, 10.0], &[5.2, 20.0], 15);
+        assert_eq!(picked, vec![0.0, 5.0, 10.0, 20.0]);
+        // Over budget: even stride keeping first/last.
+        let coverage: Vec<f64> = (0..10).map(|i| i as f64).collect();
+        let picked = select_keyframes(&coverage, &[], 4);
+        assert_eq!(picked.len(), 4);
+        assert_eq!(picked.first(), Some(&0.0));
+        assert_eq!(picked.last(), Some(&9.0));
+        // Degenerate inputs.
+        assert!(select_keyframes(&[], &[], 15).is_empty());
+        assert!(select_keyframes(&[1.0, f64::NAN, -2.0], &[], 15) == vec![1.0]);
+        assert!(select_keyframes(&[1.0, 2.0], &[], 0).is_empty());
+    }
+
+    /// Synthetic hard cut (red 2 s + blue 2 s): expect a cut near the boundary.
+    /// Needs ffmpeg; SKIP otherwise.
+    #[test]
+    fn detect_scene_times_finds_synthetic_cut() {
+        let ffmpeg = match resolve_ffmpeg() {
+            Ok(path) => path,
+            Err(_) => {
+                eprintln!("SKIP scene detect: ffmpeg not vendored on this machine");
+                return;
+            }
+        };
+        let dir = std::env::temp_dir().join(format!("lumina-scene-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("scene temp dir");
+        let media = dir.join("cut.mp4");
+        let status = command(&ffmpeg)
+            .args([
+                "-y",
+                "-f",
+                "lavfi",
+                "-i",
+                "color=c=red:duration=2:size=320x240:rate=10",
+                "-f",
+                "lavfi",
+                "-i",
+                "color=c=blue:duration=2:size=320x240:rate=10",
+                "-filter_complex",
+                "[0:v][1:v]concat=n=2:v=1",
+                "-c:v",
+                "libx264",
+                "-preset",
+                "veryfast",
+                "-pix_fmt",
+                "yuv420p",
+                "-an",
+            ])
+            .arg(&media)
+            .output()
+            .expect("spawn ffmpeg");
+        assert!(status.status.success(), "cut fixture failed to encode");
+        let cuts = detect_scene_times(&media, DEFAULT_SCENE_THRESHOLD).expect("detect");
+        assert!(
+            cuts.iter().any(|t| (t - 2.0).abs() < 0.6),
+            "expected a cut near 2.0s, got {cuts:?}"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// P7-S1 spike measurement: real numbers for the budget model.
