@@ -1,13 +1,29 @@
+import { useQuery } from "@tanstack/react-query";
+
 import { useMediaInfoQuery } from "@/features/media";
 import { usePlayerStore } from "@/features/player";
+import { useTrackStore } from "@/features/player/trackStore";
+import { loadSubtitleChoice } from "@/features/transcript/api";
 import { formatTime } from "@/lib/format";
+
+import { buildSoftSegments } from "../softSegments";
 
 export function ChaptersPanel() {
   const mediaPath = usePlayerStore((s) => s.currentFile);
   const sourceKind = usePlayerStore((s) => s.sourceKind);
   const seek = usePlayerStore((s) => s.seek);
   const positionMs = usePlayerStore((s) => s.currentTimeMs);
+  const subtitleChoiceId = useTrackStore((s) => s.subtitleChoiceId);
   const { data, isLoading, error } = useMediaInfoQuery();
+  // Shared transcript cache with the transcript tab (same query key, no refetch).
+  const transcriptQuery = useQuery({
+    queryKey: ["transcript", mediaPath, subtitleChoiceId],
+    queryFn: () =>
+      loadSubtitleChoice(mediaPath as string, subtitleChoiceId as string),
+    enabled: Boolean(mediaPath && subtitleChoiceId),
+    retry: false,
+    staleTime: Infinity,
+  });
 
   if (!mediaPath) {
     return (
@@ -35,9 +51,41 @@ export function ChaptersPanel() {
 
   const chapters = data?.chapters ?? [];
   if (chapters.length === 0) {
+    const cues = transcriptQuery.data?.cues ?? [];
+    const segments = buildSoftSegments(cues);
+    if (segments.length === 0) {
+      return (
+        <div className="p-3 text-xs text-muted-foreground">
+          该文件没有容器章节元数据，也没有可用字幕可供分段。
+        </div>
+      );
+    }
     return (
-      <div className="p-3 text-xs text-muted-foreground">
-        该文件没有容器章节元数据。一般视频不会自动生成断点。
+      <div className="min-h-0 flex-1 space-y-1 overflow-auto p-3">
+        <p className="px-2 text-[11px] text-muted-foreground">
+          无容器章节，按字幕停顿机械分段（非语义章节）。
+        </p>
+        {segments.map((segment) => {
+          const active =
+            positionMs >= segment.startMs && positionMs < segment.endMs;
+          return (
+            <button
+              key={segment.id}
+              type="button"
+              className={
+                active
+                  ? "flex w-full items-start gap-2 rounded-md bg-accent px-2 py-1.5 text-left text-xs"
+                  : "flex w-full items-start gap-2 rounded-md px-2 py-1.5 text-left text-xs hover:bg-muted"
+              }
+              onClick={() => void seek(segment.startMs)}
+            >
+              <span className="shrink-0 font-mono text-primary">
+                {formatTime(segment.startMs)}
+              </span>
+              <span className="min-w-0 flex-1">{segment.title}</span>
+            </button>
+          );
+        })}
       </div>
     );
   }
