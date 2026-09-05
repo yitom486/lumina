@@ -14,6 +14,7 @@ import {
   createNote,
   deleteNote,
   exportNotesMarkdownToFile,
+  getNoteFrame,
   listNotes,
   previewNoteQuotes,
 } from "../api";
@@ -30,6 +31,33 @@ function formatCueLabel(cue: Cue): string {
   return `${formatTime(cue.startMs)} ${cue.text.replace(/\s+/g, " ").slice(0, 48)}`;
 }
 
+/** P7-M3 lazy frame thumbnail; click seeks to the frame moment. */
+function NoteFrameThumb({ noteId, atMs }: { noteId: string; atMs: number }) {
+  const seek = usePlayerStore((s) => s.seek);
+  const frameQuery = useQuery({
+    queryKey: ["note-frame", noteId],
+    queryFn: () => getNoteFrame(noteId),
+    staleTime: Infinity,
+    retry: false,
+  });
+  const data = frameQuery.data;
+  if (!data) return null;
+  return (
+    <button
+      type="button"
+      title={`跳转到 ${formatTime(atMs)} 的画面`}
+      onClick={() => void seek(atMs)}
+      className="shrink-0 overflow-hidden rounded border border-border hover:border-primary"
+    >
+      <img
+        src={`data:${data.mime};base64,${data.data}`}
+        alt={`批注画面 ${formatTime(atMs)}`}
+        className="h-12 w-auto"
+      />
+    </button>
+  );
+}
+
 export function NotesPanel() {
   const mediaPath = usePlayerStore((s) => s.currentFile);
   const positionMs = usePlayerStore((s) => s.currentTimeMs);
@@ -39,6 +67,7 @@ export function NotesPanel() {
   const [quotePreview, setQuotePreview] = useState<NoteQuote[]>([]);
   const [exportSavedPath, setExportSavedPath] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [includeFrame, setIncludeFrame] = useState(false);
   const activeCueRef = useRef<HTMLLabelElement | null>(null);
 
   const body = useNoteComposeStore((s) => s.body);
@@ -235,6 +264,15 @@ export function NotesPanel() {
           {!canAttachQuotes ? "（需先选择字幕轨）" : null}
         </label>
 
+        <label className="mt-2 flex items-center gap-2 text-xs text-muted-foreground">
+          <input
+            type="checkbox"
+            checked={includeFrame}
+            onChange={(e) => setIncludeFrame(e.target.checked)}
+          />
+          附带当前画面
+        </label>
+
         {includeQuotes && canAttachQuotes ? (
           <div className="mt-2 space-y-2 rounded-md border border-border/60 p-2">
             <div className="flex flex-wrap items-center gap-2">
@@ -402,6 +440,7 @@ export function NotesPanel() {
                   ? selectedQuoteIndices
                   : null,
               includeQuotes,
+              includeFrame,
             })
           }
         >
@@ -444,6 +483,17 @@ export function NotesPanel() {
                   >
                     {quote.text}
                   </p>
+                ))}
+              </div>
+            ) : null}
+            {note.frames?.length ? (
+              <div className="flex flex-wrap gap-1">
+                {note.frames.map((frame) => (
+                  <NoteFrameThumb
+                    key={`${note.id}-${frame.file}`}
+                    noteId={note.id}
+                    atMs={frame.atMs}
+                  />
                 ))}
               </div>
             ) : null}

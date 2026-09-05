@@ -91,6 +91,7 @@ mod tests {
             position_ms: 1200,
             body: "hello".into(),
             quotes: Vec::new(),
+            frames: Vec::new(),
             created_at: "t0".into(),
             updated_at: "t0".into(),
         }];
@@ -98,6 +99,21 @@ mod tests {
         let loaded = load(&path).expect("load");
         assert_eq!(loaded.len(), 1);
         assert_eq!(loaded[0].body, "hello");
+        let _ = fs::remove_file(&path);
+    }
+
+    #[test]
+    fn legacy_json_without_frames_still_loads() {
+        let path = std::env::temp_dir().join("lumina-notes-test-legacy.json");
+        let _ = fs::remove_file(&path);
+        fs::write(
+            &path,
+            r#"{"notes": [{"id": "9", "mediaPath": "/a.mp4", "positionMs": 5, "body": "old", "quotes": [], "createdAt": "t", "updatedAt": "t"}]}"#,
+        )
+        .expect("seed legacy");
+        let loaded = load(&path).expect("load legacy");
+        assert_eq!(loaded.len(), 1);
+        assert!(loaded[0].frames.is_empty());
         let _ = fs::remove_file(&path);
     }
 }

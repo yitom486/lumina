@@ -36,7 +36,7 @@ pub use media::{
     MediaChapter, MediaError, MediaErrorCode, MediaInfo, MediaInspector, MediaStream,
     MediaToolStatus, StreamKind,
 };
-pub use notes::{Note, NoteError, NoteErrorCode, NoteService};
+pub use notes::{Note, NoteError, NoteErrorCode, NoteFrame, NoteFrameData, NoteService};
 pub use player::{
     PlayerError, PlayerErrorCode, PlayerEvent, PlayerService, PlayerSnapshot, PlayerState,
 };
@@ -69,8 +69,8 @@ use commands::library::{
 use commands::media::{media_inspect, media_list_siblings, media_tool_status};
 use commands::notes::{
     notes_create, notes_delete, notes_dismiss_proposal, notes_export_markdown,
-    notes_export_markdown_to_file, notes_list, notes_load_latest_proposal, notes_preview_quotes,
-    notes_update,
+    notes_export_markdown_to_file, notes_get_frame, notes_list, notes_load_latest_proposal,
+    notes_preview_quotes, notes_update,
 };
 use commands::player::{
     player_get_state, player_list_playback_formats, player_open, player_pause, player_play,
@@ -182,6 +182,7 @@ pub fn run() {
             acp_close,
             notes_list,
             notes_preview_quotes,
+            notes_get_frame,
             notes_create,
             notes_update,
             notes_delete,

@@ -5,7 +5,7 @@ use tauri::Manager;
 
 use crate::notes::headings::resolve_export_headings;
 use crate::notes::model::{Note, NoteCreate, NotePreviewQuotes, NoteUpdate};
-use crate::notes::{NoteError, NoteService};
+use crate::notes::{NoteError, NoteFrameData, NoteService};
 use crate::state::AppState;
 
 fn with_notes<R, F>(app: AppHandle, work: F) -> Result<R, NoteError>
@@ -69,6 +69,19 @@ pub async fn notes_delete(app: AppHandle, id: String) -> Result<(), NoteError> {
     tauri::async_runtime::spawn_blocking(move || with_notes(app, move |notes| notes.delete(&id)))
         .await
         .map_err(|error| NoteError::internal(Some(&format!("notes delete join: {error}"))))?
+}
+
+/// Lazy frame thumbnail bytes (P7-M3). Missing files degrade to `Ok(None)`.
+#[tauri::command]
+pub async fn notes_get_frame(
+    app: AppHandle,
+    id: String,
+) -> Result<Option<NoteFrameData>, NoteError> {
+    tauri::async_runtime::spawn_blocking(move || {
+        with_notes(app, move |notes| notes.frame_data(&id))
+    })
+    .await
+    .map_err(|error| NoteError::internal(Some(&format!("notes frame join: {error}"))))?
 }
 
 #[tauri::command]

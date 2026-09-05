@@ -6,12 +6,23 @@ export type NoteQuote = {
   anchor: boolean;
 };
 
+export type NoteFrame = {
+  atMs: number;
+  file: string;
+};
+
+export type NoteFrameData = {
+  mime: string;
+  data: string;
+};
+
 export type Note = {
   id: string;
   mediaPath: string;
   positionMs: number;
   body: string;
   quotes: NoteQuote[];
+  frames?: NoteFrame[] | null;
   createdAt: string;
   updatedAt: string;
 };
@@ -27,6 +38,7 @@ export type NoteCreate = {
   quoteCueIndices?: number[] | null;
   quoteHint?: string | null;
   includeQuotes?: boolean | null;
+  includeFrame?: boolean | null;
 };
 
 export type NotePreviewQuotes = {

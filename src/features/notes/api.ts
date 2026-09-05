@@ -4,6 +4,7 @@ import { save } from "@tauri-apps/plugin-dialog";
 import type {
   Note,
   NoteCreate,
+  NoteFrameData,
   NotePreviewQuotes,
   NoteQuote,
   NoteUpdate,
@@ -46,6 +47,11 @@ export function updateNote(input: NoteUpdate): Promise<Note> {
 
 export function deleteNote(id: string): Promise<void> {
   return invoke("notes_delete", { id });
+}
+
+/** Lazy frame thumbnail bytes (P7-M3). Null when the note has no frame. */
+export function getNoteFrame(id: string): Promise<NoteFrameData | null> {
+  return invoke<NoteFrameData | null>("notes_get_frame", { id });
 }
 
 export function exportNotesMarkdown(mediaPath: string): Promise<string> {

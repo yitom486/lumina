@@ -12,6 +12,23 @@ pub struct NoteQuote {
     pub anchor: bool,
 }
 
+/// Durable frame reference attached to a note (P7-M3). `file` is a bare
+/// filename under the notes `note-frames/` dir; export writes time+text only.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct NoteFrame {
+    pub at_ms: u64,
+    pub file: String,
+}
+
+/// JPEG bytes for one note frame thumbnail (lazy `notes_get_frame`).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NoteFrameData {
+    pub mime: String,
+    pub data: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Note {
@@ -21,6 +38,8 @@ pub struct Note {
     pub body: String,
     #[serde(default)]
     pub quotes: Vec<NoteQuote>,
+    #[serde(default)]
+    pub frames: Vec<NoteFrame>,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -41,6 +60,9 @@ pub struct NoteCreate {
     pub quote_hint: Option<String>,
     #[serde(default)]
     pub include_quotes: Option<bool>,
+    /// Capture one frame at `position_ms` into durable storage (best-effort).
+    #[serde(default)]
+    pub include_frame: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
