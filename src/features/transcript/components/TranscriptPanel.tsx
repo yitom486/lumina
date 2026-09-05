@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   keepPreviousData,
   useQuery,
@@ -28,6 +28,7 @@ import {
 } from "../api";
 import { useSubtitleWorkshopModels } from "../useSubtitleWorkshopModels";
 import type { Cue, SubtitleChoice } from "../types";
+import { followMode, useFollowStore } from "../followStore";
 
 function activeCueIndex(cues: Cue[], timeMs: number): number {
   return cues.findIndex((c) => timeMs >= c.startMs && timeMs < c.endMs);
@@ -71,6 +72,15 @@ export function TranscriptPanel() {
   const setSidebarTab = useUiStore((s) => s.setSidebarTab);
   const noteQuoteIndices = useNoteComposeStore((s) => s.selectedIndices);
   const pickFromTranscript = useNoteComposeStore((s) => s.pickFromTranscript);
+
+  // P6-M1 controllable follow (independent from the prompt anchor).
+  const followEnabled = useFollowStore((s) => s.followEnabled);
+  const browsing = useFollowStore((s) => s.browsing);
+  const setFollowEnabled = useFollowStore((s) => s.setFollowEnabled);
+  const setBrowsing = useFollowStore((s) => s.setBrowsing);
+  const resumeFollow = useFollowStore((s) => s.resume);
+  const resetFollowForMedia = useFollowStore((s) => s.resetForMedia);
+  const mode = followMode(followEnabled, browsing);
 
   const mediaReady =
     Boolean(path) &&
@@ -135,7 +145,8 @@ export function TranscriptPanel() {
     setInstallProgress(null);
     setInstallError(null);
     setAsrScope("full");
-  }, [path]);
+    resetFollowForMedia();
+  }, [path, resetFollowForMedia]);
 
   useEffect(() => {
     if (chapters.length === 0 && asrScope === "chapter") {
@@ -188,11 +199,23 @@ export function TranscriptPanel() {
     [transcript, currentTimeMs],
   );
 
-  useEffect(() => {
+  const scrollToActive = useCallback(() => {
     if (activeIndex < 0 || showStale) return;
     const el = document.getElementById(`cue-${activeIndex}`);
     el?.scrollIntoView({ block: "nearest", behavior: "smooth" });
   }, [activeIndex, showStale]);
+
+  const markBrowsingOnSelection = useCallback(() => {
+    const selection = window.getSelection();
+    if (selection && !selection.isCollapsed) setBrowsing(true);
+  }, [setBrowsing]);
+
+  useEffect(() => {
+    // Browsing or follow-off: never yank the page. Wheel/touch/keys drive
+    // `browsing`, so programmatic scrolls need no suppression window.
+    if (mode !== "following") return;
+    scrollToActive();
+  }, [mode, scrollToActive]);
 
   async function selectExportedTrack(
     mediaPath: string,
@@ -394,9 +417,31 @@ export function TranscriptPanel() {
       <div className="flex shrink-0 flex-col gap-2 border-b border-border px-3 py-2">
         <div className="flex items-center justify-between gap-2">
           <p className="text-sm font-medium">文稿</p>
-          {transcriptQuery.isFetching || choicesQuery.isFetching ? (
-            <span className="text-xs text-muted-foreground">加载中…</span>
-          ) : null}
+          <div className="flex items-center gap-1">
+            {mode === "browsing" ? (
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                onClick={resumeFollow}
+              >
+                回到当前播放位置
+              </Button>
+            ) : null}
+            <Button
+              type="button"
+              size="sm"
+              variant={followEnabled ? "secondary" : "ghost"}
+              aria-pressed={followEnabled}
+              title={followEnabled ? "跟随播放位置（开）" : "跟随播放位置（关）"}
+              onClick={() => setFollowEnabled(!followEnabled)}
+            >
+              跟随
+            </Button>
+            {transcriptQuery.isFetching || choicesQuery.isFetching ? (
+              <span className="text-xs text-muted-foreground">加载中…</span>
+            ) : null}
+          </div>
         </div>
 
         <p className="text-[11px] text-muted-foreground">
@@ -677,7 +722,32 @@ export function TranscriptPanel() {
       </div>
 
       <ScrollArea className="min-h-0 flex-1">
-        <div className={`px-2 py-2 ${showStale ? "opacity-50" : ""}`}>
+        <div
+          className={`px-2 py-2 ${showStale ? "opacity-50" : ""}`}
+          onWheel={() => setBrowsing(true)}
+          onTouchMove={() => setBrowsing(true)}
+          onKeyDown={(event) => {
+            if (event.shiftKey) {
+              setBrowsing(true);
+              return;
+            }
+            if (
+              [
+                "ArrowUp",
+                "ArrowDown",
+                "PageUp",
+                "PageDown",
+                "Home",
+                "End",
+                " ",
+              ].includes(event.key)
+            ) {
+              setBrowsing(true);
+            }
+          }}
+          onMouseUp={markBrowsingOnSelection}
+          onTouchEnd={markBrowsingOnSelection}
+        >
           {transcriptQuery.isFetching && !transcript ? (
             <p className="px-2 text-sm text-muted-foreground">加载文稿…</p>
           ) : null}
@@ -715,7 +785,11 @@ export function TranscriptPanel() {
                           : "text-muted-foreground hover:bg-muted hover:text-foreground",
                         quoted && !active && "ring-1 ring-primary/30",
                       )}
-                      onClick={() => void seek(cue.startMs)}
+                      onClick={() => {
+                        // Jumping to a sentence means watching from there.
+                        resumeFollow();
+                        void seek(cue.startMs);
+                      }}
                     >
                       <span className="mr-2 tabular-nums text-[11px] opacity-70">
                         {formatTime(cue.startMs)}
