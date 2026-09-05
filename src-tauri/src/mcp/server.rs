@@ -142,6 +142,21 @@ fn tools_list_result(snapshot: &LuminaMcpSnapshot) -> Value {
                 "additionalProperties": false
             }
         }),
+        json!({
+            "name": "lumina_get_audio_marks",
+            "description": "Return non-semantic audio signals around a time point on the anchor media file: silence intervals and loudness-spike candidates with millisecond timestamps. These are NOT laughter/applause/music labels. Defaults to the frozen prompt anchor; optional centerMs or atSec overrides the center. Window defaults to 60 seconds before and after (each side up to 300 seconds).",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "centerMs": { "type": "integer", "minimum": 0 },
+                    "atSec": { "type": "integer", "minimum": 0 },
+                    "beforeSec": { "type": "integer", "minimum": 0, "maximum": 300 },
+                    "afterSec": { "type": "integer", "minimum": 0, "maximum": 300 },
+                    "radiusSec": { "type": "integer", "minimum": 0, "maximum": 300 }
+                },
+                "additionalProperties": false
+            }
+        }),
     ];
 
     if subtitle_workshop_enabled(snapshot) {
@@ -302,6 +317,7 @@ mod tests {
         assert!(names.contains(&"lumina_get_playback_context"));
         assert!(names.contains(&"lumina_get_transcript_window"));
         assert!(names.contains(&"lumina_get_episode_transcript"));
+        assert!(names.contains(&"lumina_get_audio_marks"));
         assert!(names.contains(&"lumina_propose_video_annotation"));
         assert!(!names.contains(&"lumina_get_subtitle_cues"));
         assert!(!names.contains(&"lumina_write_subtitle_track"));

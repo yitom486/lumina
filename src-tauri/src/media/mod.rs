@@ -1,5 +1,6 @@
 //! Media inspection domain. Implementation lives in `ffprobe`.
 
+pub mod audio_marks;
 pub mod error;
 pub mod ffprobe;
 pub mod frame_capture;

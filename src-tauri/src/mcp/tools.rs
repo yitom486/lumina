@@ -80,6 +80,7 @@ pub fn handle_tool_call(
             }
         }
         "lumina_capture_frames" => capture_frame_tool(snapshot, args),
+        "lumina_get_audio_marks" => audio_marks(snapshot, args),
         "lumina_propose_video_annotation" => {
             if !video_annotations_enabled(snapshot) {
                 Err("该工具未对当前会话开放".to_string())
@@ -551,6 +552,58 @@ fn capture_frame_tool(snapshot: &LuminaMcpSnapshot, args: &Value) -> Result<Valu
     let _ = fs::remove_dir_all(&output_dir);
     Ok(json!({
         "content": content,
+        "isError": false
+    }))
+}
+
+/// Non-semantic audio signals around a time point (P7-M2): silence intervals
+/// and loudness-spike candidates. Never laughter/applause/music labels —
+/// the detectors cannot distinguish them (review decision).
+fn audio_marks(snapshot: &LuminaMcpSnapshot, args: &Value) -> Result<Value, String> {
+    use crate::media::audio_marks::{
+        detect_loudness_peaks, detect_silence, DEFAULT_SILENCE_MIN_SEC, DEFAULT_SILENCE_NOISE_DB,
+    };
+
+    let anchor = require_anchor(snapshot)?;
+    let media_path = PathBuf::from(&anchor.media_path);
+    if !media_path.is_file() {
+        return Err("无法读取当前媒体音频".to_string());
+    }
+    let duration_ms = snapshot_duration_ms(snapshot);
+    let center_ms = parse_time_center_ms(args, anchor.position_ms, duration_ms);
+    // Same window language as the transcript tools; audio-only decode is cheap
+    // but still bounded (300 s per side, default 60/60).
+    let (before_sec, after_sec) = parse_window_args(args, 60, 60);
+    let from_sec = center_ms.saturating_sub(before_sec.saturating_mul(1000) as u64) as f64 / 1000.0;
+    let to_sec = match duration_ms {
+        Some(duration) => {
+            ((center_ms + after_sec.saturating_mul(1000) as u64).min(duration)) as f64 / 1000.0
+        }
+        None => center_ms as f64 / 1000.0 + after_sec as f64,
+    };
+    if to_sec <= from_sec {
+        return Err("音频分析时间窗无效".to_string());
+    }
+    let silences = detect_silence(
+        &media_path,
+        from_sec,
+        to_sec,
+        DEFAULT_SILENCE_NOISE_DB,
+        DEFAULT_SILENCE_MIN_SEC,
+    )
+    .map_err(|_| "无法分析当前媒体音频".to_string())?;
+    let peaks = detect_loudness_peaks(&media_path, from_sec, to_sec)
+        .map_err(|_| "无法分析当前媒体音频".to_string())?;
+    Ok(json!({
+        "content": [{
+            "type": "text",
+            "text": serde_json::to_string_pretty(&json!({
+                "anchorMs": anchor.position_ms,
+                "centerMs": center_ms,
+                "silences": silences,
+                "peaks": peaks,
+            })).unwrap_or_default(),
+        }],
         "isError": false
     }))
 }
@@ -1082,5 +1135,99 @@ mod tests {
         let lines = transcript_lines_from_cues(&cues, 10_000, 2, 2);
         assert_eq!(lines.len(), 1);
         assert_eq!(lines[0].text, "active");
+    }
+
+    /// P7-M2 tool shape on a synthetic gap fixture. Needs ffmpeg; SKIP otherwise.
+    #[test]
+    fn audio_marks_tool_returns_silence_window() {
+        let ffmpeg = match crate::media::tools::resolve_ffmpeg() {
+            Ok(path) => path,
+            Err(_) => {
+                eprintln!("SKIP audio marks tool: ffmpeg not vendored on this machine");
+                return;
+            }
+        };
+        let dir = std::env::temp_dir().join(format!("lumina-audio-tool-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("tool temp dir");
+        let media = dir.join("gap.m4a");
+        let status = crate::process_util::command(&ffmpeg)
+            .args([
+                "-y",
+                "-f",
+                "lavfi",
+                "-i",
+                "sine=frequency=440:duration=2",
+                "-f",
+                "lavfi",
+                "-i",
+                "anullsrc=r=44100:cl=stereo:d=2",
+                "-f",
+                "lavfi",
+                "-i",
+                "sine=frequency=440:duration=2",
+                "-filter_complex",
+                "[0:a][1:a][2:a]concat=n=3:v=0:a=1",
+                "-c:a",
+                "aac",
+                "-vn",
+            ])
+            .arg(&media)
+            .output()
+            .expect("spawn ffmpeg");
+        assert!(status.status.success(), "gap fixture failed to encode");
+
+        let snapshot = LuminaMcpSnapshot {
+            anchor: Some(PromptAnchor {
+                media_path: media.to_string_lossy().into_owned(),
+                library_root: None,
+                group_key: None,
+                season: None,
+                episode: None,
+                position_ms: 3_000,
+                sent_at_ms: 11,
+                subtitle_choice_id: None,
+            }),
+            playback: Some(crate::mcp::snapshot::PlaybackLite {
+                media_path: Some(media.to_string_lossy().into_owned()),
+                media_title: Some("gap.m4a".into()),
+                position_ms: Some(3_000),
+                duration_ms: Some(6_000),
+                chapter_title: None,
+                notes_excerpt: None,
+            }),
+            capabilities: Some(AgentCapabilities {
+                vision_capable: false,
+                subtitle_workshop_enabled: false,
+                video_annotations_enabled: true,
+            }),
+            ..LuminaMcpSnapshot::empty()
+        };
+        let value =
+            audio_marks(&snapshot, &json!({ "beforeSec": 3, "afterSec": 3 })).expect("audio marks");
+        let text = value
+            .get("content")
+            .and_then(Value::as_array)
+            .and_then(|blocks| blocks.first())
+            .and_then(|block| block.get("text"))
+            .and_then(Value::as_str)
+            .expect("text block");
+        let parsed: Value = serde_json::from_str(text).expect("marks JSON");
+        let silences = parsed
+            .get("silences")
+            .and_then(Value::as_array)
+            .expect("silences");
+        assert_eq!(silences.len(), 1, "marks: {text}");
+        let start = silences[0]
+            .get("startMs")
+            .and_then(Value::as_u64)
+            .unwrap_or(0);
+        let end = silences[0]
+            .get("endMs")
+            .and_then(Value::as_u64)
+            .unwrap_or(0);
+        assert!((start as i64 - 2000).abs() < 400, "marks: {text}");
+        assert!((end as i64 - 4000).abs() < 400, "marks: {text}");
+        assert!(parsed.get("peaks").and_then(Value::as_array).is_some());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
