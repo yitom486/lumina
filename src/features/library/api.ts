@@ -126,6 +126,22 @@ export function listLibraryGroups(root: string): Promise<MediaGroup[]> {
   return invoke<MediaGroup[]>("library_list_groups", { root });
 }
 
+/**
+ * Resolve an S/E sibling of a media file (P6 citation jumps).
+ * `season: null` inherits the current media's season (backend maps to 0).
+ */
+export function resolveEpisodeFile(
+  mediaPath: string,
+  season: number | null,
+  episode: number,
+): Promise<string> {
+  return invoke<string>("library_resolve_episode_file", {
+    mediaPath,
+    season: season ?? 0,
+    episode,
+  });
+}
+
 export function previewWikipediaEnrichment(input: {
   root: string;
   groupKey: string;

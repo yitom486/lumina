@@ -335,6 +335,41 @@ impl MediaLibraryService {
         Some((label, file.season, file.episode))
     }
 
+    /// Resolve an S/E sibling of `media_path` to an absolute file path.
+    /// P6 citation jumps; misses map to the existing library-domain errors.
+    /// `season == 0` inherits the current media's season (frontend `[第N集]` form).
+    pub fn resolve_episode_file(
+        &self,
+        media_path: &str,
+        season: u32,
+        episode: u32,
+    ) -> Result<String, LibraryError> {
+        if episode == 0 {
+            return Err(LibraryError::invalid_input("episode 须大于 0"));
+        }
+        let media_path_buf = PathBuf::from(media_path);
+        let root = self
+            .library_root_for_media(media_path)
+            .ok_or_else(|| LibraryError::group_not_found(Some("current media is not indexed")))?;
+        let index = store::load(&root)?
+            .ok_or_else(|| LibraryError::group_not_found(Some("library index is not available")))?;
+        let (current, _) = metadata::resolve_media_in_index(&index, &media_path_buf, &root)?
+            .ok_or_else(|| LibraryError::group_not_found(Some("current media is not indexed")))?;
+        let group_key = current.group_key.clone();
+        let season = if season == 0 {
+            current
+                .season
+                .ok_or_else(|| LibraryError::group_not_found(Some("current media has no season")))?
+        } else {
+            season
+        };
+        let target = metadata::resolve_episode_media_file(&index, &group_key, season, episode)?;
+        Ok(root
+            .join(&target.relative_path)
+            .to_string_lossy()
+            .into_owned())
+    }
+
     pub fn list_groups(&self, root: String) -> Result<Vec<MediaGroup>, LibraryError> {
         self.ensure_configured_root(&root)?;
         let path = PathBuf::from(&root);
@@ -709,6 +744,22 @@ mod tests {
 
         service.stop().expect("stop watcher");
         let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn resolve_episode_file_misses_without_index() {
+        let service = MediaLibraryService::new();
+        let err = service
+            .resolve_episode_file(r"C:\nope\Show.S01E01.mkv", 1, 2)
+            .expect_err("unindexed media");
+        assert_eq!(
+            err.code,
+            crate::library::error::LibraryErrorCode::GroupNotFound
+        );
+        assert!(err
+            .message
+            .chars()
+            .any(|c| ('\u{4e00}'..='\u{9fff}').contains(&c)));
     }
 
     #[test]

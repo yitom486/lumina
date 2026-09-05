@@ -938,5 +938,11 @@ mod tests {
         let file = resolve_episode_media_file(&index, "Show", 1, 2).expect("episode");
         assert_eq!(file.relative_path, "Show/S01E02.mkv");
         assert!(resolve_episode_media_file(&index, "Show", 9, 9).is_err());
+        // Zero season/episode is invalid input (frontend citations guarantee positives).
+        let zero = resolve_episode_media_file(&index, "Show", 0, 1).expect_err("zero season");
+        assert_eq!(
+            zero.code,
+            crate::library::error::LibraryErrorCode::InvalidInput
+        );
     }
 }

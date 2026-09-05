@@ -121,6 +121,21 @@ pub async fn library_context_for_media(
 }
 
 #[tauri::command]
+pub async fn library_resolve_episode_file(
+    state: State<'_, AppState>,
+    media_path: String,
+    season: u32,
+    episode: u32,
+) -> Result<String, LibraryError> {
+    let service = state.library.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        service.resolve_episode_file(&media_path, season, episode)
+    })
+    .await
+    .map_err(|error| LibraryError::internal(Some(&format!("library resolve join: {error}"))))?
+}
+
+#[tauri::command]
 pub async fn library_list_groups(
     state: State<'_, AppState>,
     root: String,
