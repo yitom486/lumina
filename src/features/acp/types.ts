@@ -168,6 +168,8 @@ export type ChatTurn = {
   status: ChatMessageStatus;
   activities: ChatActivity[];
   showActivities: boolean;
+  /** Question anchor (frozen at keystroke); used for note saving. Absent on old turns. */
+  anchorMs?: number | null;
   /** Pre-tool agent stream; sealed when a tool call starts. */
   agentDraft?: string;
   /** Sealed agent segments before tool calls (not shown in UI). */

@@ -49,7 +49,11 @@ function lastAgentSegment(turn: ChatTurn): string {
   return turn.answer.trim();
 }
 
-export function createTurn(seq: { n: number }, userText: string): ChatTurn {
+export function createTurn(
+  seq: { n: number },
+  userText: string,
+  anchorMs?: number | null,
+): ChatTurn {
   const id = `turn-${nextSeq(seq)}-${Date.now()}`;
   return {
     id,
@@ -58,6 +62,7 @@ export function createTurn(seq: { n: number }, userText: string): ChatTurn {
     status: "streaming",
     activities: [],
     showActivities: true,
+    anchorMs: anchorMs ?? null,
   };
 }
 

@@ -107,6 +107,7 @@ lumina_get_transcript_window、lumina_get_episode_transcript、lumina_propose_vi
 单帧截图看不清台词或需要画面/场景/表情细节时，再用 lumina_capture_frames。\
 (5) 分集列表与媒体库背景分别用 lumina_get_episode_index、lumina_get_library_context。\
 (6) 写视频批注：先调用 lumina_propose_video_annotation 生成提议（含正文与引用台词预览），**禁止**直接写入笔记库；用户会在该条回复下方的确认卡片中保存或取消。保存成功后界面会显示「批注已写入笔记库」，无需反复提醒用户去别处确认。\
+(7) 引用视频内容用 `[mm:ss]`（如 `[03:12]`；跨集用 `[第N集 · mm:ss]`）标注出处时间；只引用本轮工具实际返回的内容，未经工具确认不编造时间。\
 制作/翻译外挂字幕请使用文稿面板的「翻译字幕」或 ASR，不要在本对话中尝试写入字幕轨。"
 }
 
@@ -183,6 +184,7 @@ mod tests {
         assert!(!pointer.contains("lumina_get_subtitle_cues"));
         assert!(pointer.contains("lumina_capture_frames"));
         assert!(pointer.contains("先调用工具补齐"));
+        assert!(pointer.contains("[mm:ss]"));
         assert!(!pointer.contains("也不应出现"));
         assert_eq!(
             prompt[2].get("text").and_then(Value::as_str),

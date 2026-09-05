@@ -6,6 +6,12 @@ import {
 } from "@tanstack/react-query";
 
 import { getAsrStatus, installAsrBundle, transcribeOnDemand } from "@/features/asr";
+import {
+  explainSegmentPreset,
+  summarizeChapterPreset,
+  useAskAboutStore,
+} from "@/features/acp/askAboutStore";
+import { useChatUiStore } from "@/features/acp/chatUiStore";
 import type { AsrRange } from "@/features/asr";
 import { useMediaInfoQuery } from "@/features/media";
 import type { MediaChapter } from "@/features/media";
@@ -72,6 +78,8 @@ export function TranscriptPanel() {
   const setSidebarTab = useUiStore((s) => s.setSidebarTab);
   const noteQuoteIndices = useNoteComposeStore((s) => s.selectedIndices);
   const pickFromTranscript = useNoteComposeStore((s) => s.pickFromTranscript);
+  const askAbout = useAskAboutStore((s) => s.askAbout);
+  const openChat = useChatUiStore((s) => s.openChat);
 
   // P6-M1 controllable follow (independent from the prompt anchor).
   const followEnabled = useFollowStore((s) => s.followEnabled);
@@ -540,15 +548,42 @@ export function TranscriptPanel() {
           ) : null}
         </div>
         {asrScope === "chapter" ? (
-          <p className="text-[11px] text-muted-foreground">
-            {activeChapter
-              ? `当前章节：${activeChapter.title?.trim() || `第 ${activeChapter.id} 章`}（${formatTime(activeChapter.startMs)}${
-                  activeChapter.endMs != null
-                    ? `–${formatTime(activeChapter.endMs)}`
-                    : "–片尾"
-                }）`
-              : "请先 seek 到某一章节内"}
-          </p>
+          <div className="flex flex-wrap items-center gap-2">
+            <p className="text-[11px] text-muted-foreground">
+              {activeChapter
+                ? `当前章节：${activeChapter.title?.trim() || `第 ${activeChapter.id} 章`}（${formatTime(activeChapter.startMs)}${
+                    activeChapter.endMs != null
+                      ? `–${formatTime(activeChapter.endMs)}`
+                      : "–片尾"
+                  }）`
+                : "请先 seek 到某一章节内"}
+            </p>
+            {activeChapter ? (
+              <Button
+                type="button"
+                size="sm"
+                variant="ghost"
+                className="h-6 px-2 text-[11px]"
+                onClick={() => {
+                  const title =
+                    activeChapter.title?.trim() ||
+                    `第 ${activeChapter.id} 章`;
+                  const range = `${formatTime(activeChapter.startMs)}–${
+                    activeChapter.endMs != null
+                      ? formatTime(activeChapter.endMs)
+                      : "片尾"
+                  }`;
+                  askAbout(
+                    activeChapter.startMs,
+                    summarizeChapterPreset(title, range),
+                  );
+                  openChat();
+                }}
+              >
+                总结本章
+              </Button>
+            ) : null}
+          </div>
         ) : null}
 
         {installSupported ? (
@@ -796,6 +831,28 @@ export function TranscriptPanel() {
                       </span>
                       {cue.text}
                     </button>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="ghost"
+                      className="h-auto shrink-0 px-2 py-1 text-[10px] opacity-70 group-hover:opacity-100"
+                      title={`就这句提问（锚定 ${formatTime(cue.startMs)}）`}
+                      disabled={!path}
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        if (!path) return;
+                        askAbout(
+                          cue.startMs,
+                          explainSegmentPreset(
+                            cue.text,
+                            formatTime(cue.startMs),
+                          ),
+                        );
+                        openChat();
+                      }}
+                    >
+                      问
+                    </Button>
                     <Button
                       type="button"
                       size="sm"

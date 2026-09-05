@@ -1,10 +1,24 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, render, screen } from "@testing-library/react";
-import { afterEach, describe, expect, it } from "vitest";
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+import { usePlayerStore } from "@/features/player";
 
 import type { ChatTurn } from "../types";
 import { ChatShell, ChatColumn } from "./ChatShell";
 import { ChatTurnView } from "./ChatTurnView";
+
+vi.mock("@tauri-apps/api/core", () => ({
+  invoke: vi.fn(),
+}));
+
+import { invoke } from "@tauri-apps/api/core";
 
 function makeTurn(partial: Partial<ChatTurn> & Pick<ChatTurn, "id">): ChatTurn {
   return {
@@ -19,6 +33,8 @@ function makeTurn(partial: Partial<ChatTurn> & Pick<ChatTurn, "id">): ChatTurn {
 
 afterEach(() => {
   cleanup();
+  vi.clearAllMocks();
+  localStorage.clear();
 });
 
 describe("ChatShell", () => {
@@ -180,5 +196,96 @@ describe("ChatTurnView", () => {
     );
     expect(screen.getByText("批注已写入笔记库")).toBeInTheDocument();
     expect(screen.queryByText("确认保存")).not.toBeInTheDocument();
+  });
+});
+
+describe("ChatTurnView save answer as note", () => {
+  function renderDoneTurn(turn: ChatTurn) {
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    return render(
+      <QueryClientProvider client={client}>
+        <ChatTurnView turn={turn} />
+      </QueryClientProvider>,
+    );
+  }
+
+  beforeEach(() => {
+    vi.mocked(invoke).mockImplementation((cmd: string) => {
+      if (cmd === "notes_create")
+        return Promise.resolve({
+          id: "n1",
+          mediaPath: "C:\\v\\a.mp4",
+          positionMs: 192_000,
+          body: "答案正文",
+        });
+      return Promise.resolve(null);
+    });
+    usePlayerStore.setState({
+      currentFile: "C:\\v\\a.mp4",
+      status: "Paused",
+      currentTimeMs: 600_000,
+    });
+  });
+
+  it("saves with the turn anchor after inline confirm", async () => {
+    renderDoneTurn(
+      makeTurn({
+        id: "t8",
+        userText: "解释这一段",
+        answer: "答案正文",
+        status: "done",
+        showActivities: false,
+        anchorMs: 192_000,
+      }),
+    );
+    fireEvent.click(screen.getByText("存为批注"));
+    // Confirm shows the turn anchor, not the live position.
+    expect(await screen.findByText(/保存到 3:12 的批注？/)).toBeInTheDocument();
+    fireEvent.click(screen.getByText("保存"));
+    await waitFor(() => {
+      expect(screen.getByText("已保存为批注")).toBeInTheDocument();
+    });
+    const create = vi
+      .mocked(invoke)
+      .mock.calls.find(([cmd]) => cmd === "notes_create");
+    expect(create?.[1]).toMatchObject({
+      input: expect.objectContaining({
+        mediaPath: "C:\\v\\a.mp4",
+        positionMs: 192_000,
+        body: "答案正文",
+        includeQuotes: false,
+      }),
+    });
+  });
+
+  it("surfaces backend failures without saving", async () => {
+    vi.mocked(invoke).mockImplementation(() => {
+      throw { code: "IoError", message: "笔记读写失败" };
+    });
+    renderDoneTurn(
+      makeTurn({
+        id: "t9",
+        userText: "q",
+        answer: "答案正文",
+        status: "done",
+        showActivities: false,
+        anchorMs: 192_000,
+      }),
+    );
+    fireEvent.click(screen.getByText("存为批注"));
+    fireEvent.click(await screen.findByText("保存"));
+    await waitFor(() => {
+      expect(screen.getByText("笔记读写失败")).toBeInTheDocument();
+    });
+    expect(screen.queryByText("已保存为批注")).not.toBeInTheDocument();
+  });
+
+  it("hides the button while streaming or without an answer", () => {
+    renderDoneTurn(
+      makeTurn({ id: "t10", answer: "片段", status: "streaming" }),
+    );
+    expect(screen.queryByText("存为批注")).not.toBeInTheDocument();
   });
 });

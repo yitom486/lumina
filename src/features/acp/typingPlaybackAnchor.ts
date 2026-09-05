@@ -41,6 +41,15 @@ export function useTypingPlaybackAnchor() {
     anchorRef.current = null;
   }, []);
 
+  /**
+   * P6-M3 shortcut entry: seed the anchor at an explicit media time
+   * (e.g. the cue the user asked about). A subsequent draft change within
+   * the idle window keeps it — the freeze/consume machinery is untouched.
+   */
+  const seedAnchorPositionMs = useCallback((positionMs: number) => {
+    anchorRef.current = { positionMs, lastInputAt: Date.now() };
+  }, []);
+
   const consumeAnchorPositionMs = useCallback(() => {
     const fallback = usePlayerStore.getState().currentTimeMs;
     const positionMs = anchorRef.current?.positionMs ?? fallback;
@@ -58,6 +67,7 @@ export function useTypingPlaybackAnchor() {
   return {
     handleDraftChange,
     clearTypingAnchor,
+    seedAnchorPositionMs,
     consumeAnchorPositionMs,
     syncAnchorForDraft,
   };

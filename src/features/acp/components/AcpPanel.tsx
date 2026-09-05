@@ -26,6 +26,7 @@ import { errorMessage } from "@/lib/format";
 import "../chat-motion.css";
 
 import { useAcpProfilesStore } from "../acpProfilesStore";
+import { useAskAboutStore } from "../askAboutStore";
 import {
   clientSettingsFromStore,
   useAcpSettingsStore,
@@ -157,9 +158,12 @@ export function AcpPanel() {
   const sessionCwd = workspaceCwdFromMedia(currentFile);
   const connectKey = `${activeProfileId}:${profilesSig}:${sessionCwd ?? ""}`;
   const videoContext = useVideoPromptContext();
-  const { handleDraftChange, clearTypingAnchor, consumeAnchorPositionMs } =
-    useTypingPlaybackAnchor();
-
+  const {
+    handleDraftChange,
+    clearTypingAnchor,
+    seedAnchorPositionMs,
+    consumeAnchorPositionMs,
+  } = useTypingPlaybackAnchor();
   const setDraftEmpty = () => {
     clearTypingAnchor();
     setDraft("");
@@ -169,6 +173,20 @@ export function AcpPanel() {
     handleDraftChange(next);
     setDraft(next);
   };
+
+  // P6-M3 shortcut-ask: seed the anchor at the asked-about time BEFORE the
+  // draft change, so the idle window keeps it instead of re-anchoring live.
+  const askAboutRequest = useAskAboutStore((s) => s.request);
+  useEffect(() => {
+    if (!askAboutRequest) return;
+    seedAnchorPositionMs(askAboutRequest.anchorMs);
+    handleDraftChange(askAboutRequest.text);
+    setDraft(askAboutRequest.text);
+    useAskAboutStore.getState().consume();
+    useChatUiStore.getState().openChat();
+    window.setTimeout(() => composerRef.current?.focusInput(), 0);
+    window.setTimeout(() => composerRef.current?.focusInput(), 120);
+  }, [askAboutRequest, seedAnchorPositionMs, handleDraftChange]);
 
   const activeProfile = statusQuery.data?.profiles.find(
     (profile) => profile.id === activeProfileId,
@@ -563,7 +581,7 @@ export function AcpPanel() {
       setProgress(null);
       setPendingPermission(null);
 
-      const turn = createTurn(idSeq, text);
+      const turn = createTurn(idSeq, text, anchorPositionMs);
       const historyContext = historyInjectionActive
         ? formatConversationHistoryContext(turns)
         : null;

@@ -1,8 +1,12 @@
+import { useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 
 import { cn } from "@/lib/utils";
+import { errorMessage, formatTime } from "@/lib/format";
 
 import { AnnotationProposalCard } from "@/features/notes/components/AnnotationProposalCard";
+import { createNote } from "@/features/notes/api";
+import { usePlayerStore } from "@/features/player";
 
 import { waitingLabel, hasActiveToolActivity } from "../activityStatus";
 import type { ChatTurn } from "../types";
@@ -17,6 +21,117 @@ type Props = {
   onDismissAnnotation?: (turnId: string) => void;
   onSaveAnnotation?: (turnId: string, proposalId?: string) => void;
 };
+
+/**
+ * P6-M3: save any done answer as a note (two-step inline confirm, no dialog
+ * over video). Reuses the confirm-before-write chain; QuickNoteDialog keeps
+ * its live-position semantics untouched.
+ *
+ * QueryClient is only touched inside the mounted confirm step, so turns
+ * rendered without a query context (tests, history previews) keep working.
+ */
+function SaveAnswerNote({ turn }: { turn: ChatTurn }) {
+  const [confirming, setConfirming] = useState(false);
+  const [saved, setSaved] = useState(false);
+
+  if (turn.status !== "done" || !turn.answer.trim()) return null;
+  if (saved) {
+    return (
+      <p className="mt-2 text-[11px] text-emerald-600 dark:text-emerald-400">
+        已保存为批注
+      </p>
+    );
+  }
+  if (!confirming) {
+    return (
+      <button
+        type="button"
+        className="mt-2 text-[11px] text-muted-foreground hover:text-foreground"
+        onClick={() => setConfirming(true)}
+      >
+        存为批注
+      </button>
+    );
+  }
+  return (
+    <ConfirmSaveNote
+      turn={turn}
+      onSaved={() => {
+        setConfirming(false);
+        setSaved(true);
+      }}
+      onCancel={() => setConfirming(false)}
+    />
+  );
+}
+
+function ConfirmSaveNote({
+  turn,
+  onSaved,
+  onCancel,
+}: {
+  turn: ChatTurn;
+  onSaved: () => void;
+  onCancel: () => void;
+}) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const queryClient = useQueryClient();
+  const store = usePlayerStore.getState();
+  const anchorMs = turn.anchorMs ?? store.currentTimeMs;
+
+  return (
+    <span className="mt-2 inline-flex flex-wrap items-center gap-1 text-[11px]">
+      <span className="text-muted-foreground">
+        保存到 {formatTime(anchorMs)} 的批注？
+      </span>
+      <button
+        type="button"
+        className="font-medium text-sky-400 hover:text-sky-300 disabled:opacity-50"
+        disabled={busy}
+        onClick={() => {
+          void (async () => {
+            const live = usePlayerStore.getState();
+            const mediaPath = live.currentFile;
+            if (!mediaPath) {
+              setError("请先打开视频");
+              return;
+            }
+            setBusy(true);
+            setError(null);
+            try {
+              await createNote({
+                mediaPath,
+                positionMs: turn.anchorMs ?? live.currentTimeMs,
+                body: turn.answer.trim(),
+                includeQuotes: false,
+              });
+              await queryClient.invalidateQueries({
+                queryKey: ["notes", mediaPath],
+              });
+              onSaved();
+            } catch (cause) {
+              setError(errorMessage(cause));
+            } finally {
+              setBusy(false);
+            }
+          })();
+        }}
+      >
+        {busy ? "保存中…" : "保存"}
+      </button>
+      <button
+        type="button"
+        className="text-muted-foreground hover:text-foreground"
+        disabled={busy}
+        onClick={onCancel}
+      >
+        取消
+      </button>
+      {error ? <span className="text-destructive">{error}</span> : null}
+    </span>
+  );
+}
 
 export function ChatTurnView({
   turn,
@@ -98,6 +213,8 @@ export function ChatTurnView({
             {turn.errorHint}
           </p>
         ) : null}
+
+        <SaveAnswerNote turn={turn} />
 
         {turn.annotationProposalSaved ? (
           <div className="mt-2 rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-[12px] text-emerald-800 dark:text-emerald-300">

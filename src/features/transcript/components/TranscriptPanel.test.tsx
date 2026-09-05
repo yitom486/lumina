@@ -4,6 +4,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { usePlayerStore } from "@/features/player";
 import { useTrackStore } from "@/features/player/trackStore";
+import { useAskAboutStore } from "@/features/acp/askAboutStore";
+import { useChatUiStore } from "@/features/acp/chatUiStore";
 
 import { TranscriptPanel } from "./TranscriptPanel";
 import { useFollowStore } from "../followStore";
@@ -74,6 +76,8 @@ beforeEach(() => {
   });
   useFollowStore.setState({ followEnabled: true, browsing: false });
   useTrackStore.setState({ subtitleChoiceId: "s1" });
+  useAskAboutStore.setState({ request: null });
+  useChatUiStore.getState().closeChat();
   usePlayerStore.setState({
     currentFile: "C:\\v\\a.mp4",
     status: "Paused",
@@ -203,5 +207,22 @@ describe("TranscriptPanel follow mode", () => {
     expect(
       screen.queryByText("回到当前播放位置"),
     ).not.toBeInTheDocument();
+  });
+
+  it("asks about a cue with its own anchor, not the live position", async () => {
+    usePlayerStore.setState({ currentTimeMs: 2500 });
+    renderPanel();
+    await waitFor(() => {
+      expect(screen.getByText("第三句")).toBeInTheDocument();
+    });
+    const askButtons = screen.getAllByText("问");
+    expect(askButtons.length).toBeGreaterThan(0);
+    fireEvent.click(askButtons[0] as Element);
+    const request = useAskAboutStore.getState().request;
+    // First cue starts at 0 even though playback is at 2500.
+    expect(request).toMatchObject({ anchorMs: 0 });
+    expect(request?.text).toContain("解释这一段");
+    expect(useChatUiStore.getState().chatOpen).toBe(true);
+    useAskAboutStore.getState().consume();
   });
 });
