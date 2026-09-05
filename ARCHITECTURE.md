@@ -87,9 +87,12 @@ CPU/GPU 留手工：播放同一媒体同一窗口状态，任务管理器（Win
 2026-09-06 本机基线（Win x64，生成 1080p60 H.264/10s）：hwdec `d3d11va-copy`，
 demux 368ms，首帧 884ms，稳态 5000/5000ms，三点 seek 6/53/1ms，丢帧 0，avsync 0。
 
-### Manual smoke checklist（待手工 — headless 未跑，不伪造结果）
+### Manual smoke checklist
 
-- [ ] Windows：H264 / HEVC / AV1 各打开 1 个 → 首帧 + 10s 播放 + seek 2 次
+- [x] Windows（2026-09-06，0.3.0 debug MSI 解包运行）：安装布局含 `mpv/libmpv-2.dll` +
+  `ffmpeg/{ffmpeg,ffprobe}.exe`；冷启动 25s 无 ERROR；会话恢复自动播真实 1080p H.264
+ （start-file/file-loaded/playback-restart）；`%APPDATA%/lumina/logs` 落盘正常
+- [ ] Windows：HEVC / AV1 各打开 1 个 → 首帧 + 10s 播放 + seek 2 次（需人眼）
 - [ ] Windows：SRT / ASS / VTT 文稿 + 点击 seek；位图轨上画面
 - [ ] Windows：视频面单击暂停/双击全屏
 - [ ] macOS：NSView 打开 + seek；记录点击缺失影响
