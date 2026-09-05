@@ -3,6 +3,31 @@
 use std::path::PathBuf;
 
 use crate::media::error::MediaError;
+use crate::media::model::MediaToolStatus;
+
+/// Lightweight ffprobe presence check (no media file needed) for startup/settings UI.
+/// Missing tool is data (`available: false`), never an error.
+pub fn tool_status(resource_dir: Option<&PathBuf>) -> MediaToolStatus {
+    match resolve_ffprobe_with(resource_dir) {
+        Ok(_) => MediaToolStatus {
+            available: true,
+            message: "媒体分析已就绪".into(),
+            hint: None,
+        },
+        Err(error) => {
+            tracing::warn!(
+                code = ?error.code,
+                details = ?error.details,
+                "media tool unavailable"
+            );
+            MediaToolStatus {
+                available: false,
+                message: error.message,
+                hint: Some("安装包通常自带该组件；仍缺失时请重装应用。".into()),
+            }
+        }
+    }
+}
 
 /// 解析 ffprobe 路径，可选传入 Tauri resource_dir（打包后更可靠）。
 pub fn resolve_ffprobe_with(resource_dir: Option<&PathBuf>) -> Result<PathBuf, MediaError> {
@@ -79,4 +104,46 @@ fn tool_candidates(
     }
 
     paths
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn has_cjk(s: &str) -> bool {
+        s.chars().any(|c| ('\u{4e00}'..='\u{9fff}').contains(&c))
+    }
+
+    #[test]
+    fn resource_dir_is_checked_first() {
+        let dir = std::env::temp_dir().join(format!(
+            "lumina-tool-status-{}-resource-first",
+            std::process::id()
+        ));
+        let ffmpeg_dir = dir.join("ffmpeg");
+        std::fs::create_dir_all(&ffmpeg_dir).expect("mkdir");
+        std::fs::write(ffmpeg_dir.join("ffprobe.exe"), b"fake").expect("seed");
+        let status = tool_status(Some(&dir));
+        assert!(status.available);
+        assert!(has_cjk(&status.message));
+        assert!(status.hint.is_none());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn tool_candidates_prefer_resource_dir() {
+        let res = PathBuf::from("/tmp/lumina-res-test");
+        let list = tool_candidates("ffprobe", "ffprobe.exe", Some(&res));
+        assert_eq!(list[0], res.join("ffmpeg").join("ffprobe.exe"));
+        assert_eq!(list[1], res.join("ffmpeg").join("ffprobe"));
+    }
+
+    #[test]
+    fn unavailable_message_reuses_probe_not_found_copy() {
+        // Single source: tool_status unavailable reuses the domain constructor message.
+        assert_eq!(
+            MediaError::probe_not_found(None).message,
+            "媒体分析组件未就绪"
+        );
+    }
 }

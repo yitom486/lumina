@@ -6,4 +6,5 @@ pub mod media;
 pub mod notes;
 pub mod player;
 pub mod subtitle;
+pub mod system;
 pub mod ytdl;

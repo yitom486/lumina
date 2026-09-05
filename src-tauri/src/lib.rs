@@ -33,7 +33,8 @@ pub use library::{
     WikiZhReference, WIKI_STALE_AFTER_MS,
 };
 pub use media::{
-    MediaChapter, MediaError, MediaErrorCode, MediaInfo, MediaInspector, MediaStream, StreamKind,
+    MediaChapter, MediaError, MediaErrorCode, MediaInfo, MediaInspector, MediaStream,
+    MediaToolStatus, StreamKind,
 };
 pub use notes::{Note, NoteError, NoteErrorCode, NoteService};
 pub use player::{
@@ -47,6 +48,8 @@ pub use subtitle::{
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
 use std::time::Duration;
+
+use tracing_subscriber::{layer::SubscriberExt as _, util::SubscriberInitExt as _};
 
 use commands::acp::{
     acp_cancel, acp_close, acp_connect, acp_new_chat, acp_prompt, acp_respond_permission,
@@ -62,7 +65,7 @@ use commands::library::{
     library_watch_start, library_watch_stop, library_wikipedia_apply, library_wikipedia_preview,
     library_wikipedia_refresh, library_wikipedia_statuses,
 };
-use commands::media::{media_inspect, media_list_siblings};
+use commands::media::{media_inspect, media_list_siblings, media_tool_status};
 use commands::notes::{
     notes_create, notes_delete, notes_dismiss_proposal, notes_export_markdown,
     notes_export_markdown_to_file, notes_list, notes_load_latest_proposal, notes_preview_quotes,
@@ -77,6 +80,7 @@ use commands::player::{
 use commands::subtitle::{
     subtitle_export_sidecar, subtitle_list_choices, subtitle_load_choice, subtitle_translate_track,
 };
+use commands::system::system_log_dir;
 use commands::ytdl::{
     ytdl_cached_resolve, ytdl_cookie_status, ytdl_install, ytdl_list_browser_profiles,
     ytdl_resolve, ytdl_set_cookies, ytdl_status, ytdl_test_cookies,
@@ -95,6 +99,7 @@ pub fn run() {
     let app = match tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .on_window_event(|window, event| {
             if matches!(event, tauri::WindowEvent::CloseRequested { .. }) {
                 tracing::info!(label = %window.label(), "native window close requested");
@@ -123,6 +128,8 @@ pub fn run() {
             player_set_surface_bounds,
             media_inspect,
             media_list_siblings,
+            media_tool_status,
+            system_log_dir,
             subtitle_list_choices,
             subtitle_load_choice,
             subtitle_export_sidecar,
@@ -232,10 +239,32 @@ fn schedule_force_exit() {
         });
 }
 
+/// File-appender guard: dropping it would silently stop file logging.
+static LOG_GUARD: std::sync::OnceLock<tracing_appender::non_blocking::WorkerGuard> =
+    std::sync::OnceLock::new();
+
 fn init_tracing() {
     let filter = tracing_subscriber::EnvFilter::try_from_default_env()
         .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));
-    let _ = tracing_subscriber::fmt().with_env_filter(filter).try_init();
+    let dir = commands::system::log_dir();
+    let _ = std::fs::create_dir_all(&dir);
+    // Daily-rotated `lumina.log.<date>` next to a live stdout layer; ANSI off in files.
+    let file_appender = tracing_appender::rolling::daily(&dir, "lumina.log");
+    let (file_writer, guard) = tracing_appender::non_blocking(file_appender);
+    let _ = LOG_GUARD.set(guard);
+    let stdout_layer = tracing_subscriber::fmt::layer().with_writer(std::io::stdout);
+    let file_layer = tracing_subscriber::fmt::layer()
+        .with_writer(file_writer)
+        .with_ansi(false);
+    let _ = tracing_subscriber::registry()
+        .with(filter)
+        .with(stdout_layer)
+        .with(file_layer)
+        .try_init();
+    std::panic::set_hook(Box::new(|info| {
+        tracing::error!(panic = %info, "application panicked");
+    }));
+    tracing::info!(log_dir = %dir.display(), "file logging initialized");
 }
 
 fn attach_native_surface(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
@@ -265,6 +294,7 @@ fn attach_native_surface(app: &mut tauri::App) -> Result<(), Box<dyn std::error:
 
 fn shutdown_backend(app: &tauri::AppHandle) {
     if let Some(state) = app.try_state::<AppState>() {
+        tracing::info!("backend shutdown started");
         state.mark_shutdown();
         state.acp.request_cancel();
         state.acp.close_session_for_shutdown();
@@ -273,6 +303,7 @@ fn shutdown_backend(app: &tauri::AppHandle) {
             player.shutdown();
             Ok(())
         });
+        tracing::info!("backend shutdown finished");
         // The native video surface is a child of the Tauri window and is
         // destroyed with its parent on the UI thread. Do not explicitly drop
         // it from this background shutdown worker: Win32 requires a window to

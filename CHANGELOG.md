@@ -1,5 +1,28 @@
 # Changelog
 
+## 0.3.0 — 内部可用版（Harden P0）
+
+> 不打 tag 不发版；首个 0.3 tag 构建即联调 updater（需先建签名 secrets，见 release.yml）。
+
+### 下限补齐
+
+- **退出/异常兜底**：`StatusLine` 只展示业务中文（不再透出 `[code]` 枚举）；
+  字幕切换失败写入状态行；去业务 `expect/unwrap`；shutdown 起止进日志。
+- **资源自检**：新增 `media_tool_status`（永不报错，缺件即数据）；缺 ffprobe 时
+  媒体信息区中文降级 + 重装指引；`NotConfigured` 三件套（ASR/ACP/yt-dlp）不阻断播放。
+- **测试门**：CI/release 双门补 `cargo check`；oxlint 进门（`lint:all`）；
+  mpv/ffmpeg 安装脚本抽 composite action；online E2E 可手动 dispatch；
+  本地 `lint:ox / lint:all / check:rust` 与门一一对应。
+
+### 打包/更新
+
+- **resources 收敛**：主配置只留 `mpv/`；ffmpeg 走 `tauri.windows.conf.json`
+  单文件映射（RFC 7396 union 合并实证）；mac/Linux 无 vendored 二进制，不打。
+- **crash 日志导出**：daily rotation 文件日志（`{data}/lumina/logs`）+ panic hook；
+  新增 `system_log_dir`；标题栏“打开日志目录”按钮。
+- **updater 脚手架**：插件 + endpoints（lumina-app `latest.json`）+ 本地 keypair
+  （私钥在仓库外）；release 签名走 secrets，占位已留，首次 tag 构建联调。
+
 ## 0.2.6 — 修复版
 
 ### 修复

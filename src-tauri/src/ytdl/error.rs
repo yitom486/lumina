@@ -90,6 +90,22 @@ impl YtdlError {
         )
     }
 
+    pub fn members_only(details: Option<&str>) -> Self {
+        Self::new(
+            YtdlErrorCode::LoginRequired,
+            "该视频为频道会员专享内容。当前登录态未获得该频道的会员权限，请确认在浏览器已登录开通会员的账号后再导出 Cookie",
+            details.map(str::to_string),
+        )
+    }
+
+    pub fn js_runtime_required(details: Option<&str>) -> Self {
+        Self::new(
+            YtdlErrorCode::ResolveFailed,
+            "该视频需要 JavaScript 运行环境以完成安全验证，但本机暂未检测到，请安装后重试",
+            details.map(str::to_string),
+        )
+    }
+
     pub fn internal(details: Option<&str>) -> Self {
         Self::new(
             YtdlErrorCode::InternalError,
@@ -132,5 +148,19 @@ mod tests {
         let enc = YtdlError::cookie_encrypted(Some("DPAPI"));
         assert!(enc.message.contains("加密"));
         assert!(!enc.message.contains("DPAPI"));
+
+        let js = YtdlError::js_runtime_required(Some("The page needs to be reloaded"));
+        assert!(js.message.contains("JavaScript"));
+        assert_eq!(js.code, YtdlErrorCode::ResolveFailed);
+        for banned in ["Node", "Deno", "Bun", "QuickJS", "yt-dlp", "PATH"] {
+            assert!(
+                !js.message.contains(banned),
+                "tool name must stay in details/help, not message: {banned}"
+            );
+        }
+
+        let members = YtdlError::members_only(Some("Join this channel"));
+        assert!(members.message.contains("会员专享"));
+        assert_eq!(members.code, YtdlErrorCode::LoginRequired);
     }
 }

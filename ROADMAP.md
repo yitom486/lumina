@@ -75,6 +75,9 @@
 
 ## Phase 8 — Unified GPU Composition（远期）
 
+> 决策见 [ADR-0001](docs/adr/0001-unified-gpu-composition.md)：
+> 实现侧 No-Go（`WindowedHwnd` 保持唯一生产后端），Spike 侧 Go（8.0 盒子见 ADR）。
+
 ### 背景与目标
 
 当前播放器使用 libmpv 子 HWND 输出视频，WebView 内的 HTML/CSS 无法可靠覆盖该原生视频区域；`z-index`、React Portal、Radix/Base UI 均不能跨越 native window 边界。

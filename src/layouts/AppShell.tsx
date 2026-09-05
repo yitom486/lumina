@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { Maximize2, Minimize2 } from "lucide-react";
+import { FileText, Maximize2, Minimize2 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -9,6 +9,8 @@ import {
 } from "@/components/ui/tooltip";
 import { ChatToggleButton } from "@/features/acp/components/ChatToggleButton";
 import { usePlayerStore, useUiStore } from "@/features/player";
+import { errorMessage } from "@/lib/format";
+import { revealLogDir } from "@/lib/system";
 
 type AppShellProps = {
   children: ReactNode;
@@ -38,6 +40,32 @@ export function FullscreenToggleButton() {
       <TooltipContent>
         {fullscreen ? "退出全屏 (Esc / F)" : "全屏 (F)"}
       </TooltipContent>
+    </Tooltip>
+  );
+}
+
+/** Crash/log export: reveal the file-log directory in the OS file manager. */
+function LogDirButton() {
+  const onClick = () => {
+    void revealLogDir().catch((error: unknown) => {
+      usePlayerStore.getState().setStatusMessage(errorMessage(error));
+    });
+  };
+
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon-sm"
+          onClick={onClick}
+          aria-label="打开日志目录"
+        >
+          <FileText className="size-4" />
+        </Button>
+      </TooltipTrigger>
+      <TooltipContent>打开日志目录（报障时打包发开发者）</TooltipContent>
     </Tooltip>
   );
 }
@@ -77,6 +105,7 @@ export function AppShell({ children }: AppShellProps) {
           </div>
           <div className="flex shrink-0 items-center gap-0.5">
             <ChatToggleButton />
+            <LogDirButton />
             <FullscreenToggleButton />
           </div>
         </header>

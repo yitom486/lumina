@@ -289,6 +289,78 @@ mod tests {
     }
 
     #[test]
+    fn codec_matrix_probes_h264_hevc_av1() {
+        // Probe-level matrix only: mpv playback stays on the same loadfile path
+        // for every codec. Unix machines without vendored ffmpeg SKIP (same
+        // convention as `resolve_finds_project_ffprobe`).
+        let ffmpeg = match crate::media::tools::resolve_ffmpeg() {
+            Ok(path) => path,
+            Err(_) => {
+                eprintln!("SKIP codec matrix: ffmpeg not vendored on this machine");
+                return;
+            }
+        };
+        // ffprobe travels with ffmpeg; its absence beside a present ffmpeg is real.
+        assert!(
+            crate::media::tools::resolve_ffprobe().is_ok(),
+            "ffmpeg resolved but ffprobe is missing next to it"
+        );
+
+        let dir = std::env::temp_dir().join(format!("lumina-codec-matrix-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("matrix temp dir");
+
+        // (label, encoder, extra args, container, expected codec substring)
+        let cases: &[(&str, &str, &[&str], &str, &str)] = &[
+            ("h264", "libx264", &["-preset", "veryfast"], "mp4", "h264"),
+            ("hevc", "libx265", &["-preset", "ultrafast"], "mp4", "hevc"),
+            (
+                "av1",
+                "libaom-av1",
+                &["-cpu-used", "8", "-crf", "30"],
+                "mkv",
+                "av1",
+            ),
+        ];
+        for (label, encoder, extra, ext, expected) in cases {
+            let out = dir.join(format!("matrix-{label}.{ext}"));
+            let output = crate::process_util::command(&ffmpeg)
+                .args([
+                    "-y",
+                    "-f",
+                    "lavfi",
+                    "-i",
+                    "testsrc=duration=1:size=64x64:rate=10",
+                ])
+                .args(["-c:v", encoder])
+                .args(*extra)
+                .args(["-pix_fmt", "yuv420p", "-an"])
+                .arg(&out)
+                .output()
+                .expect("spawn ffmpeg");
+            assert!(
+                output.status.success(),
+                "{label} fixture failed to encode: {}",
+                String::from_utf8_lossy(&output.stderr)
+                    .chars()
+                    .take(300)
+                    .collect::<String>()
+            );
+            let info = crate::media::service::MediaInspector::inspect(&out).expect("probe fixture");
+            let video = info
+                .streams
+                .iter()
+                .find(|s| s.kind == crate::media::model::StreamKind::Video)
+                .expect("video stream");
+            let codec = video.codec_name.as_deref().unwrap_or("");
+            assert!(
+                codec.contains(expected),
+                "{label}: expected codec containing {expected}, got {codec:?}"
+            );
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
     fn missing_file_is_chinese_not_found() {
         let err = probe_file(Path::new("Z:\\lumina-missing-media-xyz.mp4")).expect_err("missing");
         assert_eq!(err.code, crate::media::error::MediaErrorCode::FileNotFound);

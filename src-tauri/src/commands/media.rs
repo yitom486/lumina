@@ -4,7 +4,9 @@ use std::path::PathBuf;
 
 use tauri::{AppHandle, Manager};
 
-use crate::media::{list_sibling_videos, MediaError, MediaInfo, MediaInspector};
+use crate::media::{
+    list_sibling_videos, tools, MediaError, MediaInfo, MediaInspector, MediaToolStatus,
+};
 
 #[tauri::command]
 pub async fn media_inspect(app: AppHandle, path: String) -> Result<MediaInfo, MediaError> {
@@ -14,6 +16,25 @@ pub async fn media_inspect(app: AppHandle, path: String) -> Result<MediaInfo, Me
     })
     .await
     .map_err(|error| MediaError::internal(Some(&format!("media inspect join: {error}"))))?
+}
+
+/// ffprobe presence for startup/settings UI. Never errors: a missing tool is data.
+#[tauri::command]
+pub async fn media_tool_status(app: AppHandle) -> MediaToolStatus {
+    let resource_dir: Option<PathBuf> = app.path().resource_dir().ok();
+    match tauri::async_runtime::spawn_blocking(move || tools::tool_status(resource_dir.as_ref()))
+        .await
+    {
+        Ok(status) => status,
+        Err(error) => {
+            tracing::warn!(%error, "media tool status join failed");
+            MediaToolStatus {
+                available: false,
+                message: MediaError::probe_not_found(None).message,
+                hint: None,
+            }
+        }
+    }
 }
 
 /// Videos in the same folder as `path` (sorted), for building a playlist.

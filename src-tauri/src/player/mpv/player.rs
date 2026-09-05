@@ -140,12 +140,19 @@ impl LibMpvPlayer {
                     .set_property("ytdl-format", fmt)
                     .map_err(|error| map_network_property_error("ytdl-format", error))?;
             }
+            let mut raw_opts = Vec::new();
             if let Some(cookies_path) = cookies {
                 // ytdl-raw-options is key=value; normalize slashes for Windows paths.
                 let normalized = cookies_path.replace('\\', "/");
-                let raw = format!("cookies={normalized}");
+                raw_opts.push(format!("cookies={normalized}"));
+            }
+            if let Some(js_runtime) = crate::ytdl::runtime::primary_js_runtime_name() {
+                raw_opts.push(format!("js-runtimes={js_runtime}"));
+            }
+            if !raw_opts.is_empty() {
+                let raw = raw_opts.join(",");
                 if let Err(error) = self.mpv.set_property("ytdl-raw-options", raw.as_str()) {
-                    tracing::warn!(%error, "set ytdl-raw-options cookies failed");
+                    tracing::warn!(%error, "set ytdl-raw-options failed");
                 }
             }
             tracing::info!(
@@ -237,6 +244,32 @@ impl LibMpvPlayer {
         self.mpv
             .get_property("eof-reached")
             .map_err(map_playback_error)
+    }
+
+    /// Best-effort hardware decode for headless baselines (`initialize()` leaves
+    /// mpv default `hwdec=no`; product uses `hwdec=auto` with a wid).
+    pub fn enable_hwdec(&self) -> Result<(), PlayerError> {
+        self.mpv
+            .set_property("hwdec", "auto")
+            .map_err(map_playback_error)
+    }
+
+    /// Read-only counters for baselines/diagnostics. Missing values are `None`/zero.
+    pub fn hwdec_current(&self) -> Option<String> {
+        self.mpv.get_property("hwdec-current").ok()
+    }
+
+    pub fn frame_drop_counts(&self) -> (i64, i64) {
+        let decoder = self
+            .mpv
+            .get_property("decoder-frame-drop-count")
+            .unwrap_or(0);
+        let vo = self.mpv.get_property("frame-drop-count").unwrap_or(0);
+        (decoder, vo)
+    }
+
+    pub fn avsync_last(&self) -> Option<f64> {
+        self.mpv.get_property("avsync").ok()
     }
 
     /// Drain libmpv's asynchronous event queue and forward diagnostics to tracing.

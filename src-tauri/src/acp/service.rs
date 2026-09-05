@@ -41,6 +41,11 @@ use crate::mcp::{
     LuminaMcpSnapshot, PromptSnapshotState,
 };
 
+/// Prompt-loop bounds, locked by unit test (silent timeout removal must fail loudly).
+const PROMPT_DEADLINE_SECS: u64 = 600;
+/// Grace period for an agent to honor `session/cancel` before the process is killed.
+const CANCEL_KILL_SECS: u64 = 8;
+
 struct LiveSession {
     child: Child,
     stdin: ChildStdin,
@@ -673,7 +678,7 @@ impl AcpService {
             on_event(ev);
         };
 
-        let deadline = Instant::now() + Duration::from_secs(600);
+        let deadline = Instant::now() + Duration::from_secs(PROMPT_DEADLINE_SECS);
         let mut cancel_sent = false;
         let mut cancel_at: Option<Instant> = None;
 
@@ -695,7 +700,7 @@ impl AcpService {
             }
 
             if let Some(at) = cancel_at {
-                if Instant::now().duration_since(at) > Duration::from_secs(8) {
+                if Instant::now().duration_since(at) > Duration::from_secs(CANCEL_KILL_SECS) {
                     let _ = session.child.kill();
                     let _ = guard.take();
                     return Err(AcpError::cancelled());
@@ -954,7 +959,9 @@ impl AcpService {
             });
 
         let session_id = if try_resume {
-            let saved = saved.expect("checked above");
+            let Some(saved) = saved else {
+                return Err(AcpError::internal(Some("saved session missing for resume")));
+            };
             on_event(AcpEvent::Progress {
                 message: "正在恢复上次会话…".into(),
             });
@@ -1443,5 +1450,19 @@ fn initialize_timeout() -> Duration {
 impl Default for AcpService {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn prompt_loop_bounds_are_locked() {
+        // These bounds are the product contract for H-P2-7 (timeout + cancel).
+        // Change them deliberately, never by accident.
+        assert_eq!(PROMPT_DEADLINE_SECS, 600);
+        assert_eq!(CANCEL_KILL_SECS, 8);
+        assert!(initialize_timeout() >= Duration::from_secs(60));
     }
 }

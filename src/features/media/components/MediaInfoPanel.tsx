@@ -2,6 +2,7 @@ import { errorMessage, formatTime } from "@/lib/format";
 import { Separator } from "@/components/ui/separator";
 import { usePlayerStore } from "@/features/player";
 
+import { useMediaToolStatus } from "../hooks/useMediaToolStatus";
 import { useMediaInfoQuery } from "../hooks/useMediaInfoQuery";
 import type { MediaStream } from "../types";
 
@@ -26,11 +27,22 @@ function shortStream(stream: MediaStream): string {
   return stream.codecName ?? stream.kind;
 }
 
+function isProbeNotFound(error: unknown): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    (error as { code: unknown }).code === "ProbeNotFound"
+  );
+}
+
 /** Compact media summary for the reader sidebar. */
 export function MediaInfoPanel() {
   const sourceKind = usePlayerStore((s) => s.sourceKind);
   const currentFile = usePlayerStore((s) => s.currentFile);
   const query = useMediaInfoQuery();
+  const probeMissing = isProbeNotFound(query.error) && query.isError;
+  const toolQuery = useMediaToolStatus(probeMissing);
 
   if (sourceKind === "remote" || (currentFile?.startsWith("http") ?? false)) {
     return (
@@ -59,8 +71,13 @@ export function MediaInfoPanel() {
 
   if (query.isError) {
     return (
-      <div className="px-3 py-2 text-xs text-destructive">
-        {errorMessage(query.error)}
+      <div className="space-y-1 px-3 py-2 text-xs">
+        <p className="text-destructive">{errorMessage(query.error)}</p>
+        {probeMissing ? (
+          <p className="text-muted-foreground">
+            {toolQuery.data?.hint ?? "正在检查媒体分析组件…"}
+          </p>
+        ) : null}
       </div>
     );
   }

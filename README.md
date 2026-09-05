@@ -1,12 +1,12 @@
 # Lumina
 
-> 0.1.0 · Windows x64 私有预览版
+> 0.3.0 · Windows x64 私有预览版
 
 Lumina 是一款桌面端 AI Video Reader：用原生 libmpv 播放本地视频，并把字幕、文稿、笔记、章节和可选 AI 对话放在同一个阅读工作流里。
 
 本仓库目前不适合公开发布。请将其保存在私有 GitHub 仓库；不要提交个人视频、笔记、`.env`、Codex 登录配置，或项目本地 native 二进制。
 
-## 0.1.0 包含什么
+## 包含什么（0.2.x 私有预览）
 
 - 原生播放：libmpv 通过 Windows 子 HWND 渲染，不使用 HTML `<video>` 或逐帧 canvas。
 - 播放控制：打开、播放/暂停、停止、进度跳转、音量、倍速、播放列表和断点续播。
@@ -62,15 +62,11 @@ $env:Path = "$env:USERPROFILE\.cargo\bin;$env:Path"
 ## 验证与打包
 
 ```powershell
-bun run lint
+bun run lint:all
 bun run test
 bun run build
 
-Push-Location src-tauri
-cargo fmt --check
-cargo test --lib
-cargo clippy --all-targets -- -D warnings
-Pop-Location
+bun run check:rust
 
 bun run tauri build --debug
 ```

@@ -41,6 +41,15 @@ pub struct MediaStream {
     pub language: Option<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MediaToolStatus {
+    pub available: bool,
+    pub message: String,
+    /// Help copy (may name install/download locations); never an error main message.
+    pub hint: Option<String>,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "PascalCase")]
 pub enum StreamKind {

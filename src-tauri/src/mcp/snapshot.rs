@@ -200,6 +200,40 @@ mod tests {
     }
 
     #[test]
+    fn snapshot_carries_no_cookie_material() {
+        // H-P2-7 contract: login state (browser cookies / cookies.txt / mpv-cookies.txt)
+        // must never reach the Agent. Tripwire: any future field containing it fails here.
+        let snapshot = LuminaMcpSnapshot {
+            online: Some(OnlineMediaSnapshot {
+                media_id: "youtube:e2e".into(),
+                title: Some("demo".into()),
+                duration_ms: Some(60_000),
+                webpage_url: Some("https://www.youtube.com/watch?v=e2e".into()),
+                extractor: Some("youtube".into()),
+                chapters: vec![],
+                subtitles: vec![SubtitleChoice {
+                    id: "online:en".into(),
+                    source: crate::subtitle::SubtitleSource::Sidecar,
+                    label: "English".into(),
+                    supported: true,
+                    stream_index: None,
+                    external_path: Some(r"D:\cache\demo.en.srt".into()),
+                    codec_name: Some("srt".into()),
+                    language: Some("en".into()),
+                }],
+                transcript: None,
+            }),
+            ..LuminaMcpSnapshot::empty()
+        };
+        let json = serde_json::to_value(&snapshot).expect("snapshot serializes");
+        let text = json.to_string().to_lowercase();
+        assert!(
+            !text.contains("cookie"),
+            "agent snapshot must not carry cookie material: {text}"
+        );
+    }
+
+    #[test]
     fn roundtrip_snapshot_json() {
         let dir = std::env::temp_dir().join(format!("lumina-mcp-test-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);

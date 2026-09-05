@@ -602,7 +602,7 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
     try {
       get().applySnapshot(await api.setPlayerSubtitle(args));
     } catch (error) {
-      console.error("set subtitle failed", error);
+      set({ statusMessage: errorMessage(error) });
     }
   },
 

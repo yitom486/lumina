@@ -43,3 +43,9 @@ export type MediaErrorDto = {
   message: string;
   details?: string;
 };
+
+export type MediaToolStatus = {
+  available: boolean;
+  message: string;
+  hint?: string | null;
+};

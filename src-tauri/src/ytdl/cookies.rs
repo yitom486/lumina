@@ -178,6 +178,12 @@ pub fn save(input: YtdlCookieConfigInput) -> Result<YtdlCookieStatus, YtdlError>
             if !Path::new(path).is_file() {
                 return Err(YtdlError::invalid("Cookie 文件不存在或不可读"));
             }
+            let root = paths::install_root();
+            let _ = fs::create_dir_all(&root);
+            let master = master_cookie_path();
+            fs::copy(path, &master).map_err(|error| {
+                YtdlError::internal(Some(&format!("copy imported cookie file: {error}")))
+            })?;
         }
     }
 
@@ -214,8 +220,20 @@ fn browser_cookie_spec(settings: &CookieSettings) -> String {
     }
 }
 
+/// Pristine imported cookies file (kept in app data, never mutated by yt-dlp).
+pub fn master_cookie_path() -> PathBuf {
+    paths::install_root().join("cookies.master.txt")
+}
+
+/// Ephemeral runtime cookies file passed to yt-dlp (isolated from master).
+pub fn runtime_cookie_path() -> PathBuf {
+    paths::install_root().join("cookies.runtime.txt")
+}
+
 /// Append cookie-related args. Never logs cookie file contents.
 pub fn apply_to_command(cmd: &mut Command, settings: &CookieSettings) -> Result<(), YtdlError> {
+    crate::ytdl::runtime::apply_to_command(cmd);
+
     match settings.mode {
         CookieMode::None => Ok(()),
         CookieMode::Browser => {
@@ -232,11 +250,21 @@ pub fn apply_to_command(cmd: &mut Command, settings: &CookieSettings) -> Result<
                 .as_deref()
                 .filter(|p| !p.trim().is_empty())
                 .ok_or_else(|| YtdlError::invalid("请选择 Cookie 文件"))?;
-            if !Path::new(path).is_file() {
+            let master = master_cookie_path();
+            let source_file = if master.is_file() {
+                master
+            } else if Path::new(path).is_file() {
+                PathBuf::from(path)
+            } else {
                 return Err(YtdlError::invalid("Cookie 文件不存在或不可读"));
-            }
+            };
+
+            // Copy to runtime file so yt-dlp's dump-back never mutates the pristine master file.
+            let runtime = runtime_cookie_path();
+            let _ = fs::copy(&source_file, &runtime);
+
             cmd.arg("--cookies");
-            cmd.arg(path);
+            cmd.arg(runtime);
             Ok(())
         }
     }
@@ -252,11 +280,23 @@ pub fn cookies_file_for_player() -> Option<PathBuf> {
     let settings = load();
     match settings.mode {
         CookieMode::None => None,
-        CookieMode::File => settings
-            .file_path
-            .as_ref()
-            .map(PathBuf::from)
-            .filter(|p| p.is_file()),
+        CookieMode::File => {
+            let runtime = runtime_cookie_path();
+            if runtime.is_file() {
+                Some(runtime)
+            } else {
+                let master = master_cookie_path();
+                if master.is_file() {
+                    Some(master)
+                } else {
+                    settings
+                        .file_path
+                        .as_ref()
+                        .map(PathBuf::from)
+                        .filter(|p| p.is_file())
+                }
+            }
+        }
         CookieMode::Browser => {
             let exported = mpv_cookies_export_path();
             if exported.is_file() {
@@ -509,16 +549,30 @@ pub fn classify_resolve_stderr(stderr: &str) -> YtdlError {
         return YtdlError::cookie_unavailable(Some(stderr));
     }
 
+    let members_only = lower.contains("members-only")
+        || lower.contains("members only")
+        || lower.contains("join this channel")
+        || lower.contains("exclusive perks");
+    if members_only {
+        return YtdlError::members_only(Some(stderr));
+    }
+
     let login = lower.contains("sign in")
         || lower.contains("login required")
         || lower.contains("please log in")
         || lower.contains("private video")
-        || lower.contains("members only")
         || lower.contains("confirm your age")
         || lower.contains("cookies are needed")
         || lower.contains("use --cookies");
     if login {
         return YtdlError::login_required(Some(stderr));
+    }
+
+    let js_needed = lower.contains("the page needs to be reloaded")
+        || lower.contains("n challenge solving failed")
+        || lower.contains("no supported javascript runtime");
+    if js_needed {
+        return YtdlError::js_runtime_required(Some(stderr));
     }
 
     YtdlError::resolve_failed(Some(stderr))
@@ -544,7 +598,7 @@ fn process_running(exe_name: &str) -> bool {
             return false;
         };
         let stdout = String::from_utf8_lossy(&output.stdout).to_ascii_lowercase();
-        return stdout.contains(&exe_name.to_ascii_lowercase());
+        stdout.contains(&exe_name.to_ascii_lowercase())
     }
     #[cfg(not(windows))]
     {
@@ -601,6 +655,14 @@ mod tests {
             classify_resolve_stderr("ERROR: Failed to decrypt with DPAPI. See issues/10927");
         assert_eq!(encrypted.code, crate::ytdl::YtdlErrorCode::LoginRequired);
         assert!(encrypted.message.contains("加密") || encrypted.message.contains("Cookie"));
+
+        let js = classify_resolve_stderr("ERROR: [youtube] The page needs to be reloaded.");
+        assert_eq!(js.code, crate::ytdl::YtdlErrorCode::ResolveFailed);
+        assert!(js.message.contains("JavaScript"));
+
+        let members = classify_resolve_stderr("ERROR: [youtube] uSu6-6ldPhA: Join this channel to get access to members-only content like this video, and other exclusive perks.");
+        assert_eq!(members.code, crate::ytdl::YtdlErrorCode::LoginRequired);
+        assert!(members.message.contains("会员专享"));
     }
 
     #[test]

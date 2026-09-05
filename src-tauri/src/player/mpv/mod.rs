@@ -4,4 +4,7 @@ pub mod native_library;
 pub mod player;
 pub mod window;
 
+#[cfg(test)]
+mod baseline;
+
 pub use player::{LibMpvPlayer, NetworkPlaybackOpts};

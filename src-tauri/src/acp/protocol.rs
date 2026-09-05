@@ -548,7 +548,9 @@ fn redact_absolute_paths(input: &str) -> String {
             out.push_str("[路径]");
             rest = &rest[len..];
         } else {
-            let ch = rest.chars().next().unwrap();
+            let Some(ch) = rest.chars().next() else {
+                break;
+            };
             out.push(ch);
             rest = &rest[ch.len_utf8()..];
         }

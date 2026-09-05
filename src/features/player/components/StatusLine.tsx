@@ -1,3 +1,5 @@
+import { formatPlayerError } from "@/lib/format";
+
 import { usePlayerStore } from "../store";
 
 export function StatusLine() {
@@ -11,9 +13,7 @@ export function StatusLine() {
         {status} · {statusMessage}
       </p>
       {error ? (
-        <p className="truncate text-red-600">
-          [{error.code}] {error.message}
-        </p>
+        <p className="truncate text-red-600">{formatPlayerError(error)}</p>
       ) : null}
     </div>
   );

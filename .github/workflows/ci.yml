@@ -6,6 +6,15 @@ on:
   pull_request:
     branches: [main, master]
   workflow_dispatch:
+    inputs:
+      run_online_e2e:
+        description: "Run network online-source E2E (needs YouTube access + yt-dlp download)"
+        required: false
+        default: "false"
+      e2e_url:
+        description: "Optional public video URL for online E2E (defaults to fixture video)"
+        required: false
+        default: ""
 
 permissions:
   contents: read
@@ -47,134 +56,17 @@ jobs:
           key: ci-${{ matrix.platform }}-cargo-${{ hashFiles('src-tauri/Cargo.lock') }}
           restore-keys: ci-${{ matrix.platform }}-cargo-
 
-      - name: Install libmpv (Windows)
-        if: matrix.platform == 'windows'
-        shell: pwsh
-        run: |
-          $mpvDir = 'src-tauri/native/mpv'
-          $metadata = @{}
-          Get-Content "$mpvDir/VERSION" | ForEach-Object {
-            if ($_ -match '^([^=]+)=(.*)$') { $metadata[$matches[1]] = $matches[2] }
-          }
-          if (-not (Test-Path "$mpvDir/libmpv-2.dll") -or -not (Test-Path "$mpvDir/mpv.lib")) {
-            $archive = Join-Path $env:RUNNER_TEMP $metadata['archive']
-            $extractDir = Join-Path $env:RUNNER_TEMP 'lumina-mpv-dev'
-            curl.exe -L --fail --retry 3 -o $archive $metadata['url']
-            New-Item -ItemType Directory -Force -Path $extractDir | Out-Null
-            tar.exe -xf $archive -C $extractDir
-            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-            $dll = Get-ChildItem -Path $extractDir -Recurse -Filter 'libmpv-2.dll' -File | Select-Object -First 1
-            if ($null -eq $dll) {
-              throw 'The libmpv archive did not contain libmpv-2.dll.'
-            }
-            Copy-Item $dll.FullName "$mpvDir/libmpv-2.dll" -Force
-            $exportNames = & dumpbin.exe /exports "$mpvDir/libmpv-2.dll" |
-              ForEach-Object {
-                if ($_ -match '^\s*\d+\s+[0-9A-F]+\s+[0-9A-F]+\s+(\S+)$') { $matches[1] }
-              }
-            if ($LASTEXITCODE -ne 0 -or $exportNames.Count -eq 0) {
-              throw 'Could not read libmpv exports to create an MSVC import library.'
-            }
-            @('LIBRARY libmpv-2.dll', 'EXPORTS') + ($exportNames | ForEach-Object { "  $_" }) |
-              Set-Content "$mpvDir/mpv.def" -Encoding ascii
-            & lib.exe "/def:$mpvDir/mpv.def" /machine:x64 "/out:$mpvDir/mpv.lib"
-            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          }
-          $runtimeDir = "$mpvDir/runtime"
-          New-Item -ItemType Directory -Force -Path $runtimeDir | Out-Null
-          Copy-Item "$mpvDir/libmpv-2.dll" "$runtimeDir/libmpv-2.dll" -Force
-
-      - name: Install ffmpeg (Windows)
-        if: matrix.platform == 'windows'
-        shell: pwsh
-        run: |
-          $ffmpegDir = 'src-tauri/native/ffmpeg'
-          $metadata = @{}
-          Get-Content "$ffmpegDir/VERSION" | ForEach-Object {
-            if ($_ -match '^([^=]+)=(.*)$') { $metadata[$matches[1]] = $matches[2] }
-          }
-          if (-not (Test-Path "$ffmpegDir/ffprobe.exe") -or -not (Test-Path "$ffmpegDir/ffmpeg.exe")) {
-            $archive = Join-Path $env:RUNNER_TEMP 'ffmpeg-essentials.zip'
-            $extractDir = Join-Path $env:RUNNER_TEMP 'lumina-ffmpeg-extract'
-            curl.exe -L --fail --retry 3 -o $archive $metadata['url']
-            New-Item -ItemType Directory -Force -Path $extractDir | Out-Null
-            tar.exe -xf $archive -C $extractDir
-            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-            $ffprobe = Get-ChildItem -Path $extractDir -Recurse -Filter 'ffprobe.exe' -File | Select-Object -First 1
-            $ffmpeg = Get-ChildItem -Path $extractDir -Recurse -Filter 'ffmpeg.exe' -File | Select-Object -First 1
-            if ($null -eq $ffprobe -or $null -eq $ffmpeg) {
-              throw 'The ffmpeg archive did not contain ffprobe.exe / ffmpeg.exe.'
-            }
-            Copy-Item $ffprobe.FullName "$ffmpegDir/ffprobe.exe" -Force
-            Copy-Item $ffmpeg.FullName "$ffmpegDir/ffmpeg.exe" -Force
-          }
-          Get-ChildItem $ffmpegDir -Filter '*.exe' | ForEach-Object { "{0} {1}" -f $_.Name, $_.Length }
-
-      - name: Install libmpv (macOS)
-        if: matrix.platform == 'macos'
-        run: |
-          brew install mpv pkg-config
-          mkdir -p src-tauri/native/mpv/runtime
-          # brew 的 libmpv*.dylib 多为指向 Cellar 的 symlink；tauri_build 打包资源时
-          # 跟随 symlink 可能 Permission denied。解引用成可读写实体文件。
-          python3 - <<'PY'
-          import os
-          import shutil
-          import subprocess
-          from pathlib import Path
-
-          prefix = subprocess.check_output(["brew", "--prefix", "mpv"], text=True).strip()
-          src = Path(prefix) / "lib"
-          dst = Path("src-tauri/native/mpv/runtime")
-          dst.mkdir(parents=True, exist_ok=True)
-          staged = False
-          for path in sorted(src.glob("libmpv*.dylib")):
-              target = path.resolve()
-              out = dst / path.name
-              if out.exists() or out.is_symlink():
-                  out.unlink()
-              shutil.copy2(target, out)
-              os.chmod(out, 0o755)
-              print(f"staged {out} <- {target} ({out.stat().st_size} bytes)")
-              staged = True
-          if not staged:
-              raise SystemExit(f"no libmpv*.dylib under {src}")
-          PY
-          ls -la src-tauri/native/mpv/runtime/
-
-      - name: Install build deps (Linux)
-        if: matrix.platform == 'linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            libwebkit2gtk-4.1-dev \
-            libayatana-appindicator3-dev \
-            librsvg2-dev \
-            libssl-dev \
-            libmpv-dev \
-            libx11-dev \
-            patchelf
-          mkdir -p src-tauri/native/mpv/runtime
-          shopt -s nullglob
-          staged=0
-          for lib in /usr/lib/x86_64-linux-gnu/libmpv.so*; do
-            # -L 解引用，避免把指向系统路径的 symlink 交给 tauri resources
-            cp -L "$lib" src-tauri/native/mpv/runtime/
-            chmod a+rX "src-tauri/native/mpv/runtime/$(basename "$lib")"
-            staged=1
-          done
-          if [ "$staged" -ne 1 ]; then
-            echo "no libmpv.so* found under /usr/lib/x86_64-linux-gnu" >&2
-            exit 1
-          fi
-          ls -la src-tauri/native/mpv/runtime/
+      - name: Setup native tools
+        uses: ./.github/actions/setup-native-tools
+        with:
+          platform: ${{ matrix.platform }}
 
       - name: Install frontend dependencies
         run: bun install --frozen-lockfile
 
       - name: Validate frontend
         run: |
-          bun run lint
+          bun run lint:all
           bun run test
           bun run build
 
@@ -182,6 +74,7 @@ jobs:
         working-directory: src-tauri
         run: |
           cargo fmt --check
+          cargo check --all-targets
           cargo test --lib
           cargo clippy --all-targets -- -D warnings
 
@@ -211,66 +104,10 @@ jobs:
           key: ci-windows-cargo-${{ hashFiles('src-tauri/Cargo.lock') }}
           restore-keys: ci-windows-cargo-
 
-      - name: Install libmpv (Windows)
-        shell: pwsh
-        run: |
-          $mpvDir = 'src-tauri/native/mpv'
-          $metadata = @{}
-          Get-Content "$mpvDir/VERSION" | ForEach-Object {
-            if ($_ -match '^([^=]+)=(.*)$') { $metadata[$matches[1]] = $matches[2] }
-          }
-          if (-not (Test-Path "$mpvDir/libmpv-2.dll") -or -not (Test-Path "$mpvDir/mpv.lib")) {
-            $archive = Join-Path $env:RUNNER_TEMP $metadata['archive']
-            $extractDir = Join-Path $env:RUNNER_TEMP 'lumina-mpv-dev'
-            curl.exe -L --fail --retry 3 -o $archive $metadata['url']
-            New-Item -ItemType Directory -Force -Path $extractDir | Out-Null
-            tar.exe -xf $archive -C $extractDir
-            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-            $dll = Get-ChildItem -Path $extractDir -Recurse -Filter 'libmpv-2.dll' -File | Select-Object -First 1
-            if ($null -eq $dll) {
-              throw 'The libmpv archive did not contain libmpv-2.dll.'
-            }
-            Copy-Item $dll.FullName "$mpvDir/libmpv-2.dll" -Force
-            $exportNames = & dumpbin.exe /exports "$mpvDir/libmpv-2.dll" |
-              ForEach-Object {
-                if ($_ -match '^\s*\d+\s+[0-9A-F]+\s+[0-9A-F]+\s+(\S+)$') { $matches[1] }
-              }
-            if ($LASTEXITCODE -ne 0 -or $exportNames.Count -eq 0) {
-              throw 'Could not read libmpv exports to create an MSVC import library.'
-            }
-            @('LIBRARY libmpv-2.dll', 'EXPORTS') + ($exportNames | ForEach-Object { "  $_" }) |
-              Set-Content "$mpvDir/mpv.def" -Encoding ascii
-            & lib.exe "/def:$mpvDir/mpv.def" /machine:x64 "/out:$mpvDir/mpv.lib"
-            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          }
-          $runtimeDir = "$mpvDir/runtime"
-          New-Item -ItemType Directory -Force -Path $runtimeDir | Out-Null
-          Copy-Item "$mpvDir/libmpv-2.dll" "$runtimeDir/libmpv-2.dll" -Force
-
-      - name: Install ffmpeg (Windows)
-        shell: pwsh
-        run: |
-          $ffmpegDir = 'src-tauri/native/ffmpeg'
-          $metadata = @{}
-          Get-Content "$ffmpegDir/VERSION" | ForEach-Object {
-            if ($_ -match '^([^=]+)=(.*)$') { $metadata[$matches[1]] = $matches[2] }
-          }
-          if (-not (Test-Path "$ffmpegDir/ffprobe.exe") -or -not (Test-Path "$ffmpegDir/ffmpeg.exe")) {
-            $archive = Join-Path $env:RUNNER_TEMP 'ffmpeg-essentials.zip'
-            $extractDir = Join-Path $env:RUNNER_TEMP 'lumina-ffmpeg-extract'
-            curl.exe -L --fail --retry 3 -o $archive $metadata['url']
-            New-Item -ItemType Directory -Force -Path $extractDir | Out-Null
-            tar.exe -xf $archive -C $extractDir
-            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-            $ffprobe = Get-ChildItem -Path $extractDir -Recurse -Filter 'ffprobe.exe' -File | Select-Object -First 1
-            $ffmpeg = Get-ChildItem -Path $extractDir -Recurse -Filter 'ffmpeg.exe' -File | Select-Object -First 1
-            if ($null -eq $ffprobe -or $null -eq $ffmpeg) {
-              throw 'The ffmpeg archive did not contain ffprobe.exe / ffmpeg.exe.'
-            }
-            Copy-Item $ffprobe.FullName "$ffmpegDir/ffprobe.exe" -Force
-            Copy-Item $ffmpeg.FullName "$ffmpegDir/ffmpeg.exe" -Force
-          }
-          Get-ChildItem $ffmpegDir -Filter '*.exe' | ForEach-Object { "{0} {1}" -f $_.Name, $_.Length }
+      - name: Setup native tools
+        uses: ./.github/actions/setup-native-tools
+        with:
+          platform: windows
 
       - name: Install frontend dependencies
         run: bun install --frozen-lockfile
@@ -287,3 +124,43 @@ jobs:
             src-tauri/target/debug/bundle/nsis/*.exe
           if-no-files-found: error
           retention-days: 14
+
+  online-e2e:
+    name: Online E2E (manual, network)
+    if: github.event_name == 'workflow_dispatch' && inputs.run_online_e2e == 'true'
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Setup native tools
+        uses: ./.github/actions/setup-native-tools
+        with:
+          platform: windows
+
+      - name: Install yt-dlp (latest stable)
+        shell: pwsh
+        run: |
+          $dir = 'src-tauri/native/ytdl'
+          New-Item -ItemType Directory -Force -Path $dir | Out-Null
+          if (-not (Test-Path "$dir/yt-dlp.exe")) {
+            curl.exe -L --fail --retry 3 -o "$dir/yt-dlp.exe" https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe
+          }
+          & "$dir/yt-dlp.exe" --version
+
+      - name: Install frontend dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Run online E2E (no cookies)
+        working-directory: src-tauri
+        run: cargo test --lib public_youtube_resolves_and_reaches_mpv_demux_without_cookies -- --ignored --nocapture
+        env:
+          LUMINA_ONLINE_E2E_URL: ${{ inputs.e2e_url }}
