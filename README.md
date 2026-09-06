@@ -1,52 +1,94 @@
-# Lumina
+# Lumina — AI Video Reader
 
-> 0.3.0 · Windows x64 私有预览版
+> 当前版本 0.3.0 · Windows x64 / macOS arm64 / Linux x64
 
-Lumina 是一款桌面端 AI Video Reader：用原生 libmpv 播放本地视频，并把字幕、文稿、笔记、章节和可选 AI 对话放在同一个阅读工作流里。
+Lumina 是一款桌面端 AI 观影阅读器：用原生 libmpv
+播放本地视频，并把字幕文稿、章节、笔记与可选的 AI
+对话放在同一个阅读工作流里。播放、字幕、笔记不依赖
+任何在线服务与 AI；AI 能力全部按需启动。
 
-本仓库目前不适合公开发布。请将其保存在私有 GitHub 仓库；不要提交个人视频、笔记、`.env`、Codex 登录配置，或项目本地 native 二进制。
+安装包发布在 [lumina-app](https://github.com/yitom486/lumina-app/releases)；
+版本变更见 [CHANGELOG.md](CHANGELOG.md)，路线图见 [ROADMAP.md](ROADMAP.md)。
 
-## 包含什么（0.2.x 私有预览）
+## 功能
 
-- 原生播放：libmpv 通过 Windows 子 HWND 渲染，不使用 HTML `<video>` 或逐帧 canvas。
-- 播放控制：打开、播放/暂停、停止、进度跳转、音量、倍速、播放列表和断点续播。
-- 媒体阅读：ffprobe 媒体信息、内嵌/外挂字幕、文本字幕文稿、章节导航。
-- 笔记：时间戳锚点、列表浏览、跳转和 Markdown 导出。
-- 可选 ASR：仅用户触发时调用本地 whisper，不配置时不影响播放。
-- 可选 AI 对话：通过 ACP 按需启动本机 Agent；默认 Codex 使用 `bunx @agentclientprotocol/codex-acp`，未配置时不影响其他功能。
-- 原生视频图层约束：播放器、普通侧栏与 ChatDock 使用互斥布局列，HTML 浮层不会覆盖 native 视频 HWND。
+### 原生播放
 
-完整路线图见 [ROADMAP.md](ROADMAP.md)，版本变更见 [CHANGELOG.md](CHANGELOG.md)。
+- libmpv 经系统窗口句柄直接渲染，不使用 HTML `<video>` 或逐帧 canvas。
+- 打开 / 播放 / 暂停 / 停止 / 进度跳转 / 音量 / 倍速 / 播放列表 / 断点续播。
+- 同目录分集自动识别与切换；HEVC / AV1 走系统解码链路。
+- Linux 需 X11 会话（Wayland 暂不支持原生视频面）。
 
-## 媒体库元数据（实验性）
+### 文稿与阅读（P6）
 
-侧栏的「媒体库」可对用户选择的目录建立本地 `.lumina/` 索引，并以周期扫描发现文件变化。待匹配的剧集或电影可先输入作品名，或启用智能匹配：解析器只接收文件名和相对目录名，再由 TMDb 候选结果约束确认。
+- 字幕文稿：内嵌 / 外挂 / 在线字幕统一成可检索文稿，支持逐句定位与跳转。
+- 可控跟读：跟随中 / 浏览中 / 关三态；手动滚动、选字不再被抢回；滚动永不 seek。
+- 可验证引用：回答里的 `[mm:ss]` / `[第N集 · mm:ss]`
+  全部来自工具实返，点引用跳播；不可验证的只显示文本。
+- 快捷问：文稿每句「问」（解释这一段）、章节行「总结本章」，提问锚点恒为所问时刻。
+- 系列阅读：媒体库内继续阅读（首个未完成）/ 下一集 / 手动完成；跨集引用默认防剧透。
+- 章节：容器章节优先；无章节时按字幕停顿机械分段（标注非语义，不编造主题）。
 
-智能匹配有两种来源：推荐复用已配置的 Lumina ACP Agent（Codex、Claude 或自定义 profile），或配置专用的 OpenAI-compatible 直接 API。复用 Agent 时，Lumina 创建并立即关闭独立的工具禁用会话，不复用、不读取或写入聊天历史。
+### 笔记与批注
 
-模型地址、模型 ID、扫描目录和轮询周期保存在本地 WebView 设置；直接 API 的模型 Key 与所有模式共用的 TMDb Token 可在「智能匹配设置」中保存到当前 Windows 用户的 Credential Manager。密钥不会写入项目、`.lumina`、WebView 设置或日志，界面也不会回显密钥。
+- 时间戳锚点笔记：列表浏览、点击跳转、一键导出 Markdown。
+- 台词引用：手动或自动附带前后台词，导出保留引用块。
+- 视频批注：AI 回答可内联确认存为批注；批注可附单帧截图（缩略图 + 点击 seek，
+  删批注自动清理图片文件）。
 
-环境变量仍是开发与 CI 的兼容备用方式；只有在系统凭据中尚未保存对应密钥时才会读取：
+### AI 对话（ACP，可选）
+
+- 不预连接：只有用户发起会话时才按需启动本机 Agent 进程。
+- 默认 Codex profile，可配 Claude / 自定义命令；换模型走 Responses 配置，
+  换 Agent 即换启动进程。
+- 对话能力（播放上下文、字幕窗口、截图、批注）全部经 MCP 工具受控调用；
+  Cookie 与签名 URL 永不进入 prompt 与日志。
+- 未配置时应用其余功能完全可用。
+
+### 媒体库（实验性）
+
+- 对自选目录建本地 `.lumina/` 索引，周期扫描发现新增；TMDb + 维基元数据补全。
+- 智能匹配：文件名解析 + TMDb 候选约束确认；可用已配 ACP Agent 或专用直连 API。
+- 模型 Key / TMDb Token 存当前用户 Credential Manager，不进项目、索引与日志，
+  界面不回显；环境变量仅作开发与 CI 备用。
+
+### 在线视频与 ASR（可选）
+
+- 在线解析：按需调用 yt-dlp（官方 stable + SHA-256 校验 + 可恢复替换），
+  支持 cookies.txt / 浏览器 Cookie；失败按登录态分类给中文提示。
+- 本地转写：仅用户点击才调本地 whisper；未配置返回未配置，不影响播放。
+
+### 自动更新与日志
+
+- 内置 updater：从 lumina-app 的 `latest.json`
+  检查三平台签名包；标题栏可一键打开日志目录（daily rotation + panic hook）。
+
+## 安装（终端用户）
+
+1. 打开 [lumina-app Releases](https://github.com/yitom486/lumina-app/releases)，
+   下载对应系统的安装包：Windows x64 用 MSI / NSIS，macOS 用 DMG，
+   Linux x64 用 AppImage / deb。
+2. 安装后直接打开本地视频即可使用。
+
+> 终端用户不需要安装 Bun、Node、pnpm、Rust 或 whisper
+> 就能播放、看文稿、记笔记。Bun 只在下面「从源码构建」时需要。
+
+## 从源码构建（开发者）
+
+使用前必须先安装 **Bun 1.3.14**（仓库 `packageManager` 锁定版本，
+CI 与所有前端命令都经 Bun 运行）：
 
 ```powershell
-$env:LUMINA_METADATA_MODEL_API_KEY = "你的模型密钥"
-$env:LUMINA_TMDB_ACCESS_TOKEN = "你的 TMDb Read Access Token"
+# Windows（其他系统见 https://bun.sh/docs/installation）
+powershell -c "irm bun.sh/install.ps1 | iex"
+bun --version  # 应为 1.3.14
 ```
 
-可在「智能匹配设置」中选择已有 Agent、修改直接 API 的 OpenAI-compatible 模型地址和模型 ID，也可删除已保存的任一密钥。未配置智能匹配服务或 TMDb 时，播放、字幕和笔记仍完全可用。
-
-保存后可点击「验证配置」：TMDb 会执行一次轻量的只读 Bearer 请求；模型服务会执行一次不含媒体资料的最小 JSON 请求，因此会产生极小的模型调用成本。验证结果不会持久化，修改地址、模型名或密钥后请重新验证。
-
-## 开发环境
-
-当前发布目标是 Windows x64。开发机需要：
-
-- Bun 1.3.14
-- Rust stable + MSVC C++ Build Tools
-- WebView2 Runtime（Windows 11 通常已自带）
-- 项目本地 libmpv 开发包：参见 [src-tauri/native/mpv/README.md](src-tauri/native/mpv/README.md)
-
-`ffmpeg`、`whisper` 与 ACP Agent 都是可选能力；详细约定参见各自 `src-tauri/native/` 目录下的 README。
+还需要：Rust stable + MSVC C++ Build Tools、WebView2 Runtime（Windows 11
+通常自带）、项目本地 libmpv 开发包（见
+[src-tauri/native/mpv/README.md](src-tauri/native/mpv/README.md)；
+`ffmpeg` / `whisper` / ACP Agent 都是可选能力，见各自 `src-tauri/native/`
+目录下的 README）。
 
 ```powershell
 bun install --frozen-lockfile
@@ -59,24 +101,31 @@ bun run tauri dev
 $env:Path = "$env:USERPROFILE\.cargo\bin;$env:Path"
 ```
 
-## 验证与打包
+### 常用命令
 
 ```powershell
-bun run lint:all
-bun run test
-bun run build
+bun run lint:all   # tsc + oxlint
+bun run test       # 前端全量（vitest）
+bun run build      # 前端构建
 
-bun run check:rust
+bun run check:rust # Rust 门：fmt + check + test + clippy(-D warnings)
 
-bun run tauri build --debug
+bun run tauri build --debug  # Windows debug 打包（MSI + NSIS）
 ```
 
-Windows debug bundle 会生成 MSI 和 NSIS 安装器。打包后的终端用户不需要安装 Bun、Node、pnpm 或 whisper 才能播放视频。
+Rust 另有 `cd src-tauri && cargo test --lib`。发版走
+`.github/workflows/release.yml`：推送 `v*` tag 自动跑质量门、三平台构建、
+签名并上传到 lumina-app（含合并版 `latest.json`）；也支持 Actions
+手动 `workflow_dispatch` 指定 tag 重跑。发版前请读
+[CHANGELOG.md](CHANGELOG.md) 并手工安装一次产物做播放冒烟。
 
-## 私有发布
+## 应用内关于
 
-- `.github/workflows/ci.yml`：在 Windows 上验证前端、Rust、libmpv 链接和 debug bundle，并上传仅仓库成员可见的 Actions artifact。
-- `.github/workflows/release.yml`：推送 `v0.2.0` 这类 tag 时运行质量门槛、构建 Windows 安装器并 **上传到 GitHub Release**；也可在 Actions 里手动 `workflow_dispatch` 指定 tag 重跑。仓库保持私有时，Release 与资产也只对有权限的成员可见。
-- CI 会从 [VERSION](src-tauri/native/mpv/VERSION) 下载固定版本的 libmpv 开发包；二进制本身不会进入 Git。
+标题栏右侧 ⓘ 按钮打开「关于」：显示当前版本号、一句话介绍，
+并可一键打开 lumina-app 发布页下载更新。
 
-发布前请阅读 [CHANGELOG.md](CHANGELOG.md)，并手工安装一次生成的 MSI/NSIS 包进行播放冒烟测试。
+## 参与与约束
+
+- 不要提交个人视频、笔记、`.env`、模型密钥、Cookie 与项目本地 native 二进制。
+- 给前端的错误只展示中文业务 `message`；业务代码禁 `unwrap()` / `expect()`；
+  日志用 `tracing`。细则见 [AGENTS.md](AGENTS.md)。

@@ -1,6 +1,18 @@
-import type { ReactNode } from "react";
-import { FileText, Maximize2, Minimize2 } from "lucide-react";
+import { useEffect, useState, type ReactNode } from "react";
+import { FileText, Info, Maximize2, Minimize2 } from "lucide-react";
+import { getVersion } from "@tauri-apps/api/app";
+import { openUrl } from "@tauri-apps/plugin-opener";
 
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import {
   Tooltip,
@@ -11,6 +23,8 @@ import { ChatToggleButton } from "@/features/acp/components/ChatToggleButton";
 import { usePlayerStore, useUiStore } from "@/features/player";
 import { errorMessage } from "@/lib/format";
 import { revealLogDir } from "@/lib/system";
+
+const RELEASES_URL = "https://github.com/yitom486/lumina-app/releases";
 
 type AppShellProps = {
   children: ReactNode;
@@ -70,6 +84,67 @@ function LogDirButton() {
   );
 }
 
+/** About dialog: product intro + runtime version + update entry. */
+export function AboutButton() {
+  const [version, setVersion] = useState("…");
+  useEffect(() => {
+    let cancelled = false;
+    void getVersion()
+      .then((value) => {
+        if (!cancelled) setVersion(value);
+      })
+      .catch(() => {
+        if (!cancelled) setVersion("未知");
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const openReleases = () => {
+    void openUrl(RELEASES_URL).catch((error: unknown) => {
+      usePlayerStore.getState().setStatusMessage(errorMessage(error));
+    });
+  };
+
+  return (
+    <AlertDialog>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <AlertDialogTrigger asChild>
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon-sm"
+              aria-label="关于 Lumina"
+            >
+              <Info className="size-4" />
+            </Button>
+          </AlertDialogTrigger>
+        </TooltipTrigger>
+        <TooltipContent>关于 Lumina</TooltipContent>
+      </Tooltip>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>Lumina · AI Video Reader</AlertDialogTitle>
+          <AlertDialogDescription>版本 {version}</AlertDialogDescription>
+        </AlertDialogHeader>
+        <p className="text-sm text-muted-foreground">
+          桌面端 AI
+          观影阅读器：用原生播放器播放本地视频，把字幕文稿、章节、笔记与可选的
+          AI 对话放在同一个阅读工作流里。
+        </p>
+        <AlertDialogFooter>
+          <Button type="button" variant="outline" onClick={openReleases}>
+            下载更新
+          </Button>
+          <AlertDialogAction>知道了</AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+  );
+}
+
 /** Desktop app chrome: slim title bar + main content. */
 export function AppShell({ children }: AppShellProps) {
   const fullscreen = useUiStore((s) => s.fullscreen);
@@ -106,6 +181,7 @@ export function AppShell({ children }: AppShellProps) {
           <div className="flex shrink-0 items-center gap-0.5">
             <ChatToggleButton />
             <LogDirButton />
+            <AboutButton />
             <FullscreenToggleButton />
           </div>
         </header>
