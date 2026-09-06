@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased — P6 AI Video Reader + P7 多模态（进行中，未发版）
+## 0.3.0 — AI Video Reader（P6 阅读闭环 + P7 多模态）/ 下限补齐
 
 ### 应用图标
 
@@ -33,10 +33,6 @@
 - **音频信号**：静默区间 + 响度突增候选（无语义标签）；`lumina_get_audio_marks`。
 - **帧引用**：批注可附单帧（持久化 + 缩略图 + 点击 seek + 删批注清文件）；
   导出保持时间 + 文字。
-
-## 0.3.0 — 内部可用版（Harden P0）
-
-> 不打 tag 不发版；首个 0.3 tag 构建即联调 updater（需先建签名 secrets，见 release.yml）。
 
 ### 下限补齐
 
