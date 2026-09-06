@@ -288,6 +288,15 @@ mod tests {
         }
     }
 
+    fn encoder_available(ffmpeg: &std::path::Path, encoder: &str) -> bool {
+        let spec = format!("encoder={encoder}");
+        crate::process_util::command(ffmpeg)
+            .args(["-hide_banner", "-h", spec.as_str()])
+            .output()
+            .map(|output| output.status.success())
+            .unwrap_or(false)
+    }
+
     #[test]
     fn codec_matrix_probes_h264_hevc_av1() {
         // Probe-level matrix only: mpv playback stays on the same loadfile path
@@ -322,6 +331,10 @@ mod tests {
             ),
         ];
         for (label, encoder, extra, ext, expected) in cases {
+            if !encoder_available(&ffmpeg, encoder) {
+                eprintln!("SKIP codec matrix {label}: encoder {encoder} not in this ffmpeg build");
+                continue;
+            }
             let out = dir.join(format!("matrix-{label}.{ext}"));
             let output = crate::process_util::command(&ffmpeg)
                 .args([
@@ -342,7 +355,7 @@ mod tests {
                 "{label} fixture failed to encode: {}",
                 String::from_utf8_lossy(&output.stderr)
                     .chars()
-                    .take(300)
+                    .take(2000)
                     .collect::<String>()
             );
             let info = crate::media::service::MediaInspector::inspect(&out).expect("probe fixture");
