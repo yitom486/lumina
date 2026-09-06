@@ -12,6 +12,42 @@ export default defineConfig({
       "@": path.resolve(import.meta.dirname, "./src"),
     },
   },
+  // Dev cold start: pre-bundle heavy deps at server boot (parallel + cached
+  // in node_modules/.vite) instead of discovering them one by one during the
+  // first page load (that waterfall was the multi-second dev white screen).
+  // Production builds are unaffected (rollup path).
+  optimizeDeps: {
+    include: [
+      "react",
+      "react-dom",
+      "react-dom/client",
+      "zustand",
+      "zustand/middleware",
+      "@tanstack/react-query",
+      "react-markdown",
+      "remark-gfm",
+      "remark-math",
+      "rehype-katex",
+      "katex",
+      "lucide-react",
+      "clsx",
+      "tailwind-merge",
+      "class-variance-authority",
+      "@radix-ui/react-alert-dialog",
+      "@radix-ui/react-dialog",
+      "@radix-ui/react-dropdown-menu",
+      "@radix-ui/react-label",
+      "@radix-ui/react-scroll-area",
+      "@radix-ui/react-separator",
+      "@radix-ui/react-slider",
+      "@radix-ui/react-slot",
+      "@radix-ui/react-tooltip",
+      "@tauri-apps/api",
+      "@tauri-apps/api/core",
+      "@tauri-apps/plugin-dialog",
+      "@tauri-apps/plugin-opener",
+    ],
+  },
   clearScreen: false,
   server: {
     port: 1420,
