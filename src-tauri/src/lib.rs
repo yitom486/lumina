@@ -90,12 +90,25 @@ use player::mpv::window::{parent_handle_from_webview, register_surface_app, Vide
 use state::AppState;
 use tauri::Manager;
 
+/// Process start for startup telemetry (white-screen diagnosis).
+static STARTUP_START: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
+
+fn startup_ms() -> u128 {
+    STARTUP_START
+        .get()
+        .map(|start| start.elapsed().as_millis())
+        .unwrap_or(0)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    let _ = STARTUP_START.set(std::time::Instant::now());
+
     if mcp::run_if_invoked() {
         return;
     }
     init_tracing();
+    tracing::info!(elapsed_ms = startup_ms(), "startup: tracing ready");
 
     let app = match tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
@@ -194,6 +207,7 @@ pub fn run() {
         .setup(|app| {
             crate::player::mpv::native_library::ensure_libmpv_loaded(app.handle())?;
             attach_native_surface(app)?;
+            tracing::info!(elapsed_ms = startup_ms(), "startup: setup done");
             Ok(())
         })
         .build(tauri::generate_context!())
@@ -205,7 +219,11 @@ pub fn run() {
         }
     };
 
+    tracing::info!(elapsed_ms = startup_ms(), "startup: app built");
     app.run(|app, event| match event {
+        tauri::RunEvent::Ready => {
+            tracing::info!(elapsed_ms = startup_ms(), "startup: ready");
+        }
         tauri::RunEvent::ExitRequested { .. } | tauri::RunEvent::Exit => {
             handle_app_exit(app);
         }

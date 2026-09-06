@@ -51,7 +51,7 @@ describe("ChatShell", () => {
 });
 
 describe("ChatTurnView", () => {
-  it("keeps assistant bubble full column width while streaming", () => {
+  it("keeps assistant bubble full column width while streaming", async () => {
     const { container } = render(
       <ChatTurnView
         turn={makeTurn({
@@ -63,11 +63,11 @@ describe("ChatTurnView", () => {
     );
     const assistant = container.querySelector(".bg-muted\\/40");
     expect(assistant).toHaveClass("w-full");
-    expect(screen.getByText("流式片段")).toBeInTheDocument();
+    expect(await screen.findByText("流式片段")).toBeInTheDocument();
     expect(container.textContent).toContain("▍");
   });
 
-  it("uses the same full-width assistant bubble when done", () => {
+  it("uses the same full-width assistant bubble when done", async () => {
     const { container } = render(
       <ChatTurnView
         turn={makeTurn({
@@ -80,7 +80,7 @@ describe("ChatTurnView", () => {
     );
     const assistant = container.querySelector(".bg-muted\\/40");
     expect(assistant).toHaveClass("w-full");
-    expect(screen.getByText("最终答案")).toBeInTheDocument();
+    expect(await screen.findByText("最终答案")).toBeInTheDocument();
     expect(container.textContent).not.toContain("▍");
   });
 

@@ -1,5 +1,5 @@
 import { useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
+import { Suspense, lazy, useState } from "react";
 
 import { cn } from "@/lib/utils";
 import { errorMessage, formatTime } from "@/lib/format";
@@ -11,9 +11,14 @@ import { usePlayerStore } from "@/features/player";
 import { waitingLabel, hasActiveToolActivity } from "../activityStatus";
 import type { ChatTurn } from "../types";
 import { ChatActivityFeed } from "./ChatActivityFeed";
-import { ChatMarkdown } from "./ChatMarkdown";
 import { ChatColumn } from "./ChatShell";
 import { ChatWaitingDots } from "./ChatWaitingDots";
+
+// Split markdown+KaTeX out of the initial bundle: chat is never visible on
+// cold start, so parsing ~400KB can wait until the first answer renders.
+const ChatMarkdown = lazy(() =>
+  import("./ChatMarkdown").then((module) => ({ default: module.ChatMarkdown })),
+);
 
 type Props = {
   turn: ChatTurn;
@@ -195,7 +200,13 @@ export function ChatTurnView({
             isError ? (
               visibleAnswer
             ) : (
-              <ChatMarkdown content={visibleAnswer} />
+              <Suspense
+                fallback={
+                  <span className="whitespace-pre-wrap">{visibleAnswer}</span>
+                }
+              >
+                <ChatMarkdown content={visibleAnswer} />
+              </Suspense>
             )
           ) : showWaitingDots ? (
             <ChatWaitingDots label={waitingLabel(turn.activities)} />
