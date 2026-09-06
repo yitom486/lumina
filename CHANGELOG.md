@@ -54,8 +54,9 @@
   单文件映射（RFC 7396 union 合并实证）；mac/Linux 无 vendored 二进制，不打。
 - **crash 日志导出**：daily rotation 文件日志（`{data}/lumina/logs`）+ panic hook；
   新增 `system_log_dir`；标题栏“打开日志目录”按钮。
-- **updater 脚手架**：插件 + endpoints（lumina-app `latest.json`）+ 本地 keypair
-  （私钥在仓库外）；release 签名走 secrets，占位已留，首次 tag 构建联调。
+- **updater 链路**：插件 + endpoints（lumina-app `latest.json`）+ 本地 keypair
+  （私钥在仓库外，密码走 DPAPI 本地文件 + GitHub secrets）；v0.2.6 起三平台升级包
+  签名随发，`latest.json` 由 release 流程按平台合并生成（含编码自检）。
 
 ## 0.2.6 — 修复版
 
@@ -63,6 +64,7 @@
 
 - **媒体分析组件未就绪**：将 `ffprobe.exe` / `ffmpeg` 打入安装包 resources，修复安装后「媒体分析组件未就绪」提示；路径查找优先 Tauri resource_dir，兼顾 Windows、macOS `.app` bundle 与 Linux。
 - **发布仓库分离**：安装包自动上传至公开仓库 [lumina-app](https://github.com/yitom486/lumina-app/releases)，源码仓库已公开（同名 `lumina` 仓）。
+- **updater 缺件补齐**：v0.2.6 首发时签名密钥缺失，仅有安装包；已补签三平台升级包（win-x64 NSIS、mac-arm64 tar.gz、linux-x64 AppImage）并发布合并版 `latest.json`，updater 链路闭环。
 
 ## 0.2.5 — Private Preview
 
