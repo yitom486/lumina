@@ -7,12 +7,7 @@ import { useEffect, useRef } from "react";
 import { errorMessage } from "@/lib/format";
 
 import { usePlayerStore } from "../store";
-import { useSessionStore } from "../sessionStore";
-
-function isRemotePath(path: string): boolean {
-  const lower = path.trim().toLowerCase();
-  return lower.startsWith("https://") || lower.startsWith("http://");
-}
+import { isRemotePath, useSessionStore } from "../sessionStore";
 
 export function useSessionRestore(): void {
   const runtimeSynced = usePlayerStore((s) => s.runtimeSynced);

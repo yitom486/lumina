@@ -1,14 +1,10 @@
 import { useQuery } from "@tanstack/react-query";
 
 import { usePlayerStore } from "@/features/player";
+import { isRemotePath } from "@/features/player/sessionStore";
 
 import { inspectMedia } from "../api";
 import { mediaInfoKey } from "../queries";
-
-function isRemotePath(path: string): boolean {
-  const lower = path.trim().toLowerCase();
-  return lower.startsWith("https://") || lower.startsWith("http://");
-}
 
 export function useMediaInfoQuery() {
   const path = usePlayerStore((s) => s.currentFile);

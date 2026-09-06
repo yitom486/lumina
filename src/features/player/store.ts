@@ -12,6 +12,7 @@ import {
 } from "./progressStore";
 import { planResumeToast, seekForResume } from "./resumePlayback";
 import {
+  isRemotePath,
   resolveRestorePositionMs,
   useSessionStore,
 } from "./sessionStore";
@@ -79,11 +80,6 @@ type PlayerStore = PlayerSnapshot & {
   }) => Promise<void>;
   setAudio: (streamIndex: number) => Promise<void>;
 };
-
-function isRemotePath(path: string): boolean {
-  const lower = path.trim().toLowerCase();
-  return lower.startsWith("https://") || lower.startsWith("http://");
-}
 
 function fileName(path: string | null): string | null {
   if (!path) return null;
