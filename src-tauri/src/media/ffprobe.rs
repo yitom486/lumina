@@ -288,12 +288,19 @@ mod tests {
         }
     }
 
+    /// Check `-encoders` output: `-h encoder=<name>` still exits 0 for
+    /// unknown encoders on some ffmpeg builds, so parse the list instead.
     fn encoder_available(ffmpeg: &std::path::Path, encoder: &str) -> bool {
-        let spec = format!("encoder={encoder}");
         crate::process_util::command(ffmpeg)
-            .args(["-hide_banner", "-h", spec.as_str()])
+            .args(["-hide_banner", "-encoders"])
             .output()
-            .map(|output| output.status.success())
+            .map(|output| {
+                output.status.success()
+                    && String::from_utf8_lossy(&output.stdout)
+                        .lines()
+                        .flat_map(|line| line.split_whitespace().nth(1))
+                        .any(|name| name == encoder)
+            })
             .unwrap_or(false)
     }
 
@@ -318,23 +325,52 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("lumina-codec-matrix-{}", std::process::id()));
         std::fs::create_dir_all(&dir).expect("matrix temp dir");
 
-        // (label, encoder, extra args, container, expected codec substring)
-        let cases: &[(&str, &str, &[&str], &str, &str)] = &[
-            ("h264", "libx264", &["-preset", "veryfast"], "mp4", "h264"),
-            ("hevc", "libx265", &["-preset", "ultrafast"], "mp4", "hevc"),
-            (
-                "av1",
-                "libaom-av1",
-                &["-cpu-used", "8", "-crf", "30"],
-                "mkv",
-                "av1",
-            ),
+        // The matrix covers codecs, not encoders: first available candidate wins.
+        #[derive(Clone, Copy)]
+        struct MatrixCase {
+            label: &'static str,
+            candidates: &'static [EncoderCandidate],
+            ext: &'static str,
+            expected: &'static str,
+        }
+        type EncoderCandidate = (&'static str, &'static [&'static str]);
+        const CASES: &[MatrixCase] = &[
+            MatrixCase {
+                label: "h264",
+                candidates: &[("libx264", &["-preset", "veryfast"])],
+                ext: "mp4",
+                expected: "h264",
+            },
+            MatrixCase {
+                label: "hevc",
+                candidates: &[("libx265", &["-preset", "ultrafast"])],
+                ext: "mp4",
+                expected: "hevc",
+            },
+            MatrixCase {
+                label: "av1",
+                candidates: &[
+                    ("libaom-av1", &["-cpu-used", "8", "-crf", "30"]),
+                    ("libsvtav1", &["-preset", "8"]),
+                ],
+                ext: "mkv",
+                expected: "av1",
+            },
         ];
-        for (label, encoder, extra, ext, expected) in cases {
-            if !encoder_available(&ffmpeg, encoder) {
-                eprintln!("SKIP codec matrix {label}: encoder {encoder} not in this ffmpeg build");
+        for case in CASES.iter().copied() {
+            let MatrixCase {
+                label,
+                candidates,
+                ext,
+                expected,
+            } = case;
+            let Some((encoder, extra)) = candidates
+                .iter()
+                .find(|(encoder, _)| encoder_available(&ffmpeg, encoder))
+            else {
+                eprintln!("SKIP codec matrix {label}: no encoder in this ffmpeg build");
                 continue;
-            }
+            };
             let out = dir.join(format!("matrix-{label}.{ext}"));
             let output = crate::process_util::command(&ffmpeg)
                 .args([
