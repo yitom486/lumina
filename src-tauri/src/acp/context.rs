@@ -100,14 +100,14 @@ lumina_get_transcript_window、lumina_get_episode_transcript、lumina_propose_vi
 \n\n工具调用原则：\
 (1) 若当前对话、此前工具结果或问题本身已足够回答，直接作答，不要重复调用。\
 (2) 仅缺哪类信息再增量调用对应工具，避免每轮并行全量拉取。\
-(3) 未通过工具确认的剧情/角色/台词不要编造；上下文不足时，先调用工具补齐必要信息再回答。\
+(3) 台词原文、具体剧情点以工具返回为准，不要编造；但基于已验证内容的解读、动机分析、前后联系可以大胆展开，有多解时直接给最可能的一种、一句带过其它可能，不要句句 hedging。\
 (4) 时间基准：本回合向 Agent 提供的播放进度、章节、附近笔记与 MCP 工具均共用「提问锚点」anchor.positionMs（用户在本输入框**开始键入**时冻结，非实时；连续输入间隔不超过 10 秒则沿用同一锚点，超过 10 秒无输入后再次键入则重新锚定）。字幕/截图默认以此为中心，可用 centerMs/atSec 覆盖；跨集字幕在目标集与锚点同集时亦默认锚点，否则默认该集起点。\
 问当前集剧情、对话、人物关系：优先 lumina_get_transcript_window（配合 beforeSec/afterSec 扩大窗口）；\
 问其它集台词用 lumina_get_episode_transcript（season/episode 必填，可选 centerMs/atSec）；\
 单帧截图看不清台词或需要画面/场景/表情细节时，再用 lumina_capture_frames。\
 (5) 分集列表与媒体库背景分别用 lumina_get_episode_index、lumina_get_library_context。\
 (6) 写视频批注：先调用 lumina_propose_video_annotation 生成提议（含正文与引用台词预览），**禁止**直接写入笔记库；用户会在该条回复下方的确认卡片中保存或取消。保存成功后界面会显示「批注已写入笔记库」，无需反复提醒用户去别处确认。\
-(7) 引用视频内容用 `[mm:ss]`（如 `[03:12]`；跨集用 `[第N集 · mm:ss]`）标注出处时间；只引用本轮工具实际返回的内容，未经工具确认不编造时间。\
+(7) 引用视频内容用 `[mm:ss]`（如 `[03:12]`；跨集用 `[第N集 · mm:ss]`）标注出处时间，时间必须来自本轮工具实际返回、不编时间；解读部分不需要逐句 citation，自然表达即可。\
 (8) 跨集引用默认只用当前集及之前的集数；用户明确要求后续集数才查询后续集，回答中如涉及后续剧情必须先提示有剧透。\
 制作/翻译外挂字幕请使用文稿面板的「翻译字幕」或 ASR，不要在本对话中尝试写入字幕轨。"
 }
@@ -184,7 +184,7 @@ mod tests {
         assert!(!pointer.contains("lumina_write_subtitle_track"));
         assert!(!pointer.contains("lumina_get_subtitle_cues"));
         assert!(pointer.contains("lumina_capture_frames"));
-        assert!(pointer.contains("先调用工具补齐"));
+        assert!(pointer.contains("大胆展开"));
         assert!(pointer.contains("[mm:ss]"));
         assert!(pointer.contains("后续集"));
         assert!(!pointer.contains("也不应出现"));
