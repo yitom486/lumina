@@ -45,7 +45,8 @@ pub async fn subtitle_list_choices(
                 .ok_or_else(|| SubtitleError::internal(Some("app state unavailable")))?;
             state.ytdl().list_subtitle_choices(&path)
         } else {
-            SubtitleService::list_choices(path)
+            let resource_dir: Option<std::path::PathBuf> = app.path().resource_dir().ok();
+            SubtitleService::list_choices_with(path, resource_dir.as_ref())
         }
     })
     .await

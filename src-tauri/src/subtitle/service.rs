@@ -2,7 +2,7 @@
 
 use std::path::{Path, PathBuf};
 
-use crate::media::{MediaInspector, StreamKind};
+use crate::media::StreamKind;
 use crate::subtitle::error::SubtitleError;
 use crate::subtitle::extract::{self, is_bitmap_codec};
 use crate::subtitle::model::{Cue, SubtitleChoice, SubtitleSource, Transcript};
@@ -15,6 +15,15 @@ pub struct SubtitleService;
 impl SubtitleService {
     /// Embedded subtitle streams + sidecar files next to the video (same stem / stem.*).
     pub fn list_choices(path: impl AsRef<Path>) -> Result<Vec<SubtitleChoice>, SubtitleError> {
+        Self::list_choices_with(path, None)
+    }
+
+    /// Same, with an explicit Tauri resource dir so packaged builds resolve
+    /// the same ffprobe binary as `media_inspect` (one tool, one answer).
+    pub fn list_choices_with(
+        path: impl AsRef<Path>,
+        resource_dir: Option<&PathBuf>,
+    ) -> Result<Vec<SubtitleChoice>, SubtitleError> {
         let path = path.as_ref();
         if !path.is_file() {
             return Err(SubtitleError::file_not_found(&path.to_string_lossy()));
@@ -22,7 +31,7 @@ impl SubtitleService {
 
         let mut choices = Vec::new();
 
-        match MediaInspector::inspect(path) {
+        match crate::media::MediaInspector::inspect_with(path, resource_dir) {
             Ok(info) => {
                 for stream in info
                     .streams
