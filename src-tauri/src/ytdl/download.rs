@@ -234,9 +234,11 @@ mod tests {
 
     #[test]
     fn parses_official_checksum_line() {
-        let body = "abc  other\n0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef  yt-dlp.exe\n";
+        let body = format!(
+            "abc  other\n0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef  {CLI_NAME}\n"
+        );
         assert_eq!(
-            parse_expected_sha256(body).as_deref(),
+            parse_expected_sha256(&body).as_deref(),
             Some("0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
         );
     }
