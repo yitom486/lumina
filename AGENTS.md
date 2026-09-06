@@ -89,4 +89,5 @@ cd src-tauri && cargo test --lib
 - 业务代码禁止 `unwrap()` / `expect()`
 - 给前端的错误必须是 `{ code, message, details? }`；底层错误只进 `details` / 日志
 - 日志用 `tracing`；不要刷 position
+- TanStack Query key 跨文件复用时走各 feature 的 `queries.ts` 工厂，不手写字面量
 - 不与其他产品强行统一 lockfile；对齐领域模型与错误形状即可

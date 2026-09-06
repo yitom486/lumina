@@ -4,6 +4,7 @@ import { useMediaInfoQuery } from "@/features/media";
 import { usePlayerStore } from "@/features/player";
 import { useTrackStore } from "@/features/player/trackStore";
 import { loadSubtitleChoice } from "@/features/transcript/api";
+import { transcriptKey } from "@/features/transcript/queries";
 import { formatTime } from "@/lib/format";
 
 import { buildSoftSegments } from "../softSegments";
@@ -17,7 +18,7 @@ export function ChaptersPanel() {
   const { data, isLoading, error } = useMediaInfoQuery();
   // Shared transcript cache with the transcript tab (same query key, no refetch).
   const transcriptQuery = useQuery({
-    queryKey: ["transcript", mediaPath, subtitleChoiceId],
+    queryKey: transcriptKey(mediaPath, subtitleChoiceId),
     queryFn: () =>
       loadSubtitleChoice(mediaPath as string, subtitleChoiceId as string),
     enabled: Boolean(mediaPath && subtitleChoiceId),

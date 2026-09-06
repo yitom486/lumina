@@ -9,6 +9,7 @@ import {
 } from "react";
 
 import { inspectMedia } from "@/features/media/api";
+import { mediaInfoKey } from "@/features/media/queries";
 import { resolveEpisodeFile } from "@/features/library/api";
 import { usePlayerStore } from "@/features/player";
 import { useProgressStore } from "@/features/player/progressStore";
@@ -79,7 +80,7 @@ function useResolvedCitation(ref: EvidenceRef) {
         fetchTargetDurationMs: (path) =>
           queryClient
             .fetchQuery({
-              queryKey: ["mediaInfo", path],
+              queryKey: mediaInfoKey(path),
               queryFn: () => inspectMedia(path),
               staleTime: Infinity,
             })

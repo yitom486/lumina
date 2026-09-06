@@ -6,6 +6,7 @@ import {
   listSubtitleChoices,
   loadSubtitleChoice,
 } from "@/features/transcript/api";
+import { subtitleChoicesKey } from "@/features/transcript/queries";
 import type { SubtitleChoice } from "@/features/transcript/types";
 
 import { usePlayerStore } from "../store";
@@ -88,7 +89,7 @@ export function useTrackControls() {
     status !== "Error";
 
   const choicesQuery = useQuery({
-    queryKey: ["subtitleChoices", path],
+    queryKey: subtitleChoicesKey(path),
     queryFn: () => listSubtitleChoices(path as string),
     enabled: mediaReady,
     retry: false,

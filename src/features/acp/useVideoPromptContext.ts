@@ -3,6 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 
 import { useMediaInfoQuery } from "@/features/media";
 import { listNotes } from "@/features/notes/api";
+import { notesKey } from "@/features/notes/queries";
 import { usePlayerStore } from "@/features/player";
 import { useTrackStore } from "@/features/player/trackStore";
 import { getCachedYtdlResolve } from "@/features/ytdl";
@@ -33,7 +34,7 @@ export function useVideoPromptContext(): VideoPromptContext | undefined {
   });
 
   const notesQuery = useQuery({
-    queryKey: ["notes", path],
+    queryKey: notesKey(path),
     queryFn: () => listNotes(path as string),
     enabled: mediaReady,
     staleTime: 15_000,

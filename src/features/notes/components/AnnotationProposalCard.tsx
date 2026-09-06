@@ -8,6 +8,7 @@ import { cn } from "@/lib/utils";
 
 import { createNote, dismissAnnotationProposal } from "../api";
 import type { VideoAnnotationProposal } from "../proposalTypes";
+import { notesKey } from "../queries";
 
 type Props = {
   proposal: VideoAnnotationProposal;
@@ -48,7 +49,7 @@ export function AnnotationProposalCard({
     },
     onSuccess: async () => {
       await queryClient.invalidateQueries({
-        queryKey: ["notes", proposal.mediaPath],
+        queryKey: notesKey(proposal.mediaPath),
       });
       onSaved();
     },

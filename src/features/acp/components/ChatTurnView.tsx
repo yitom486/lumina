@@ -6,6 +6,7 @@ import { errorMessage, formatTime } from "@/lib/format";
 
 import { AnnotationProposalCard } from "@/features/notes/components/AnnotationProposalCard";
 import { createNote } from "@/features/notes/api";
+import { notesKey } from "@/features/notes/queries";
 import { usePlayerStore } from "@/features/player";
 
 import { waitingLabel, hasActiveToolActivity } from "../activityStatus";
@@ -112,7 +113,7 @@ function ConfirmSaveNote({
                 includeQuotes: false,
               });
               await queryClient.invalidateQueries({
-                queryKey: ["notes", mediaPath],
+                queryKey: notesKey(mediaPath),
               });
               onSaved();
             } catch (cause) {

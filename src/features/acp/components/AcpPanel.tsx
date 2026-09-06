@@ -55,6 +55,8 @@ import {
 import { formatConversationHistoryContext } from "../conversationContext";
 import { useChatUiStore } from "../chatUiStore";
 import { buildAnchoredVideoPromptContext } from "../context";
+import { mediaInfoKey } from "@/features/media/queries";
+import { notesKey } from "@/features/notes/queries";
 import { workspaceCwdFromMedia } from "../cwd";
 import { profilesSignature } from "../profilesSignature";
 import {
@@ -595,11 +597,11 @@ export function AcpPanel() {
         const player = usePlayerStore.getState();
         const mediaPath = player.currentFile;
         const chapters = mediaPath
-          ? queryClient.getQueryData<MediaInfo>(["mediaInfo", mediaPath])
+          ? queryClient.getQueryData<MediaInfo>(mediaInfoKey(mediaPath))
               ?.chapters
           : undefined;
         const notes = mediaPath
-          ? queryClient.getQueryData<Note[]>(["notes", mediaPath])
+          ? queryClient.getQueryData<Note[]>(notesKey(mediaPath))
           : undefined;
         const frozenContext = buildAnchoredVideoPromptContext({
           base: videoContext,

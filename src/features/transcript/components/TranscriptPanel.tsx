@@ -32,6 +32,7 @@ import {
   loadSubtitleChoice,
   translateSubtitleTrack,
 } from "../api";
+import { subtitleChoicesKey, transcriptKey } from "../queries";
 import { useSubtitleWorkshopModels } from "../useSubtitleWorkshopModels";
 import type { Cue, SubtitleChoice } from "../types";
 import { followMode, useFollowStore } from "../followStore";
@@ -112,7 +113,7 @@ export function TranscriptPanel() {
   );
 
   const choicesQuery = useQuery({
-    queryKey: ["subtitleChoices", path],
+    queryKey: subtitleChoicesKey(path),
     queryFn: () => listSubtitleChoices(path as string),
     enabled: mediaReady,
     retry: false,
@@ -187,7 +188,7 @@ export function TranscriptPanel() {
   );
 
   const transcriptQuery = useQuery({
-    queryKey: ["transcript", path, choiceId],
+    queryKey: transcriptKey(path, choiceId),
     queryFn: () => loadSubtitleChoice(path as string, choiceId as string),
     enabled: mediaReady && canLoadTranscript,
     retry: false,
@@ -231,10 +232,10 @@ export function TranscriptPanel() {
     suffixHint?: string,
   ) {
     await queryClient.invalidateQueries({
-      queryKey: ["subtitleChoices", mediaPath],
+      queryKey: subtitleChoicesKey(mediaPath),
     });
     const choices = await listSubtitleChoices(mediaPath);
-    queryClient.setQueryData(["subtitleChoices", mediaPath], choices);
+    queryClient.setQueryData(subtitleChoicesKey(mediaPath), choices);
     const exported =
       choices.find((choice) => choice.id === result.choiceId) ??
       (suffixHint
@@ -252,7 +253,7 @@ export function TranscriptPanel() {
     rememberSubtitleForMedia(mediaPath, exported);
     await applySubtitleChoice(exported, setSubtitle);
     await queryClient.invalidateQueries({
-      queryKey: ["transcript", mediaPath, exported.id],
+      queryKey: transcriptKey(mediaPath, exported.id),
     });
     setAsrTranscript(null);
     return exported;

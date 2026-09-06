@@ -7,11 +7,13 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { usePlayerStore } from "@/features/player";
 import { useTrackStore } from "@/features/player/trackStore";
 import { loadSubtitleChoice } from "@/features/transcript/api";
+import { transcriptKey } from "@/features/transcript/queries";
 import { errorMessage, formatTime } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
 import { createNote } from "../api";
 import { useNoteComposeStore } from "../noteComposeStore";
+import { notesKey } from "../queries";
 import {
   activeCueListIndex,
   indicesAroundPlayback,
@@ -57,7 +59,7 @@ export function QuickNoteDialog({
   const [error, setError] = useState<string | null>(null);
 
   const transcriptQuery = useQuery({
-    queryKey: ["transcript", mediaPath, subtitleChoiceId],
+    queryKey: transcriptKey(mediaPath, subtitleChoiceId),
     queryFn: () => loadSubtitleChoice(mediaPath!, subtitleChoiceId!),
     enabled: Boolean(open && mediaPath && subtitleChoiceId),
     staleTime: Infinity,
@@ -129,7 +131,7 @@ export function QuickNoteDialog({
     },
     onSuccess: async () => {
       if (mediaPath) {
-        await queryClient.invalidateQueries({ queryKey: ["notes", mediaPath] });
+        await queryClient.invalidateQueries({ queryKey: notesKey(mediaPath) });
       }
       onOpenChange(false);
       onSaved?.();

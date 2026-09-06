@@ -3,6 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { usePlayerStore } from "@/features/player";
 
 import { inspectMedia } from "../api";
+import { mediaInfoKey } from "../queries";
 
 function isRemotePath(path: string): boolean {
   const lower = path.trim().toLowerCase();
@@ -25,7 +26,7 @@ export function useMediaInfoQuery() {
     status !== "Error";
 
   return useQuery({
-    queryKey: ["mediaInfo", path],
+    queryKey: mediaInfoKey(path),
     queryFn: () => inspectMedia(path as string),
     enabled,
     retry: false,

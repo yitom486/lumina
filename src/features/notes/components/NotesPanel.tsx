@@ -6,6 +6,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { usePlayerStore } from "@/features/player";
 import { useTrackStore } from "@/features/player/trackStore";
 import { loadSubtitleChoice } from "@/features/transcript/api";
+import { transcriptKey } from "@/features/transcript/queries";
 import type { Cue } from "@/features/transcript/types";
 import { errorMessage, formatTime } from "@/lib/format";
 import { cn } from "@/lib/utils";
@@ -18,6 +19,7 @@ import {
   listNotes,
   previewNoteQuotes,
 } from "../api";
+import { noteFrameKey, notesKey } from "../queries";
 import { useNoteComposeStore } from "../noteComposeStore";
 import {
   activeCueListIndex,
@@ -35,7 +37,7 @@ function formatCueLabel(cue: Cue): string {
 function NoteFrameThumb({ noteId, atMs }: { noteId: string; atMs: number }) {
   const seek = usePlayerStore((s) => s.seek);
   const frameQuery = useQuery({
-    queryKey: ["note-frame", noteId],
+    queryKey: noteFrameKey(noteId),
     queryFn: () => getNoteFrame(noteId),
     staleTime: Infinity,
     retry: false,
@@ -89,7 +91,7 @@ export function NotesPanel() {
   );
 
   const transcriptQuery = useQuery({
-    queryKey: ["transcript", mediaPath, subtitleChoiceId],
+    queryKey: transcriptKey(mediaPath, subtitleChoiceId),
     queryFn: () => loadSubtitleChoice(mediaPath!, subtitleChoiceId!),
     enabled: Boolean(mediaPath && subtitleChoiceId),
     staleTime: Infinity,
@@ -98,7 +100,7 @@ export function NotesPanel() {
   const cues = transcriptQuery.data?.cues ?? [];
 
   const notesQuery = useQuery({
-    queryKey: ["notes", mediaPath],
+    queryKey: notesKey(mediaPath),
     queryFn: () => listNotes(mediaPath!),
     enabled: Boolean(mediaPath),
   });
@@ -169,7 +171,7 @@ export function NotesPanel() {
     onSuccess: async () => {
       resetComposeKeepQuotes();
       setError(null);
-      await queryClient.invalidateQueries({ queryKey: ["notes", mediaPath] });
+      await queryClient.invalidateQueries({ queryKey: notesKey(mediaPath) });
     },
     onError: (err) => setError(errorMessage(err)),
   });
@@ -177,7 +179,7 @@ export function NotesPanel() {
   const deleteMutation = useMutation({
     mutationFn: deleteNote,
     onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: ["notes", mediaPath] });
+      await queryClient.invalidateQueries({ queryKey: notesKey(mediaPath) });
     },
     onError: (err) => setError(errorMessage(err)),
   });
