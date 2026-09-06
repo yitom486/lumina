@@ -75,23 +75,23 @@ function toMs(hour: string | undefined, min: string, sec: string): number {
 }
 
 export function parseEvidenceSegments(text: string): ParsedSegment[] {
-  const segments: ParsedSegment[] = [];
+  const raw: ParsedSegment[] = [];
   let last = 0;
   CITATION_RE.lastIndex = 0;
   for (;;) {
     const match = CITATION_RE.exec(text);
     if (!match) break;
     if (match.index > last) {
-      segments.push({ kind: "text", text: text.slice(last, match.index) });
+      raw.push({ kind: "text", text: text.slice(last, match.index) });
     }
     const [, , seasonRaw, ep, h1, m1, s1, h2, m2, s2] = match;
     const full = match[0];
     if (m1 == null || s1 == null) {
-      segments.push({ kind: "text", text: full });
+      raw.push({ kind: "text", text: full });
     } else {
       const startMs = toMs(h1, m1, s1);
       const endMs = m2 != null && s2 != null ? toMs(h2, m2, s2) : null;
-      segments.push({
+      raw.push({
         kind: "citation",
         ref: {
           target:
@@ -113,9 +113,51 @@ export function parseEvidenceSegments(text: string): ParsedSegment[] {
     last = match.index + full.length;
   }
   if (last < text.length) {
-    segments.push({ kind: "text", text: text.slice(last) });
+    raw.push({ kind: "text", text: text.slice(last) });
   }
-  return segments;
+  return mergeBracketRanges(raw);
+}
+
+function sameTarget(a: EvidenceTarget, b: EvidenceTarget): boolean {
+  if (a.kind !== b.kind) return false;
+  if (a.kind === "current" || b.kind === "current") return true;
+  return a.season === b.season && a.episode === b.episode;
+}
+
+/**
+ * Models also emit ranges as two brackets (`[11:27] – [12:04]`).
+ * Merge citation + dash-only text + citation into one range citation.
+ */
+function mergeBracketRanges(segments: ParsedSegment[]): ParsedSegment[] {
+  const out: ParsedSegment[] = [];
+  let index = 0;
+  while (index < segments.length) {
+    const first = segments[index];
+    const middle = segments[index + 1];
+    const second = segments[index + 2];
+    if (
+      first?.kind === "citation" &&
+      middle?.kind === "text" &&
+      /^\s*[-–—]\s*$/.test(middle.text) &&
+      second?.kind === "citation" &&
+      sameTarget(first.ref.target, second.ref.target)
+    ) {
+      const endMs = second.ref.endMs ?? second.ref.startMs;
+      out.push({
+        kind: "citation",
+        ref: {
+          ...first.ref,
+          endMs,
+          label: first.ref.label + middle.text + second.ref.label,
+        },
+      });
+      index += 3;
+    } else {
+      out.push(first as ParsedSegment);
+      index += 1;
+    }
+  }
+  return out;
 }
 
 function inRange(ref: EvidenceRef, durationMs: number): boolean {

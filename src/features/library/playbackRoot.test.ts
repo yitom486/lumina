@@ -17,6 +17,17 @@ describe("libraryRootFromPlaybackPath", () => {
   it("returns null when file has no parent", () => {
     expect(libraryRootFromPlaybackPath("movie.mkv")).toBeNull();
   });
+
+  it("returns null for remote URLs (never sync garbage roots)", () => {
+    expect(
+      libraryRootFromPlaybackPath("https://www.youtube.com/watch?v=x"),
+    ).toBeNull();
+    expect(
+      shouldSyncLibraryRoots(true, "https://www.youtube.com/watch?v=x", [
+        "D:\\Shows",
+      ]),
+    ).toBeNull();
+  });
 });
 
 describe("shouldSyncLibraryRoots", () => {

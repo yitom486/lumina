@@ -63,6 +63,22 @@ describe("parseEvidenceSegments", () => {
     ]);
     expect(parseEvidenceSegments("")).toEqual([]);
   });
+
+  it("merges double-bracket ranges from model output", () => {
+    const segs = parseEvidenceSegments("声音（约 [11:27] - [12:04]）。");
+    expect(segs).toHaveLength(3);
+    const merged = segs[1];
+    expect(merged.kind === "citation" && merged.ref.startMs).toBe(687_000);
+    expect(merged.kind === "citation" && merged.ref.endMs).toBe(724_000);
+    expect(merged.kind === "citation" && merged.ref.label).toBe(
+      "[11:27] - [12:04]",
+    );
+  });
+
+  it("does not merge across different targets", () => {
+    const segs = parseEvidenceSegments("[03:12] - [第2集 · 04:00]");
+    expect(segs.filter((s) => s.kind === "citation")).toHaveLength(2);
+  });
 });
 
 describe("resolveCitation", () => {

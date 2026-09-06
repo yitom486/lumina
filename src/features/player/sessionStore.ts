@@ -26,7 +26,15 @@ const EMPTY: SessionSnapshot = {
   updatedAt: 0,
 };
 
+export function isRemotePath(path: string): boolean {
+  const lower = path.trim().toLowerCase();
+  return lower.startsWith("https://") || lower.startsWith("http://");
+}
+
 export function parentDirectory(path: string): string | null {
+  // Remote URLs have no local parent: never let `https:\\host` leak into
+  // file dialogs or library roots (it used to pollute both after online play).
+  if (isRemotePath(path)) return null;
   const normalized = path.replace(/\//g, "\\").trim();
   const idx = normalized.lastIndexOf("\\");
   if (idx <= 0) return null;
@@ -41,12 +49,14 @@ export const useSessionStore = create<SessionState>()(
       saveSession: ({ path, positionMs, directory }) => {
         const trimmed = path.trim();
         if (!trimmed) return;
-        set({
+        set((state) => ({
           lastPath: trimmed,
-          lastDirectory: directory ?? parentDirectory(trimmed),
+          lastDirectory: isRemotePath(trimmed)
+            ? state.lastDirectory
+            : (directory ?? parentDirectory(trimmed)),
           lastPositionMs: Math.max(0, Math.floor(positionMs)),
           updatedAt: Date.now(),
-        });
+        }));
       },
 
       clearSession: () => set({ ...EMPTY }),
