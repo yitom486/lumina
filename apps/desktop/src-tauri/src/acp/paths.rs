@@ -114,7 +114,7 @@ pub struct AcpPaths {
 pub fn resolve_acp_paths() -> Result<AcpPaths, AcpError> {
     let cli = find_acp_adapter().ok_or_else(|| {
         AcpError::not_configured(Some(
-            "missing codex-acp on PATH or under src-tauri/native/acp/",
+            "missing codex-acp on PATH or under apps/desktop/src-tauri/native/acp/",
         ))
     })?;
     Ok(AcpPaths {

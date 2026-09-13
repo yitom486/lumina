@@ -1,5 +1,5 @@
 [package]
-name = "lumina"
+name = "lumina-app"
 version = "0.3.0"
 description = "AI Video Reader desktop app with native libmpv playback"
 authors = ["you"]

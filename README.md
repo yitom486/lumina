@@ -86,8 +86,8 @@ bun --version  # 应为 1.3.14
 
 还需要：Rust stable + MSVC C++ Build Tools、WebView2 Runtime（Windows 11
 通常自带）、项目本地 libmpv 开发包（见
-[src-tauri/native/mpv/README.md](src-tauri/native/mpv/README.md)；
-`ffmpeg` / `whisper` / ACP Agent 都是可选能力，见各自 `src-tauri/native/`
+[apps/desktop/src-tauri/native/mpv/README.md](apps/desktop/src-tauri/native/mpv/README.md)；
+`ffmpeg` / `whisper` / ACP Agent 都是可选能力，见各自 `apps/desktop/src-tauri/native/`
 目录下的 README）。
 
 ```powershell
@@ -113,7 +113,7 @@ bun run check:rust # Rust 门：fmt + check + test + clippy(-D warnings)
 bun run tauri build --debug  # Windows debug 打包（MSI + NSIS）
 ```
 
-Rust 另有 `cd src-tauri && cargo test --lib`。发版走
+Rust 另有 `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml --lib`。发版走
 `.github/workflows/release.yml`：推送 `v*` tag 自动跑质量门、三平台构建、
 签名并上传到 lumina-app（含合并版 `latest.json`）；也支持 Actions
 手动 `workflow_dispatch` 指定 tag 重跑。发版前请读

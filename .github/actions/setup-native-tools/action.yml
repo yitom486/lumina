@@ -1,6 +1,6 @@
 name: Setup native tools
 description: >-
-  Install libmpv and ffmpeg into src-tauri/native (shared by CI validate,
+  Install libmpv and ffmpeg into apps/desktop/src-tauri/native (shared by CI validate,
   CI bundle and release). Scripts are the canonical copies; workflows must
   `uses:` this action instead of pasting them. VERSION files stay the single
   pinning point.
@@ -17,7 +17,7 @@ runs:
       if: inputs.platform == 'windows'
       shell: pwsh
       run: |
-        $mpvDir = 'src-tauri/native/mpv'
+        $mpvDir = 'apps/desktop/src-tauri/native/mpv'
         $metadata = @{}
         Get-Content "$mpvDir/VERSION" | ForEach-Object {
           if ($_ -match '^([^=]+)=(.*)$') { $metadata[$matches[1]] = $matches[2] }
@@ -54,7 +54,7 @@ runs:
       if: inputs.platform == 'windows'
       shell: pwsh
       run: |
-        $ffmpegDir = 'src-tauri/native/ffmpeg'
+        $ffmpegDir = 'apps/desktop/src-tauri/native/ffmpeg'
         $metadata = @{}
         Get-Content "$ffmpegDir/VERSION" | ForEach-Object {
           if ($_ -match '^([^=]+)=(.*)$') { $metadata[$matches[1]] = $matches[2] }
@@ -81,7 +81,7 @@ runs:
       shell: bash
       run: |
         brew install mpv pkg-config
-        mkdir -p src-tauri/native/mpv/runtime
+        mkdir -p apps/desktop/src-tauri/native/mpv/runtime
         # brew 的 libmpv*.dylib 多为指向 Cellar 的 symlink；tauri_build 打包资源时
         # 跟随 symlink 可能 Permission denied。解引用成可读写实体文件。
         python3 - <<'PY'
@@ -92,7 +92,7 @@ runs:
 
         prefix = subprocess.check_output(["brew", "--prefix", "mpv"], text=True).strip()
         src = Path(prefix) / "lib"
-        dst = Path("src-tauri/native/mpv/runtime")
+        dst = Path("apps/desktop/src-tauri/native/mpv/runtime")
         dst.mkdir(parents=True, exist_ok=True)
         staged = False
         for path in sorted(src.glob("libmpv*.dylib")):
@@ -107,7 +107,7 @@ runs:
         if not staged:
             raise SystemExit(f"no libmpv*.dylib under {src}")
         PY
-        ls -la src-tauri/native/mpv/runtime/
+        ls -la apps/desktop/src-tauri/native/mpv/runtime/
 
     - name: Install build deps (Linux)
       if: inputs.platform == 'linux'
@@ -122,17 +122,17 @@ runs:
           libmpv-dev \
           libx11-dev \
           patchelf
-        mkdir -p src-tauri/native/mpv/runtime
+        mkdir -p apps/desktop/src-tauri/native/mpv/runtime
         shopt -s nullglob
         staged=0
         for lib in /usr/lib/x86_64-linux-gnu/libmpv.so*; do
           # -L 解引用，避免把指向系统路径的 symlink 交给 tauri resources
-          cp -L "$lib" src-tauri/native/mpv/runtime/
-          chmod a+rX "src-tauri/native/mpv/runtime/$(basename "$lib")"
+          cp -L "$lib" apps/desktop/src-tauri/native/mpv/runtime/
+          chmod a+rX "apps/desktop/src-tauri/native/mpv/runtime/$(basename "$lib")"
           staged=1
         done
         if [ "$staged" -ne 1 ]; then
           echo "no libmpv.so* found under /usr/lib/x86_64-linux-gnu" >&2
           exit 1
         fi
-        ls -la src-tauri/native/mpv/runtime/
+        ls -la apps/desktop/src-tauri/native/mpv/runtime/

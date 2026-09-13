@@ -13,7 +13,7 @@ React
 
 React 不持有 mpv handle、native window handle、FFI pointer。
 
-Domain API（`src-tauri/src/player/`）与 libmpv 实现（`src-tauri/src/player/mpv/`）分离。
+Domain API（`apps/desktop/src-tauri/src/player/`）与 libmpv 实现（`apps/desktop/src-tauri/src/player/mpv/`）分离。
 
 Player Runtime（`AppState` → `Mutex<PlayerService>` + `VideoSurface`）由 Tauri State 管理。
 
@@ -33,9 +33,9 @@ Player Runtime（`AppState` → `Mutex<PlayerService>` + `VideoSurface`）由 Ta
 
 ### libmpv (M4)
 
-- Crate：`libmpv2` 6.x；本地 `src-tauri/native/mpv/`
-- `build.rs` 链接 libmpv；Windows delay-load `libmpv-2.dll`；Unix 优先 `native/mpv/runtime/` 或 pkg-config
-- 安装包 resources：`native/mpv/runtime/` → `mpv/`（`tauri.conf.json`）
+- Crate：`libmpv2` 6.x；本地 `apps/desktop/src-tauri/native/mpv/`
+- `build.rs` 链接 libmpv；Windows delay-load `libmpv-2.dll`；Unix 优先 `apps/desktop/src-tauri/native/mpv/runtime/` 或 pkg-config
+- 安装包 resources：`apps/desktop/src-tauri/native/mpv/runtime/` → `mpv/`（`apps/desktop/src-tauri/tauri.conf.json`）
 
 ### Native surface (M5) — platform matrix (H-P1-4)
 
@@ -69,7 +69,7 @@ headless `vo=null` 真解码基线，唯一用途：日后 `CompositedGpu` 与 `
 同条件对比。只看同机同媒体，跨机器数字无意义。
 
 ```powershell
-cd src-tauri
+cd apps/desktop/src-tauri
 # 默认现生成 1080p60/10s（含音频）；自带文件则设 LUMINA_BASELINE_MEDIA
 cargo test --lib baseline_local_playback -- --ignored --nocapture
 $env:LUMINA_BASELINE_MEDIA = "D:\clips\movie4k60.mp4"
@@ -102,7 +102,7 @@ demux 368ms，首帧 884ms，稳态 5000/5000ms，三点 seek 6/53/1ms，丢帧 
 ### Frontend (M7)
 
 ```
-src/
+apps/desktop/src/
   App.tsx                 # 组装壳，无业务细节
   layouts/AppShell.tsx    # 标题栏 + 主列
   features/player/        # 播放器特性模块
@@ -125,7 +125,7 @@ Zustand 只镜像 Rust；actions 一律走 Tauri Command；时间轴走 Channel�
 ### Media inspection (Phase 2)
 
 ```
-media_inspect(path) → MediaInspector → ffprobe (native/ffmpeg/) → MediaInfo
+media_inspect(path) → MediaInspector → ffprobe (apps/desktop/src-tauri/native/ffmpeg/) → MediaInfo
 ```
 
 - 与 Player / libmpv 解耦；只读探测，不转码
@@ -147,7 +147,7 @@ subtitle_list_tracks / subtitle_load_transcript
 ```
 asr_transcribe(path)  // only when user clicks
   → ffmpeg wav 16k mono
-  → whisper-cli (native/whisper/, optional)
+  → whisper-cli (apps/desktop/src-tauri/native/whisper/, optional)
   → Transcript
 ```
 

@@ -52,8 +52,8 @@ jobs:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-            src-tauri/target
-          key: ci-${{ matrix.platform }}-cargo-${{ hashFiles('src-tauri/Cargo.lock') }}
+            target
+          key: ci-${{ matrix.platform }}-cargo-${{ hashFiles('Cargo.lock') }}
           restore-keys: ci-${{ matrix.platform }}-cargo-
 
       - name: Setup native tools
@@ -71,7 +71,7 @@ jobs:
           bun run build
 
       - name: Validate Rust
-        working-directory: src-tauri
+        working-directory: apps/desktop/src-tauri
         run: |
           cargo fmt --check
           cargo check --all-targets
@@ -100,8 +100,8 @@ jobs:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-            src-tauri/target
-          key: ci-windows-cargo-${{ hashFiles('src-tauri/Cargo.lock') }}
+            target
+          key: ci-windows-cargo-${{ hashFiles('Cargo.lock') }}
           restore-keys: ci-windows-cargo-
 
       - name: Setup native tools
@@ -120,8 +120,8 @@ jobs:
         with:
           name: Lumina-windows-x64-debug
           path: |
-            src-tauri/target/debug/bundle/msi/*.msi
-            src-tauri/target/debug/bundle/nsis/*.exe
+            target/debug/bundle/msi/*.msi
+            target/debug/bundle/nsis/*.exe
           if-no-files-found: error
           retention-days: 14
 
@@ -149,7 +149,7 @@ jobs:
       - name: Install yt-dlp (latest stable)
         shell: pwsh
         run: |
-          $dir = 'src-tauri/native/ytdl'
+          $dir = 'apps/desktop/src-tauri/native/ytdl'
           New-Item -ItemType Directory -Force -Path $dir | Out-Null
           if (-not (Test-Path "$dir/yt-dlp.exe")) {
             curl.exe -L --fail --retry 3 -o "$dir/yt-dlp.exe" https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe
@@ -160,7 +160,7 @@ jobs:
         run: bun install --frozen-lockfile
 
       - name: Run online E2E (no cookies)
-        working-directory: src-tauri
+        working-directory: apps/desktop/src-tauri
         run: cargo test --lib public_youtube_resolves_and_reaches_mpv_demux_without_cookies -- --ignored --nocapture
         env:
           LUMINA_ONLINE_E2E_URL: ${{ inputs.e2e_url }}

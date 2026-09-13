@@ -20,7 +20,7 @@
 ## 推荐布局（开发态）
 
 ```
-src-tauri/native/whisper/
+apps/desktop/src-tauri/native/whisper/
   whisper-cli.exe
   models/
     ggml-base.bin
