@@ -1,0 +1,24 @@
+{
+  "name": "@lumina/contracts",
+  "private": true,
+  "version": "0.3.0",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    },
+    "./errors": {
+      "types": "./src/errors.ts",
+      "default": "./src/errors.ts"
+    },
+    "./player": {
+      "types": "./src/player.ts",
+      "default": "./src/player.ts"
+    },
+    "./subtitle": {
+      "types": "./src/subtitle.ts",
+      "default": "./src/subtitle.ts"
+    }
+  }
+}

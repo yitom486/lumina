@@ -17,9 +17,13 @@
     "noFallthroughCasesInSwitch": true,
     "baseUrl": ".",
     "paths": {
-      "@/*": ["./src/*"]
+      "@/*": ["./src/*"],
+      "@lumina/contracts": ["../../packages/contracts/src/index.ts"],
+      "@lumina/contracts/*": ["../../packages/contracts/src/*"],
+      "@lumina/query-keys": ["../../packages/query-keys/src/index.ts"],
+      "@lumina/query-keys/*": ["../../packages/query-keys/src/*"]
     }
   },
-  "include": ["src"],
+  "include": ["src", "../../packages/contracts/src", "../../packages/query-keys/src"],
   "references": [{ "path": "./tsconfig.node.json" }]
 }

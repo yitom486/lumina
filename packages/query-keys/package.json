@@ -1,0 +1,24 @@
+{
+  "name": "@lumina/query-keys",
+  "private": true,
+  "version": "0.3.0",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    },
+    "./media": {
+      "types": "./src/media.ts",
+      "default": "./src/media.ts"
+    },
+    "./transcript": {
+      "types": "./src/transcript.ts",
+      "default": "./src/transcript.ts"
+    },
+    "./notes": {
+      "types": "./src/notes.ts",
+      "default": "./src/notes.ts"
+    }
+  }
+}
