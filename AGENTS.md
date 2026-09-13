@@ -2,9 +2,21 @@
 
 AI Video Reader 桌面应用。
 
-**当前焦点：Phase 5 ACP Client（可插拔 Agent；默认 Codex profile）**。
+**当前焦点：Monorepo 目标架构迁移与 Online Source 收敛。当前项目仍处于迁移状态，
+必须严格按照最初制定的目标架构与迁移计划推进，不得自行创建替代性的组织模式。**
 
 完整计划见 `project.md` / `ROADMAP.md`。执行计划与状态在 `.plan/`（本地，不入库）。每完成一个可检查点，必须更新对应文档的 `status` 与 `STATUS.md`。实现前先读本文件与 `.cursor/rules/`（尤其 `errors.mdc`、`phase-5.mdc`）。
+
+### 当前迁移约束
+
+- 架构唯一依据是 `.plan/L0-monorepo-target-architecture.md` 与
+  `.plan/L1-monorepo-migration.md`；L2 任务只能细化它们，不能替换它们。
+- M0–M9 是已完成的检查点，不代表整个目标架构迁移已经结束；当前总体状态仍为
+  `doing`，后续工作必须继续沿原定依赖方向、边界和迁移顺序推进。
+- 不得为了目录对称强行移动跨域编排、Tauri/native、libmpv、IPC 或真实桌面状态；
+  任何暂缓项必须在对应 `.plan/` 文档中记录原因和下一步，不得私自改成“已完成”。
+- 每个新迁移批次都必须先落盘可复制的执行提示词与验收标准，完成后更新状态，
+  通过功能/静态门禁后再提交；不做无计划的大范围重构。
 
 ## Tech Stack
 
