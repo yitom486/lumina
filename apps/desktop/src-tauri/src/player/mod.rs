@@ -1,12 +1,12 @@
-//! Player domain API. libmpv types stay in `mpv`.
+//! App compat: player implementation lives in `lumina-player`
+//! (player-crate migration).
+//!
+//! Existing `crate::player::…` paths keep working through this re-export.
 
-pub mod error;
-pub mod model;
+pub use lumina_player::{
+    error, model, service, source, MediaSource, MediaSourceKind, PlayerError, PlayerErrorCode,
+    PlayerEvent, PlayerService, PlayerSnapshot, PlayerState,
+};
+
+/// Tauri/native-bound mpv glue stays in app (L2 player-crate audit §5).
 pub mod mpv;
-pub mod service;
-pub mod source;
-
-pub use error::{PlayerError, PlayerErrorCode};
-pub use model::{PlayerEvent, PlayerSnapshot, PlayerState};
-pub use service::PlayerService;
-pub use source::{MediaSource, MediaSourceKind};

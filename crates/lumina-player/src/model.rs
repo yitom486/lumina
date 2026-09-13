@@ -2,7 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::player::error::PlayerError;
+use crate::error::PlayerError;
 use lumina_core::MediaSourceKind;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

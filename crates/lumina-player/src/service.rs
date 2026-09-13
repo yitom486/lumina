@@ -2,9 +2,9 @@
 
 use std::time::{Duration, Instant};
 
-use crate::player::error::PlayerError;
-use crate::player::model::{PlayerEvent, PlayerSnapshot, PlayerState};
-use crate::player::mpv::LibMpvPlayer;
+use crate::error::PlayerError;
+use crate::model::{PlayerEvent, PlayerSnapshot, PlayerState};
+use crate::mpv::LibMpvPlayer;
 use lumina_core::MediaSourceKind;
 
 const VOLUME_MIN: f64 = 0.0;
@@ -126,7 +126,7 @@ impl PlayerService {
             resume_ms,
             resume_paused,
             None,
-            crate::player::mpv::NetworkPlaybackOpts::default(),
+            crate::mpv::NetworkPlaybackOpts::default(),
         )
     }
 
@@ -140,7 +140,7 @@ impl PlayerService {
         resume_ms: Option<u64>,
         resume_paused: bool,
         duration_hint_ms: Option<u64>,
-        network: crate::player::mpv::NetworkPlaybackOpts,
+        network: crate::mpv::NetworkPlaybackOpts,
     ) -> Result<(PlayerSnapshot, Vec<PlayerEvent>), PlayerError> {
         if self.snapshot.status == PlayerState::Loading {
             return Err(PlayerError::invalid_state("open", self.snapshot.status));
@@ -483,7 +483,7 @@ impl PlayerService {
             {
                 self.remote_demux_deadline = None;
                 let error = PlayerError::new(
-                    crate::player::PlayerErrorCode::LoadError,
+                    crate::PlayerErrorCode::LoadError,
                     "无法拉取在线视频流，请更新登录态后重试",
                     Some("remote demux timeout (yt-dlp/mpv)".into()),
                 );
@@ -578,8 +578,8 @@ impl Default for PlayerService {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::player::error::PlayerErrorCode;
-    use crate::player::model::{PlayerEvent, PlayerState};
+    use crate::error::PlayerErrorCode;
+    use crate::model::{PlayerEvent, PlayerState};
 
     #[test]
     fn play_from_idle_is_invalid() {
@@ -645,17 +645,16 @@ mod tests {
         );
         assert_eq!(
             player.snapshot().source_kind,
-            Some(crate::player::source::MediaSourceKind::Remote)
+            Some(crate::source::MediaSourceKind::Remote)
         );
     }
 
     #[test]
     fn open_source_override_keeps_page_identity() {
         let mut player = PlayerService::new();
-        let source = crate::player::source::MediaSource::parse(
-            "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
-        )
-        .unwrap();
+        let source =
+            crate::source::MediaSource::parse("https://www.youtube.com/watch?v=dQw4w9WgXcQ")
+                .unwrap();
         let err = player
             .open_source(
                 source,
@@ -675,7 +674,7 @@ mod tests {
         assert_eq!(snap.media_id.as_deref(), Some("youtube:dQw4w9WgXcQ"));
         assert_eq!(
             snap.source_kind,
-            Some(crate::player::source::MediaSourceKind::Remote)
+            Some(crate::source::MediaSourceKind::Remote)
         );
         // Format id is cleared when open fails before backend.
         assert!(snap.playback_format_id.is_none());

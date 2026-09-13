@@ -5,7 +5,7 @@ use std::fmt;
 
 use serde::{Deserialize, Serialize};
 
-use crate::player::model::PlayerState;
+use crate::model::PlayerState;
 use lumina_core::{MediaSourceError, MediaSourceErrorKind};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

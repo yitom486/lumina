@@ -1,10 +1,10 @@
-//! libmpv implementation. Do not import from React-facing commands.
-pub mod events;
-pub mod native_library;
-pub mod player;
-pub mod window;
+//! App-side mpv glue: portable core is re-exported from `lumina-player`;
+//! Tauri-bound `native_library` / `window` and the manual `baseline` stay here
+//! (L2 player-crate audit §5).
+
+pub use lumina_player::mpv::{LibMpvPlayer, NetworkPlaybackOpts};
 
 #[cfg(test)]
 mod baseline;
-
-pub use player::{LibMpvPlayer, NetworkPlaybackOpts};
+pub mod native_library;
+pub mod window;

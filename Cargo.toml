@@ -6,6 +6,7 @@ members = [
     "crates/lumina-ai",
     "crates/lumina-library",
     "crates/lumina-notes",
+    "crates/lumina-player",
     "crates/lumina-ytdl",
     "crates/lumina-mcp",
     "crates/lumina-media",

@@ -18,7 +18,7 @@
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
-use super::player::LibMpvPlayer;
+use super::LibMpvPlayer;
 
 #[derive(Debug, serde::Serialize)]
 #[serde(rename_all = "camelCase")]

@@ -2275,6 +2275,7 @@ dependencies = [
  "lumina-mcp",
  "lumina-media",
  "lumina-notes",
+ "lumina-player",
  "lumina-subtitle",
  "lumina-ytdl",
  "objc",
@@ -2365,6 +2366,18 @@ dependencies = [
  "base64 0.22.1",
  "lumina-media",
  "lumina-subtitle",
+ "serde",
+ "serde_json",
+ "tracing",
+]
+
+[[package]]
+name = "lumina-player"
+version = "0.3.0"
+dependencies = [
+ "libmpv2",
+ "libmpv2-sys",
+ "lumina-core",
  "serde",
  "serde_json",
  "tracing",

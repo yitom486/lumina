@@ -5,7 +5,7 @@ use std::ffi::CString;
 use libmpv2::events::Event;
 use libmpv2::Mpv;
 
-use crate::player::error::{PlayerError, PlayerErrorCode};
+use crate::error::{PlayerError, PlayerErrorCode};
 
 pub struct LibMpvPlayer {
     mpv: Mpv,
