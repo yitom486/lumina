@@ -243,7 +243,7 @@ export function TranscriptPanel() {
 
     setSubtitleChoiceId(exported.id);
     rememberSubtitleForMedia(mediaPath, exported);
-    await applySubtitleChoice(exported, setSubtitle);
+    await applySubtitleChoice(exported, setSubtitle, mediaPath, loadSubtitleChoice);
     await queryClient.invalidateQueries({
       queryKey: transcriptKey(mediaPath, exported.id),
     });

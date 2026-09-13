@@ -7,7 +7,6 @@ import {
   loadSubtitleChoice,
 } from "@/features/transcript/api";
 import { subtitleChoicesKey } from "@/features/transcript/queries";
-import type { SubtitleChoice } from "@/features/transcript/types";
 
 import { usePlayerStore } from "../store";
 import {
@@ -17,52 +16,12 @@ import {
 } from "../trackPreferences";
 import { useTrackStore } from "../trackStore";
 
-export async function applySubtitleChoice(
-  choice: SubtitleChoice | undefined,
-  setSubtitle: (args: {
-    source: "Embedded" | "Sidecar" | "None";
-    streamIndex?: number | null;
-    externalPath?: string | null;
-  }) => Promise<void>,
-  mediaPath?: string,
-) {
-  if (!choice) {
-    await setSubtitle({ source: "None" });
-    return;
-  }
-  if (choice.source === "Embedded") {
-    await setSubtitle({
-      source: "Embedded",
-      streamIndex: choice.streamIndex,
-    });
-    return;
-  }
-  if (choice.id.startsWith("online:") && !choice.externalPath) {
-    if (!mediaPath) return;
-    const transcript = await loadSubtitleChoice(mediaPath, choice.id);
-    await setSubtitle({
-      source: "Sidecar",
-      externalPath: transcript.sourcePath,
-    });
-    return;
-  }
-  await setSubtitle({
-    source: "Sidecar",
-    externalPath: choice.externalPath,
-  });
-}
-
-export function audioTrackLabel(stream: {
-  index: number;
-  language?: string | null;
-  codecName?: string | null;
-  channels?: number | null;
-}): string {
-  const lang = stream.language ?? "und";
-  const codec = stream.codecName ?? "audio";
-  const ch = stream.channels ? `${stream.channels}ch` : null;
-  return [lang, codec, ch].filter(Boolean).join(" · ");
-}
+/** Compat facade: canonical implementations live in @lumina/player-ui. */
+import {
+  applySubtitleChoice,
+  audioTrackLabel,
+} from "@lumina/player-ui/trackActions";
+export { applySubtitleChoice, audioTrackLabel };
 
 export function useTrackControls() {
   const path = usePlayerStore((s) => s.currentFile);
@@ -151,7 +110,7 @@ export function useTrackControls() {
       }
       return;
     }
-    void applySubtitleChoice(choice, setSubtitle, path ?? undefined);
+    void applySubtitleChoice(choice, setSubtitle, path ?? undefined, loadSubtitleChoice);
   }, [
     choices,
     mediaReady,

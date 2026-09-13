@@ -6,4 +6,5 @@ export * from "./surfaceBoundsQueue";
 export * from "./progressStore";
 export * from "./resumePlayback";
 export * from "./sessionStore";
+export * from "./trackActions";
 export * from "./hooks/playerHotkeyPolicy";
