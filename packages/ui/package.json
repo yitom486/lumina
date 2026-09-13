@@ -3,6 +3,11 @@
   "private": true,
   "version": "0.3.0",
   "type": "module",
+  "imports": {
+    "#components/*": "./src/*.tsx",
+    "#lib/*": "./src/*.ts",
+    "#hooks/*": "./src/*.ts"
+  },
   "exports": {
     ".": {
       "types": "./src/index.ts",
@@ -11,6 +16,34 @@
     "./*": {
       "types": "./src/*.ts",
       "default": "./src/*.ts"
+    },
+    "./button": {
+      "types": "./src/button.tsx",
+      "default": "./src/button.tsx"
+    },
+    "./slider": {
+      "types": "./src/slider.tsx",
+      "default": "./src/slider.tsx"
+    },
+    "./separator": {
+      "types": "./src/separator.tsx",
+      "default": "./src/separator.tsx"
+    },
+    "./tooltip": {
+      "types": "./src/tooltip.tsx",
+      "default": "./src/tooltip.tsx"
+    },
+    "./alert-dialog": {
+      "types": "./src/alert-dialog.tsx",
+      "default": "./src/alert-dialog.tsx"
+    },
+    "./dropdown-menu": {
+      "types": "./src/dropdown-menu.tsx",
+      "default": "./src/dropdown-menu.tsx"
+    },
+    "./scroll-area": {
+      "types": "./src/scroll-area.tsx",
+      "default": "./src/scroll-area.tsx"
     }
   },
   "dependencies": {
