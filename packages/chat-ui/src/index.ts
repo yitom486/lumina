@@ -16,3 +16,4 @@ export * from "./chatHistoryStore";
 export * from "./acpSettingsStore";
 export * from "./acpProfilesStore";
 export * from "./acpSessionStore";
+export * from "./askAboutStore";
