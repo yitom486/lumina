@@ -14,7 +14,6 @@ import {
 import { useChatUiStore } from "@/features/acp/chatUiStore";
 import type { AsrRange } from "@/features/asr";
 import { useMediaInfoQuery } from "@/features/media";
-import type { MediaChapter } from "@/features/media";
 import type { Transcript } from "@/features/transcript";
 import { formatTime } from "@/lib/format";
 import { useNoteComposeStore } from "@/features/notes/noteComposeStore";
@@ -41,19 +40,7 @@ import { subtitleChoicesKey, transcriptKey } from "../queries";
 import { useSubtitleWorkshopModels } from "../useSubtitleWorkshopModels";
 import type { SubtitleChoice } from "../types";
 import { followMode, useFollowStore } from "../followStore";
-
-function findChapterAt(
-  chapters: MediaChapter[],
-  timeMs: number,
-): MediaChapter | null {
-  if (chapters.length === 0) return null;
-  const hit = chapters.find((chapter) => {
-    if (timeMs < chapter.startMs) return false;
-    if (chapter.endMs == null) return true;
-    return timeMs < chapter.endMs;
-  });
-  return hit ?? null;
-}
+import { findChapterAt } from "../../../../../../packages/transcript-ui/src/chapterSelectors";
 
 export function TranscriptPanel() {
   const queryClient = useQueryClient();
