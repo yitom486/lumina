@@ -73,7 +73,7 @@ pub async fn player_open(app: AppHandle, path: String) -> Result<PlayerSnapshot,
 fn open_media(state: &AppState, path: String) -> Result<PlayerSnapshot, PlayerError> {
     let source = match MediaSource::parse(&path) {
         Ok(source) => source,
-        Err(error) => return Err(emit_open_error(state, error)),
+        Err(error) => return Err(emit_open_error(state, error.into())),
     };
 
     match source.kind() {
@@ -144,6 +144,7 @@ fn remote_ytdl_network_opts(
             .map(|p| p.to_string_lossy().into_owned()),
         ytdl_cli: Some(cli.to_string_lossy().into_owned()),
         ytdl_format: Some(ytdl_format),
+        js_runtime: crate::ytdl::runtime::primary_js_runtime_name().map(str::to_string),
     })
 }
 

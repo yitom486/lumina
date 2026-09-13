@@ -5,11 +5,11 @@ use std::path::Path;
 use serde::Deserialize;
 
 use crate::media::model::MediaChapter;
-use crate::player::source::MediaSource;
 use crate::process_util::command;
 use crate::ytdl::error::YtdlError;
 use crate::ytdl::model::{YtdlFormat, YtdlResolveResult, YtdlSubtitleTrack};
 use crate::ytdl::paths::require_cli;
+use lumina_core::MediaSource;
 
 #[derive(Debug, Deserialize)]
 struct YtdlJson {
@@ -50,13 +50,13 @@ struct YtdlJsonFormat {
 
 /// Resolve metadata + formats for a remote page URL (does not open the player).
 pub fn resolve_url(page_url: &str) -> Result<YtdlResolveResult, YtdlError> {
-    let source = MediaSource::parse(page_url).map_err(|e| YtdlError::invalid(e.message))?;
-    if source.kind() != crate::player::source::MediaSourceKind::Remote {
+    let source = MediaSource::parse(page_url).map_err(|e| YtdlError::invalid(e.message()))?;
+    if source.kind() != lumina_core::MediaSourceKind::Remote {
         return Err(YtdlError::invalid("请提供 http(s) 在线视频链接"));
     }
     source
         .validate()
-        .map_err(|e| YtdlError::invalid(e.message))?;
+        .map_err(|e| YtdlError::invalid(e.message()))?;
 
     let cli = require_cli()?;
     let cookies = crate::ytdl::cookies::load();

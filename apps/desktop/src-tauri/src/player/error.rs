@@ -6,6 +6,7 @@ use std::fmt;
 use serde::{Deserialize, Serialize};
 
 use crate::player::model::PlayerState;
+use lumina_core::{MediaSourceError, MediaSourceErrorKind};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "PascalCase")]
@@ -98,6 +99,16 @@ impl PlayerError {
 
     pub fn backend_missing() -> Self {
         Self::internal(Some("libmpv backend is not attached"))
+    }
+}
+
+impl From<MediaSourceError> for PlayerError {
+    fn from(error: MediaSourceError) -> Self {
+        // Messages match the core stable strings by construction.
+        match error.kind {
+            MediaSourceErrorKind::Load => Self::load(error.details.as_deref()),
+            MediaSourceErrorKind::Unsupported => Self::unsupported(error.details.as_deref()),
+        }
     }
 }
 

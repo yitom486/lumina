@@ -1,6 +1,7 @@
 [workspace]
 members = [
     "apps/desktop/src-tauri",
+    "crates/lumina-core",
     "crates/lumina-media",
     "crates/lumina-subtitle",
     "crates/lumina-asr",

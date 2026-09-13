@@ -274,7 +274,7 @@ fn cache_matches(cached: &CachedResolve, page_url: &str) -> bool {
     {
         return true;
     }
-    crate::player::source::MediaSource::parse(page_url)
+    lumina_core::MediaSource::parse(page_url)
         .map(|s| s.media_id() == cached.resolved.media_id)
         .unwrap_or(false)
 }

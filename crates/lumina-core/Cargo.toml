@@ -1,0 +1,8 @@
+[package]
+name = "lumina-core"
+version = "0.3.0"
+description = "Stable, implementation-free value objects for Lumina"
+edition = "2021"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }

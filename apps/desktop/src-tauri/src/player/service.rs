@@ -5,7 +5,7 @@ use std::time::{Duration, Instant};
 use crate::player::error::PlayerError;
 use crate::player::model::{PlayerEvent, PlayerSnapshot, PlayerState};
 use crate::player::mpv::LibMpvPlayer;
-use crate::player::source::MediaSourceKind;
+use lumina_core::MediaSourceKind;
 
 const VOLUME_MIN: f64 = 0.0;
 const VOLUME_MAX: f64 = 100.0;
@@ -92,12 +92,13 @@ impl PlayerService {
         &mut self,
         path: String,
     ) -> Result<(PlayerSnapshot, Vec<PlayerEvent>), PlayerError> {
-        let source = match crate::player::source::MediaSource::parse(&path) {
+        let source = match lumina_core::MediaSource::parse(&path) {
             Ok(source) => source,
             Err(error) => {
                 self.snapshot.current_file = Some(path);
                 self.snapshot.media_id = None;
                 self.snapshot.source_kind = None;
+                let error = PlayerError::from(error);
                 self.fail(error.clone());
                 return Err(error);
             }
@@ -110,7 +111,7 @@ impl PlayerService {
     /// `audio_url` pairs a separate audio stream (DASH). Rate is always restored.
     pub fn open_source(
         &mut self,
-        source: crate::player::source::MediaSource,
+        source: lumina_core::MediaSource,
         playback_override: Option<String>,
         playback_format_id: Option<String>,
         audio_url: Option<String>,
@@ -132,7 +133,7 @@ impl PlayerService {
     #[allow(clippy::too_many_arguments)]
     pub fn open_source_with_network(
         &mut self,
-        source: crate::player::source::MediaSource,
+        source: lumina_core::MediaSource,
         playback_override: Option<String>,
         playback_format_id: Option<String>,
         audio_url: Option<String>,
@@ -159,6 +160,7 @@ impl PlayerService {
             self.snapshot.media_id = Some(media_id);
             self.snapshot.source_kind = Some(source_kind);
             self.snapshot.playback_format_id = None;
+            let error = PlayerError::from(error);
             self.fail(error.clone());
             return Err(error);
         }

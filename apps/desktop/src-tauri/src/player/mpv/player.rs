@@ -20,6 +20,8 @@ pub struct NetworkPlaybackOpts {
     pub ytdl_cli: Option<String>,
     /// e.g. `18` or `137+bestaudio/best`
     pub ytdl_format: Option<String>,
+    /// JS runtime name for the ytdl hook (`js-runtimes=`); injected by app.
+    pub js_runtime: Option<String>,
 }
 
 impl LibMpvPlayer {
@@ -146,7 +148,7 @@ impl LibMpvPlayer {
                 let normalized = cookies_path.replace('\\', "/");
                 raw_opts.push(format!("cookies={normalized}"));
             }
-            if let Some(js_runtime) = crate::ytdl::runtime::primary_js_runtime_name() {
+            if let Some(js_runtime) = network.js_runtime.as_deref() {
                 raw_opts.push(format!("js-runtimes={js_runtime}"));
             }
             if !raw_opts.is_empty() {
