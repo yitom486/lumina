@@ -349,3 +349,131 @@ describe("TranscriptPanel follow mode", () => {
     useAskAboutStore.getState().consume();
   });
 });
+
+describe("TranscriptPanel downloaded subtitles", () => {
+  const REMOTE_CUES = [
+    { index: 1, startMs: 0, endMs: 900, text: "downloaded one" },
+    { index: 2, startMs: 900, endMs: 1800, text: "downloaded two" },
+  ];
+  const DOWNLOADED = {
+    id: "cache:subdl:en",
+    source: "Sidecar",
+    label: "下载 · subdl · en",
+    supported: true,
+    streamIndex: null,
+  };
+  const CANDIDATES = [
+    {
+      provider: "subdl",
+      language: "EN",
+      releaseName: "demo.S01E01.1080p",
+      sizeBytes: 102862,
+      format: "srt",
+      season: 1,
+      episode: 1,
+      downloadUrl: "https://dl.subdl.com/subtitle/a/b",
+      cached: false,
+    },
+  ];
+
+  function mockDownloadFlow() {
+    vi.mocked(invoke).mockImplementation((cmd: string) => {
+      if (cmd === "subtitle_provider_status")
+        return Promise.resolve([{ id: "subdl", needsKey: true, hasKey: true }]);
+      if (cmd === "subtitle_search_online") return Promise.resolve(CANDIDATES);
+      if (cmd === "subtitle_download_candidate")
+        return Promise.resolve({
+          sourcePath: "C:\\v\\a.mp4",
+          choiceId: "cache:subdl:en",
+          streamIndex: null,
+          language: "en",
+          codecName: "srt",
+          cues: REMOTE_CUES,
+        });
+      if (cmd === "subtitle_list_choices") return Promise.resolve([DOWNLOADED]);
+      if (cmd === "subtitle_load_choice")
+        return Promise.resolve({ choiceId: "cache:subdl:en", cues: REMOTE_CUES });
+      if (cmd === "asr_status")
+        return Promise.resolve({
+          available: false,
+          installSupported: false,
+          models: [],
+          catalog: [],
+        });
+      if (cmd === "media_inspect")
+        return Promise.resolve({ path: "C:\\v\\a.mp4", streams: [], chapters: [] });
+      if (cmd === "library_agent_models_discover") return Promise.resolve(null);
+      return Promise.resolve(null);
+    });
+  }
+
+  function invokeCommands() {
+    return vi.mocked(invoke).mock.calls.map(([cmd]) => cmd as string);
+  }
+
+  it("hides the online section for remote videos", async () => {
+    mockDownloadFlow();
+    usePlayerStore.setState({
+      currentFile: "https://www.youtube.com/watch?v=abc",
+      status: "Paused",
+      currentTimeMs: 1000,
+    });
+    useTrackStore.setState({ subtitleChoiceId: null });
+    renderPanel();
+    await waitFor(() => {
+      expect(screen.getByText("文稿")).toBeInTheDocument();
+    });
+    expect(screen.queryByText(/在线字幕/)).not.toBeInTheDocument();
+    expect(
+      invokeCommands().filter((cmd) => cmd === "subtitle_search_online"),
+    ).toHaveLength(0);
+  });
+
+  it("searches without downloading and never touches the player", async () => {
+    mockDownloadFlow();
+    usePlayerStore.setState({
+      currentFile: "C:\\v\\a.mp4",
+      status: "Paused",
+      currentTimeMs: 500,
+    });
+    useTrackStore.setState({ subtitleChoiceId: null });
+    renderPanel();
+    await waitFor(() => {
+      expect(screen.getByText("搜索字幕")).toBeInTheDocument();
+    });
+    fireEvent.click(screen.getByText("搜索字幕"));
+    await waitFor(() => {
+      expect(screen.getByText("demo.S01E01.1080p")).toBeInTheDocument();
+    });
+    const commands = invokeCommands();
+    expect(commands).toContain("subtitle_search_online");
+    expect(commands).not.toContain("subtitle_download_candidate");
+    expect(commands).not.toContain("player_set_subtitle");
+    expect(commands).not.toContain("player_seek");
+  });
+
+  it("downloads on explicit click and views without applying to the player", async () => {
+    mockDownloadFlow();
+    usePlayerStore.setState({
+      currentFile: "C:\\v\\a.mp4",
+      status: "Paused",
+      currentTimeMs: 500,
+    });
+    useTrackStore.setState({ subtitleChoiceId: null });
+    renderPanel();
+    await waitFor(() => {
+      expect(screen.getByText("搜索字幕")).toBeInTheDocument();
+    });
+    fireEvent.click(screen.getByText("搜索字幕"));
+    await waitFor(() => {
+      expect(screen.getByText("下载")).toBeInTheDocument();
+    });
+    fireEvent.click(screen.getByText("下载"));
+    await waitFor(() => {
+      expect(screen.getByText("downloaded two")).toBeInTheDocument();
+    });
+    const commands = invokeCommands();
+    expect(commands).toContain("subtitle_download_candidate");
+    expect(commands).not.toContain("player_set_subtitle");
+  });
+});

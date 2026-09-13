@@ -98,6 +98,36 @@ pub fn asr_sidecar_path(media_path: &Path) -> Result<PathBuf, SubtitleError> {
     sidecar_path(media_path, ASR_SIDECAR_TOKEN)
 }
 
+/// Write SRT `cues` to an explicit `filename` inside `dir` (process cache,
+/// translated variants). The filename is validated like a lang token segment:
+/// no separators, no parent escapes.
+pub fn write_srt_file(dir: &Path, filename: &str, cues: &[Cue]) -> Result<PathBuf, SubtitleError> {
+    if cues.is_empty() {
+        return Err(SubtitleError::export_failed(Some("no cues to export")));
+    }
+    if filename.is_empty()
+        || filename.contains(['/', '\\'])
+        || filename.contains("..")
+        || !filename
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_'))
+    {
+        return Err(SubtitleError::export_failed(Some(
+            "invalid subtitle file name",
+        )));
+    }
+    fs::create_dir_all(dir).map_err(|error| {
+        tracing::warn!("subtitle cache write failed");
+        SubtitleError::internal(Some(&format!("create subtitle dir: {error}")))
+    })?;
+    let path = dir.join(filename);
+    let body = format_srt(cues);
+    fs::write(&path, body).map_err(|error| {
+        SubtitleError::export_failed(Some(&format!("write {}: {error}", path.display())))
+    })?;
+    Ok(path)
+}
+
 /// Write `{stem}.{lang}.srt` beside the media and return a transcript pointing at it.
 pub fn export_sidecar_srt(
     media_path: &Path,
@@ -196,5 +226,33 @@ mod tests {
     fn normalize_lang_token_rejects_path_chars() {
         assert!(normalize_lang_token("../x").is_err());
         assert!(normalize_lang_token("zh").is_ok());
+    }
+
+    #[test]
+    fn write_srt_file_rejects_unsafe_names() {
+        let dir = std::env::temp_dir().join(format!(
+            "lumina-sub-write-{}",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or_default()
+        ));
+        let cues = vec![Cue {
+            index: 1,
+            start_ms: 0,
+            end_ms: 1000,
+            text: "hi".into(),
+        }];
+        assert!(write_srt_file(&dir, "../evil.srt", &cues).is_err());
+        assert!(write_srt_file(&dir, "a/b.srt", &cues).is_err());
+        assert!(write_srt_file(&dir, "", &cues).is_err());
+        assert!(write_srt_file(&dir, "subtitle.srt", &[]).is_err());
+        let path = write_srt_file(&dir, "translated-zh.srt", &cues).expect("write");
+        assert!(path.is_file());
+        assert_eq!(
+            path.file_name().and_then(|n| n.to_str()),
+            Some("translated-zh.srt")
+        );
+        let _ = fs::remove_dir_all(&dir);
     }
 }

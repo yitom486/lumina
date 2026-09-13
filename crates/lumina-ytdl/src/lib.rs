@@ -6,6 +6,7 @@ pub mod error;
 pub mod model;
 pub mod paths;
 pub mod playback;
+pub mod provider;
 pub mod resolve;
 pub mod runtime;
 pub mod service;
@@ -18,5 +19,9 @@ pub use cookies::{
 pub use error::{YtdlError, YtdlErrorCode};
 pub use model::{YtdlFormat, YtdlInstallEvent, YtdlResolveResult, YtdlStatus, YtdlSubtitleTrack};
 pub use playback::{PlaybackFormatOption, PlaybackFormatsResponse, YtdlPlayTarget};
+pub use provider::{
+    normalize_lang, order_candidates, ProviderService, ProviderStatus, SubtitleCandidate,
+    SubtitleProvider, SubtitleQuery,
+};
 pub use runtime::{available_js_runtimes, primary_js_runtime_name};
 pub use service::YtdlService;

@@ -23,6 +23,57 @@ export function exportSubtitleSidecar(
   return invoke("subtitle_export_sidecar", { path, langToken, cues });
 }
 
+export type SubtitleProviderStatus = {
+  id: string;
+  needsKey: boolean;
+  hasKey: boolean;
+};
+
+export type SubtitleQuery = {
+  title?: string | null;
+  tmdbId?: number | null;
+  season?: number | null;
+  episode?: number | null;
+};
+
+export type SubtitleCandidate = {
+  provider: string;
+  language: string;
+  releaseName: string;
+  sizeBytes: number;
+  format: string;
+  season?: number | null;
+  episode?: number | null;
+  downloadUrl: string;
+  cached: boolean;
+};
+
+export function getSubtitleProviderStatus(): Promise<SubtitleProviderStatus[]> {
+  return invoke("subtitle_provider_status");
+}
+
+export function setSubtitleProviderKey(
+  provider: string,
+  key: string,
+): Promise<SubtitleProviderStatus[]> {
+  return invoke("subtitle_set_provider_key", { provider, key });
+}
+
+export function searchOnlineSubtitles(
+  path: string,
+  query: SubtitleQuery,
+  prefer: string[],
+): Promise<SubtitleCandidate[]> {
+  return invoke("subtitle_search_online", { path, query, prefer });
+}
+
+export function downloadSubtitleCandidate(
+  path: string,
+  candidate: SubtitleCandidate,
+): Promise<Transcript> {
+  return invoke("subtitle_download_candidate", { path, candidate });
+}
+
 export type SubtitleTranslateEvent =
   | { type: "Progress"; payload: { message: string } }
   | { type: "Finished"; payload: { transcript: Transcript } }

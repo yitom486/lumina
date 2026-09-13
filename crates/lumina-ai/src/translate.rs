@@ -41,6 +41,33 @@ pub fn translate_and_export_track(
 
     on_progress("正在加载源字幕…".into());
     let source = SubtitleService::load_choice(media_path, choice_id)?;
+    let translated = translate_cues(
+        &source,
+        &token,
+        profile_id,
+        model_id,
+        reasoning_effort,
+        invoker,
+        &mut on_progress,
+    )?;
+
+    on_progress(format!("正在保存外挂字幕（{token}）…"));
+    export_sidecar_srt(std::path::Path::new(media_path), &token, &translated)
+}
+
+/// Translate an already-loaded transcript (timeline preserved). The caller
+/// owns loading (local sidecar, process cache, …) and exporting, so cached
+/// downloads can reuse this without touching beside-media files.
+#[allow(clippy::too_many_arguments)]
+pub fn translate_cues(
+    source: &Transcript,
+    target_lang: &str,
+    profile_id: &str,
+    model_id: Option<&str>,
+    reasoning_effort: Option<&str>,
+    invoker: &dyn AgentInvoker,
+    on_progress: &mut impl FnMut(String),
+) -> Result<Vec<Cue>, SubtitleError> {
     if source.cues.is_empty() {
         return Err(SubtitleError::export_failed(Some(
             "source transcript empty",
@@ -58,7 +85,7 @@ pub fn translate_and_export_track(
         ));
         let texts = translate_batch(
             chunk,
-            &token,
+            target_lang,
             profile_id,
             model_id,
             reasoning_effort,
@@ -80,9 +107,7 @@ pub fn translate_and_export_track(
             });
         }
     }
-
-    on_progress(format!("正在保存外挂字幕（{token}）…"));
-    export_sidecar_srt(std::path::Path::new(media_path), &token, &translated)
+    Ok(translated)
 }
 
 fn translate_batch(
@@ -173,6 +198,7 @@ fn parse_agent_json(raw: &str) -> Result<Value, SubtitleError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Mutex;
 
     #[test]
     fn parse_agent_json_strips_fence() {
@@ -181,5 +207,104 @@ mod tests {
         let batch: TranslatedBatch = serde_json::from_value(value).expect("shape");
         assert_eq!(batch.cues.len(), 1);
         assert_eq!(batch.cues[0].text, "Hi");
+    }
+
+    /// Canned invoker: echoes `TRANSLATED[<text>]` per input cue, preserving
+    /// count and order across batches (41 cues force two batches).
+    struct EchoInvoker {
+        calls: Mutex<usize>,
+    }
+
+    impl AgentInvoker for EchoInvoker {
+        fn invoke_isolated(&self, task: IsolatedAgentTask) -> Result<String, AgentTaskError> {
+            *self.calls.lock().expect("lock") += 1;
+            let input: Value =
+                serde_json::from_str(task.prompt.rsplit("Input JSON:").next().unwrap_or("{}"))
+                    .unwrap_or(json!({ "cues": [] }));
+            let cues = input
+                .get("cues")
+                .and_then(|value| value.as_array())
+                .cloned()
+                .unwrap_or_default();
+            let out: Vec<Value> = cues
+                .iter()
+                .map(|cue| {
+                    json!({
+                        "index": cue.get("index"),
+                        "text": format!(
+                            "TRANSLATED[{}]",
+                            cue.get("text").and_then(|t| t.as_str()).unwrap_or("")
+                        ),
+                    })
+                })
+                .collect();
+            Ok(serde_json::to_string(&json!({ "cues": out })).expect("json"))
+        }
+    }
+
+    fn fixture_transcript(cue_count: usize) -> Transcript {
+        Transcript {
+            source_path: "D:\\video\\demo.mkv".into(),
+            choice_id: "cache:subdl:en".into(),
+            stream_index: None,
+            language: Some("en".into()),
+            codec_name: Some("srt".into()),
+            cues: (0..cue_count)
+                .map(|i| Cue {
+                    index: i as u32 + 1,
+                    start_ms: i as u64 * 1000,
+                    end_ms: i as u64 * 1000 + 800,
+                    text: format!("line {i}"),
+                })
+                .collect(),
+        }
+    }
+
+    #[test]
+    fn translate_cues_preserves_timeline_across_batches() {
+        let source = fixture_transcript(41);
+        let invoker = EchoInvoker {
+            calls: Mutex::new(0),
+        };
+        let mut progress = Vec::new();
+        let cues = translate_cues(
+            &source,
+            "zh",
+            "codex",
+            None,
+            None,
+            &invoker,
+            &mut |message| progress.push(message),
+        )
+        .expect("translate");
+        assert_eq!(cues.len(), 41);
+        assert_eq!(*invoker.calls.lock().expect("lock"), 2);
+        for (i, cue) in cues.iter().enumerate() {
+            assert_eq!(cue.text, format!("TRANSLATED[line {i}]"));
+            assert_eq!(cue.start_ms, i as u64 * 1000);
+            assert_eq!(cue.end_ms, i as u64 * 1000 + 800);
+            assert_eq!(cue.index, i as u32 + 1);
+        }
+        assert!(progress.iter().any(|message| message.contains('2')));
+    }
+
+    #[test]
+    fn translate_cues_rejects_empty_source() {
+        let source = fixture_transcript(0);
+        let invoker = EchoInvoker {
+            calls: Mutex::new(0),
+        };
+        let mut progress = Vec::new();
+        let err = translate_cues(
+            &source,
+            "zh",
+            "codex",
+            None,
+            None,
+            &invoker,
+            &mut |message| progress.push(message),
+        )
+        .expect_err("empty source");
+        assert_eq!(err.message, "无法保存字幕文件");
     }
 }

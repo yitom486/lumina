@@ -78,7 +78,9 @@ use commands::player::{
     player_subscribe,
 };
 use commands::subtitle::{
-    subtitle_export_sidecar, subtitle_list_choices, subtitle_load_choice, subtitle_translate_track,
+    subtitle_download_candidate, subtitle_export_sidecar, subtitle_list_choices,
+    subtitle_load_choice, subtitle_provider_status, subtitle_search_online,
+    subtitle_set_provider_key, subtitle_translate_track,
 };
 use commands::system::system_log_dir;
 use commands::ytdl::{
@@ -147,6 +149,10 @@ pub fn run() {
             subtitle_load_choice,
             subtitle_export_sidecar,
             subtitle_translate_track,
+            subtitle_provider_status,
+            subtitle_set_provider_key,
+            subtitle_search_online,
+            subtitle_download_candidate,
             asr_status,
             asr_transcribe,
             asr_install,

@@ -16,6 +16,7 @@ use crate::player::error::PlayerError;
 use crate::player::model::PlayerEvent;
 use crate::player::mpv::window::VideoSurface;
 use crate::player::PlayerService;
+use crate::ytdl::provider::ProviderService;
 use crate::ytdl::YtdlService;
 
 const POSITION_TICK_MS: u64 = 200;
@@ -31,6 +32,7 @@ pub struct AppState {
     pub library: Arc<MediaLibraryService>,
     pub notes: Arc<NoteService>,
     pub ytdl: Arc<YtdlService>,
+    pub provider: Arc<ProviderService>,
     ticker_started: AtomicBool,
     shutdown: AtomicBool,
 }
@@ -48,6 +50,7 @@ impl AppState {
             library: Arc::new(MediaLibraryService::new()),
             notes: Arc::new(NoteService::new()),
             ytdl: Arc::new(YtdlService::new()),
+            provider: Arc::new(ProviderService::new()),
             ticker_started: AtomicBool::new(false),
             shutdown: AtomicBool::new(false),
         }
@@ -55,6 +58,10 @@ impl AppState {
 
     pub fn ytdl(&self) -> &YtdlService {
         self.ytdl.as_ref()
+    }
+
+    pub fn provider(&self) -> &ProviderService {
+        self.provider.as_ref()
     }
 
     pub fn with_player<T>(

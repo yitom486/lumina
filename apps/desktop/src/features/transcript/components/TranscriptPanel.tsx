@@ -37,6 +37,7 @@ import {
   translateSubtitleTrack,
 } from "../api";
 import { subtitleChoicesKey, transcriptKey, ytdlResolveKey } from "@lumina/query-keys";
+import { OnlineSubtitleSection } from "./OnlineSubtitleSection";
 import { useSubtitleWorkshopModels } from "../useSubtitleWorkshopModels";
 import type { SubtitleChoice } from "@lumina/contracts";
 import { followMode, useFollowStore } from "@lumina/transcript-ui";
@@ -230,7 +231,11 @@ export function TranscriptPanel() {
 
     setSubtitleChoiceId(exported.id);
     rememberSubtitleForMedia(mediaPath, exported);
-    await applySubtitleChoice(exported, setSubtitle, mediaPath, loadSubtitleChoice);
+    // Downloaded cache tracks stay off the video surface by default: view in
+    // panel only, never auto-apply to the player.
+    if (!exported.id.startsWith("cache:")) {
+      await applySubtitleChoice(exported, setSubtitle, mediaPath, loadSubtitleChoice);
+    }
     await queryClient.invalidateQueries({
       queryKey: transcriptKey(mediaPath, exported.id),
     });
@@ -375,6 +380,32 @@ export function TranscriptPanel() {
   }
 
   const choices = choicesQuery.data ?? [];
+  const isRemotePath = /^https?:\/\//i.test(path ?? "");
+  const audioLanguage = useMemo(
+    () =>
+      mediaInfoQuery.data?.streams?.find((stream) => stream.kind === "Audio")
+        ?.language ?? null,
+    [mediaInfoQuery.data],
+  );
+
+  async function handleDownloadedSubtitle(choiceId: string) {
+    if (!path) return;
+    await queryClient.invalidateQueries({
+      queryKey: subtitleChoicesKey(path),
+    });
+    const fresh = await listSubtitleChoices(path);
+    queryClient.setQueryData(subtitleChoicesKey(path), fresh);
+    // Panel viewing only: never remember or apply to the player surface.
+    if (fresh.some((choice) => choice.id === choiceId)) {
+      setAsrError(null);
+      setTranslateError(null);
+      setSubtitleChoiceId(choiceId);
+      await queryClient.invalidateQueries({
+        queryKey: transcriptKey(path, choiceId),
+      });
+    }
+  }
+
   const asrAvailable = asrStatusQuery.data?.available === true;
   const installSupported = asrStatusQuery.data?.installSupported === true;
   const catalog = asrStatusQuery.data?.catalog ?? [];
@@ -461,6 +492,15 @@ export function TranscriptPanel() {
             )}
           </select>
         </label>
+
+        {!isRemotePath ? (
+          <OnlineSubtitleSection
+            mediaPath={path as string}
+            audioLanguage={audioLanguage}
+            disabled={busy}
+            onDownloaded={(downloadedId) => void handleDownloadedSubtitle(downloadedId)}
+          />
+        ) : null}
 
         <div className="flex flex-wrap items-end gap-2">
           <label className="flex min-w-[7rem] flex-1 flex-col gap-1 text-xs">

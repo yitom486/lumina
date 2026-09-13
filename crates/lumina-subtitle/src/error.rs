@@ -14,6 +14,7 @@ pub enum SubtitleErrorCode {
     ParseFailed,
     UnsupportedSubtitle,
     NoSubtitleTrack,
+    NotConfigured,
     ExportFailed,
     TranslateNotConfigured,
     InternalError,
@@ -87,6 +88,14 @@ impl SubtitleError {
             SubtitleErrorCode::NoSubtitleTrack,
             "该媒体没有可用字幕轨",
             None,
+        )
+    }
+
+    pub fn provider_not_configured(details: Option<&str>) -> Self {
+        Self::new(
+            SubtitleErrorCode::NotConfigured,
+            "未配置在线字幕下载",
+            details.map(str::to_string),
         )
     }
 
@@ -166,6 +175,10 @@ mod tests {
             SubtitleError::no_track().code,
             SubtitleErrorCode::NoSubtitleTrack
         );
+        let provider = SubtitleError::provider_not_configured(Some("subdl"));
+        assert!(has_cjk(&provider.message));
+        assert!(!provider.message.contains("subdl"));
+        assert_eq!(provider.code, SubtitleErrorCode::NotConfigured);
     }
 
     #[test]

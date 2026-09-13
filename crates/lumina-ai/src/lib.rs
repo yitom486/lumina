@@ -6,4 +6,4 @@
 pub mod translate;
 
 pub use lumina_core::{AgentInvoker, AgentTaskError, IsolatedAgentTask};
-pub use translate::translate_and_export_track;
+pub use translate::{translate_and_export_track, translate_cues};
