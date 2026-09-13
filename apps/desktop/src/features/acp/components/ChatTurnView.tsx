@@ -11,9 +11,9 @@ import { usePlayerStore } from "@/features/player";
 
 import { waitingLabel, hasActiveToolActivity } from "@lumina/chat-ui/activityStatus";
 import type { ChatTurn } from "../types";
-import { ChatActivityFeed } from "./ChatActivityFeed";
-import { ChatColumn } from "./ChatShell";
-import { ChatWaitingDots } from "./ChatWaitingDots";
+import { ChatActivityFeed } from "@lumina/chat-ui/components/ChatActivityFeed";
+import { ChatColumn } from "@lumina/chat-ui/components/ChatShell";
+import { ChatWaitingDots } from "@lumina/chat-ui/components/ChatWaitingDots";
 
 // Split markdown+KaTeX out of the initial bundle: chat is never visible on
 // cold start, so parsing ~400KB can wait until the first answer renders.

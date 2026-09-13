@@ -1,7 +1,7 @@
 import { useEffect, useRef } from "react";
 
 import type { ChatTurn } from "../types";
-import { ChatColumn } from "./ChatShell";
+import { ChatColumn } from "@lumina/chat-ui/components/ChatShell";
 import { ChatTurnView } from "./ChatTurnView";
 
 type Props = {

@@ -2,7 +2,7 @@ import { Button } from "@lumina/ui/button";
 
 import { respondAcpPermission } from "../api";
 import type { PendingPermission } from "../types";
-import { ChatColumn } from "./ChatShell";
+import { ChatColumn } from "@lumina/chat-ui/components/ChatShell";
 
 type Props = {
   pending: PendingPermission;

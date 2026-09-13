@@ -19,7 +19,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@lumina/ui/tooltip";
-import { ChatToggleButton } from "@/features/acp/components/ChatToggleButton";
+import { ChatToggleButton } from "@lumina/chat-ui/components/ChatToggleButton";
 import { usePlayerStore, useUiStore } from "@/features/player";
 import { errorMessage } from "@/lib/format";
 import { revealLogDir } from "@/lib/system";

@@ -1,4 +1,4 @@
-import { ChatToggleButton } from "@/features/acp/components/ChatToggleButton";
+import { ChatToggleButton } from "@lumina/chat-ui/components/ChatToggleButton";
 
 import { FullscreenToggleButton } from "./AppShell";
 

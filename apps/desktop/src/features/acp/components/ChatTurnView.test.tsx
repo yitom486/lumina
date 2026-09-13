@@ -11,7 +11,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { usePlayerStore } from "@/features/player";
 
 import type { ChatTurn } from "../types";
-import { ChatShell, ChatColumn } from "./ChatShell";
+import { ChatShell, ChatColumn } from "@lumina/chat-ui/components/ChatShell";
 import { ChatTurnView } from "./ChatTurnView";
 
 vi.mock("@tauri-apps/api/core", () => ({

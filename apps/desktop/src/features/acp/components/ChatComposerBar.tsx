@@ -7,8 +7,8 @@ import { cn } from "@lumina/ui/utils";
 import type { AcpStatus, PermissionMode } from "../types";
 import { previewQueuedText, type QueuedPrompt } from "@lumina/chat-ui/promptQueue";
 import { useAgentModelControls } from "../useAgentModelControls";
-import { focusComposerTextarea } from "./composerFocus";
-import { ChatColumn } from "./ChatShell";
+import { focusComposerTextarea } from "@lumina/chat-ui/components/composerFocus";
+import { ChatColumn } from "@lumina/chat-ui/components/ChatShell";
 
 type Props = {
   value: string;

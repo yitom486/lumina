@@ -6,7 +6,7 @@ import { QuickNoteDialog } from "@/features/notes/components/QuickNoteDialog";
 import { cn } from "@lumina/ui/utils";
 
 import type { AcpConnectionState } from "../types";
-import { ChatColumn } from "./ChatShell";
+import { ChatColumn } from "@lumina/chat-ui/components/ChatShell";
 
 type Props = {
   agentLabel: string;

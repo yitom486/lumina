@@ -77,10 +77,10 @@ import type {
 import { useVideoPromptContext } from "../useVideoPromptContext";
 import { useTypingPlaybackAnchor } from "../typingPlaybackAnchor";
 import { AgentSettingsPanel } from "./AgentSettingsPanel";
-import { ChatHistorySheet } from "./ChatHistorySheet";
+import { ChatHistorySheet } from "@lumina/chat-ui/components/ChatHistorySheet";
 import { ChatComposerBar, type ChatComposerBarHandle } from "./ChatComposerBar";
-import { ChatShell } from "./ChatShell";
-import { ChatColumn } from "./ChatShell";
+import { ChatShell } from "@lumina/chat-ui/components/ChatShell";
+import { ChatColumn } from "@lumina/chat-ui/components/ChatShell";
 import { ChatToolbar } from "./ChatToolbar";
 import { ChatTurnList } from "./ChatTurnList";
 import { PermissionPrompt } from "./PermissionPrompt";

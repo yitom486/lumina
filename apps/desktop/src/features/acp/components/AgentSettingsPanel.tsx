@@ -8,7 +8,7 @@ import { clientSettingsFromStore, useAcpSettingsStore } from "@lumina/chat-ui/ac
 import type { AgentProfileStatus, ThinkingLevel } from "../types";
 import { acpSyncMcpCapabilities } from "../api";
 import { useAgentModelControls } from "../useAgentModelControls";
-import { ChatColumn } from "./ChatShell";
+import { ChatColumn } from "@lumina/chat-ui/components/ChatShell";
 
 type Props = {
   status: import("../types").AcpStatus | undefined;
