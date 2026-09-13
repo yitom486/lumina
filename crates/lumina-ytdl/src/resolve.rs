@@ -86,8 +86,9 @@ fn run_dump_json(
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-        // Never log cookie file contents — stderr from yt-dlp is OK for tracing.
-        tracing::warn!(%stderr, "yt-dlp non-zero exit");
+        // Never log stderr (may carry page URL fragments, cookie hints, or
+        // tool output); it stays in error details for backend diagnosis only.
+        tracing::warn!("yt-dlp non-zero exit");
         return Err(crate::cookies::classify_resolve_stderr(
             &if stderr.is_empty() {
                 "yt-dlp non-zero exit".into()

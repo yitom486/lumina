@@ -59,6 +59,48 @@ impl PlayerSnapshot {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn remote_snapshot_keeps_page_url_without_sensitive_fields() {
+        let snapshot = PlayerSnapshot {
+            status: PlayerState::Paused,
+            current_time_ms: 10_000,
+            duration_ms: 0,
+            volume: 100.0,
+            rate: 1.0,
+            current_file: Some("https://www.youtube.com/watch?v=abc".into()),
+            media_id: Some("youtube:abc".into()),
+            source_kind: Some(MediaSourceKind::Remote),
+            playback_format_id: Some("22".into()),
+            duration_hint_ms: Some(60_000),
+            error: None,
+        };
+        let text = serde_json::to_value(&snapshot)
+            .expect("serialize")
+            .to_string()
+            .to_lowercase();
+        // Functional identity survives.
+        assert!(text.contains("watch?v=abc"), "page url: {text}");
+        assert!(text.contains("youtube:abc"), "media id: {text}");
+        // Backend-only network material never crosses into the UI snapshot.
+        for banned in [
+            "cookie",
+            "sig=",
+            "signed",
+            "ytdl_cli",
+            "cookies-file",
+            "yt-dlp.exe",
+            "stderr",
+            "--cookies",
+        ] {
+            assert!(!text.contains(banned), "banned {banned}: {text}");
+        }
+    }
+}
+
 /// Rust → React stream events (Tauri Channel).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(

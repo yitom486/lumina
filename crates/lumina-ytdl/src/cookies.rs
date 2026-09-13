@@ -500,7 +500,7 @@ pub fn test_cookies(settings: &CookieSettings) -> Result<YtdlCookieTestResult, Y
     }
 
     let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-    tracing::warn!(%stderr, "cookie test failed");
+    tracing::warn!(mode = ?settings.mode, "cookie test failed");
     let mut classified = classify_resolve_stderr(&if stderr.is_empty() {
         "cookie test failed".into()
     } else {

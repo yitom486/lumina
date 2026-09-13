@@ -72,7 +72,6 @@ impl LibMpvPlayer {
     ) -> Result<(), PlayerError> {
         self.apply_network_opts(&network)?;
         tracing::info!(
-            path,
             has_audio_url = audio_url.is_some(),
             has_ytdl = network.ytdl_cli.is_some(),
             has_cookies_file = network.cookies_file.is_some(),
@@ -158,7 +157,6 @@ impl LibMpvPlayer {
                 }
             }
             tracing::info!(
-                ytdl_path = cli,
                 format = network.ytdl_format.as_deref().unwrap_or(""),
                 has_cookies = cookies.is_some(),
                 "libmpv ytdl hook configured for remote page"
@@ -357,7 +355,7 @@ impl LibMpvPlayer {
 
     /// Load and select an external subtitle file.
     pub fn set_external_subtitle(&self, path: &str) -> Result<(), PlayerError> {
-        tracing::info!(path, "set external subtitle (sub-add)");
+        tracing::info!("set external subtitle (sub-add)");
         set_sub_visibility(&self.mpv, true)?;
         self.mpv
             .command("sub-add", &[path, "select"])

@@ -65,7 +65,6 @@ where
     tracing::info!(
         previous_version = previous.as_deref().unwrap_or("none"),
         version = %downloaded_version,
-        path = %dest.display(),
         "yt-dlp installed or updated"
     );
     let st = status();

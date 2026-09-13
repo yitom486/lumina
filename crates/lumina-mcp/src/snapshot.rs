@@ -217,7 +217,7 @@ mod tests {
                     label: "English".into(),
                     supported: true,
                     stream_index: None,
-                    external_path: Some(r"D:\cache\demo.en.srt".into()),
+                    external_path: None,
                     codec_name: Some("srt".into()),
                     language: Some("en".into()),
                 }],
@@ -231,6 +231,97 @@ mod tests {
             !text.contains("cookie"),
             "agent snapshot must not carry cookie material: {text}"
         );
+    }
+
+    #[test]
+    fn online_snapshot_hides_cache_paths_and_signed_urls() {
+        use lumina_media::MediaChapter;
+        use lumina_subtitle::Transcript;
+        let snapshot = LuminaMcpSnapshot {
+            anchor: Some(PromptAnchor {
+                media_path: "https://www.youtube.com/watch?v=e2e".into(),
+                library_root: None,
+                group_key: None,
+                season: None,
+                episode: None,
+                position_ms: 10_000,
+                sent_at_ms: 1,
+                subtitle_choice_id: Some("online:en".into()),
+            }),
+            playback: Some(PlaybackLite {
+                media_path: Some("https://www.youtube.com/watch?v=e2e".into()),
+                media_title: Some("demo".into()),
+                position_ms: Some(10_000),
+                duration_ms: Some(60_000),
+                chapter_title: Some("Intro".into()),
+                notes_excerpt: None,
+            }),
+            online: Some(OnlineMediaSnapshot {
+                media_id: "youtube:e2e".into(),
+                title: Some("demo".into()),
+                duration_ms: Some(60_000),
+                webpage_url: Some("https://www.youtube.com/watch?v=e2e".into()),
+                extractor: Some("youtube".into()),
+                chapters: vec![MediaChapter {
+                    id: 0,
+                    start_ms: 0,
+                    end_ms: Some(10_000),
+                    title: Some("Intro".into()),
+                }],
+                subtitles: vec![SubtitleChoice {
+                    id: "online:en".into(),
+                    source: lumina_subtitle::SubtitleSource::Sidecar,
+                    label: "在线 · en".into(),
+                    supported: true,
+                    stream_index: None,
+                    external_path: None,
+                    codec_name: Some("vtt".into()),
+                    language: Some("en".into()),
+                }],
+                transcript: Some(Transcript {
+                    source_path: "https://www.youtube.com/watch?v=e2e".into(),
+                    choice_id: "online:en".into(),
+                    stream_index: None,
+                    language: Some("en".into()),
+                    codec_name: Some("vtt".into()),
+                    cues: vec![lumina_subtitle::Cue {
+                        index: 1,
+                        start_ms: 9_000,
+                        end_ms: 11_000,
+                        text: "hello".into(),
+                    }],
+                }),
+            }),
+            capabilities: Some(AgentCapabilities {
+                vision_capable: false,
+                subtitle_workshop_enabled: false,
+                video_annotations_enabled: true,
+            }),
+            ..LuminaMcpSnapshot::empty()
+        };
+        let json = serde_json::to_value(&snapshot).expect("snapshot serializes");
+        let text = json.to_string().to_lowercase();
+        for banned in [
+            "cookie",
+            "sig=",
+            "signed",
+            "yt-dlp",
+            "stderr",
+            "--cookies",
+            "mpv-cookies",
+            "cookies.txt",
+            "yt-dlp.exe",
+            "cli_path",
+            "ytdl_cli",
+        ] {
+            assert!(!text.contains(banned), "banned {banned}: {text}");
+        }
+        // Page URL, chapters, cues, and timing survive sanitization.
+        assert!(text.contains("youtube:e2e"), "media id: {text}");
+        assert!(text.contains("watch?v=e2e"), "page url: {text}");
+        assert!(text.contains("intro"), "chapter: {text}");
+        assert!(text.contains("hello"), "cue: {text}");
+        assert!(text.contains("online:en"), "choice: {text}");
     }
 
     #[test]

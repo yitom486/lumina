@@ -41,7 +41,7 @@ mod win {
                 continue;
             }
             if load_dll(&path).is_ok() {
-                tracing::info!(path = %path.display(), "loaded libmpv runtime");
+                tracing::info!("loaded libmpv runtime");
                 return Ok(());
             }
         }
@@ -139,11 +139,11 @@ mod unix {
             }
             match unsafe { Library::new(&path) } {
                 Ok(_library) => {
-                    tracing::info!(path = %path.display(), "loaded libmpv runtime");
+                    tracing::info!("loaded libmpv runtime");
                     return Ok(());
                 }
                 Err(error) => {
-                    tracing::warn!(path = %path.display(), %error, "failed to load libmpv candidate");
+                    tracing::warn!(%error, "failed to load libmpv candidate");
                 }
             }
         }

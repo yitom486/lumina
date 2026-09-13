@@ -203,8 +203,6 @@ impl PlayerService {
             None
         };
         tracing::info!(
-            %playback_target,
-            %display_path,
             %media_id,
             ?source_kind,
             ?playback_format_id,
@@ -270,7 +268,7 @@ impl PlayerService {
             });
         }
 
-        tracing::info!(%playback_target, %media_id, duration_ms, "file opened");
+        tracing::info!(%media_id, duration_ms, "file opened");
         Ok((self.snapshot(), events))
     }
 

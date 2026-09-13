@@ -63,9 +63,17 @@ pub fn session_prompt_params(
                 .as_deref()
                 .filter(|s| !s.trim().is_empty())
                 .unwrap_or_else(|| file_name(path));
+            // Online page URLs stay as-is (Agent fetches via MCP snapshot);
+            // only local paths become file:// URIs. Never put cookies,
+            // signed URLs, or cache paths here — snapshot is already sanitized.
+            let uri = if is_remote_url(path) {
+                path.to_string()
+            } else {
+                path_to_file_uri(path)
+            };
             prompt.push(json!({
                 "type": "resource_link",
-                "uri": path_to_file_uri(path),
+                "uri": uri,
                 "name": name,
             }));
         }
@@ -126,7 +134,15 @@ fn format_time_ms(ms: u64) -> String {
     }
 }
 
+fn is_remote_url(path: &str) -> bool {
+    let lower = path.trim_start().to_ascii_lowercase();
+    lower.starts_with("http://") || lower.starts_with("https://")
+}
+
 fn file_name(path: &str) -> &str {
+    if is_remote_url(path) {
+        return path;
+    }
     Path::new(path)
         .file_name()
         .and_then(|s| s.to_str())
@@ -234,6 +250,61 @@ mod tests {
             path_to_file_uri(r"D:\videos\a.mp4"),
             "file:///D:/videos/a.mp4"
         );
+    }
+
+    #[test]
+    fn online_page_url_stays_as_is_in_prompt() {
+        let page = "https://www.youtube.com/watch?v=abc";
+        let ctx = VideoPromptContext {
+            media_path: Some(page.into()),
+            media_title: Some("Demo".into()),
+            position_ms: Some(10_000),
+            duration_ms: Some(60_000),
+            chapter_title: None,
+            subtitle_choice_id: Some("online:en".into()),
+            notes_excerpt: None,
+        };
+        let params = session_prompt_params("sess_1", "讲了什么？", Some(&ctx), None);
+        let prompt = params
+            .get("prompt")
+            .and_then(Value::as_array)
+            .expect("prompt");
+        let link = &prompt[0];
+        assert_eq!(
+            link.get("type").and_then(Value::as_str),
+            Some("resource_link")
+        );
+        // Page URL preserved for MCP snapshot fetch; never rewritten to file://.
+        assert_eq!(link.get("uri").and_then(Value::as_str), Some(page));
+        assert_eq!(link.get("name").and_then(Value::as_str), Some("Demo"));
+        let text = serde_json::to_string(&params)
+            .expect("serialize")
+            .to_lowercase();
+        assert!(!text.contains("cookie"), "no cookie: {text}");
+        assert!(!text.contains("sig="), "no signature: {text}");
+        assert!(!text.contains("yt-dlp"), "no tool detail: {text}");
+    }
+
+    #[test]
+    fn local_path_still_uses_file_uri() {
+        let ctx = VideoPromptContext {
+            media_path: Some(r"D:\videos\demo.mp4".into()),
+            media_title: Some("demo.mp4".into()),
+            position_ms: Some(1_000),
+            duration_ms: None,
+            chapter_title: None,
+            subtitle_choice_id: None,
+            notes_excerpt: None,
+        };
+        let params = session_prompt_params("sess_1", "hi", Some(&ctx), None);
+        let uri = params
+            .get("prompt")
+            .and_then(Value::as_array)
+            .and_then(|p| p.first())
+            .and_then(|l| l.get("uri"))
+            .and_then(Value::as_str)
+            .expect("uri");
+        assert_eq!(uri, "file:///D:/videos/demo.mp4");
     }
 
     #[test]

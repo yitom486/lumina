@@ -305,6 +305,51 @@ mod tests {
     }
 
     #[test]
+    fn sanitized_keeps_page_url_chapters_and_format_ids() {
+        use lumina_media::model::MediaChapter;
+        let resolved = YtdlResolveResult {
+            media_id: "youtube:abc".into(),
+            title: Some("Demo".into()),
+            duration_ms: Some(60_000),
+            webpage_url: Some("https://www.youtube.com/watch?v=abc".into()),
+            extractor: Some("youtube".into()),
+            chapters: vec![MediaChapter {
+                id: 0,
+                start_ms: 0,
+                end_ms: Some(10_000),
+                title: Some("Intro".into()),
+            }],
+            formats: vec![fmt("22", Some(720), "avc1", "mp4a", "https://secret", None)],
+            subtitles: vec![crate::YtdlSubtitleTrack {
+                language: "en".into(),
+                ext: Some("vtt".into()),
+                name: Some("English".into()),
+                url: Some("https://secret/sub?sig=abc".into()),
+            }],
+            recommended_url: Some("https://secret".into()),
+            recommended_format_id: Some("22".into()),
+        };
+        let clean = resolved.sanitized_for_ipc();
+        // Functional fields survive; only signed resource URLs are stripped.
+        assert_eq!(
+            clean.webpage_url.as_deref(),
+            Some("https://www.youtube.com/watch?v=abc")
+        );
+        assert_eq!(clean.title.as_deref(), Some("Demo"));
+        assert_eq!(clean.chapters.len(), 1);
+        assert_eq!(clean.chapters[0].title.as_deref(), Some("Intro"));
+        assert_eq!(clean.formats[0].format_id, "22");
+        assert_eq!(clean.subtitles[0].language, "en");
+        let text = serde_json::to_value(&clean)
+            .expect("serialize")
+            .to_string()
+            .to_lowercase();
+        assert!(!text.contains("secret"), "no signed URL: {text}");
+        assert!(!text.contains("sig="), "no signature: {text}");
+        assert!(!text.contains("cookie"), "no cookie: {text}");
+    }
+
+    #[test]
     fn progressive_dedupes_by_height() {
         let formats = vec![
             fmt(

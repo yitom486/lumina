@@ -558,7 +558,7 @@ fn capture_frame_tool(snapshot: &LuminaMcpSnapshot, args: &Value) -> Result<Valu
         ),
     }));
     for (index, frame) in frames.iter().enumerate() {
-        let bytes = fs::read(frame).map_err(|error| error.to_string())?;
+        let bytes = fs::read(frame).map_err(|_| "无法获取当前画面".to_string())?;
         content.push(json!({
             "type": "image",
             "data": STANDARD.encode(bytes),
@@ -1366,6 +1366,68 @@ mod tests {
         let snap_json = serde_json::to_value(&snapshot.online).expect("online snapshot serializes");
         let snap_text = snap_json.to_string().to_lowercase();
         assert!(!snap_text.contains("cookie"), "snapshot: {snap_text}");
+    }
+
+    #[test]
+    fn playback_context_preserves_page_url_without_sensitive_fields() {
+        let snapshot = online_snapshot_with_transcript();
+        let value = playback_context(&snapshot).expect("playback context");
+        let payload = tool_text_payload(&value);
+        let online = payload.get("online").expect("online block");
+        assert_eq!(
+            online.get("mediaId").and_then(Value::as_str),
+            Some("youtube:abc")
+        );
+        assert_eq!(
+            online.get("webpageUrl").and_then(Value::as_str),
+            Some("https://www.youtube.com/watch?v=abc")
+        );
+        assert_eq!(
+            online.get("transcriptAvailable").and_then(Value::as_bool),
+            Some(true)
+        );
+        let text = serde_json::to_string(&value)
+            .expect("serialize")
+            .to_lowercase();
+        for banned in [
+            "cookie",
+            "sig=",
+            "signed",
+            "stderr",
+            "--cookies",
+            "ytdl_cli",
+            "cookies-file",
+            "yt-dlp.exe",
+        ] {
+            assert!(!text.contains(banned), "banned {banned}: {text}");
+        }
+    }
+
+    #[test]
+    fn online_capture_returns_stable_error_without_file_access() {
+        // Online anchor is a page URL, never a local file: capture must fail
+        // with the stable business error, not a raw IO path.
+        let mut snapshot = online_snapshot_with_transcript();
+        snapshot.capabilities = Some(AgentCapabilities {
+            vision_capable: true,
+            subtitle_workshop_enabled: false,
+            video_annotations_enabled: true,
+        });
+        let err = capture_frame_tool(&snapshot, &json!({})).expect_err("online capture");
+        assert_eq!(err, "无法获取当前画面");
+    }
+
+    #[test]
+    fn vision_gate_stays_closed_for_online_snapshot() {
+        let mut snapshot = online_snapshot_with_transcript();
+        snapshot.capabilities = Some(AgentCapabilities {
+            vision_capable: false,
+            subtitle_workshop_enabled: false,
+            video_annotations_enabled: true,
+        });
+        assert!(!vision_capable(&snapshot));
+        let err = capture_frame_tool(&snapshot, &json!({})).expect_err("vision gate");
+        assert!(err.contains("识图"));
     }
 
     /// P7-M2 tool shape on a synthetic gap fixture. Needs ffmpeg; SKIP otherwise.
