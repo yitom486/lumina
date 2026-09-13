@@ -9,7 +9,7 @@
     "preview": "cd apps/desktop && bun run preview",
     "typecheck": "cd apps/desktop && bun run typecheck",
     "lint": "cd apps/desktop && bun run lint",
-    "lint:ox": "oxlint apps/desktop/src packages/contracts/src packages/query-keys/src packages/player-ui/src packages/chat-ui/src packages/ui/src",
+    "lint:ox": "oxlint apps/desktop/src packages/contracts/src packages/query-keys/src packages/player-ui/src packages/transcript-ui/src packages/chat-ui/src packages/ui/src",
     "lint:all": "cd apps/desktop && bun run lint:all",
     "check:rust": "cargo fmt --all --check && cargo check --workspace --all-targets && cargo test --workspace --lib && cargo clippy --workspace --all-targets -- -D warnings",
     "test": "cd apps/desktop && bun run test",

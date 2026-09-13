@@ -25,6 +25,8 @@
       "@lumina/query-keys/*": ["../../packages/query-keys/src/*"],
       "@lumina/player-ui": ["../../packages/player-ui/src/index.ts"],
       "@lumina/player-ui/*": ["../../packages/player-ui/src/*"],
+      "@lumina/transcript-ui": ["../../packages/transcript-ui/src/index.ts"],
+      "@lumina/transcript-ui/*": ["../../packages/transcript-ui/src/*"],
       "@lumina/chat-ui": ["../../packages/chat-ui/src/index.ts"],
       "@lumina/chat-ui/*": ["../../packages/chat-ui/src/*"],
       "@lumina/ui": ["../../packages/ui/src/index.ts"],
@@ -36,6 +38,7 @@
     "../../packages/contracts/src",
     "../../packages/query-keys/src",
     "../../packages/player-ui/src",
+    "../../packages/transcript-ui/src",
     "../../packages/chat-ui/src",
     "../../packages/ui/src"
   ],

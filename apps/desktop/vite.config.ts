@@ -11,6 +11,7 @@ export default defineConfig({
     alias: {
       "@": path.resolve(import.meta.dirname, "./src"),
       "@lumina/player-ui": path.resolve(import.meta.dirname, "../../packages/player-ui/src"),
+      "@lumina/transcript-ui": path.resolve(import.meta.dirname, "../../packages/transcript-ui/src"),
       "@lumina/chat-ui": path.resolve(import.meta.dirname, "../../packages/chat-ui/src"),
       "@lumina/ui": path.resolve(import.meta.dirname, "../../packages/ui/src"),
     },

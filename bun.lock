@@ -13,6 +13,7 @@
         "@lumina/contracts": "workspace:*",
         "@lumina/player-ui": "workspace:*",
         "@lumina/query-keys": "workspace:*",
+        "@lumina/transcript-ui": "workspace:*",
         "@lumina/ui": "workspace:*",
         "@radix-ui/react-alert-dialog": "^1.1.23",
         "@radix-ui/react-dialog": "^1.1.23",
@@ -96,6 +97,9 @@
     "packages/transcript-ui": {
       "name": "@lumina/transcript-ui",
       "version": "0.3.0",
+      "dependencies": {
+        "@lumina/contracts": "workspace:*",
+      },
       "peerDependencies": {
         "react": "^19.1.0",
         "react-dom": "^19.1.0",
