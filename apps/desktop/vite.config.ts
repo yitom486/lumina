@@ -74,7 +74,8 @@ export default defineConfig({
         test: {
           name: "unit",
           environment: "node",
-          include: ["src/**/*.test.ts", "../../packages/**/*.test.ts"],
+          include: ["src/**/*.test.ts", "../../packages/*/src/**/*.test.ts"],
+          exclude: ["**/node_modules/**", "**/dist/**"],
         },
       },
       {
@@ -82,7 +83,8 @@ export default defineConfig({
         test: {
           name: "ui",
           environment: "happy-dom",
-          include: ["src/**/*.test.tsx", "../../packages/**/*.test.tsx"],
+          include: ["src/**/*.test.tsx", "../../packages/*/src/**/*.test.tsx"],
+          exclude: ["**/node_modules/**", "**/dist/**"],
           setupFiles: ["src/test/setup.ts"],
         },
       },
