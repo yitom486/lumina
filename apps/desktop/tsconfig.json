@@ -21,9 +21,19 @@
       "@lumina/contracts": ["../../packages/contracts/src/index.ts"],
       "@lumina/contracts/*": ["../../packages/contracts/src/*"],
       "@lumina/query-keys": ["../../packages/query-keys/src/index.ts"],
-      "@lumina/query-keys/*": ["../../packages/query-keys/src/*"]
+      "@lumina/query-keys/*": ["../../packages/query-keys/src/*"],
+      "@lumina/player-ui": ["../../packages/player-ui/src/index.ts"],
+      "@lumina/player-ui/*": ["../../packages/player-ui/src/*"],
+      "@lumina/chat-ui": ["../../packages/chat-ui/src/index.ts"],
+      "@lumina/chat-ui/*": ["../../packages/chat-ui/src/*"]
     }
   },
-  "include": ["src", "../../packages/contracts/src", "../../packages/query-keys/src"],
+  "include": [
+    "src",
+    "../../packages/contracts/src",
+    "../../packages/query-keys/src",
+    "../../packages/player-ui/src",
+    "../../packages/chat-ui/src"
+  ],
   "references": [{ "path": "./tsconfig.node.json" }]
 }

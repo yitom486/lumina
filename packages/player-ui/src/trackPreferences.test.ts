@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import type { SubtitleChoice } from "@/features/transcript/types";
+import type { SubtitleChoice } from "@lumina/contracts";
 
 import {
   mediaDirectoryKey,

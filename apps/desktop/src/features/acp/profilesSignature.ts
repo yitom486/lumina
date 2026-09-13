@@ -1,11 +1,3 @@
-import type { AgentProfileInput } from "./types";
+/** Compat re-export: canonical source is packages/chat-ui/src. */
 
-/** Stable string for React Query keys — avoids subscribing to profile arrays. */
-export function profilesSignature(profiles: AgentProfileInput[]): string {
-  return profiles
-    .map(
-      (profile) =>
-        `${profile.id}|${profile.command}|${(profile.args ?? []).join(",")}`,
-    )
-    .join(";");
-}
+export * from "../../../../../packages/chat-ui/src/profilesSignature";

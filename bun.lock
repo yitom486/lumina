@@ -9,7 +9,9 @@
       "name": "lumina-desktop",
       "version": "0.3.0",
       "dependencies": {
+        "@lumina/chat-ui": "workspace:*",
         "@lumina/contracts": "workspace:*",
+        "@lumina/player-ui": "workspace:*",
         "@lumina/query-keys": "workspace:*",
         "@radix-ui/react-alert-dialog": "^1.1.23",
         "@radix-ui/react-dialog": "^1.1.23",
@@ -56,13 +58,46 @@
         "vitest": "^3.2.7",
       },
     },
+    "packages/chat-ui": {
+      "name": "@lumina/chat-ui",
+      "version": "0.3.0",
+      "dependencies": {
+        "@lumina/contracts": "workspace:*",
+      },
+      "peerDependencies": {
+        "react": "^19.1.0",
+        "react-dom": "^19.1.0",
+        "zustand": "^5.0.15",
+      },
+    },
     "packages/contracts": {
       "name": "@lumina/contracts",
       "version": "0.3.0",
     },
+    "packages/player-ui": {
+      "name": "@lumina/player-ui",
+      "version": "0.3.0",
+      "dependencies": {
+        "@lumina/contracts": "workspace:*",
+      },
+      "peerDependencies": {
+        "react": "^19.1.0",
+        "react-dom": "^19.1.0",
+        "zustand": "^5.0.15",
+      },
+    },
     "packages/query-keys": {
       "name": "@lumina/query-keys",
       "version": "0.3.0",
+    },
+    "packages/transcript-ui": {
+      "name": "@lumina/transcript-ui",
+      "version": "0.3.0",
+      "peerDependencies": {
+        "react": "^19.1.0",
+        "react-dom": "^19.1.0",
+        "zustand": "^5.0.15",
+      },
     },
   },
   "packages": {
@@ -182,9 +217,15 @@
 
     "@jridgewell/trace-mapping": ["@jridgewell/trace-mapping@0.3.31", "", { "dependencies": { "@jridgewell/resolve-uri": "^3.1.0", "@jridgewell/sourcemap-codec": "^1.4.14" } }, "sha512-zzNR+SdQSDJzc8joaeP8QQoCQr8NuYx2dIIytl1QeBEZHJ9uW6hebsrYgbz8hJwUQao3TWCMtmfV8Nu1twOLAw=="],
 
+    "@lumina/chat-ui": ["@lumina/chat-ui@workspace:packages/chat-ui"],
+
     "@lumina/contracts": ["@lumina/contracts@workspace:packages/contracts"],
 
+    "@lumina/player-ui": ["@lumina/player-ui@workspace:packages/player-ui"],
+
     "@lumina/query-keys": ["@lumina/query-keys@workspace:packages/query-keys"],
+
+    "@lumina/transcript-ui": ["@lumina/transcript-ui@workspace:packages/transcript-ui"],
 
     "@napi-rs/lzma-linux-x64-gnu": ["@napi-rs/lzma-linux-x64-gnu@1.5.1", "", { "os": "linux", "cpu": "x64" }, "sha512-oTXEIha4SsuXdTA4Iyskj0kpdx2yVXdhd75c2v3xGrHFfVMsbhTPZU/nMPL4sWKo4pBHm3aucLaqGlF696dTyQ=="],
 

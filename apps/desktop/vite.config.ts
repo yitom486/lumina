@@ -10,6 +10,8 @@ export default defineConfig({
   resolve: {
     alias: {
       "@": path.resolve(import.meta.dirname, "./src"),
+      "@lumina/player-ui": path.resolve(import.meta.dirname, "../../packages/player-ui/src"),
+      "@lumina/chat-ui": path.resolve(import.meta.dirname, "../../packages/chat-ui/src"),
     },
   },
   // Dev cold start: pre-bundle heavy deps at server boot (parallel + cached
@@ -79,7 +81,7 @@ export default defineConfig({
         test: {
           name: "ui",
           environment: "happy-dom",
-          include: ["src/**/*.test.tsx"],
+          include: ["src/**/*.test.tsx", "../../packages/**/*.test.tsx"],
           setupFiles: ["src/test/setup.ts"],
         },
       },
