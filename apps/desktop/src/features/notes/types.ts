@@ -1,10 +1,5 @@
-export type NoteQuote = {
-  index: number;
-  startMs: number;
-  endMs: number;
-  text: string;
-  anchor: boolean;
-};
+import type { NoteQuote } from "@lumina/contracts";
+export type { NoteQuote } from "@lumina/contracts";
 
 export type NoteFrame = {
   atMs: number;

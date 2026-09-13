@@ -1,30 +1,5 @@
-/**
- * Mirror of `features/notes/proposalTypes.ts#VideoAnnotationProposal`.
- * chat-ui cannot import desktop files, so the shape is copied verbatim here;
- * keep in sync (proper home: `@lumina/contracts`, needs manifest work).
- */
-export type VideoAnnotationProposal = {
-  proposalId: string;
-  mediaPath: string;
-  positionMs: number;
-  body: string;
-  subtitleChoiceId?: string | null;
-  anchorCueIndex?: number | null;
-  quoteCueIndices?: number[] | null;
-  quoteHint?: string | null;
-  includeQuotes: boolean;
-  quotes: NoteQuote[];
-  previewMarkdown: string;
-  createdAtMs: number;
-};
-
-type NoteQuote = {
-  index: number;
-  startMs: number;
-  endMs: number;
-  text: string;
-  anchor: boolean;
-};
+import type { VideoAnnotationProposal } from "@lumina/contracts";
+export type { NoteQuote, VideoAnnotationProposal } from "@lumina/contracts";
 
 export type AgentKind = "Codex" | "Claude" | "Custom";
 
