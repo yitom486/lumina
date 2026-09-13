@@ -1,1 +1,1 @@
-export * from "../../../../../packages/player-ui/src/surfaceBoundsQueue";
+export * from "@lumina/player-ui/surfaceBoundsQueue";

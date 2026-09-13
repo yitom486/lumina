@@ -1,3 +1,3 @@
-/** Compat re-export: canonical source is packages/player-ui/src. */
+/** Compat re-export: canonical source is @lumina/player-ui. */
 
-export * from "../../../../../packages/player-ui/src/cwd";
+export * from "@lumina/player-ui/cwd";

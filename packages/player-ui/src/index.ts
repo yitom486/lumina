@@ -1,6 +1,9 @@
-/** Pure player utilities (no Tauri, no surface bridge, no store runtime). */
+/** Player stores, hooks and pure utilities (no Tauri, no surface bridge). */
 
 export * from "./trackPreferences";
 export * from "./cwd";
 export * from "./surfaceBoundsQueue";
+export * from "./progressStore";
+export * from "./resumePlayback";
+export * from "./sessionStore";
 export * from "./hooks/playerHotkeyPolicy";

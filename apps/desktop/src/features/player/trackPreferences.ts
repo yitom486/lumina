@@ -1,1 +1,1 @@
-export * from "../../../../../packages/player-ui/src/trackPreferences";
+export * from "@lumina/player-ui/trackPreferences";

@@ -1,1 +1,1 @@
-export * from "../../../../../../packages/player-ui/src/hooks/playerHotkeyPolicy";
+export * from "@lumina/player-ui/hooks/playerHotkeyPolicy";
