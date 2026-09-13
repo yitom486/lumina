@@ -28,18 +28,19 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { cn } from "@/lib/utils";
 
 import {
+  activeCueIndex,
+  LANG_PRESETS,
+  type AsrScope,
+} from "../../../../../../packages/transcript-ui/src/cueSelectors";
+import {
   listSubtitleChoices,
   loadSubtitleChoice,
   translateSubtitleTrack,
 } from "../api";
 import { subtitleChoicesKey, transcriptKey } from "../queries";
 import { useSubtitleWorkshopModels } from "../useSubtitleWorkshopModels";
-import type { Cue, SubtitleChoice } from "../types";
+import type { SubtitleChoice } from "../types";
 import { followMode, useFollowStore } from "../followStore";
-
-function activeCueIndex(cues: Cue[], timeMs: number): number {
-  return cues.findIndex((c) => timeMs >= c.startMs && timeMs < c.endMs);
-}
 
 function findChapterAt(
   chapters: MediaChapter[],
@@ -53,15 +54,6 @@ function findChapterAt(
   });
   return hit ?? null;
 }
-
-const LANG_PRESETS = [
-  { value: "en", label: "英语 (en)" },
-  { value: "zh", label: "中文 (zh)" },
-  { value: "ja", label: "日语 (ja)" },
-  { value: "ko", label: "韩语 (ko)" },
-];
-
-type AsrScope = "full" | "chapter";
 
 export function TranscriptPanel() {
   const queryClient = useQueryClient();
