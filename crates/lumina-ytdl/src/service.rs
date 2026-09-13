@@ -176,8 +176,10 @@ impl YtdlService {
         page_url: &str,
         choice_id: &str,
     ) -> Result<Transcript, SubtitleError> {
+        // Reuse the full in-process resolve (with signed subtitle URLs);
+        // `cached_resolve` is sanitized for IPC and would drop the fast path.
         let resolved = self
-            .cached_resolve(page_url)
+            .cached_full_resolve(page_url)
             .map_err(|error| SubtitleError::extract_failed(error.details.as_deref()))?;
         let resolved = resolved.ok_or_else(|| {
             SubtitleError::extract_failed(Some("online resolve cache unavailable"))
@@ -286,5 +288,68 @@ fn urls_match(a: &str, b: &str) -> bool {
 impl Default for YtdlService {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn subtitle_list_without_cache_is_business_error_without_network() {
+        let service = YtdlService::new();
+        let err = service
+            .list_subtitle_choices("https://www.youtube.com/watch?v=uncached")
+            .expect_err("cache miss must not trigger resolve");
+        assert_eq!(err.message, "无法提取字幕");
+    }
+
+    #[test]
+    fn subtitle_load_without_cache_is_business_error_without_network() {
+        let service = YtdlService::new();
+        let err = service
+            .load_subtitle_choice("https://www.youtube.com/watch?v=uncached", "online:en")
+            .expect_err("cache miss must not trigger download");
+        assert_eq!(err.message, "无法提取字幕");
+    }
+
+    #[test]
+    fn subtitle_load_with_unknown_choice_is_business_error() {
+        use crate::model::{YtdlResolveResult, YtdlSubtitleTrack};
+
+        let service = YtdlService::new();
+        let resolved = YtdlResolveResult {
+            media_id: "youtube:abc".into(),
+            title: None,
+            duration_ms: None,
+            webpage_url: Some("https://www.youtube.com/watch?v=abc".into()),
+            extractor: None,
+            chapters: vec![],
+            formats: vec![],
+            subtitles: vec![YtdlSubtitleTrack {
+                language: "en".into(),
+                ext: Some("vtt".into()),
+                name: None,
+                url: None,
+            }],
+            recommended_url: None,
+            recommended_format_id: None,
+        };
+        service
+            .store_cache("https://www.youtube.com/watch?v=abc", resolved, None)
+            .expect("store cache");
+        // Cached resolve exists, but the requested language is absent:
+        // must fail before any download attempt.
+        let err = service
+            .load_subtitle_choice("https://www.youtube.com/watch?v=abc", "online:xx")
+            .expect_err("unknown language");
+        assert_eq!(err.message, "无法提取字幕");
+        // List path reuses the same cache and keeps the online:<lang> id.
+        let choices = service
+            .list_subtitle_choices("https://www.youtube.com/watch?v=abc")
+            .expect("list from cache");
+        assert_eq!(choices.len(), 1);
+        assert_eq!(choices[0].id, "online:en");
+        assert!(choices[0].external_path.is_none());
     }
 }

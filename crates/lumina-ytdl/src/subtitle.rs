@@ -50,14 +50,16 @@ pub fn load_choice(
         .find(|track| track.language == language)
         .ok_or_else(|| SubtitleError::extract_failed(Some("online subtitle choice not found")))?;
     let cached = download_or_cached(page_url, &resolved.media_id, track)?;
-    let (content, source_path) = read_external_subtitle(&cached)?;
+    let (content, cached_path) = read_external_subtitle(&cached)?;
     let cues = parse_subtitle_text(&content)?;
+    // Never expose the absolute disk cache path to UI/ACP/MCP: the page URL
+    // is already known to the caller and carries the same identity.
     Ok(Transcript {
-        source_path: source_path.to_string_lossy().to_string(),
+        source_path: page_url.to_string(),
         choice_id: choice_id.to_string(),
         stream_index: None,
         language: Some(track.language.clone()),
-        codec_name: source_path
+        codec_name: cached_path
             .extension()
             .and_then(|ext| ext.to_str())
             .map(str::to_string),
@@ -79,7 +81,7 @@ fn download_or_cached(
         .join(safe_component(media_id))
         .join(safe_component(&track.language));
     fs::create_dir_all(&dir).map_err(|error| {
-        tracing::warn!(%error, path = %dir.display(), "online subtitle cache create failed");
+        tracing::warn!("online subtitle cache create failed");
         SubtitleError::internal(Some(&format!("create online subtitle cache: {error}")))
     })?;
     if let Some(path) = find_subtitle(&dir) {
@@ -91,7 +93,7 @@ fn download_or_cached(
             Ok(path) => return Ok(path),
             Err(error) => tracing::warn!(
                 code = ?error.code,
-                details = ?error.details,
+                language = %track.language,
                 "cached signed subtitle URL failed; retrying through resolver"
             ),
         }
@@ -125,7 +127,7 @@ fn download_or_cached(
     })?;
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-        tracing::warn!(%stderr, language = %track.language, "online subtitle download failed");
+        tracing::warn!(language = %track.language, "online subtitle download failed");
         return Err(SubtitleError::extract_failed(Some(&stderr)));
     }
     find_subtitle(&dir).ok_or_else(|| {
@@ -214,6 +216,26 @@ fn safe_component(value: &str) -> String {
 mod tests {
     use super::*;
 
+    fn fixture_resolved() -> YtdlResolveResult {
+        YtdlResolveResult {
+            media_id: "youtube:abc".into(),
+            title: Some("Demo".into()),
+            duration_ms: Some(1_000),
+            webpage_url: None,
+            extractor: Some("youtube".into()),
+            chapters: vec![],
+            formats: vec![],
+            subtitles: vec![YtdlSubtitleTrack {
+                language: "zh-Hans".into(),
+                ext: Some("vtt".into()),
+                name: Some("中文".into()),
+                url: Some("https://signed.example/video?sig=secret&cookie=abc".into()),
+            }],
+            recommended_url: None,
+            recommended_format_id: None,
+        }
+    }
+
     #[test]
     fn online_choices_do_not_expose_local_paths() {
         let resolved = YtdlResolveResult {
@@ -236,6 +258,89 @@ mod tests {
         let choices = list_choices(&resolved);
         assert_eq!(choices[0].id, "online:zh-Hans");
         assert!(choices[0].external_path.is_none());
+    }
+
+    #[test]
+    fn remote_choice_list_hides_urls_cookies_and_paths() {
+        let resolved = fixture_resolved();
+        let choices = list_choices(&resolved);
+        assert_eq!(choices.len(), 1);
+        assert_eq!(choices[0].id, "online:zh-Hans");
+        assert!(choices[0].external_path.is_none());
+        let json = serde_json::to_value(&choices).expect("choices serialize");
+        let text = json.to_string().to_lowercase();
+        assert!(!text.contains("signed.example"), "no signed URL: {text}");
+        assert!(!text.contains("sig="), "no signature: {text}");
+        assert!(!text.contains("cookie"), "no cookie: {text}");
+        // No absolute cache path leaks into the list DTO.
+        assert!(!text.contains(":\\"), "no windows path: {text}");
+        assert!(!text.contains("/tmp"), "no tmp path: {text}");
+    }
+
+    #[test]
+    fn invalid_online_choice_id_is_business_error() {
+        let resolved = fixture_resolved();
+        let err = load_choice(
+            "https://www.youtube.com/watch?v=abc",
+            &resolved,
+            "embedded:0",
+        )
+        .expect_err("non-online id must fail");
+        assert_eq!(err.message, "无法提取字幕");
+    }
+
+    #[test]
+    fn unknown_online_language_is_business_error_without_network() {
+        let resolved = fixture_resolved();
+        let err = load_choice(
+            "https://www.youtube.com/watch?v=abc",
+            &resolved,
+            "online:xx-missing",
+        )
+        .expect_err("unknown language must fail before download");
+        assert_eq!(err.message, "无法提取字幕");
+    }
+
+    #[test]
+    fn cached_online_subtitle_returns_sanitized_transcript() {
+        // Pre-seed the on-disk cache so `load_choice` hits `find_subtitle`
+        // before any signed-URL or yt-dlp download (no network in unit tests).
+        let page_url = "https://www.youtube.com/watch?v=abc";
+        let resolved = fixture_resolved();
+        let dir = crate::paths::install_root()
+            .join("subtitles")
+            .join("youtube_abc")
+            .join("zh-Hans");
+        let _ = fs::create_dir_all(&dir);
+        // Clean any stale fixture from previous runs.
+        if let Ok(entries) = fs::read_dir(&dir) {
+            for entry in entries.flatten() {
+                let _ = fs::remove_file(entry.path());
+            }
+        }
+        fs::write(
+            dir.join("subtitle.vtt"),
+            "WEBVTT\n\n00:00:01.000 --> 00:00:02.000\n你好\n",
+        )
+        .expect("seed cached subtitle");
+        let transcript = load_choice(page_url, &resolved, "online:zh-Hans")
+            .expect("cached subtitle should parse");
+        assert_eq!(transcript.choice_id, "online:zh-Hans");
+        assert_eq!(transcript.language.as_deref(), Some("zh-Hans"));
+        assert_eq!(transcript.cues.len(), 1);
+        assert_eq!(transcript.cues[0].text, "你好");
+        assert_eq!(transcript.cues[0].start_ms, 1_000);
+        // Sanitized: page URL identity, never the absolute cache file path.
+        assert_eq!(transcript.source_path, page_url);
+        let json = serde_json::to_value(&transcript).expect("transcript serializes");
+        let text = json.to_string().to_lowercase();
+        assert!(!text.contains("signed.example"), "no signed URL: {text}");
+        assert!(!text.contains("cookie"), "no cookie: {text}");
+        let _ = fs::remove_dir_all(
+            crate::paths::install_root()
+                .join("subtitles")
+                .join("youtube_abc"),
+        );
     }
 
     #[test]

@@ -138,7 +138,6 @@ pub async fn acp_prompt(
                             Err(error) => {
                                 tracing::warn!(
                                     code = ?error.code,
-                                    details = ?error.details,
                                     "online transcript unavailable for ACP snapshot"
                                 );
                                 None
@@ -166,7 +165,7 @@ pub async fn acp_prompt(
                 }
                 Ok(None) => tracing::warn!("online resolve cache unavailable for ACP snapshot"),
                 Err(error) => {
-                    tracing::warn!(details = ?error.details, "online resolve cache failed")
+                    tracing::warn!(code = ?error.code, "online resolve cache failed")
                 }
             }
         }

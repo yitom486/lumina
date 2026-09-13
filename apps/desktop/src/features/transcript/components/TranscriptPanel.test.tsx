@@ -92,6 +92,129 @@ afterEach(() => {
   localStorage.clear();
 });
 
+describe("TranscriptPanel online subtitles", () => {
+  const REMOTE_URL = "https://www.youtube.com/watch?v=abc";
+  const REMOTE_CUES = [
+    { index: 1, startMs: 1000, endMs: 2000, text: "remote one" },
+    { index: 2, startMs: 9000, endMs: 11000, text: "remote two" },
+  ];
+
+  function mockRemoteInvoke() {
+    vi.mocked(invoke).mockImplementation((cmd: string, args?: unknown) => {
+      if (cmd === "subtitle_list_choices") {
+        const path = (args as { path?: string } | undefined)?.path;
+        expect(path).toBe(REMOTE_URL);
+        return Promise.resolve([
+          {
+            id: "online:en",
+            source: "Sidecar",
+            label: "在线 · en",
+            supported: true,
+            streamIndex: null,
+            externalPath: null,
+            codecName: "vtt",
+            language: "en",
+          },
+        ]);
+      }
+      if (cmd === "subtitle_load_choice") {
+        const payload = args as { path?: string; choiceId?: string };
+        expect(payload.path).toBe(REMOTE_URL);
+        expect(payload.choiceId).toBe("online:en");
+        return Promise.resolve({
+          sourcePath: REMOTE_URL,
+          choiceId: "online:en",
+          streamIndex: null,
+          language: "en",
+          codecName: "vtt",
+          cues: REMOTE_CUES,
+        });
+      }
+      if (cmd === "ytdl_cached_resolve") {
+        return Promise.resolve({
+          mediaId: "youtube:abc",
+          title: "Demo",
+          durationMs: 60000,
+          webpageUrl: REMOTE_URL,
+          extractor: "youtube",
+          chapters: [],
+          formats: [],
+          subtitles: [{ language: "en", ext: "vtt", name: "English" }],
+        });
+      }
+      if (cmd === "asr_status")
+        return Promise.resolve({
+          available: false,
+          installSupported: false,
+          models: [],
+          catalog: [],
+        });
+      if (cmd === "media_inspect")
+        return Promise.reject(new Error("remote must not probe local media"));
+      if (cmd === "library_agent_models_discover")
+        return Promise.resolve(null);
+      return Promise.resolve(null);
+    });
+  }
+
+  beforeEach(() => {
+    usePlayerStore.setState({
+      currentFile: REMOTE_URL,
+      status: "Paused",
+      currentTimeMs: 9500,
+    });
+    useTrackStore.setState({ subtitleChoiceId: "online:en" });
+  });
+
+  it("lists remote choices without signed URLs and loads after selection", async () => {
+    mockRemoteInvoke();
+    renderPanel();
+    await waitFor(() => {
+      expect(screen.getByText("remote two")).toBeInTheDocument();
+    });
+    const calls = vi.mocked(invoke).mock.calls;
+    const listCalls = calls.filter(([cmd]) => cmd === "subtitle_list_choices");
+    const loadCalls = calls.filter(([cmd]) => cmd === "subtitle_load_choice");
+    expect(listCalls.length).toBeGreaterThan(0);
+    expect(loadCalls.length).toBeGreaterThan(0);
+    // List DTO must not leak signed URLs, cookies, or absolute cache paths.
+    const listed = (await vi.mocked(invoke)("subtitle_list_choices", {
+      path: REMOTE_URL,
+    })) as Array<{ id: string; externalPath?: string | null }>;
+    expect(listed[0]?.id).toBe("online:en");
+    expect(listed[0]?.externalPath).toBeNull();
+    const listedText = JSON.stringify(listed).toLowerCase();
+    expect(listedText).not.toContain("sig=");
+    expect(listedText).not.toContain("cookie");
+    expect(listedText).not.toContain("http");
+  });
+
+  it("does not download before a subtitle is selected", async () => {
+    mockRemoteInvoke();
+    useTrackStore.setState({ subtitleChoiceId: null });
+    renderPanel();
+    // Remote choices are listed on demand, but no transcript download happens
+    // until the user picks `online:<language>`.
+    await waitFor(() => {
+      expect(screen.getByText("在线 · en")).toBeInTheDocument();
+    });
+    expect(screen.queryByText("remote one")).not.toBeInTheDocument();
+    const loadCalls = vi
+      .mocked(invoke)
+      .mock.calls.filter(([cmd]) => cmd === "subtitle_load_choice");
+    expect(loadCalls).toHaveLength(0);
+  });
+
+  it("renders remote cues with the same timeline semantics as local", async () => {
+    mockRemoteInvoke();
+    renderPanel();
+    await waitFor(() => {
+      expect(screen.getByText("remote one")).toBeInTheDocument();
+    });
+    expect(screen.getByText("remote two")).toBeInTheDocument();
+  });
+});
+
 describe("TranscriptPanel follow mode", () => {
   it("auto-scrolls while following", async () => {
     renderPanel();

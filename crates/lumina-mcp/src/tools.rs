@@ -255,19 +255,41 @@ fn episode_transcript(snapshot: &LuminaMcpSnapshot, args: &Value) -> Result<Valu
 fn subtitle_cues(snapshot: &LuminaMcpSnapshot, args: &Value) -> Result<Value, String> {
     let anchor = require_anchor(snapshot)?;
     let choice_id = resolve_subtitle_choice_id(args, anchor)?;
-    let media_path = PathBuf::from(&anchor.media_path);
     let offset = args.get("offset").and_then(Value::as_u64).unwrap_or(0) as usize;
     let limit = args
         .get("limit")
         .and_then(Value::as_u64)
         .map(|value| value.min(200) as usize)
         .unwrap_or(80);
+    // Online path reuses the same cached transcript as Transcript UI and
+    // `lumina_get_transcript_window`: no file IO, no implicit resolve, no
+    // signed URL / cookie / absolute path in the result.
+    if let Some(online) = snapshot.online.as_ref() {
+        if !online.subtitles.iter().any(|choice| choice.id == choice_id) {
+            return Err("当前未选择可解析字幕".to_string());
+        }
+        let transcript = online
+            .transcript
+            .as_ref()
+            .filter(|transcript| transcript.choice_id == choice_id)
+            .ok_or_else(|| "当前在线字幕尚未缓存，请先在文稿面板选择字幕后重试".to_string())?;
+        return paged_cues_result(&choice_id, &transcript.cues, offset, limit);
+    }
+    let media_path = PathBuf::from(&anchor.media_path);
     let transcript = SubtitleService::load_choice(&media_path, &choice_id)
         .map_err(|error| error.message.clone())?;
-    let total = transcript.cues.len();
-    let slice: Vec<_> = transcript
-        .cues
-        .into_iter()
+    paged_cues_result(&choice_id, &transcript.cues, offset, limit)
+}
+
+fn paged_cues_result(
+    choice_id: &str,
+    cues: &[Cue],
+    offset: usize,
+    limit: usize,
+) -> Result<Value, String> {
+    let total = cues.len();
+    let slice: Vec<_> = cues
+        .iter()
         .skip(offset)
         .take(limit)
         .map(|cue| {
@@ -1133,6 +1155,217 @@ mod tests {
         let lines = transcript_lines_from_cues(&cues, 10_000, 2, 2);
         assert_eq!(lines.len(), 1);
         assert_eq!(lines[0].text, "active");
+    }
+
+    fn online_snapshot_with_transcript() -> LuminaMcpSnapshot {
+        use crate::snapshot::OnlineMediaSnapshot;
+        use lumina_subtitle::{SubtitleChoice, SubtitleSource, Transcript};
+        LuminaMcpSnapshot {
+            anchor: Some(PromptAnchor {
+                media_path: "https://www.youtube.com/watch?v=abc".into(),
+                library_root: None,
+                group_key: None,
+                season: None,
+                episode: None,
+                position_ms: 10_000,
+                sent_at_ms: 1,
+                subtitle_choice_id: Some("online:en".into()),
+            }),
+            playback: Some(crate::snapshot::PlaybackLite {
+                media_path: Some("https://www.youtube.com/watch?v=abc".into()),
+                media_title: Some("Demo".into()),
+                position_ms: Some(10_000),
+                duration_ms: Some(60_000),
+                chapter_title: None,
+                notes_excerpt: None,
+            }),
+            capabilities: Some(AgentCapabilities {
+                vision_capable: false,
+                subtitle_workshop_enabled: true,
+                video_annotations_enabled: true,
+            }),
+            online: Some(OnlineMediaSnapshot {
+                media_id: "youtube:abc".into(),
+                title: Some("Demo".into()),
+                duration_ms: Some(60_000),
+                webpage_url: Some("https://www.youtube.com/watch?v=abc".into()),
+                extractor: Some("youtube".into()),
+                chapters: vec![],
+                subtitles: vec![SubtitleChoice {
+                    id: "online:en".into(),
+                    source: SubtitleSource::Sidecar,
+                    label: "在线 · en".into(),
+                    supported: true,
+                    stream_index: None,
+                    external_path: None,
+                    codec_name: Some("vtt".into()),
+                    language: Some("en".into()),
+                }],
+                transcript: Some(Transcript {
+                    source_path: "https://www.youtube.com/watch?v=abc".into(),
+                    choice_id: "online:en".into(),
+                    stream_index: None,
+                    language: Some("en".into()),
+                    codec_name: Some("vtt".into()),
+                    cues: vec![
+                        Cue {
+                            index: 1,
+                            start_ms: 1_000,
+                            end_ms: 2_000,
+                            text: "before".into(),
+                        },
+                        Cue {
+                            index: 2,
+                            start_ms: 9_000,
+                            end_ms: 11_000,
+                            text: "active".into(),
+                        },
+                        Cue {
+                            index: 3,
+                            start_ms: 30_000,
+                            end_ms: 31_000,
+                            text: "after".into(),
+                        },
+                    ],
+                }),
+            }),
+            ..LuminaMcpSnapshot::empty()
+        }
+    }
+
+    fn tool_text_payload(value: &Value) -> Value {
+        let text = value
+            .get("content")
+            .and_then(Value::as_array)
+            .and_then(|blocks| blocks.first())
+            .and_then(|block| block.get("text"))
+            .and_then(Value::as_str)
+            .expect("text block");
+        serde_json::from_str(text).expect("tool payload JSON")
+    }
+
+    #[test]
+    fn online_transcript_window_uses_cached_cues_with_time_range() {
+        let snapshot = online_snapshot_with_transcript();
+        let value = transcript_window(&snapshot, &json!({ "beforeSec": 2, "afterSec": 2 }))
+            .expect("online window");
+        let payload = tool_text_payload(&value);
+        let lines = payload
+            .get("lines")
+            .and_then(Value::as_array)
+            .expect("lines");
+        assert_eq!(lines.len(), 1);
+        assert_eq!(lines[0].get("text").and_then(Value::as_str), Some("active"));
+        assert_eq!(lines[0].get("startMs").and_then(Value::as_u64), Some(9_000));
+        let text = serde_json::to_string(&value)
+            .expect("serialize")
+            .to_lowercase();
+        assert!(!text.contains("signed"), "no signed URL: {text}");
+        assert!(!text.contains("cookie"), "no cookie: {text}");
+    }
+
+    #[test]
+    fn online_transcript_window_rejects_choice_mismatch_without_network() {
+        let snapshot = online_snapshot_with_transcript();
+        let err = transcript_window(&snapshot, &json!({ "subtitleChoiceId": "online:xx" }))
+            .expect_err("mismatched choice");
+        assert!(
+            err.contains("尚未缓存") || err.contains("未选择"),
+            "stable error: {err}"
+        );
+    }
+
+    #[test]
+    fn online_transcript_window_requires_cache_without_crawling() {
+        let mut snapshot = online_snapshot_with_transcript();
+        if let Some(online) = snapshot.online.as_mut() {
+            online.transcript = None;
+        }
+        let err = transcript_window(&snapshot, &json!({})).expect_err("missing transcript");
+        assert!(
+            err.contains("尚未缓存"),
+            "cache miss is a business error: {err}"
+        );
+    }
+
+    #[test]
+    fn online_subtitle_cues_paginates_with_same_semantics() {
+        let snapshot = online_snapshot_with_transcript();
+        let value = subtitle_cues(&snapshot, &json!({ "offset": 0, "limit": 2 }))
+            .expect("online cues page 1");
+        let payload = tool_text_payload(&value);
+        assert_eq!(
+            payload.get("choiceId").and_then(Value::as_str),
+            Some("online:en")
+        );
+        assert_eq!(payload.get("total").and_then(Value::as_u64), Some(3));
+        assert_eq!(
+            payload.get("cues").and_then(Value::as_array).map(Vec::len),
+            Some(2)
+        );
+        assert_eq!(payload.get("hasMore").and_then(Value::as_bool), Some(true));
+        let first = payload
+            .get("cues")
+            .and_then(Value::as_array)
+            .and_then(|cues| cues.first())
+            .expect("first cue");
+        assert_eq!(first.get("startMs").and_then(Value::as_u64), Some(1_000));
+        assert_eq!(first.get("endMs").and_then(Value::as_u64), Some(2_000));
+        assert_eq!(first.get("text").and_then(Value::as_str), Some("before"));
+
+        let second = subtitle_cues(&snapshot, &json!({ "offset": 2, "limit": 2 }))
+            .expect("online cues page 2");
+        let payload = tool_text_payload(&second);
+        assert_eq!(
+            payload.get("cues").and_then(Value::as_array).map(Vec::len),
+            Some(1)
+        );
+        assert_eq!(payload.get("hasMore").and_then(Value::as_bool), Some(false));
+        let text = serde_json::to_string(&second)
+            .expect("serialize")
+            .to_lowercase();
+        assert!(!text.contains("signed"), "no signed URL: {text}");
+        assert!(!text.contains("cookie"), "no cookie: {text}");
+    }
+
+    #[test]
+    fn online_subtitle_cues_validates_choice_and_cache() {
+        let snapshot = online_snapshot_with_transcript();
+        let err = subtitle_cues(
+            &snapshot,
+            &json!({ "subtitleChoiceId": "sidecar:/tmp/x.srt" }),
+        )
+        .expect_err("unknown choice");
+        assert!(
+            err.contains("未选择") || err.contains("尚未缓存"),
+            "choice error: {err}"
+        );
+
+        let mut missing = online_snapshot_with_transcript();
+        if let Some(online) = missing.online.as_mut() {
+            online.transcript = None;
+        }
+        let err = subtitle_cues(&missing, &json!({})).expect_err("missing transcript");
+        assert!(err.contains("尚未缓存"), "cache miss: {err}");
+    }
+
+    #[test]
+    fn online_tool_results_hide_paths_urls_and_cookies() {
+        let snapshot = online_snapshot_with_transcript();
+        let window = transcript_window(&snapshot, &json!({})).expect("window");
+        let cues = subtitle_cues(&snapshot, &json!({})).expect("cues");
+        for value in [&window, &cues] {
+            let text = serde_json::to_string(value)
+                .expect("serialize")
+                .to_lowercase();
+            assert!(!text.contains("cookie"), "no cookie: {text}");
+            assert!(!text.contains("sig="), "no signature: {text}");
+            assert!(!text.contains("signed"), "no signed URL: {text}");
+        }
+        // Snapshot itself must not carry absolute cache paths for online tracks.
+        let snap_json = serde_json::to_value(&snapshot.online).expect("online snapshot serializes");
+        let snap_text = snap_json.to_string().to_lowercase();
+        assert!(!snap_text.contains("cookie"), "snapshot: {snap_text}");
     }
 
     /// P7-M2 tool shape on a synthetic gap fixture. Needs ffmpeg; SKIP otherwise.
