@@ -3,6 +3,7 @@
 use tauri::ipc::Channel;
 use tauri::{AppHandle, Manager, State};
 
+use crate::acp::adapter;
 use crate::acp::paths::resolve_session_cwd;
 use crate::acp::settings::AcpClientSettings;
 use crate::acp::{
@@ -74,14 +75,13 @@ pub async fn acp_connect(
 
 #[tauri::command]
 pub async fn acp_sync_mcp_capabilities(
-    state: State<'_, AppState>,
+    _state: State<'_, AppState>,
     cwd: Option<String>,
     client_settings: Option<AcpClientSettings>,
 ) -> Result<(), AcpError> {
-    let acp = state.acp.clone();
     let settings = client_settings.unwrap_or_default();
     tauri::async_runtime::spawn_blocking(move || {
-        acp.sync_mcp_capabilities(cwd.as_deref(), settings.vision_capable)
+        adapter::sync_mcp_capabilities(cwd.as_deref(), settings.vision_capable)
     })
     .await
     .map_err(|error| {
@@ -107,12 +107,17 @@ pub async fn acp_prompt(
 ) -> Result<String, AcpError> {
     let acp = state.acp.clone();
     let library = state.library.clone();
+    let snapshots = state.prompt_snapshots.clone();
     let ytdl = state.ytdl.clone();
     let settings = client_settings.unwrap_or_default();
     tauri::async_runtime::spawn_blocking(move || {
         let session_cwd = resolve_session_cwd(cwd.as_deref())?;
-        let mut snapshot =
-            acp.build_prompt_snapshot(context.as_ref(), &library, settings.vision_capable)?;
+        let mut snapshot = adapter::build_prompt_snapshot(
+            &snapshots,
+            &library,
+            context.as_ref(),
+            settings.vision_capable,
+        )?;
         if let Some(page_url) = context
             .as_ref()
             .and_then(|value| value.media_path.as_deref())
@@ -173,7 +178,7 @@ pub async fn acp_prompt(
                 "ACP 提问锚点已写入 snapshot"
             );
         }
-        acp.write_prompt_snapshot(&session_cwd, &snapshot)?;
+        adapter::write_prompt_snapshot(&session_cwd, &snapshot)?;
         acp.prompt(
             text,
             cwd,
@@ -236,8 +241,10 @@ pub async fn acp_new_chat(
     on_event: Channel<AcpEvent>,
 ) -> Result<(), AcpError> {
     let acp = state.acp.clone();
+    let snapshots = state.prompt_snapshots.clone();
     let settings = client_settings.unwrap_or_default();
     tauri::async_runtime::spawn_blocking(move || {
+        adapter::reset_prompt_snapshot_state(&snapshots);
         acp.new_chat(cwd, profile_id, settings, profiles, |event| {
             if let Err(error) = on_event.send(event) {
                 tracing::warn!(%error, "failed to send ACP new chat event");
@@ -254,7 +261,9 @@ pub async fn acp_close(app: AppHandle) -> Result<(), AcpError> {
         let Some(state) = app.try_state::<AppState>() else {
             return Err(AcpError::internal(Some("app state unavailable")));
         };
-        state.acp.close_session()
+        let result = state.acp.close_session();
+        adapter::reset_prompt_snapshot_state(&state.prompt_snapshots);
+        result
     })
     .await
     .map_err(|error| AcpError::internal(Some(&format!("acp close join: {error}"))))?

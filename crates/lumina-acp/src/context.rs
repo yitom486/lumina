@@ -9,7 +9,8 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
-use crate::mcp::SNAPSHOT_RELATIVE_PATH;
+/// Mirrors `mcp::SNAPSHOT_RELATIVE_PATH`; acp must not depend on mcp (M5).
+const SNAPSHOT_RELATIVE_PATH: &str = ".lumina/agent-context.json";
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]

@@ -10,6 +10,7 @@ use tauri::{AppHandle, Manager};
 use crate::acp::AcpService;
 use crate::asr::AsrService;
 use crate::library::MediaLibraryService;
+use crate::mcp::PromptSnapshotState;
 use crate::notes::NoteService;
 use crate::player::error::PlayerError;
 use crate::player::model::PlayerEvent;
@@ -25,6 +26,8 @@ pub struct AppState {
     events: Mutex<Option<Channel<PlayerEvent>>>,
     pub asr: Arc<AsrService>,
     pub acp: Arc<AcpService>,
+    /// Warm chat-snapshot state (M5: owned by app, used by the ACP adapter).
+    pub prompt_snapshots: Arc<Mutex<PromptSnapshotState>>,
     pub library: Arc<MediaLibraryService>,
     pub notes: Arc<NoteService>,
     pub ytdl: Arc<YtdlService>,
@@ -34,12 +37,14 @@ pub struct AppState {
 
 impl AppState {
     pub fn new() -> Self {
+        crate::acp::adapter::install_session_environment();
         Self {
             player: Mutex::new(PlayerService::new()),
             surface: Mutex::new(None),
             events: Mutex::new(None),
             asr: Arc::new(AsrService::new()),
             acp: Arc::new(AcpService::new()),
+            prompt_snapshots: Arc::new(Mutex::new(PromptSnapshotState::default())),
             library: Arc::new(MediaLibraryService::new()),
             notes: Arc::new(NoteService::new()),
             ytdl: Arc::new(YtdlService::new()),

@@ -2,17 +2,15 @@
 
 use std::path::{Path, PathBuf};
 
-use crate::acp::discover::{codex_config_present, find_acp_adapter, find_bunx, find_codex};
-use crate::acp::error::AcpError;
-use crate::acp::model::AcpStatus;
-use crate::acp::model::AgentProfilesHint;
-use crate::acp::profile::{
-    install_hint, list_status, prepare_profiles, AgentKind, RESPONSES_ONLY_NOTE,
-};
-use crate::process_util::command;
+use crate::discover::{codex_config_present, find_acp_adapter, find_bunx, find_codex};
+use crate::error::AcpError;
+use crate::model::AcpStatus;
+use crate::model::AgentProfilesHint;
+use crate::process::command;
+use crate::profile::{install_hint, list_status, prepare_profiles, AgentKind, RESPONSES_ONLY_NOTE};
 
 #[cfg(test)]
-use crate::acp::profile::default_profiles_hint;
+use crate::profile::default_profiles_hint;
 
 /// Resolve an absolute session `cwd` for ACP.
 ///
@@ -241,7 +239,7 @@ mod tests {
     fn resolve_cwd_rejects_remote_urls_with_business_error() {
         let error = resolve_session_cwd(Some("https://www.youtube.com/watch?v=test"))
             .expect_err("URL must not become cwd");
-        assert_eq!(error.code, crate::acp::AcpErrorCode::WorkspaceUnavailable);
+        assert_eq!(error.code, crate::AcpErrorCode::WorkspaceUnavailable);
         assert!(error.message.contains("工作目录"));
         assert!(!error.message.contains("https"));
     }

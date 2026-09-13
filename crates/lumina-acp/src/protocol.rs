@@ -3,8 +3,8 @@
 
 use serde_json::{json, Value};
 
-use crate::acp::discover::codex_config_present;
-use crate::acp::error::AcpError;
+use crate::discover::codex_config_present;
+use crate::error::AcpError;
 
 pub fn request(id: u64, method: &str, params: Value) -> Value {
     json!({
@@ -86,7 +86,7 @@ pub fn session_new_params(cwd: &str, mcp_servers: Value) -> Value {
 }
 
 pub fn session_prompt_params(session_id: &str, text: &str) -> Value {
-    crate::acp::context::session_prompt_params(session_id, text, None, None)
+    crate::context::session_prompt_params(session_id, text, None, None)
 }
 
 pub fn session_resume_params(session_id: &str, cwd: &str, mcp_servers: Value) -> Value {
@@ -242,9 +242,9 @@ pub fn parse_session_id(value: &Value) -> Option<String> {
         })
 }
 
-pub fn parse_session_model_options(value: &Value) -> crate::acp::AcpSessionModelOptions {
+pub fn parse_session_model_options(value: &Value) -> crate::AcpSessionModelOptions {
     let result = value.get("result").unwrap_or(value);
-    let mut options = crate::acp::AcpSessionModelOptions::default();
+    let mut options = crate::AcpSessionModelOptions::default();
     let Some(config_options) = result.get("configOptions").and_then(Value::as_array) else {
         return options;
     };
@@ -261,7 +261,7 @@ pub fn parse_session_model_options(value: &Value) -> crate::acp::AcpSessionModel
             .flatten()
             .filter_map(|item| {
                 let value = item.get("value")?.as_str()?.trim();
-                (!value.is_empty()).then(|| crate::acp::AcpSessionOption {
+                (!value.is_empty()).then(|| crate::AcpSessionOption {
                     value: value.to_string(),
                     name: item
                         .get("name")
@@ -783,9 +783,16 @@ mod tests {
     fn session_new_requires_absolute_cwd() {
         let params = session_new_params(
             "D:/videos",
-            crate::mcp::lumina_mcp_servers(std::path::Path::new(
-                "D:/videos/.lumina/agent-context.json",
-            )),
+            // Generalized MCP server spec (shape mirrors `mcp::lumina_mcp_servers`).
+            serde_json::json!([{
+                "name": "lumina",
+                "command": "lumina",
+                "args": ["--lumina-mcp"],
+                "env": [{
+                    "name": "LUMINA_MCP_CONTEXT_FILE",
+                    "value": "D:/videos/.lumina/agent-context.json",
+                }],
+            }]),
         );
         assert_eq!(params.get("cwd").and_then(Value::as_str), Some("D:/videos"));
         assert!(params.get("mcpServers").and_then(Value::as_array).is_some());

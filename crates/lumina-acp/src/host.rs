@@ -12,9 +12,9 @@ use std::time::Duration;
 
 use serde_json::{json, Value};
 
-use crate::acp::error::AcpError;
-use crate::acp::protocol::{error_response, success_response};
-use crate::process_util::command;
+use crate::error::AcpError;
+use crate::process::command;
+use crate::protocol::{error_response, success_response};
 
 static TERMINAL_SEQ: AtomicU64 = AtomicU64::new(1);
 
@@ -74,7 +74,7 @@ impl AcpHost {
         match method {
             "session/request_permission" => success_response(
                 id,
-                crate::acp::protocol::permission_auto_result(params, canceling),
+                crate::protocol::permission_auto_result(params, canceling),
             ),
             "fs/read_text_file" => match self.read_text_file(params) {
                 Ok(result) => success_response(id, result),
@@ -129,7 +129,7 @@ impl AcpHost {
         let raw = fs::read_to_string(&path).map_err(|error| {
             tracing::warn!(path = %path.display(), %error, "ACP fs read failed");
             AcpError::new(
-                crate::acp::AcpErrorCode::ProtocolError,
+                crate::AcpErrorCode::ProtocolError,
                 "无法读取该文件",
                 Some(error.to_string()),
             )
@@ -163,7 +163,7 @@ impl AcpHost {
                 fs::create_dir_all(parent).map_err(|error| {
                     tracing::warn!(path = %parent.display(), %error, "ACP fs mkdir failed");
                     AcpError::new(
-                        crate::acp::AcpErrorCode::ProtocolError,
+                        crate::AcpErrorCode::ProtocolError,
                         "无法创建文件目录",
                         Some(error.to_string()),
                     )
@@ -174,7 +174,7 @@ impl AcpHost {
         fs::write(&path, content).map_err(|error| {
             tracing::warn!(path = %path.display(), %error, "ACP fs write failed");
             AcpError::new(
-                crate::acp::AcpErrorCode::ProtocolError,
+                crate::AcpErrorCode::ProtocolError,
                 "无法写入该文件",
                 Some(error.to_string()),
             )

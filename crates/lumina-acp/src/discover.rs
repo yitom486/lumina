@@ -2,10 +2,38 @@
 
 use std::path::PathBuf;
 
+/// Dev-workspace `native/acp` roots, nearest first. Monorepo 拆分后 acp crate
+/// 不再与 `native/` 同目录，向上兼容查找旧布局。
+pub fn native_acp_dirs() -> Vec<PathBuf> {
+    let mut roots = Vec::new();
+    let mut dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    roots.push(dir.join("native").join("acp"));
+    for _ in 0..6 {
+        let Some(parent) = dir.parent().map(PathBuf::from) else {
+            break;
+        };
+        dir = parent;
+        roots.push(dir.join("native").join("acp"));
+        roots.push(
+            dir.join("apps")
+                .join("desktop")
+                .join("src-tauri")
+                .join("native")
+                .join("acp"),
+        );
+    }
+    roots
+}
+
 pub fn native_acp_dir() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("native")
-        .join("acp")
+    native_acp_dirs()
+        .into_iter()
+        .find(|p| p.is_dir())
+        .unwrap_or_else(|| {
+            PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("native")
+                .join("acp")
+        })
 }
 
 pub fn which(name: &str) -> Option<PathBuf> {
@@ -22,7 +50,9 @@ pub fn which(name: &str) -> Option<PathBuf> {
 pub fn find_command(name: &str) -> Option<PathBuf> {
     let mut candidates = Vec::new();
 
-    candidates.push(native_acp_dir().join(name));
+    for dir in native_acp_dirs() {
+        candidates.push(dir.join(name));
+    }
 
     if let Ok(exe) = std::env::current_exe() {
         if let Some(dir) = exe.parent() {
@@ -37,7 +67,9 @@ pub fn find_command(name: &str) -> Option<PathBuf> {
 
     if cfg!(windows) && !name.ends_with(".exe") {
         let with_exe = format!("{name}.exe");
-        candidates.push(native_acp_dir().join(&with_exe));
+        for dir in native_acp_dirs() {
+            candidates.push(dir.join(&with_exe));
+        }
         if let Some(from_path) = which(&with_exe) {
             candidates.push(from_path);
         }
@@ -182,18 +214,29 @@ pub fn find_bun() -> Option<PathBuf> {
 }
 
 /// Dev tree: `node_modules/@agentclientprotocol/codex-acp` (avoids flaky `bun x` on Windows).
+/// Monorepo 拆分后向上兼容查找，desktop 包优先（旧解析顺序）。
 pub fn find_dev_codex_acp_entry() -> Option<PathBuf> {
-    let entry = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("..")
-        .join("node_modules")
-        .join("@agentclientprotocol")
-        .join("codex-acp")
-        .join("dist")
-        .join("index.js");
-    if !entry.is_file() {
-        return None;
+    let mut dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    loop {
+        for node_modules in [
+            dir.join("apps").join("desktop").join("node_modules"),
+            dir.join("node_modules"),
+        ] {
+            let entry = node_modules
+                .join("@agentclientprotocol")
+                .join("codex-acp")
+                .join("dist")
+                .join("index.js");
+            if entry.is_file() {
+                return Some(entry.canonicalize().unwrap_or(entry));
+            }
+        }
+        let Some(parent) = dir.parent().map(PathBuf::from) else {
+            break;
+        };
+        dir = parent;
     }
-    Some(entry.canonicalize().unwrap_or(entry))
+    None
 }
 
 #[cfg(test)]

@@ -2239,6 +2239,25 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f9f8bd3e56ce4dfc153cf470fffbfa98c7620958b312ca5c3a4b8d5181fd13c6"
 
 [[package]]
+name = "lumina-acp"
+version = "0.3.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "tracing",
+]
+
+[[package]]
+name = "lumina-ai"
+version = "0.3.0"
+dependencies = [
+ "lumina-core",
+ "lumina-subtitle",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "lumina-app"
 version = "0.3.0"
 dependencies = [
@@ -2248,6 +2267,8 @@ dependencies = [
  "libloading 0.8.9",
  "libmpv2",
  "libmpv2-sys",
+ "lumina-acp",
+ "lumina-ai",
  "lumina-asr",
  "lumina-core",
  "lumina-media",

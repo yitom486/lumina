@@ -12,19 +12,20 @@ use std::time::{Duration, Instant};
 
 use serde_json::Value;
 
-use crate::acp::agent_reply_collector::AgentReplyCollector;
-use crate::acp::context::{self, VideoPromptContext};
-use crate::acp::error::AcpError;
-use crate::acp::host::AcpHost;
-use crate::acp::model::{
+use crate::agent_reply_collector::AgentReplyCollector;
+use crate::context::{self, VideoPromptContext};
+use crate::environment::session_env;
+use crate::error::AcpError;
+use crate::host::AcpHost;
+use crate::model::{
     AcpEvent, AcpModelDiscoveryResult, AcpSessionModelOptions, AcpSessionModelSelection, AcpStatus,
     AgentProfilesHint, PermissionOption, SavedSessionHint,
 };
-use crate::acp::paths::{resolve_session_cwd, status_from_profiles};
-use crate::acp::profile::{
+use crate::paths::{resolve_session_cwd, status_from_profiles};
+use crate::profile::{
     prepare_profiles, resolve_active_profile, resolve_launch, AgentKind, PreparedProfiles,
 };
-use crate::acp::protocol::{
+use crate::protocol::{
     authenticate_params, classify_inbound, encode_line, error_response, extract_agent_text,
     extract_permission_options, extract_plan_summary, extract_thought_text, extract_tool_call,
     extract_tool_call_content_chunk, initialize_params, initialize_params_restricted,
@@ -34,12 +35,7 @@ use crate::acp::protocol::{
     session_cancel_params, session_close_params, session_new_params, session_resume_params,
     session_set_config_option_params, success_response, Inbound, InitializeResult,
 };
-use crate::acp::settings::{AcpClientSettings, PermissionMode};
-use crate::library::MediaLibraryService;
-use crate::mcp::{
-    lumina_mcp_servers, snapshot_path_for_cwd, sync_snapshot_capabilities, write_snapshot,
-    LuminaMcpSnapshot, PromptSnapshotState,
-};
+use crate::settings::{AcpClientSettings, PermissionMode};
 
 /// Prompt-loop bounds, locked by unit test (silent timeout removal must fail loudly).
 const PROMPT_DEADLINE_SECS: u64 = 600;
@@ -67,7 +63,6 @@ pub struct AcpService {
     permission_seq: AtomicU64,
     tool_access_enabled: AtomicBool,
     next_session_model_selection: Mutex<Option<AcpSessionModelSelection>>,
-    prompt_snapshot_state: Mutex<PromptSnapshotState>,
 }
 
 impl AcpService {
@@ -82,7 +77,6 @@ impl AcpService {
             permission_seq: AtomicU64::new(1),
             tool_access_enabled: AtomicBool::new(true),
             next_session_model_selection: Mutex::new(None),
-            prompt_snapshot_state: Mutex::new(PromptSnapshotState::default()),
         }
     }
 
@@ -133,10 +127,10 @@ impl AcpService {
     }
 
     /// Close live session (`session/close` when supported) and kill process.
+    /// Chat snapshot warm state is owned by the app adapter (M5).
     pub fn close_session(&self) -> Result<(), AcpError> {
         self.cancel.store(true, Ordering::SeqCst);
         self.drop_live_session(true);
-        self.reset_prompt_snapshot_state();
         self.cancel.store(false, Ordering::SeqCst);
         Ok(())
     }
@@ -145,49 +139,6 @@ impl AcpService {
     pub fn close_session_for_shutdown(&self) {
         self.cancel.store(true, Ordering::SeqCst);
         self.drop_live_session(false);
-        self.reset_prompt_snapshot_state();
-    }
-
-    pub fn write_prompt_snapshot(
-        &self,
-        cwd: &std::path::Path,
-        snapshot: &LuminaMcpSnapshot,
-    ) -> Result<std::path::PathBuf, AcpError> {
-        let path = snapshot_path_for_cwd(cwd);
-        write_snapshot(&path, snapshot).map_err(|details| AcpError::internal(Some(&details)))?;
-        Ok(path)
-    }
-
-    pub fn sync_mcp_capabilities(
-        &self,
-        cwd_hint: Option<&str>,
-        vision_capable: bool,
-    ) -> Result<(), AcpError> {
-        let workspace = resolve_session_cwd(cwd_hint)?;
-        let path = snapshot_path_for_cwd(&workspace);
-        sync_snapshot_capabilities(&path, vision_capable)
-            .map_err(|details| AcpError::internal(Some(&details)))
-    }
-
-    pub fn build_prompt_snapshot(
-        &self,
-        context: Option<&VideoPromptContext>,
-        library: &MediaLibraryService,
-        vision_capable: bool,
-    ) -> Result<LuminaMcpSnapshot, AcpError> {
-        let mut guard = self
-            .prompt_snapshot_state
-            .lock()
-            .map_err(|_| AcpError::internal(Some("prompt snapshot mutex poisoned")))?;
-        guard
-            .next_snapshot(context, library, vision_capable)
-            .map_err(|error| AcpError::internal(error.details.as_deref()))
-    }
-
-    pub fn reset_prompt_snapshot_state(&self) {
-        if let Ok(mut guard) = self.prompt_snapshot_state.lock() {
-            guard.reset();
-        }
     }
 
     /// Warm up Agent process + session without sending a prompt (user opened chat tab).
@@ -219,7 +170,15 @@ impl AcpService {
             .map_err(|_| AcpError::internal(Some("ACP session mutex poisoned")))?;
 
         if guard.is_some() {
-            self.sync_mcp_capabilities(cwd.as_deref(), client_settings.vision_capable)?;
+            // Keep the existing-session capability sync inline (was `sync_mcp_capabilities`);
+            // snapshot IO now goes through the app-provided environment.
+            let env = session_env()?;
+            let workspace = resolve_session_cwd(cwd.as_deref())?;
+            env.sync_snapshot(
+                &env.snapshot_path(&workspace),
+                client_settings.vision_capable,
+            )
+            .map_err(|error| AcpError::internal(Some(&error)))?;
             if let Some(session) = guard.as_mut() {
                 if let Some(selection) = client_settings.model_selection() {
                     let _ = self.apply_model_selection(session, &selection, &mut on_event);
@@ -275,7 +234,7 @@ impl AcpService {
         }
 
         self.cancel.store(false, Ordering::SeqCst);
-        self.reset_prompt_snapshot_state();
+        // Chat snapshot warm state is owned/reset by the app adapter (M5).
         if let Ok(mut guard) = self.permission_mode.lock() {
             *guard = client_settings.permission_mode;
         }
@@ -496,7 +455,7 @@ impl AcpService {
                 text: text.clone(),
                 stop_reason: stop_reason.clone(),
             }),
-            Err(error) if error.code == crate::acp::AcpErrorCode::Cancelled => {
+            Err(error) if error.code == crate::AcpErrorCode::Cancelled => {
                 on_event(AcpEvent::Failed {
                     code: "Cancelled".into(),
                     message: error.message.clone(),
@@ -534,7 +493,7 @@ impl AcpService {
             None,
             AcpClientSettings {
                 permission_mode: PermissionMode::Ask,
-                thinking_level: crate::acp::settings::ThinkingLevel::Hidden,
+                thinking_level: crate::settings::ThinkingLevel::Hidden,
                 agent_mode: "subtitle-workshop".into(),
                 vision_capable: false,
                 model_id: None,
@@ -601,16 +560,14 @@ impl AcpService {
                 .lock()
                 .map_err(|_| AcpError::internal(Some("ACP session mutex poisoned")))?;
             if guard.is_none() {
+                // Snapshot IO goes through the app-provided environment (M5);
+                // missing snapshot still means vision-capable, as before.
                 let vision_capable = resolve_session_cwd(cwd)
                     .ok()
                     .and_then(|workspace| {
-                        crate::mcp::read_snapshot(&snapshot_path_for_cwd(&workspace))
+                        session_env()
                             .ok()
-                            .and_then(|snapshot| {
-                                snapshot
-                                    .capabilities
-                                    .map(|capabilities| capabilities.vision_capable)
-                            })
+                            .and_then(|env| env.snapshot_vision_capable(&workspace))
                     })
                     .unwrap_or(true);
                 let mut spawned = self.spawn_session(
@@ -790,7 +747,7 @@ impl AcpService {
             message: format!("工作目录：{cwd}"),
         });
 
-        let mut command = crate::process_util::command(&launch.program);
+        let mut command = crate::process::command(&launch.program);
         command
             .args(&launch.args)
             .current_dir(&workspace)
@@ -942,11 +899,12 @@ impl AcpService {
         session.init = init.clone();
         let supports_resume = init.supports_session_resume;
 
-        sync_snapshot_capabilities(
-            &snapshot_path_for_cwd(std::path::Path::new(&cwd)),
-            vision_capable,
-        )
-        .map_err(|error| AcpError::internal(Some(&error)))?;
+        // Snapshot IO goes through the app-provided environment (M5).
+        let env = session_env()?;
+        let snapshot_path = env.snapshot_path(std::path::Path::new(&cwd));
+        env.sync_snapshot(&snapshot_path, vision_capable)
+            .map_err(|error| AcpError::internal(Some(&error)))?;
+        let mcp_servers = env.mcp_servers(&snapshot_path);
 
         on_event(AcpEvent::Progress {
             message: "正在创建会话…".into(),
@@ -971,11 +929,7 @@ impl AcpService {
                 &mut session.stdin,
                 resume_id,
                 "session/resume",
-                session_resume_params(
-                    &saved.session_id,
-                    &cwd,
-                    lumina_mcp_servers(&snapshot_path_for_cwd(std::path::Path::new(&cwd))),
-                ),
+                session_resume_params(&saved.session_id, &cwd, mcp_servers),
             )?;
             let resume_resp = Self::read_until_id_raw(
                 self,
@@ -1027,12 +981,14 @@ impl AcpService {
         vision_capable: bool,
         on_event: &mut dyn FnMut(AcpEvent),
     ) -> Result<String, AcpError> {
-        let snapshot_path = snapshot_path_for_cwd(std::path::Path::new(cwd));
-        sync_snapshot_capabilities(&snapshot_path, vision_capable)
+        // Snapshot IO goes through the app-provided environment (M5).
+        let env = session_env()?;
+        let snapshot_path = env.snapshot_path(std::path::Path::new(cwd));
+        env.sync_snapshot(&snapshot_path, vision_capable)
             .map_err(|error| AcpError::internal(Some(&error)))?;
         let new_id = session.next_id;
         session.next_id += 1;
-        let mcp_servers = lumina_mcp_servers(&snapshot_path_for_cwd(std::path::Path::new(cwd)));
+        let mcp_servers = env.mcp_servers(&snapshot_path);
         tracing::info!(
             cwd,
             snapshot = %snapshot_path.display(),

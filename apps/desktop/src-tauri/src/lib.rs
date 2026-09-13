@@ -320,6 +320,7 @@ fn shutdown_backend(app: &tauri::AppHandle) {
         state.mark_shutdown();
         state.acp.request_cancel();
         state.acp.close_session_for_shutdown();
+        crate::acp::adapter::reset_prompt_snapshot_state(&state.prompt_snapshots);
         state.library.stop_for_shutdown();
         let _ = state.with_player(|player| {
             player.shutdown();

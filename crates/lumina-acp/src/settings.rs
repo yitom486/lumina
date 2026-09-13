@@ -36,12 +36,12 @@ pub struct AcpClientSettings {
 }
 
 impl AcpClientSettings {
-    pub fn model_selection(&self) -> Option<crate::acp::AcpSessionModelSelection> {
+    pub fn model_selection(&self) -> Option<crate::AcpSessionModelSelection> {
         let model_id = self.model_id.as_deref()?.trim();
         if model_id.is_empty() {
             return None;
         }
-        Some(crate::acp::AcpSessionModelSelection {
+        Some(crate::AcpSessionModelSelection {
             model_id: model_id.to_string(),
             reasoning_effort: self
                 .reasoning_effort

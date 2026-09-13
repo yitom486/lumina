@@ -1,24 +1,7 @@
-//! Optional on-demand ACP. Not required for playback.
+//! App compat: ACP implementation lives in `lumina-acp` (M5).
+//!
+//! Chat snapshot lifecycle + MCP session environment live in `adapter`.
 
-pub mod agent_reply_collector;
-pub mod context;
-pub mod discover;
-pub mod error;
-pub mod host;
-pub mod model;
-pub mod paths;
-pub mod profile;
-pub mod protocol;
-pub mod service;
-pub mod settings;
+pub mod adapter;
 
-pub use context::VideoPromptContext;
-pub use error::{AcpError, AcpErrorCode};
-pub use model::{
-    AcpEvent, AcpModelDiscoveryResult, AcpSessionModelOptions, AcpSessionModelSelection,
-    AcpSessionOption, AcpStatus, AgentProfileInput, AgentProfilesHint, PermissionOption,
-    SavedSessionHint,
-};
-pub use profile::{AgentKind, AgentProfile, AgentProfileStatus};
-pub use service::AcpService;
-pub use settings::{AcpClientSettings, PermissionMode, ThinkingLevel};
+pub use lumina_acp::*;

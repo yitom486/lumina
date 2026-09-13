@@ -6,12 +6,12 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-use crate::acp::discover::{
+use crate::discover::{
     codex_home_dir, find_acp_adapter, find_bun, find_bunx, find_codex, find_command,
     find_dev_codex_acp_entry, native_acp_dir,
 };
-use crate::acp::error::AcpError;
-use crate::acp::model::{AgentProfileInput, AgentProfilesHint};
+use crate::error::AcpError;
+use crate::model::{AgentProfileInput, AgentProfilesHint};
 
 pub const CODEX_ACP_PACKAGE: &str = "@agentclientprotocol/codex-acp";
 

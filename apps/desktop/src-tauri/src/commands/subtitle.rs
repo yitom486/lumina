@@ -118,14 +118,20 @@ pub async fn subtitle_translate_track(
     on_event: Channel<SubtitleTranslateEvent>,
 ) -> Result<Transcript, SubtitleError> {
     tauri::async_runtime::spawn_blocking(move || {
+        if profile_id.trim().is_empty() || profiles.profiles.is_empty() {
+            return Err(SubtitleError::translate_not_configured(Some(
+                "workshop profile selection is empty",
+            )));
+        }
+        let invoker = crate::acp::adapter::AcpAgentInvoker::new(profiles);
         let result = translate::translate_and_export_track(
             &path,
             &choice_id,
             &target_lang,
             &profile_id,
-            &profiles,
             model_id.as_deref(),
             reasoning_effort.as_deref(),
+            &invoker,
             |message| {
                 let _ = on_event.send(SubtitleTranslateEvent::Progress { message });
             },

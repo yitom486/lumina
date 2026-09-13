@@ -6,6 +6,9 @@
 //! mappings (player `LoadError`/`UnsupportedMedia`, ytdl `InvalidRequest`)
 //! keep producing byte-identical errors.
 
+pub mod agent_invoker;
 pub mod media_source;
+
+pub use agent_invoker::{AgentInvoker, AgentTaskError, IsolatedAgentTask};
 
 pub use media_source::{MediaSource, MediaSourceError, MediaSourceErrorKind, MediaSourceKind};
