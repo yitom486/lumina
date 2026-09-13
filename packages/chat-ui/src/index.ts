@@ -17,3 +17,4 @@ export * from "./acpSettingsStore";
 export * from "./acpProfilesStore";
 export * from "./acpSessionStore";
 export * from "./askAboutStore";
+export * from "./components/composerFocus";
