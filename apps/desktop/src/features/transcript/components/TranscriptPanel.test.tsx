@@ -452,6 +452,27 @@ describe("TranscriptPanel downloaded subtitles", () => {
     expect(commands).not.toContain("player_seek");
   });
 
+  it("survives the Loading -> Paused readiness flip without tripping the boundary", async () => {
+    mockDownloadFlow();
+    usePlayerStore.setState({
+      currentFile: "C:\\v\\a.mp4",
+      status: "Loading",
+      currentTimeMs: 0,
+    });
+    useTrackStore.setState({ subtitleChoiceId: "cache:subdl:en" });
+    renderPanel();
+    await waitFor(() => {
+      expect(screen.getByText(/打开视频后/)).toBeInTheDocument();
+    });
+    act(() => {
+      usePlayerStore.setState({ status: "Paused", currentTimeMs: 500 });
+    });
+    await waitFor(() => {
+      expect(screen.getByText("downloaded two")).toBeInTheDocument();
+    });
+    expect(screen.queryByText("文稿加载失败")).not.toBeInTheDocument();
+  });
+
   it("downloads on explicit click and views without applying to the player", async () => {
     mockDownloadFlow();
     usePlayerStore.setState({

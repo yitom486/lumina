@@ -92,6 +92,17 @@ export function TranscriptPanel() {
     [chapters, currentTimeMs],
   );
 
+  // Hooks must stay above the `!mediaReady` early return: media readiness
+  // flips false -> true while opening a video, and any hook below the return
+  // would change hook order across renders ("Rendered fewer hooks").
+  const isRemotePath = /^https?:\/\//i.test(path ?? "");
+  const audioLanguage = useMemo(
+    () =>
+      mediaInfoQuery.data?.streams?.find((stream) => stream.kind === "Audio")
+        ?.language ?? null,
+    [mediaInfoQuery.data],
+  );
+
   const choicesQuery = useQuery({
     queryKey: subtitleChoicesKey(path),
     queryFn: () => listSubtitleChoices(path as string),
@@ -380,13 +391,6 @@ export function TranscriptPanel() {
   }
 
   const choices = choicesQuery.data ?? [];
-  const isRemotePath = /^https?:\/\//i.test(path ?? "");
-  const audioLanguage = useMemo(
-    () =>
-      mediaInfoQuery.data?.streams?.find((stream) => stream.kind === "Audio")
-        ?.language ?? null,
-    [mediaInfoQuery.data],
-  );
 
   async function handleDownloadedSubtitle(choiceId: string) {
     if (!path) return;
