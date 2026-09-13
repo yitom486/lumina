@@ -16,7 +16,7 @@ use lumina_library::{
 };
 use lumina_media::frame_capture::{
     capture_frames, detect_scene_times, sample_times_for_window, select_keyframes,
-    DEFAULT_FRAME_BUDGET, DEFAULT_SCENE_THRESHOLD, MAX_CAPTURE_SPAN_SEC,
+    DEFAULT_FRAME_BUDGET, DEFAULT_SCENE_THRESHOLD,
 };
 use lumina_notes::proposal::{build_proposal, save_latest_proposal};
 use lumina_subtitle::model::Cue;
@@ -60,33 +60,37 @@ pub fn handle_tool_call(
     name: &str,
     args: &Value,
 ) -> Result<Value, String> {
-    let result = match name {
-        "lumina_get_playback_context" => playback_context(snapshot),
-        "lumina_get_library_context" => library_context(snapshot),
-        "lumina_get_episode_index" => episode_index(snapshot),
-        "lumina_get_transcript_window" => transcript_window(snapshot, args),
-        "lumina_get_episode_transcript" => episode_transcript(snapshot, args),
-        "lumina_get_subtitle_cues" | "lumina_write_subtitle_track" => {
-            if !subtitle_workshop_enabled(snapshot) {
-                Err("该工具仅对字幕制作助手开放".to_string())
-            } else {
-                match name {
-                    "lumina_get_subtitle_cues" => subtitle_cues(snapshot, args),
-                    "lumina_write_subtitle_track" => write_subtitle_track(snapshot, args),
-                    _ => unreachable!(),
-                }
-            }
+    use lumina_core::tool_contract as contract;
+    let result = if name == contract::TOOL_PLAYBACK_CONTEXT {
+        playback_context(snapshot)
+    } else if name == contract::TOOL_LIBRARY_CONTEXT {
+        library_context(snapshot)
+    } else if name == contract::TOOL_EPISODE_INDEX {
+        episode_index(snapshot)
+    } else if name == contract::TOOL_TRANSCRIPT_WINDOW {
+        transcript_window(snapshot, args)
+    } else if name == contract::TOOL_EPISODE_TRANSCRIPT {
+        episode_transcript(snapshot, args)
+    } else if name == contract::TOOL_SUBTITLE_CUES || name == contract::TOOL_WRITE_SUBTITLE_TRACK {
+        if !subtitle_workshop_enabled(snapshot) {
+            Err("该工具仅对字幕制作助手开放".to_string())
+        } else if name == contract::TOOL_SUBTITLE_CUES {
+            subtitle_cues(snapshot, args)
+        } else {
+            write_subtitle_track(snapshot, args)
         }
-        "lumina_capture_frames" => capture_frame_tool(snapshot, args),
-        "lumina_get_audio_marks" => audio_marks(snapshot, args),
-        "lumina_propose_video_annotation" => {
-            if !video_annotations_enabled(snapshot) {
-                Err("该工具未对当前会话开放".to_string())
-            } else {
-                propose_video_annotation(snapshot, args)
-            }
+    } else if name == contract::TOOL_CAPTURE_FRAMES {
+        capture_frame_tool(snapshot, args)
+    } else if name == contract::TOOL_AUDIO_MARKS {
+        audio_marks(snapshot, args)
+    } else if name == contract::TOOL_PROPOSE_ANNOTATION {
+        if !video_annotations_enabled(snapshot) {
+            Err("该工具未对当前会话开放".to_string())
+        } else {
+            propose_video_annotation(snapshot, args)
         }
-        other => Err(format!("Unknown tool: {other}")),
+    } else {
+        Err(format!("Unknown tool: {name}"))
     };
     if let Err(message) = result.as_ref() {
         warn!(tool = name, reason = %message, "lumina MCP tool failed");
@@ -255,12 +259,11 @@ fn episode_transcript(snapshot: &LuminaMcpSnapshot, args: &Value) -> Result<Valu
 fn subtitle_cues(snapshot: &LuminaMcpSnapshot, args: &Value) -> Result<Value, String> {
     let anchor = require_anchor(snapshot)?;
     let choice_id = resolve_subtitle_choice_id(args, anchor)?;
-    let offset = args.get("offset").and_then(Value::as_u64).unwrap_or(0) as usize;
-    let limit = args
-        .get("limit")
-        .and_then(Value::as_u64)
-        .map(|value| value.min(200) as usize)
-        .unwrap_or(80);
+    // Canonical paging bounds live in `lumina-core`.
+    let offset =
+        lumina_core::tool_contract::clamp_cues_offset(args.get("offset").and_then(Value::as_u64));
+    let limit =
+        lumina_core::tool_contract::clamp_cues_limit(args.get("limit").and_then(Value::as_u64));
     // Online path reuses the same cached transcript as Transcript UI and
     // `lumina_get_transcript_window`: no file IO, no implicit resolve, no
     // signed URL / cookie / absolute path in the result.
@@ -288,10 +291,11 @@ fn paged_cues_result(
     limit: usize,
 ) -> Result<Value, String> {
     let total = cues.len();
+    let (start, count, has_more) = lumina_core::tool_contract::paginate(total, offset, limit);
     let slice: Vec<_> = cues
         .iter()
-        .skip(offset)
-        .take(limit)
+        .skip(start)
+        .take(count)
         .map(|cue| {
             json!({
                 "index": cue.index,
@@ -307,7 +311,7 @@ fn paged_cues_result(
         "offset": offset,
         "limit": limit,
         "cues": slice,
-        "hasMore": offset.saturating_add(slice.len()) < total,
+        "hasMore": has_more,
     }))
 }
 
@@ -404,11 +408,15 @@ fn parse_write_cues(args: &Value) -> Result<Vec<Cue>, String> {
         .get("cues")
         .and_then(Value::as_array)
         .ok_or_else(|| "缺少 cues".to_string())?;
-    if raw.is_empty() {
-        return Err("cues 不能为空".into());
-    }
-    if raw.len() > 2000 {
-        return Err("单次写入字幕过多，请分批".into());
+    // Canonical batch bounds live in `lumina-core`; wording stays here.
+    match lumina_core::tool_contract::validate_write_cues_len(raw.len()) {
+        Ok(()) => {}
+        Err(lumina_core::tool_contract::WriteCuesError::Empty) => {
+            return Err("cues 不能为空".into());
+        }
+        Err(lumina_core::tool_contract::WriteCuesError::TooMany) => {
+            return Err("单次写入字幕过多，请分批".into());
+        }
     }
     let mut cues = Vec::with_capacity(raw.len());
     for (i, item) in raw.iter().enumerate() {
@@ -502,18 +510,22 @@ fn resolve_subtitle_choice_id(args: &Value, anchor: &PromptAnchor) -> Result<Str
 }
 
 fn parse_required_season_episode(args: &Value) -> Result<(u32, u32), String> {
-    let season = args
-        .get("season")
-        .and_then(Value::as_u64)
-        .ok_or_else(|| "缺少 season".to_string())? as u32;
-    let episode = args
-        .get("episode")
-        .and_then(Value::as_u64)
-        .ok_or_else(|| "缺少 episode".to_string())? as u32;
-    if season == 0 || episode == 0 {
-        return Err("season 与 episode 须大于 0".into());
+    // Canonical bounds live in `lumina-core`; wording stays here.
+    match lumina_core::tool_contract::validate_season_episode(
+        args.get("season").and_then(Value::as_u64),
+        args.get("episode").and_then(Value::as_u64),
+    ) {
+        Ok(pair) => Ok(pair),
+        Err(lumina_core::tool_contract::SeasonEpisodeError::MissingSeason) => {
+            Err("缺少 season".to_string())
+        }
+        Err(lumina_core::tool_contract::SeasonEpisodeError::MissingEpisode) => {
+            Err("缺少 episode".to_string())
+        }
+        Err(lumina_core::tool_contract::SeasonEpisodeError::NonPositive) => {
+            Err("season 与 episode 须大于 0".into())
+        }
     }
-    Ok((season, episode))
 }
 
 fn capture_frame_tool(snapshot: &LuminaMcpSnapshot, args: &Value) -> Result<Value, String> {
@@ -679,14 +691,12 @@ fn snapshot_duration_ms(snapshot: &LuminaMcpSnapshot) -> Option<u64> {
 /// Shared time center for transcript + capture tools. Defaults to `default_center_ms`
 /// (usually the frozen prompt anchor) unless `centerMs` / `atSec` is provided.
 fn parse_time_center_ms(args: &Value, default_center_ms: u64, duration_ms: Option<u64>) -> u64 {
-    let center = if let Some(ms) = args.get("centerMs").and_then(Value::as_u64) {
-        ms
-    } else if let Some(sec) = args.get("atSec").and_then(Value::as_u64) {
-        sec.saturating_mul(1000)
-    } else {
-        default_center_ms
-    };
-    duration_ms.map_or(center, |duration| center.min(duration))
+    lumina_core::tool_contract::resolve_center_ms(
+        args.get("centerMs").and_then(Value::as_u64),
+        args.get("atSec").and_then(Value::as_u64),
+        default_center_ms,
+        duration_ms,
+    )
 }
 
 fn episode_transcript_default_center(anchor: &PromptAnchor, season: u32, episode: u32) -> u64 {
@@ -698,44 +708,36 @@ fn episode_transcript_default_center(anchor: &PromptAnchor, season: u32, episode
 }
 
 fn parse_window_args(args: &Value, default_before: u32, default_after: u32) -> (u32, u32) {
-    if let Some(radius) = args.get("radiusSec").and_then(Value::as_u64) {
-        let radius = radius.min(300) as u32;
-        return (radius, radius);
-    }
-    let before = args
-        .get("beforeSec")
-        .and_then(Value::as_u64)
-        .map(|value| value.min(300) as u32)
-        .unwrap_or(default_before);
-    let after = args
-        .get("afterSec")
-        .and_then(Value::as_u64)
-        .map(|value| value.min(300) as u32)
-        .unwrap_or(default_after);
-    (before, after)
+    // Canonical bounds live in `lumina-core`; this adapter only extracts
+    // transport args so `tools/call` stays byte-identical.
+    lumina_core::tool_contract::resolve_window(
+        args.get("beforeSec").and_then(Value::as_u64),
+        args.get("afterSec").and_then(Value::as_u64),
+        args.get("radiusSec").and_then(Value::as_u64),
+        default_before,
+        default_after,
+    )
 }
 
 fn parse_capture_window_args(args: &Value) -> (u32, u32) {
-    let (before, after) = parse_window_args(args, 0, 0);
-    (
-        before.min(MAX_CAPTURE_SPAN_SEC),
-        after.min(MAX_CAPTURE_SPAN_SEC),
+    lumina_core::tool_contract::resolve_capture_window(
+        args.get("beforeSec").and_then(Value::as_u64),
+        args.get("afterSec").and_then(Value::as_u64),
+        args.get("radiusSec").and_then(Value::as_u64),
     )
 }
 
 /// P7-M1 opt-in sampling: `"scene"` merges scene cuts into the coverage grid.
 /// Anything else (or absent) keeps the uniform behavior unchanged.
 fn parse_capture_mode(args: &Value) -> bool {
-    args.get("mode")
-        .and_then(Value::as_str)
-        .is_some_and(|mode| mode.eq_ignore_ascii_case("scene"))
+    lumina_core::tool_contract::is_scene_mode(args.get("mode").and_then(Value::as_str))
 }
 
 fn parse_scene_threshold(args: &Value) -> f32 {
-    args.get("sceneThreshold")
-        .and_then(Value::as_f64)
-        .map(|value| (value as f32).clamp(0.1, 0.9))
-        .unwrap_or(DEFAULT_SCENE_THRESHOLD)
+    lumina_core::tool_contract::clamp_scene_threshold(
+        args.get("sceneThreshold").and_then(Value::as_f64),
+        DEFAULT_SCENE_THRESHOLD,
+    )
 }
 
 fn require_anchor(snapshot: &LuminaMcpSnapshot) -> Result<&PromptAnchor, String> {

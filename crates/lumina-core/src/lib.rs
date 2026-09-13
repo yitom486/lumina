@@ -8,6 +8,7 @@
 
 pub mod agent_invoker;
 pub mod media_source;
+pub mod tool_contract;
 
 pub use agent_invoker::{AgentInvoker, AgentTaskError, IsolatedAgentTask};
 

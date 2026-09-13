@@ -115,39 +115,45 @@ fn tools_list_result(profile: McpToolProfile, snapshot: &LuminaMcpSnapshot) -> V
     json!({ "tools": tools })
 }
 
-/// Tool JSON schemas keyed by the central directory in `policy`.
+/// Tool JSON schemas keyed by the canonical directory in `lumina-core`.
 /// Returns `None` for unknown names (safe direction: omit, never invent).
+/// Schemas are byte-identical to the pre-contract payloads; only the keying
+/// moved from string literals to the shared contract.
 fn tool_json(name: &str) -> Option<Value> {
-    let tool = match name {
-        "lumina_get_playback_context" => json!({
-            "name": "lumina_get_playback_context",
+    use lumina_core::tool_contract as contract;
+    let tool = if name == contract::TOOL_PLAYBACK_CONTEXT {
+        json!({
+            "name": contract::TOOL_PLAYBACK_CONTEXT,
             "description": "Return frozen playback anchor, progress, chapter title, and nearby notes for the current prompt turn.",
             "inputSchema": {
                 "type": "object",
                 "properties": {},
                 "additionalProperties": false
             }
-        }),
-        "lumina_get_library_context" => json!({
-            "name": "lumina_get_library_context",
+        })
+    } else if name == contract::TOOL_LIBRARY_CONTEXT {
+        json!({
+            "name": contract::TOOL_LIBRARY_CONTEXT,
             "description": "Return series metadata plus the current episode overview/plot. Loads from warm cache when present, otherwise reads local metadata on demand.",
             "inputSchema": {
                 "type": "object",
                 "properties": {},
                 "additionalProperties": false
             }
-        }),
-        "lumina_get_episode_index" => json!({
-            "name": "lumina_get_episode_index",
+        })
+    } else if name == contract::TOOL_EPISODE_INDEX {
+        json!({
+            "name": contract::TOOL_EPISODE_INDEX,
             "description": "List episode titles and overviews for every episode in the current series group.",
             "inputSchema": {
                 "type": "object",
                 "properties": {},
                 "additionalProperties": false
             }
-        }),
-        "lumina_get_transcript_window" => json!({
-            "name": "lumina_get_transcript_window",
+        })
+    } else if name == contract::TOOL_TRANSCRIPT_WINDOW {
+        json!({
+            "name": contract::TOOL_TRANSCRIPT_WINDOW,
             "description": "Return subtitle lines around a time point on the current media file. Defaults to the frozen prompt anchor; optional centerMs or atSec overrides the center. Window defaults to 60 seconds before and after (each side up to 300 seconds).",
             "inputSchema": {
                 "type": "object",
@@ -160,9 +166,10 @@ fn tool_json(name: &str) -> Option<Value> {
                 },
                 "additionalProperties": false
             }
-        }),
-        "lumina_get_episode_transcript" => json!({
-            "name": "lumina_get_episode_transcript",
+        })
+    } else if name == contract::TOOL_EPISODE_TRANSCRIPT {
+        json!({
+            "name": contract::TOOL_EPISODE_TRANSCRIPT,
             "description": "Return subtitle lines for another episode in the same series group. Requires season and episode. Defaults to the frozen prompt anchor when season/episode match the anchor file, otherwise episode start (0). Optional centerMs/atSec overrides. Uses the anchor subtitle track unless subtitleChoiceId is provided. Window defaults to 60 seconds before and after (each side up to 300 seconds).",
             "inputSchema": {
                 "type": "object",
@@ -179,9 +186,10 @@ fn tool_json(name: &str) -> Option<Value> {
                 "required": ["season", "episode"],
                 "additionalProperties": false
             }
-        }),
-        "lumina_get_audio_marks" => json!({
-            "name": "lumina_get_audio_marks",
+        })
+    } else if name == contract::TOOL_AUDIO_MARKS {
+        json!({
+            "name": contract::TOOL_AUDIO_MARKS,
             "description": "Return non-semantic audio signals around a time point on the anchor media file: silence intervals and loudness-spike candidates with millisecond timestamps. These are NOT laughter/applause/music labels. Defaults to the frozen prompt anchor; optional centerMs or atSec overrides the center. Window defaults to 60 seconds before and after (each side up to 300 seconds).",
             "inputSchema": {
                 "type": "object",
@@ -194,9 +202,10 @@ fn tool_json(name: &str) -> Option<Value> {
                 },
                 "additionalProperties": false
             }
-        }),
-        "lumina_get_subtitle_cues" => json!({
-            "name": "lumina_get_subtitle_cues",
+        })
+    } else if name == contract::TOOL_SUBTITLE_CUES {
+        json!({
+            "name": contract::TOOL_SUBTITLE_CUES,
             "description": "Return a page of full subtitle cues for the anchor media (for translation/workshop). Defaults to the frozen subtitleChoiceId. Use offset/limit (default 80, max 200) to batch line-by-line work.",
             "inputSchema": {
                 "type": "object",
@@ -207,9 +216,10 @@ fn tool_json(name: &str) -> Option<Value> {
                 },
                 "additionalProperties": false
             }
-        }),
-        "lumina_write_subtitle_track" => json!({
-            "name": "lumina_write_subtitle_track",
+        })
+    } else if name == contract::TOOL_WRITE_SUBTITLE_TRACK {
+        json!({
+            "name": contract::TOOL_WRITE_SUBTITLE_TRACK,
             "description": "Write a new sidecar subtitle track beside the anchor media as {stem}.{lang}.srt. Provide lang token (e.g. en/zh) and cues with startMs/endMs/text (timings usually copied from source). Use after translating one batch or the full page.",
             "inputSchema": {
                 "type": "object",
@@ -234,9 +244,10 @@ fn tool_json(name: &str) -> Option<Value> {
                 "required": ["lang", "cues"],
                 "additionalProperties": false
             }
-        }),
-        "lumina_capture_frames" => json!({
-            "name": "lumina_capture_frames",
+        })
+    } else if name == contract::TOOL_CAPTURE_FRAMES {
+        json!({
+            "name": contract::TOOL_CAPTURE_FRAMES,
             "description": "Capture temporary JPEG frames (~1 per second) around a time point on the anchor media file. Defaults to the frozen prompt anchor; optional centerMs or atSec overrides the center. Default is a single frame at center. Use radiusSec or beforeSec/afterSec (each capped at 7s, max 15 frames). Files are discarded after the tool returns.",
             "inputSchema": {
                 "type": "object",
@@ -249,9 +260,10 @@ fn tool_json(name: &str) -> Option<Value> {
                 },
                 "additionalProperties": false
             }
-        }),
-        "lumina_propose_video_annotation" => json!({
-            "name": "lumina_propose_video_annotation",
+        })
+    } else if name == contract::TOOL_PROPOSE_ANNOTATION {
+        json!({
+            "name": contract::TOOL_PROPOSE_ANNOTATION,
             "description": "Propose a timestamped video annotation with optional quoted subtitle lines. Does NOT write to the notes store — the user must confirm in Lumina UI before it is saved. Call after you have enough context (transcript window, playback anchor). Provide body (required); optional positionMs, anchorCueIndex, quoteCueIndices, quoteHint, includeQuotes, subtitleChoiceId.",
             "inputSchema": {
                 "type": "object",
@@ -270,8 +282,9 @@ fn tool_json(name: &str) -> Option<Value> {
                 "required": ["body"],
                 "additionalProperties": false
             }
-        }),
-        _ => return None,
+        })
+    } else {
+        return None;
     };
     Some(tool)
 }
@@ -324,6 +337,85 @@ fn error(id: Value, code: i64, message: &str) -> Value {
 mod tests {
     use super::*;
     use crate::snapshot::{AgentCapabilities, LuminaMcpSnapshot, SNAPSHOT_SCHEMA_VERSION};
+
+    #[test]
+    fn tool_list_matches_canonical_contract() {
+        use lumina_core::tool_contract as contract;
+        // Every canonical name resolves to a schema whose `name` echoes it;
+        // unknown names still resolve to `None` (omit, never invent).
+        assert_eq!(contract::ALL_TOOLS.len(), contract::TOOL_COUNT);
+        for name in contract::ALL_TOOLS {
+            let tool = tool_json(name).expect("canonical tool must have a schema");
+            assert_eq!(tool.get("name").and_then(Value::as_str), Some(*name));
+            assert!(tool.get("description").and_then(Value::as_str).is_some());
+            assert!(tool.get("inputSchema").is_some());
+        }
+        assert!(tool_json("lumina_do_anything").is_none());
+        // Schema bounds mirror the canonical numeric contract.
+        let window = tool_json(contract::TOOL_TRANSCRIPT_WINDOW).expect("window schema");
+        let props = window
+            .pointer("/inputSchema/properties/beforeSec")
+            .expect("beforeSec schema");
+        assert_eq!(
+            props.get("maximum").and_then(Value::as_u64),
+            Some(u64::from(contract::WINDOW_MAX_SEC))
+        );
+        let capture = tool_json(contract::TOOL_CAPTURE_FRAMES).expect("capture schema");
+        let before = capture
+            .pointer("/inputSchema/properties/beforeSec")
+            .expect("capture beforeSec");
+        assert_eq!(
+            before.get("maximum").and_then(Value::as_u64),
+            Some(u64::from(contract::CAPTURE_MAX_SEC))
+        );
+        let cues = tool_json(contract::TOOL_SUBTITLE_CUES).expect("cues schema");
+        let limit = cues
+            .pointer("/inputSchema/properties/limit")
+            .expect("limit schema");
+        assert_eq!(
+            limit.get("maximum").and_then(Value::as_u64),
+            Some(contract::SUBTITLE_CUES_MAX_LIMIT as u64)
+        );
+        let write = tool_json(contract::TOOL_WRITE_SUBTITLE_TRACK).expect("write schema");
+        let lang = write
+            .pointer("/inputSchema/properties/lang")
+            .expect("lang schema");
+        assert_eq!(
+            lang.get("maxLength").and_then(Value::as_u64),
+            Some(contract::WRITE_LANG_MAX_LEN as u64)
+        );
+        let episode = tool_json(contract::TOOL_EPISODE_TRANSCRIPT).expect("episode schema");
+        let season = episode
+            .pointer("/inputSchema/properties/season")
+            .expect("season schema");
+        assert_eq!(
+            season.get("minimum").and_then(Value::as_u64),
+            Some(u64::from(contract::SEASON_EPISODE_MIN))
+        );
+        // Policy directory and dispatch agree with the contract on identity.
+        for name in contract::ALL_TOOLS {
+            assert!(
+                super::super::policy::allowed_tool_names(
+                    McpToolProfile::SubtitleWorkshop,
+                    &LuminaMcpSnapshot::empty()
+                )
+                .contains(name)
+                    || {
+                        let gated = LuminaMcpSnapshot {
+                            capabilities: Some(AgentCapabilities {
+                                vision_capable: true,
+                                subtitle_workshop_enabled: true,
+                                video_annotations_enabled: true,
+                            }),
+                            ..LuminaMcpSnapshot::empty()
+                        };
+                        super::super::policy::allowed_tool_names(McpToolProfile::Chat, &gated)
+                            .contains(name)
+                    },
+                "contract tool must be reachable via policy: {name}"
+            );
+        }
+    }
 
     #[test]
     fn tools_list_contains_core_tools() {

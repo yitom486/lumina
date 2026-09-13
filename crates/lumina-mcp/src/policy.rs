@@ -13,6 +13,15 @@
 use super::snapshot::LuminaMcpSnapshot;
 use super::tools::{subtitle_workshop_enabled, video_annotations_enabled, vision_capable};
 
+// Canonical tool identities live in `lumina-core` (transport-free); this
+// module keeps the MCP-side re-export so existing `policy::TOOL_*` paths and
+// `tools/list` order stay byte-identical.
+pub use lumina_core::tool_contract::{
+    TOOL_AUDIO_MARKS, TOOL_CAPTURE_FRAMES, TOOL_EPISODE_INDEX, TOOL_EPISODE_TRANSCRIPT,
+    TOOL_LIBRARY_CONTEXT, TOOL_PLAYBACK_CONTEXT, TOOL_PROPOSE_ANNOTATION, TOOL_SUBTITLE_CUES,
+    TOOL_TRANSCRIPT_WINDOW, TOOL_WRITE_SUBTITLE_TRACK,
+};
+
 /// Env var carrying the profile into the MCP server process.
 pub const TOOL_PROFILE_ENV: &str = "LUMINA_MCP_TOOL_PROFILE";
 
@@ -57,19 +66,8 @@ pub fn tool_profile_from_env() -> McpToolProfile {
     McpToolProfile::from_env_value(&std::env::var(TOOL_PROFILE_ENV).unwrap_or_default())
 }
 
-// Central tool directory (names must match the `tool_json` literals in
-// `server.rs` and the `handle_tool_call` dispatch in `tools.rs`).
-pub const TOOL_PLAYBACK_CONTEXT: &str = "lumina_get_playback_context";
-pub const TOOL_LIBRARY_CONTEXT: &str = "lumina_get_library_context";
-pub const TOOL_EPISODE_INDEX: &str = "lumina_get_episode_index";
-pub const TOOL_TRANSCRIPT_WINDOW: &str = "lumina_get_transcript_window";
-pub const TOOL_EPISODE_TRANSCRIPT: &str = "lumina_get_episode_transcript";
-pub const TOOL_AUDIO_MARKS: &str = "lumina_get_audio_marks";
-pub const TOOL_SUBTITLE_CUES: &str = "lumina_get_subtitle_cues";
-pub const TOOL_WRITE_SUBTITLE_TRACK: &str = "lumina_write_subtitle_track";
-pub const TOOL_CAPTURE_FRAMES: &str = "lumina_capture_frames";
-pub const TOOL_PROPOSE_ANNOTATION: &str = "lumina_propose_video_annotation";
-
+// Central tool directory (canonical names in `lumina-core`; `tool_json` in
+// `server.rs` and the `handle_tool_call` dispatch in `tools.rs` consume them).
 /// Tools visible under `profile`, in `tools/list` order.
 pub fn allowed_tool_names(
     profile: McpToolProfile,
@@ -105,19 +103,7 @@ pub fn allowed_tool_names(
 }
 
 fn is_known_tool(name: &str) -> bool {
-    matches!(
-        name,
-        TOOL_PLAYBACK_CONTEXT
-            | TOOL_LIBRARY_CONTEXT
-            | TOOL_EPISODE_INDEX
-            | TOOL_TRANSCRIPT_WINDOW
-            | TOOL_EPISODE_TRANSCRIPT
-            | TOOL_AUDIO_MARKS
-            | TOOL_SUBTITLE_CUES
-            | TOOL_WRITE_SUBTITLE_TRACK
-            | TOOL_CAPTURE_FRAMES
-            | TOOL_PROPOSE_ANNOTATION
-    )
+    lumina_core::tool_contract::is_known_tool(name)
 }
 
 /// Policy wrapper used by both `tools/list` and `tools/call`.

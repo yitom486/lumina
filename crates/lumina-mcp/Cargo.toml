@@ -5,6 +5,7 @@ description = "Lumina MCP server, snapshots, tools, and policies"
 edition = "2021"
 
 [dependencies]
+lumina-core = { path = "../lumina-core" }
 lumina-library = { path = "../lumina-library" }
 lumina-media = { path = "../lumina-media" }
 lumina-notes = { path = "../lumina-notes" }
