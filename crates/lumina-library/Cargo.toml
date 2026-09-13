@@ -1,0 +1,21 @@
+[package]
+name = "lumina-library"
+version = "0.3.0"
+description = "Local media library and metadata resolution for Lumina"
+edition = "2021"
+
+[dependencies]
+lumina-core = { path = "../lumina-core" }
+lumina-media = { path = "../lumina-media" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tracing = "0.1"
+ureq = { version = "3.1", features = ["json"] }
+url = "2"
+
+[target.'cfg(windows)'.dependencies]
+keyring = { version = "3.6.3", features = ["windows-native"] }
+windows = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_Storage_FileSystem",
+] }

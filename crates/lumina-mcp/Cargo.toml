@@ -1,0 +1,15 @@
+[package]
+name = "lumina-mcp"
+version = "0.3.0"
+description = "Lumina MCP server, snapshots, tools, and policies"
+edition = "2021"
+
+[dependencies]
+lumina-library = { path = "../lumina-library" }
+lumina-media = { path = "../lumina-media" }
+lumina-notes = { path = "../lumina-notes" }
+lumina-subtitle = { path = "../lumina-subtitle" }
+base64 = "0.22"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tracing = "0.1"

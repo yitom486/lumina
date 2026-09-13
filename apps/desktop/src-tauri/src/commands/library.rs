@@ -87,9 +87,12 @@ pub async fn library_resolve_preview(
     config: ResolverRunConfig,
 ) -> Result<ResolverPreview, LibraryError> {
     let service = state.library.clone();
-    tauri::async_runtime::spawn_blocking(move || service.resolve_preview(root, group_key, config))
-        .await
-        .map_err(|error| LibraryError::internal(Some(&format!("library resolver join: {error}"))))?
+    tauri::async_runtime::spawn_blocking(move || {
+        let agent = crate::library::adapter::resolver_invoker_for_provider(&config.provider)?;
+        service.resolve_preview(root, group_key, config, &agent)
+    })
+    .await
+    .map_err(|error| LibraryError::internal(Some(&format!("library resolver join: {error}"))))?
 }
 
 #[tauri::command]
@@ -280,11 +283,12 @@ pub async fn library_credential_delete(
 pub async fn library_credentials_validate(
     config: CredentialValidationConfig,
 ) -> Result<CredentialValidationResult, LibraryError> {
-    tauri::async_runtime::spawn_blocking(move || crate::library::validate_credentials(config))
-        .await
-        .map_err(|error| {
-            LibraryError::internal(Some(&format!("credential validation join: {error}")))
-        })
+    tauri::async_runtime::spawn_blocking(move || {
+        let agent = crate::library::adapter::validation_invoker(&config.provider);
+        crate::library::validate_credentials(config, &agent)
+    })
+    .await
+    .map_err(|error| LibraryError::internal(Some(&format!("credential validation join: {error}"))))
 }
 
 #[tauri::command]
@@ -315,9 +319,9 @@ pub async fn library_models_discover(
 pub async fn library_agent_models_discover(
     config: AgentModelDiscoveryConfig,
 ) -> Result<AgentModelDiscoveryResult, LibraryError> {
-    tauri::async_runtime::spawn_blocking(move || crate::library::discover_agent_models(config))
-        .await
-        .map_err(|error| {
-            LibraryError::internal(Some(&format!("agent model discovery join: {error}")))
-        })
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::library::adapter::discover_agent_models(config.profile_id, &config.profiles)
+    })
+    .await
+    .map_err(|error| LibraryError::internal(Some(&format!("agent model discovery join: {error}"))))
 }

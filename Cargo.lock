@@ -2271,8 +2271,12 @@ dependencies = [
  "lumina-ai",
  "lumina-asr",
  "lumina-core",
+ "lumina-library",
+ "lumina-mcp",
  "lumina-media",
+ "lumina-notes",
  "lumina-subtitle",
+ "lumina-ytdl",
  "objc",
  "pkg-config",
  "raw-window-handle",
@@ -2315,6 +2319,35 @@ dependencies = [
 ]
 
 [[package]]
+name = "lumina-library"
+version = "0.3.0"
+dependencies = [
+ "keyring",
+ "lumina-core",
+ "lumina-media",
+ "serde",
+ "serde_json",
+ "tracing",
+ "ureq",
+ "url",
+ "windows",
+]
+
+[[package]]
+name = "lumina-mcp"
+version = "0.3.0"
+dependencies = [
+ "base64 0.22.1",
+ "lumina-library",
+ "lumina-media",
+ "lumina-notes",
+ "lumina-subtitle",
+ "serde",
+ "serde_json",
+ "tracing",
+]
+
+[[package]]
 name = "lumina-media"
 version = "0.3.0"
 dependencies = [
@@ -2325,12 +2358,39 @@ dependencies = [
 ]
 
 [[package]]
+name = "lumina-notes"
+version = "0.3.0"
+dependencies = [
+ "base64 0.22.1",
+ "lumina-media",
+ "lumina-subtitle",
+ "serde",
+ "serde_json",
+ "tracing",
+]
+
+[[package]]
 name = "lumina-subtitle"
 version = "0.3.0"
 dependencies = [
  "lumina-media",
  "serde",
  "tracing",
+]
+
+[[package]]
+name = "lumina-ytdl"
+version = "0.3.0"
+dependencies = [
+ "lumina-core",
+ "lumina-media",
+ "lumina-subtitle",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tracing",
+ "ureq",
+ "which",
 ]
 
 [[package]]

@@ -68,17 +68,27 @@ pub fn install_session_environment() -> bool {
 
 /// Build the next chat prompt snapshot (warm library policy). Mirrors the
 /// removed `AcpService::build_prompt_snapshot`; errors unchanged.
+/// Converts the ACP prompt context into MCP's own generic input (M7).
 pub fn build_prompt_snapshot(
     snapshots: &Mutex<PromptSnapshotState>,
     library: &MediaLibraryService,
     context: Option<&VideoPromptContext>,
     vision_capable: bool,
 ) -> Result<LuminaMcpSnapshot, AcpError> {
+    let context = context.map(|context| crate::mcp::McpPromptContext {
+        media_path: context.media_path.clone(),
+        media_title: context.media_title.clone(),
+        position_ms: context.position_ms,
+        duration_ms: context.duration_ms,
+        chapter_title: context.chapter_title.clone(),
+        subtitle_choice_id: context.subtitle_choice_id.clone(),
+        notes_excerpt: context.notes_excerpt.clone(),
+    });
     let mut guard = snapshots
         .lock()
         .map_err(|_| AcpError::internal(Some("prompt snapshot mutex poisoned")))?;
     guard
-        .next_snapshot(context, library, vision_capable)
+        .next_snapshot(context.as_ref(), library, vision_capable)
         .map_err(|error| AcpError::internal(error.details.as_deref()))
 }
 

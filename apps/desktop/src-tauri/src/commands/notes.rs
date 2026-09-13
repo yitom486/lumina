@@ -3,7 +3,7 @@
 use tauri::AppHandle;
 use tauri::Manager;
 
-use crate::notes::headings::resolve_export_headings;
+use crate::notes::headings::{resolve_export_headings, NotesMediaMetadata};
 use crate::notes::model::{Note, NoteCreate, NotePreviewQuotes, NoteUpdate};
 use crate::notes::{NoteError, NoteFrameData, NoteService};
 use crate::state::AppState;
@@ -26,7 +26,37 @@ fn resolve_headings(
     let Some(state) = app.try_state::<AppState>() else {
         return Err(NoteError::internal(Some("app state unavailable")));
     };
-    Ok(resolve_export_headings(media_path, &state.library))
+    // Library metadata is assembled here (M7); notes only renders it.
+    let metadata =
+        match state.library.context_for_media(media_path.to_string()) {
+            Ok(Some(context)) => {
+                let season = context
+                    .item
+                    .as_ref()
+                    .and_then(|entry| entry.season)
+                    .or(context.group.season);
+                let episode = context
+                    .item
+                    .as_ref()
+                    .and_then(|entry| entry.episode)
+                    .or(context.group.episode);
+                Some(NotesMediaMetadata {
+                    group_title: context.group.title.clone(),
+                    episode_title: context.item.as_ref().map(|entry| entry.title.clone()),
+                    season,
+                    episode,
+                })
+            }
+            _ => state.library.group_label_for_media(media_path).map(
+                |(group_label, season, episode)| NotesMediaMetadata {
+                    group_title: group_label,
+                    episode_title: None,
+                    season,
+                    episode,
+                },
+            ),
+        };
+    Ok(resolve_export_headings(media_path, metadata))
 }
 
 #[tauri::command]
