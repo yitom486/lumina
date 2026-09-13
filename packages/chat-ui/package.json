@@ -31,7 +31,8 @@
   },
   "dependencies": {
     "@lumina/contracts": "workspace:*",
-    "@lumina/ui": "workspace:*"
+    "@lumina/ui": "workspace:*",
+    "lucide-react": "^1.37.0"
   },
   "peerDependencies": {
     "react": "^19.1.0",
