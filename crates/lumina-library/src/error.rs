@@ -108,6 +108,14 @@ impl LibraryError {
         )
     }
 
+    pub fn tmdb_unauthorized(details: Option<&str>) -> Self {
+        Self::new(
+            LibraryErrorCode::RemoteRequestFailed,
+            "TMDb Token 无效或过期，请重新填写",
+            details.map(str::to_string),
+        )
+    }
+
     pub fn wikipedia_page_not_found(details: Option<&str>) -> Self {
         Self::new(
             LibraryErrorCode::RemoteRequestFailed,

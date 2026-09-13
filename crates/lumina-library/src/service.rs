@@ -602,6 +602,18 @@ fn scan_runtime(
         record_scan_failure(runtime, &error)?;
         return Err(error);
     }
+    // A fresh scan supersedes the previous failure banner; stale atomic-write
+    // tmps from interrupted runs are swept best-effort (never fail the scan).
+    if let Ok(mut state) = runtime.lock() {
+        state.last_scan_error = None;
+    }
+    let swept: usize = roots
+        .iter()
+        .map(|root| store::cleanup_stale_tmps(std::path::Path::new(root)))
+        .sum();
+    if swept > 0 {
+        tracing::info!(swept, "cleaned stale library tmp files");
+    }
     on_event(LibraryScanEvent::Started {
         root_count: roots.len(),
     });

@@ -415,7 +415,7 @@ export function MediaLibraryPanel() {
         </div>
       </details>
 
-      {error ? <p className="text-destructive" role="alert">{error}</p> : null}
+      {error ? <p className="text-destructive" role="alert">{error}{" "}<button type="button" className="underline" aria-label="关闭错误提示" onClick={() => setError(null)}>关闭</button></p> : null}
       {matchedGroups.length > 0 ? (
         <section className="min-h-0 space-y-2">
           <p className="font-medium">已匹配分组（{matchedGroups.length}）</p>
@@ -514,19 +514,22 @@ export function MediaLibraryPanel() {
           <PendingGroupCard
             key={`${pending.root}:${pending.group.key}`}
             pending={pending}
-            title={titles[pending.group.key] ?? pending.group.manualTitle ?? ""}
+            title={titles[pending.group.key] ?? pending.group.manualTitle ?? pending.group.displayName}
             preview={previews[pending.group.key]}
             disabled={!statusQuery.data?.running || !resolverReady}
             onTitle={(title) => setTitles((state) => ({ ...state, [pending.group.key]: title }))}
             onSaveTitle={async (title) => {
+              setError(null);
               await setManualMediaTitle({ root: pending.root, groupKey: pending.group.key, title });
               await refresh();
             }}
             onPreview={async () => {
+              setError(null);
               const preview = await previewMediaMatch({ root: pending.root, groupKey: pending.group.key, config });
               setPreviews((state) => ({ ...state, [pending.group.key]: preview }));
             }}
             onApply={async (tmdbId, mediaType) => {
+              setError(null);
               await applyTmdbMediaMatch({ root: pending.root, groupKey: pending.group.key, tmdbId, mediaType, tmdb: config.tmdb });
               await refresh();
             }}
@@ -830,12 +833,40 @@ function PendingGroupCard({ pending, title, preview, disabled, onTitle, onSaveTi
   onPreview: () => Promise<void>; onApply: (id: number, type: "movie" | "tv") => Promise<void>;
   onError: (error: unknown) => void;
 }) {
+  const [busy, setBusy] = useState<"preview" | "apply" | "save" | null>(null);
+  const [applyingId, setApplyingId] = useState<number | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+  const isBusy = busy !== null;
+  const first = preview?.candidates[0] ?? null;
+
+  const run = async (
+    action: "preview" | "apply" | "save",
+    fn: () => Promise<void>,
+    applyingCandidateId?: number,
+  ) => {
+    setBusy(action);
+    setApplyingId(applyingCandidateId ?? null);
+    setNotice(null);
+    try {
+      await fn();
+    } catch (error) {
+      onError(error);
+    } finally {
+      setBusy(null);
+      setApplyingId(null);
+    }
+  };
+
   return <div className="space-y-2 rounded-md border border-border p-2">
     <p className="font-medium">{pending.group.displayName}</p>
     <p className="text-muted-foreground">{pending.group.files.length} 个文件 · {pending.group.kind === "series" ? "剧集候选" : "电影候选"}</p>
-    <div className="flex gap-1"><input className="h-7 min-w-0 flex-1 rounded border border-border bg-background px-2" value={title} placeholder="匹配不到时输入作品名" onChange={(e) => onTitle(e.target.value)} /><Button size="sm" variant="outline" disabled={!title.trim()} onClick={() => void onSaveTitle(title).catch(onError)}>保存标题</Button></div>
-    <Button size="sm" disabled={disabled} onClick={() => void onPreview().catch(onError)}>智能识别</Button>
-    {preview ? <div className="space-y-1 rounded bg-muted/40 p-2"><p>识别：{preview.intent.title} · {preview.intent.mediaType}</p>{preview.candidates.map((candidate) => <div key={candidate.tmdbId} className="flex items-center justify-between gap-2"><span className="min-w-0 truncate">{candidate.title}{candidate.year ? ` (${candidate.year})` : ""}</span><Button size="sm" variant="outline" onClick={() => void onApply(candidate.tmdbId, candidate.mediaType).catch(onError)}>确认</Button></div>)}</div> : null}
+    <div className="flex gap-1"><input className="h-7 min-w-0 flex-1 rounded border border-border bg-background px-2" value={title} placeholder="匹配不到时输入作品名" disabled={isBusy} onChange={(e) => onTitle(e.target.value)} /><Button size="sm" variant="outline" disabled={!title.trim() || isBusy} onClick={() => void run("save", async () => { await onSaveTitle(title); setNotice("标题已保存"); })}>{busy === "save" ? "保存中…" : "保存标题"}</Button></div>
+    <Button size="sm" disabled={disabled || isBusy} onClick={() => void run("preview", onPreview)}>{busy === "preview" ? "识别中…" : "智能识别"}</Button>
+    {preview ? <div className="space-y-1 rounded bg-muted/40 p-2"><p>识别：{preview.intent.title} · {preview.intent.mediaType}</p>
+      {first ? <Button size="sm" disabled={disabled || isBusy} onClick={() => void run("apply", async () => { await onApply(first.tmdbId, first.mediaType); setNotice(`已确认：${first.title}`); }, first.tmdbId)}>{busy === "apply" && applyingId === first.tmdbId ? "确认中…" : `确认首选：${first.title}${first.year ? ` (${first.year})` : ""}`}</Button> : null}
+      {preview.candidates.map((candidate) => <div key={candidate.tmdbId} className="flex items-center justify-between gap-2"><span className="min-w-0 truncate">{candidate.title}{candidate.year ? ` (${candidate.year})` : ""}</span><Button size="sm" variant="outline" disabled={disabled || isBusy} onClick={() => void run("apply", async () => { await onApply(candidate.tmdbId, candidate.mediaType); setNotice(`已确认：${candidate.title}`); }, candidate.tmdbId)}>{busy === "apply" && applyingId === candidate.tmdbId ? "确认中…" : "确认"}</Button></div>)}
+      {notice ? <p className="text-xs text-emerald-600 dark:text-emerald-400">{notice}</p> : null}
+    </div> : null}
   </div>;
 }
 

@@ -69,6 +69,16 @@ impl RemoteResolver {
     }
 }
 
+/// Map a TMDb HTTP failure: 401/403 means the Bearer token is rejected and
+/// needs an actionable message; everything else keeps the generic copy.
+/// Only the context label and status enter `details` — never the token.
+fn tmdb_call_error(context: &str, error: ureq::Error) -> LibraryError {
+    if matches!(error, ureq::Error::StatusCode(401 | 403)) {
+        return LibraryError::tmdb_unauthorized(Some(&format!("{context}: {error}")));
+    }
+    LibraryError::remote_request_failed(Some(&format!("{context}: {error}")))
+}
+
 /// Validate both configured remote services without sending any media data.
 /// Each result is independent so a user can correct one credential without
 /// losing the diagnostic result for the other service.
@@ -232,9 +242,7 @@ fn validate_tmdb_token(config: &TmdbConfig) -> Result<(), LibraryError> {
         .header("Authorization", &format!("Bearer {token}"))
         .header("Accept", "application/json")
         .call()
-        .map_err(|error| {
-            LibraryError::remote_request_failed(Some(&format!("TMDb validation: {error}")))
-        })?;
+        .map_err(|error| tmdb_call_error("TMDb validation", error))?;
     let payload: Value = response.body_mut().read_json().map_err(|error| {
         LibraryError::remote_request_failed(Some(&format!("TMDb validation body: {error}")))
     })?;
@@ -537,9 +545,7 @@ fn search_tmdb(
         .header("Authorization", &format!("Bearer {token}"))
         .header("Accept", "application/json")
         .call()
-        .map_err(|error| {
-            LibraryError::remote_request_failed(Some(&format!("TMDb search: {error}")))
-        })?;
+        .map_err(|error| tmdb_call_error("TMDb search", error))?;
     let payload: Value = response.body_mut().read_json().map_err(|error| {
         LibraryError::remote_request_failed(Some(&format!("TMDb response: {error}")))
     })?;
@@ -599,9 +605,7 @@ pub fn fetch_tmdb_details_with_language(
         .header("Authorization", &format!("Bearer {token}"))
         .header("Accept", "application/json")
         .call()
-        .map_err(|error| {
-            LibraryError::remote_request_failed(Some(&format!("TMDb details: {error}")))
-        })?;
+        .map_err(|error| tmdb_call_error("TMDb details", error))?;
     response.body_mut().read_json().map_err(|error| {
         LibraryError::remote_request_failed(Some(&format!("TMDb detail response: {error}")))
     })
@@ -626,9 +630,7 @@ pub fn fetch_tmdb_external_ids(
         .header("Authorization", &format!("Bearer {token}"))
         .header("Accept", "application/json")
         .call()
-        .map_err(|error| {
-            LibraryError::remote_request_failed(Some(&format!("TMDb external_ids: {error}")))
-        })?;
+        .map_err(|error| tmdb_call_error("TMDb external_ids", error))?;
     let payload: Value = response.body_mut().read_json().map_err(|error| {
         LibraryError::remote_request_failed(Some(&format!("TMDb external_ids body: {error}")))
     })?;
@@ -669,9 +671,7 @@ pub fn fetch_tmdb_credits(
         .header("Authorization", &format!("Bearer {token}"))
         .header("Accept", "application/json")
         .call()
-        .map_err(|error| {
-            LibraryError::remote_request_failed(Some(&format!("TMDb credits: {error}")))
-        })?;
+        .map_err(|error| tmdb_call_error("TMDb credits", error))?;
     response.body_mut().read_json().map_err(|error| {
         LibraryError::remote_request_failed(Some(&format!("TMDb credits response: {error}")))
     })
@@ -738,6 +738,19 @@ mod tests {
         .expect("movie candidate");
         assert_eq!(movie.year, Some(2010));
         assert_eq!(movie.title, "Inception");
+    }
+
+    #[test]
+    fn tmdb_auth_failures_map_to_actionable_copy() {
+        for code in [401u16, 403u16] {
+            let error = tmdb_call_error("TMDb search", ureq::Error::StatusCode(code));
+            assert_eq!(error.message, "TMDb Token 无效或过期，请重新填写");
+            assert_eq!(error.code, LibraryError::remote_request_failed(None).code);
+            assert!(!error.message.contains("401"));
+            assert!(!error.message.contains("403"));
+        }
+        let error = tmdb_call_error("TMDb search", ureq::Error::StatusCode(500));
+        assert_eq!(error.message, "媒体信息查询失败，请稍后重试");
     }
 
     #[test]

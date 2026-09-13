@@ -485,7 +485,9 @@ pub fn tmdb_statuses_for_root(
                 .count() as u32;
             Some(TmdbGroupStatus {
                 group_key: group.key.clone(),
-                title: stored.as_ref().map(|item| item.title.clone()),
+                title: stored
+                    .as_ref()
+                    .map(|item| item.title_zh.clone().unwrap_or_else(|| item.title.clone())),
                 cast_count: stored
                     .as_ref()
                     .map(|item| item.cast.len() as u32)
@@ -582,6 +584,10 @@ fn document_from_tmdb(
         StoredMetadataKind::Episode => (Vec::new(), Vec::new(), None, None),
     };
 
+    // TMDB falls back per-field: a zh-CN request can still return an English
+    // `title` while overview/genres/cast come back Chinese. Only record a
+    // Chinese work title when the text actually contains CJK.
+    let title_zh = contains_cjk(&title).then(|| title.clone());
     Ok(StoredMetadata {
         schema_version: METADATA_SCHEMA_VERSION,
         kind,
@@ -594,6 +600,7 @@ fn document_from_tmdb(
             .and_then(Value::as_str)
             .filter(|text| !text.trim().is_empty())
             .map(str::to_string),
+        title_zh,
         overview: detail
             .get("overview")
             .and_then(Value::as_str)
@@ -621,6 +628,14 @@ fn document_from_tmdb(
         status,
         updated_at_ms: now_ms(),
     })
+}
+
+/// Hanzi-only check for the Chinese work title. Kana/Hangul do NOT qualify:
+/// a Korean title is not a Chinese translation (Kanji overlap with Hanzi is
+/// inherently ambiguous and accepted as Chinese).
+fn contains_cjk(text: &str) -> bool {
+    text.chars()
+        .any(|c| matches!(c, '\u{4e00}'..='\u{9fff}' | '\u{3400}'..='\u{4dbf}'))
 }
 
 fn cast_from_credits(credits: &Value, limit: usize) -> Vec<MetadataCastMember> {
@@ -764,6 +779,7 @@ mod tests {
         .expect("document");
         assert_eq!(document.schema_version, METADATA_SCHEMA_VERSION);
         assert_eq!(document.title, "努力克服自卑的我们");
+        assert_eq!(document.title_zh.as_deref(), Some("努力克服自卑的我们"));
         assert_eq!(document.year, Some(2026));
         assert_eq!(document.genres, vec!["剧情"]);
         assert_eq!(document.cast.len(), 2);
@@ -772,6 +788,53 @@ mod tests {
         assert_eq!(document.creators, vec!["Park Hae-young", "Cha Yeong-hun"]);
         assert_eq!(document.network.as_deref(), Some("JTBC"));
         assert_eq!(document.status.as_deref(), Some("Ended"));
+    }
+
+    #[test]
+    fn title_zh_stays_empty_without_cjk_title() {
+        // TMDB falls back per-field: English title + Korean original must not
+        // fabricate a Chinese title (the user's Our Beloved Summer case).
+        let document = document_from_tmdb(
+            &json!({
+                "id": 135897,
+                "name": "Our Beloved Summer",
+                "original_name": "그 해 우리는",
+                "first_air_date": "2021-12-06",
+                "overview": "一对争吵不休的前恋人高中时拍了一部纪录片。"
+            }),
+            None,
+            StoredMetadataKind::Series,
+            135897,
+            None,
+            None,
+            None,
+        )
+        .expect("document");
+        assert_eq!(document.title, "Our Beloved Summer");
+        assert_eq!(document.title_zh, None);
+        assert_eq!(document.original_title.as_deref(), Some("그 해 우리는"));
+    }
+
+    #[test]
+    fn title_zh_survives_roundtrip_and_old_files_parse() {
+        let document = document_from_tmdb(
+            &json!({"id": 1, "name": "那年，我们的夏天", "first_air_date": "2021-12-06"}),
+            None,
+            StoredMetadataKind::Series,
+            1,
+            None,
+            None,
+            None,
+        )
+        .expect("document");
+        assert_eq!(document.title_zh.as_deref(), Some("那年，我们的夏天"));
+        let text = serde_json::to_string(&document).expect("json");
+        assert!(text.contains("titleZh"));
+        // Files written before title_zh existed still parse.
+        let legacy = text.replace(",\"titleZh\":\"那年，我们的夏天\"", "");
+        let parsed: StoredMetadata = serde_json::from_str(&legacy).expect("legacy json");
+        assert_eq!(parsed.title_zh, None);
+        assert_eq!(parsed.title, "那年，我们的夏天");
     }
 
     #[test]
@@ -855,6 +918,7 @@ mod tests {
             series_tmdb_id: Some(289424),
             title: "第一集".into(),
             original_title: None,
+            title_zh: None,
             overview: Some("分集简介".into()),
             year: None,
             season: Some(1),
@@ -903,6 +967,7 @@ mod tests {
             series_tmdb_id: None,
             title: "开篇".into(),
             original_title: None,
+            title_zh: None,
             overview: None,
             year: None,
             season: Some(1),
@@ -960,6 +1025,7 @@ mod tests {
             series_tmdb_id: None,
             title: "示例".into(),
             original_title: None,
+            title_zh: None,
             overview: Some("短简介".into()),
             year: None,
             season: None,
@@ -978,6 +1044,7 @@ mod tests {
             series_tmdb_id: Some(1),
             title: "第一集".into(),
             original_title: None,
+            title_zh: None,
             overview: Some("TMDb 分集简介".into()),
             year: None,
             season: Some(1),

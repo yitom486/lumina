@@ -47,7 +47,10 @@ pub fn save_if_changed(root: &Path, index: &LibraryIndex) -> Result<bool, Librar
     fs::write(&temp, encoded).map_err(|error| {
         LibraryError::storage_failed(Some(&format!("write {}: {error}", temp.display())))
     })?;
-    replace_file(&temp, &path)?;
+    if let Err(error) = replace_file(&temp, &path) {
+        let _ = fs::remove_file(&temp);
+        return Err(error);
+    }
     Ok(true)
 }
 
@@ -114,6 +117,35 @@ fn replace_file(temp: &Path, destination: &Path) -> Result<(), LibraryError> {
     }
 }
 
+/// Remove leftover atomic-write temp files (`.index-*.tmp`, `.*.tmp`) under
+/// `<root>/.lumina`. Best-effort: any failure is ignored so a dirty cache dir
+/// can never break a scan. Returns the removed count (logs/tests only).
+pub fn cleanup_stale_tmps(root: &Path) -> usize {
+    fn visit(dir: &Path, removed: &mut usize) {
+        let Ok(entries) = fs::read_dir(dir) else {
+            return;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                visit(&path, removed);
+                continue;
+            }
+            let is_stale_tmp = path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.starts_with('.') && name.ends_with(".tmp"));
+            if is_stale_tmp && fs::remove_file(&path).is_ok() {
+                *removed += 1;
+            }
+        }
+    }
+
+    let mut removed = 0;
+    visit(&root.join(crate::paths::LUMINA_DIR_NAME), &mut removed);
+    removed
+}
+
 pub fn group_dir(root: &Path, group_key: &str) -> PathBuf {
     let readable: String = group_key
         .chars()
@@ -150,7 +182,10 @@ pub fn save_group_json<T: serde::Serialize>(
     fs::write(&temp, encoded).map_err(|error| {
         LibraryError::storage_failed(Some(&format!("write {}: {error}", temp.display())))
     })?;
-    replace_file(&temp, &destination)?;
+    if let Err(error) = replace_file(&temp, &destination) {
+        let _ = fs::remove_file(&temp);
+        return Err(error);
+    }
     Ok(destination)
 }
 
@@ -192,6 +227,30 @@ fn unique_suffix() -> u128 {
 mod tests {
     use super::*;
     use crate::model::{GroupResolution, MediaGroupKind};
+
+    #[test]
+    fn cleanup_removes_only_stale_tmps() {
+        let dir = std::env::temp_dir().join(format!(
+            "lumina-store-tmp-{}",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or_default()
+        ));
+        let base = dir.join(".lumina").join("groups").join("g");
+        fs::create_dir_all(&base).expect("mkdir");
+        fs::write(base.join(".index-1.tmp"), b"x").expect("seed tmp");
+        fs::write(base.join(".data-2.tmp"), b"x").expect("seed tmp");
+        fs::write(base.join("index.json"), b"{}").expect("seed real");
+        fs::write(dir.join(".lumina").join(".top-3.tmp"), b"x").expect("seed top");
+        assert_eq!(cleanup_stale_tmps(&dir), 3);
+        assert!(base.join("index.json").is_file());
+        assert!(!base.join(".index-1.tmp").exists());
+        assert!(!dir.join(".lumina").join(".top-3.tmp").exists());
+        // Missing .lumina dir is not an error.
+        assert_eq!(cleanup_stale_tmps(&dir.join("absent")), 0);
+        let _ = fs::remove_dir_all(&dir);
+    }
 
     #[test]
     fn carries_confirmed_resolution_into_a_new_scan() {

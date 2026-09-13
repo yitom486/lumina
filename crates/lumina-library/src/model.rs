@@ -356,6 +356,11 @@ pub struct StoredMetadata {
     pub series_tmdb_id: Option<u64>,
     pub title: String,
     pub original_title: Option<String>,
+    /// Localized Chinese work title when TMDB actually returned CJK text.
+    /// TMDB falls back per-field, so `title` alone is unreliable for glossary
+    /// use; explicit `None` beats guessing. Old files without it still parse.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title_zh: Option<String>,
     pub overview: Option<String>,
     pub year: Option<u16>,
     pub season: Option<u32>,
