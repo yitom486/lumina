@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 
-import { Button } from "@/components/ui/button";
+import { Button } from "@lumina/ui/button";
 
 import { useAcpProfilesStore } from "../acpProfilesStore";
 import { clientSettingsFromStore, useAcpSettingsStore } from "../acpSettingsStore";

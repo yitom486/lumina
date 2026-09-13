@@ -2,8 +2,8 @@ import { useEffect } from "react";
 import { Sparkles, X } from "lucide-react";
 
 import { PanelErrorBoundary } from "@/components/PanelErrorBoundary";
-import { Button } from "@/components/ui/button";
-import { cn } from "@/lib/utils";
+import { Button } from "@lumina/ui/button";
+import { cn } from "@lumina/ui/utils";
 
 import { useChatUiStore } from "../chatUiStore";
 import { AcpPanel } from "./AcpPanel";

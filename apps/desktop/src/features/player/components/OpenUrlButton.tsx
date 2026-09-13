@@ -2,12 +2,12 @@
 
 import { Link2 } from "lucide-react";
 
-import { Button } from "@/components/ui/button";
+import { Button } from "@lumina/ui/button";
 import {
   Tooltip,
   TooltipContent,
   TooltipTrigger,
-} from "@/components/ui/tooltip";
+} from "@lumina/ui/tooltip";
 import { useChatUiStore } from "@/features/acp/chatUiStore";
 
 import { useUiStore } from "../uiStore";

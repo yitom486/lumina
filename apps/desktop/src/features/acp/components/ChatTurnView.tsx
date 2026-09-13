@@ -1,7 +1,7 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { Suspense, lazy, useState } from "react";
 
-import { cn } from "@/lib/utils";
+import { cn } from "@lumina/ui/utils";
 import { errorMessage, formatTime } from "@/lib/format";
 
 import { AnnotationProposalCard } from "@/features/notes/components/AnnotationProposalCard";

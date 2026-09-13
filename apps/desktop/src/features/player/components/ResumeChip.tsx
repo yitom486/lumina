@@ -4,8 +4,8 @@ import { useEffect } from "react";
 import { X } from "lucide-react";
 
 import { formatTime } from "@/lib/format";
-import { Button } from "@/components/ui/button";
-import { cn } from "@/lib/utils";
+import { Button } from "@lumina/ui/button";
+import { cn } from "@lumina/ui/utils";
 
 import { usePlayerStore } from "../store";
 import { useUiStore } from "../uiStore";

@@ -12,13 +12,13 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
   AlertDialogTrigger,
-} from "@/components/ui/alert-dialog";
-import { Button } from "@/components/ui/button";
+} from "@lumina/ui/alert-dialog";
+import { Button } from "@lumina/ui/button";
 import {
   Tooltip,
   TooltipContent,
   TooltipTrigger,
-} from "@/components/ui/tooltip";
+} from "@lumina/ui/tooltip";
 import { ChatToggleButton } from "@/features/acp/components/ChatToggleButton";
 import { usePlayerStore, useUiStore } from "@/features/player";
 import { errorMessage } from "@/lib/format";

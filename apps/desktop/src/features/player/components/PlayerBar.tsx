@@ -1,7 +1,7 @@
 import { useState } from "react";
 
 import { FullscreenToggleButton } from "@/layouts/AppShell";
-import { cn } from "@/lib/utils";
+import { cn } from "@lumina/ui/utils";
 
 import { usePlaybackChromeReveal } from "../hooks/usePlaybackChromeReveal";
 import { useUiStore } from "../uiStore";

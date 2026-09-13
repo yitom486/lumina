@@ -41,8 +41,8 @@ import {
 } from "@/features/player";
 import { TranscriptPanel } from "@/features/transcript";
 import { OnlineSourcePanel } from "@/features/ytdl/components/OnlineSourcePanel";
-import { TooltipProvider } from "@/components/ui/tooltip";
-import { cn } from "@/lib/utils";
+import { TooltipProvider } from "@lumina/ui/tooltip";
+import { cn } from "@lumina/ui/utils";
 
 const TABS: { id: SidebarTab; label: string }[] = [
   { id: "playlist", label: "列表" },

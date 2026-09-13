@@ -1,8 +1,8 @@
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef } from "react";
 import { ArrowUp, ListPlus, Loader2, Zap } from "lucide-react";
 
-import { Button } from "@/components/ui/button";
-import { cn } from "@/lib/utils";
+import { Button } from "@lumina/ui/button";
+import { cn } from "@lumina/ui/utils";
 
 import type { AcpStatus, PermissionMode } from "../types";
 import { previewQueuedText, type QueuedPrompt } from "../promptQueue";

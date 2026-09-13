@@ -1,9 +1,9 @@
 import { History, Plus, StickyNote } from "lucide-react";
 import { useRef } from "react";
 
-import { Button } from "@/components/ui/button";
+import { Button } from "@lumina/ui/button";
 import { QuickNoteDialog } from "@/features/notes/components/QuickNoteDialog";
-import { cn } from "@/lib/utils";
+import { cn } from "@lumina/ui/utils";
 
 import type { AcpConnectionState } from "../types";
 import { ChatColumn } from "./ChatShell";

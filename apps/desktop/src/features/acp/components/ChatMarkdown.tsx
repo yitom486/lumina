@@ -4,7 +4,7 @@ import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
 
 import { enhanceCitationChildren } from "@/features/evidence/EvidenceLink";
-import { cn } from "@/lib/utils";
+import { cn } from "@lumina/ui/utils";
 
 import "katex/dist/katex.min.css";
 

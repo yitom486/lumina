@@ -1,5 +1,5 @@
-import { ScrollArea } from "@/components/ui/scroll-area";
-import { cn } from "@/lib/utils";
+import { ScrollArea } from "@lumina/ui/scroll-area";
+import { cn } from "@lumina/ui/utils";
 
 import { usePlayerStore } from "../store";
 

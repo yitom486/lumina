@@ -1,4 +1,4 @@
-import { Button } from "@/components/ui/button";
+import { Button } from "@lumina/ui/button";
 
 import { respondAcpPermission } from "../api";
 import type { PendingPermission } from "../types";

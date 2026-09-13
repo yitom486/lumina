@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 
-import { Button } from "@/components/ui/button";
+import { Button } from "@lumina/ui/button";
 import { OnlineSourceSettings } from "@/features/ytdl/components/OnlineSourceSettings";
 import { usePlayerStore } from "@/features/player";
 import { getCachedYtdlResolve } from "../api";

@@ -1,15 +1,15 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef, useState } from "react";
 
-import { Button } from "@/components/ui/button";
-import { ScrollArea } from "@/components/ui/scroll-area";
+import { Button } from "@lumina/ui/button";
+import { ScrollArea } from "@lumina/ui/scroll-area";
 import { usePlayerStore } from "@/features/player";
 import { useTrackStore } from "@/features/player/trackStore";
 import { loadSubtitleChoice } from "@/features/transcript/api";
 import { transcriptKey } from "@/features/transcript/queries";
 import type { Cue } from "@/features/transcript/types";
 import { errorMessage, formatTime } from "@/lib/format";
-import { cn } from "@/lib/utils";
+import { cn } from "@lumina/ui/utils";
 
 import {
   createNote,

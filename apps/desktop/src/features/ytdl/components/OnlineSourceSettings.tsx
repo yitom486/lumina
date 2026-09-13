@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Channel } from "@tauri-apps/api/core";
 
-import { Button } from "@/components/ui/button";
+import { Button } from "@lumina/ui/button";
 import { errorMessage } from "@/lib/format";
 import {
   getYtdlCookieStatus,

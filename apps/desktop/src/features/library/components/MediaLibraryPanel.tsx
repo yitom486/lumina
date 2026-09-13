@@ -2,7 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { open } from "@tauri-apps/plugin-dialog";
 import { useEffect, useMemo, useState } from "react";
 
-import { Button } from "@/components/ui/button";
+import { Button } from "@lumina/ui/button";
 import { profilesHintFromStore } from "@/features/acp/defaultAgentProfiles";
 import { useAcpProfilesStore } from "@/features/acp/acpProfilesStore";
 import { usePlayerStore } from "@/features/player";

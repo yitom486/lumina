@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Captions, Languages } from "lucide-react";
 
-import { Button } from "@/components/ui/button";
+import { Button } from "@lumina/ui/button";
 import {
   DropdownMenu,
   DropdownMenuCheckboxItem,
@@ -10,13 +10,13 @@ import {
   DropdownMenuLabel,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
+} from "@lumina/ui/dropdown-menu";
 import {
   Tooltip,
   TooltipContent,
   TooltipTrigger,
-} from "@/components/ui/tooltip";
-import { cn } from "@/lib/utils";
+} from "@lumina/ui/tooltip";
+import { cn } from "@lumina/ui/utils";
 
 import { audioTrackLabel, useTrackControls } from "../hooks/useTrackControls";
 

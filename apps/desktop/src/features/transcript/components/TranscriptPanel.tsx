@@ -22,9 +22,9 @@ import { applySubtitleChoice } from "@/features/player/hooks/useTrackControls";
 import { useUiStore } from "@/features/player/uiStore";
 import { useTrackStore } from "@/features/player/trackStore";
 import { getCachedYtdlResolve } from "@/features/ytdl";
-import { Button } from "@/components/ui/button";
-import { ScrollArea } from "@/components/ui/scroll-area";
-import { cn } from "@/lib/utils";
+import { Button } from "@lumina/ui/button";
+import { ScrollArea } from "@lumina/ui/scroll-area";
+import { cn } from "@lumina/ui/utils";
 
 import {
   activeCueIndex,

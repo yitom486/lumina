@@ -1,5 +1,5 @@
 import { formatTime } from "@/lib/format";
-import { Slider } from "@/components/ui/slider";
+import { Slider } from "@lumina/ui/slider";
 import { useMediaInfoQuery } from "@/features/media";
 
 import { usePlayerStore } from "../store";

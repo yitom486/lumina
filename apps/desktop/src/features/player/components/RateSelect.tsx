@@ -1,11 +1,11 @@
-import { Button } from "@/components/ui/button";
+import { Button } from "@lumina/ui/button";
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuCheckboxItem,
   DropdownMenuLabel,
   DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
+} from "@lumina/ui/dropdown-menu";
 
 import { usePlayerStore } from "../store";
 

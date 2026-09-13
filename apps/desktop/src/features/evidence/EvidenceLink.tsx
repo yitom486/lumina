@@ -14,7 +14,7 @@ import { resolveEpisodeFile } from "@/features/library/api";
 import { usePlayerStore } from "@/features/player";
 import { useProgressStore } from "@/features/player/progressStore";
 import { errorMessage, formatTime } from "@/lib/format";
-import { cn } from "@/lib/utils";
+import { cn } from "@lumina/ui/utils";
 
 import {
   parseEvidenceSegments,

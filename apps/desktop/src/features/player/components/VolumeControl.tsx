@@ -1,14 +1,14 @@
 import { useRef, useState } from "react";
 import { Volume2, VolumeX } from "lucide-react";
 
-import { Button } from "@/components/ui/button";
-import { Slider } from "@/components/ui/slider";
+import { Button } from "@lumina/ui/button";
+import { Slider } from "@lumina/ui/slider";
 import {
   Tooltip,
   TooltipContent,
   TooltipTrigger,
-} from "@/components/ui/tooltip";
-import { cn } from "@/lib/utils";
+} from "@lumina/ui/tooltip";
+import { cn } from "@lumina/ui/utils";
 
 import { usePlayerStore } from "../store";
 
