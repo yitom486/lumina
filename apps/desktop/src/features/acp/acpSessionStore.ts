@@ -1,36 +1,3 @@
-import { create } from "zustand";
-import { persist } from "zustand/middleware";
+/** Compat re-export: canonical source is packages/chat-ui/src. */
 
-import type { SavedSessionHint } from "./types";
-
-type AcpSessionStore = {
-  savedSession: SavedSessionHint | null;
-  setSavedSession: (session: SavedSessionHint) => void;
-  clearSavedSession: () => void;
-};
-
-/** Session id hint for ACP resume; chat transcripts live in chatHistoryStore. */
-export const useAcpSessionStore = create<AcpSessionStore>()(
-  persist(
-    (set) => ({
-      savedSession: null,
-      setSavedSession: (savedSession) => set({ savedSession }),
-      clearSavedSession: () => set({ savedSession: null }),
-    }),
-    {
-      name: "lumina-acp-session",
-      partialize: (state) => ({
-        savedSession: state.savedSession,
-      }),
-      merge: (persisted, current) => {
-        const saved = (persisted ?? {}) as Partial<
-          Pick<AcpSessionStore, "savedSession">
-        >;
-        return {
-          ...current,
-          savedSession: saved.savedSession ?? current.savedSession ?? null,
-        };
-      },
-    },
-  ),
-);
+export * from "../../../../../packages/chat-ui/src/acpSessionStore";
