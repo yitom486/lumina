@@ -10,6 +10,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::error::LibraryError;
 use crate::model::{GroupResolution, IndexedMediaFile, LibraryIndex, MediaGroup, MediaGroupKind};
+use crate::naming::parse_filename;
 use crate::paths::{is_lumina_data_dir, relativize_under_root};
 
 const VIDEO_EXTENSIONS: &[&str] = &[
@@ -144,93 +145,6 @@ fn build_groups(files: &[IndexedMediaFile]) -> Vec<MediaGroup> {
             }
         })
         .collect()
-}
-
-struct ParsedFilename {
-    key: String,
-    season: Option<u32>,
-    episode: Option<u32>,
-}
-
-fn parse_filename(file_name: &str) -> ParsedFilename {
-    let stem = Path::new(file_name)
-        .file_stem()
-        .and_then(|value| value.to_str())
-        .unwrap_or(file_name);
-    let normalized = stem.replace([' ', '_', '-'], ".");
-    let upper = normalized.to_ascii_uppercase();
-    if let Some((at, season, episode)) = find_season_episode(&upper) {
-        return ParsedFilename {
-            key: clean_group_key(&normalized[..at]),
-            season: Some(season),
-            episode: Some(episode),
-        };
-    }
-    if let Some((at, season, episode)) = find_x_episode(&upper) {
-        return ParsedFilename {
-            key: clean_group_key(&normalized[..at]),
-            season: Some(season),
-            episode: Some(episode),
-        };
-    }
-    ParsedFilename {
-        key: clean_group_key(&normalized),
-        season: None,
-        episode: None,
-    }
-}
-
-fn find_season_episode(value: &str) -> Option<(usize, u32, u32)> {
-    let bytes = value.as_bytes();
-    for index in 0..bytes.len().saturating_sub(5) {
-        if bytes[index] != b'S' {
-            continue;
-        }
-        let season_end = index + 3;
-        let episode_mark = index + 3;
-        let episode_end = index + 6;
-        if bytes.get(index + 1).is_some_and(u8::is_ascii_digit)
-            && bytes.get(index + 2).is_some_and(u8::is_ascii_digit)
-            && bytes.get(episode_mark) == Some(&b'E')
-            && bytes.get(index + 4).is_some_and(u8::is_ascii_digit)
-            && bytes.get(index + 5).is_some_and(u8::is_ascii_digit)
-        {
-            let season = value.get(index + 1..season_end)?.parse().ok()?;
-            let episode = value.get(index + 4..episode_end)?.parse().ok()?;
-            return Some((index, season, episode));
-        }
-    }
-    None
-}
-
-fn find_x_episode(value: &str) -> Option<(usize, u32, u32)> {
-    let bytes = value.as_bytes();
-    for index in 0..bytes.len().saturating_sub(3) {
-        if !bytes[index].is_ascii_digit() {
-            continue;
-        }
-        let season_end = index + 1;
-        let marker = index + 1;
-        let episode_end = index + 4;
-        if bytes.get(marker) == Some(&b'X')
-            && bytes.get(index + 2).is_some_and(u8::is_ascii_digit)
-            && bytes.get(index + 3).is_some_and(u8::is_ascii_digit)
-        {
-            let season = value.get(index..season_end)?.parse().ok()?;
-            let episode = value.get(index + 2..episode_end)?.parse().ok()?;
-            return Some((index, season, episode));
-        }
-    }
-    None
-}
-
-fn clean_group_key(value: &str) -> String {
-    let trimmed = value.trim_matches('.');
-    if trimmed.is_empty() {
-        "untitled".into()
-    } else {
-        trimmed.to_string()
-    }
 }
 
 fn is_video(path: &Path) -> bool {

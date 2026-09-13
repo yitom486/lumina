@@ -8,6 +8,7 @@ pub mod credentials;
 mod error;
 mod metadata;
 pub mod model;
+mod naming;
 mod paths;
 mod resolver;
 mod scanner;
