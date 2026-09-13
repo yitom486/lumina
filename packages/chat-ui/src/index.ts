@@ -18,3 +18,7 @@ export * from "./acpProfilesStore";
 export * from "./acpSessionStore";
 export * from "./askAboutStore";
 export * from "./components/composerFocus";
+export * from "./components/ChatWaitingDots";
+export * from "./components/ChatShell";
+export * from "./components/ChatActivityFeed";
+export * from "./components/ChatComposer";

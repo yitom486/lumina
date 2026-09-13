@@ -11,10 +11,27 @@
     "./*": {
       "types": "./src/*.ts",
       "default": "./src/*.ts"
+    },
+    "./components/ChatWaitingDots": {
+      "types": "./src/components/ChatWaitingDots.tsx",
+      "default": "./src/components/ChatWaitingDots.tsx"
+    },
+    "./components/ChatShell": {
+      "types": "./src/components/ChatShell.tsx",
+      "default": "./src/components/ChatShell.tsx"
+    },
+    "./components/ChatActivityFeed": {
+      "types": "./src/components/ChatActivityFeed.tsx",
+      "default": "./src/components/ChatActivityFeed.tsx"
+    },
+    "./components/ChatComposer": {
+      "types": "./src/components/ChatComposer.tsx",
+      "default": "./src/components/ChatComposer.tsx"
     }
   },
   "dependencies": {
-    "@lumina/contracts": "workspace:*"
+    "@lumina/contracts": "workspace:*",
+    "@lumina/ui": "workspace:*"
   },
   "peerDependencies": {
     "react": "^19.1.0",

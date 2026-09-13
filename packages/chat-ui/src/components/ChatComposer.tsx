@@ -1,0 +1,66 @@
+import { Button, cn } from "@lumina/ui";
+
+import { ChatColumn } from "./ChatShell";
+
+type Props = {
+  value: string;
+  disabled?: boolean;
+  busy?: boolean;
+  placeholder?: string;
+  onChange: (value: string) => void;
+  onSend: () => void;
+  onCancel?: () => void;
+};
+
+export function ChatComposer({
+  value,
+  disabled,
+  busy,
+  placeholder = "输入问题…",
+  onChange,
+  onSend,
+  onCancel,
+}: Props) {
+  return (
+    <ChatColumn className="shrink-0 space-y-2 border-t border-border py-3">
+      <div className={cn(busy && "chat-composer-active p-px")}>
+        <textarea
+          className={cn(
+            "min-h-[72px] w-full resize-none rounded-md border border-border bg-background px-3 py-2 text-sm",
+            "outline-none focus-visible:ring-1 focus-visible:ring-ring",
+            "disabled:opacity-60",
+            busy && "bg-muted/20",
+          )}
+          placeholder={placeholder}
+          value={value}
+          disabled={disabled || busy}
+          onChange={(e) => onChange(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && !e.shiftKey) {
+              e.preventDefault();
+              if (!disabled && !busy && value.trim()) onSend();
+            }
+          }}
+        />
+      </div>
+      <div className="flex gap-2">
+        <Button
+          size="sm"
+          className={cn("flex-1", busy && "animate-pulse")}
+          disabled={disabled || busy || !value.trim()}
+          onClick={onSend}
+        >
+          {busy ? "回复中…" : "发送"}
+        </Button>
+        <Button
+          size="sm"
+          variant="outline"
+          disabled={!busy}
+          onClick={() => onCancel?.()}
+        >
+          取消
+        </Button>
+      </div>
+    </ChatColumn>
+  );
+}
