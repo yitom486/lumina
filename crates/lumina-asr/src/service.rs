@@ -3,14 +3,14 @@
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use crate::asr::error::AsrError;
-use crate::asr::extract::{self, temp_job_dir};
-use crate::asr::model::{AsrEvent, AsrRange, AsrStatus};
-use crate::asr::paths::{self, resolve_asr_paths};
-use crate::asr::whisper_cli;
-use crate::media::MediaInspector;
-use crate::subtitle::model::Cue;
-use crate::subtitle::Transcript;
+use crate::error::AsrError;
+use crate::extract::{self, temp_job_dir};
+use crate::model::{AsrEvent, AsrRange, AsrStatus};
+use crate::paths::{self, resolve_asr_paths};
+use crate::transcriber::{Transcriber, WhisperCliTranscriber};
+use lumina_media::MediaInspector;
+use lumina_subtitle::model::Cue;
+use lumina_subtitle::Transcript;
 
 pub struct AsrService {
     busy: AtomicBool,
@@ -43,7 +43,7 @@ impl AsrService {
     /// Download CLI (if needed) + selected catalog model into app data.
     pub fn install<F>(&self, model_id: &str, mut on_event: F) -> Result<AsrStatus, AsrError>
     where
-        F: FnMut(crate::asr::model::AsrInstallEvent),
+        F: FnMut(crate::model::AsrInstallEvent),
     {
         if self
             .busy
@@ -53,14 +53,14 @@ impl AsrService {
             return Err(AsrError::busy());
         }
 
-        let result = crate::asr::download::install_bundle(model_id, |event| {
+        let result = crate::download::install_bundle(model_id, |event| {
             on_event(event);
         });
 
         self.busy.store(false, Ordering::SeqCst);
 
         if let Err(error) = &result {
-            on_event(crate::asr::model::AsrInstallEvent::Failed {
+            on_event(crate::model::AsrInstallEvent::Failed {
                 code: format!("{:?}", error.code),
                 message: error.message.clone(),
             });
@@ -75,9 +75,32 @@ impl AsrService {
         media_path: impl AsRef<Path>,
         range: Option<AsrRange>,
         model_id: Option<String>,
+        on_event: F,
+    ) -> Result<Transcript, AsrError>
+    where
+        F: FnMut(AsrEvent),
+    {
+        self.transcribe_with(
+            &WhisperCliTranscriber,
+            media_path,
+            range,
+            model_id,
+            on_event,
+        )
+    }
+
+    /// Same pipeline with an injected engine. Busy guard, windows, sidecar
+    /// export and error JSON are engine-independent.
+    pub fn transcribe_with<T, F>(
+        &self,
+        transcriber: &T,
+        media_path: impl AsRef<Path>,
+        range: Option<AsrRange>,
+        model_id: Option<String>,
         mut on_event: F,
     ) -> Result<Transcript, AsrError>
     where
+        T: Transcriber,
         F: FnMut(AsrEvent),
     {
         if self
@@ -126,7 +149,7 @@ impl AsrService {
                 message: format!("正在转写语音（{}）…", window.label),
             });
 
-            let mut transcript = whisper_cli::transcribe_wav(&asr_paths, &wav, &work, media_path)?;
+            let mut transcript = transcriber.transcribe_wav(&asr_paths, &wav, &work, media_path)?;
             offset_cues(&mut transcript.cues, window.from_ms);
             reindex_cues(&mut transcript.cues);
 
@@ -134,7 +157,7 @@ impl AsrService {
                 stage: "export".into(),
                 message: "正在保存外挂字幕…".into(),
             });
-            let transcript = crate::subtitle::write::export_sidecar_srt(
+            let transcript = lumina_subtitle::write::export_sidecar_srt(
                 media_path,
                 &window.lang_token,
                 &transcript.cues,
@@ -268,7 +291,7 @@ mod tests {
             }),
         )
         .expect_err("inverted");
-        assert_eq!(err.code, crate::asr::AsrErrorCode::InvalidRequest);
+        assert_eq!(err.code, crate::AsrErrorCode::InvalidRequest);
         assert!(err.message.contains("时间范围"));
     }
 }

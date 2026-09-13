@@ -8,9 +8,9 @@ use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
-use crate::media::tools::resolve_ffmpeg;
-use crate::media::MediaError;
-use crate::process_util::command;
+use crate::process::command;
+use crate::tools::resolve_ffmpeg;
+use crate::MediaError;
 
 /// Defaults: -30 dB floor, at least 0.5 s long.
 pub const DEFAULT_SILENCE_NOISE_DB: i32 = -30;

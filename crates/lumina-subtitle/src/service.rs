@@ -2,11 +2,11 @@
 
 use std::path::{Path, PathBuf};
 
-use crate::media::StreamKind;
-use crate::subtitle::error::SubtitleError;
-use crate::subtitle::extract::{self, is_bitmap_codec};
-use crate::subtitle::model::{Cue, SubtitleChoice, SubtitleSource, Transcript};
-use crate::subtitle::parse::parse_subtitle_text;
+use crate::error::SubtitleError;
+use crate::extract::{self, is_bitmap_codec};
+use crate::model::{Cue, SubtitleChoice, SubtitleSource, Transcript};
+use crate::parse::parse_subtitle_text;
+use lumina_media::StreamKind;
 
 const SIDECAR_EXTS: &[&str] = &["srt", "ass", "ssa", "vtt"];
 
@@ -31,7 +31,7 @@ impl SubtitleService {
 
         let mut choices = Vec::new();
 
-        match crate::media::MediaInspector::inspect_with(path, resource_dir) {
+        match lumina_media::MediaInspector::inspect_with(path, resource_dir) {
             Ok(info) => {
                 for stream in info
                     .streams

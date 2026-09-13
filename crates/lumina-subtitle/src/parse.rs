@@ -1,7 +1,7 @@
 //! Parse SRT / WebVTT / ASS dialogue into cues.
 
-use crate::subtitle::error::SubtitleError;
-use crate::subtitle::model::Cue;
+use crate::error::SubtitleError;
+use crate::model::Cue;
 
 pub fn parse_subtitle_text(content: &str) -> Result<Vec<Cue>, SubtitleError> {
     let trimmed = content.trim_start_matches('\u{feff}').trim();
@@ -377,10 +377,7 @@ mod tests {
     #[test]
     fn empty_content_is_chinese_parse_error() {
         let err = parse_subtitle_text("").expect_err("empty");
-        assert_eq!(
-            err.code,
-            crate::subtitle::error::SubtitleErrorCode::ParseFailed
-        );
+        assert_eq!(err.code, crate::error::SubtitleErrorCode::ParseFailed);
         assert!(err
             .message
             .chars()

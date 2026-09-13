@@ -5,9 +5,9 @@ use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
 use std::time::SystemTime;
 
-use crate::media::error::MediaError;
-use crate::media::ffprobe;
-use crate::media::model::MediaInfo;
+use crate::error::MediaError;
+use crate::ffprobe;
+use crate::model::MediaInfo;
 
 /// Process-wide probe cache: one ffprobe run per unchanged file.
 /// Open flows hit the same file repeatedly (media panel, subtitle listing,
@@ -124,9 +124,9 @@ mod tests {
     use super::*;
 
     fn make_fixture(dir: &std::path::Path) -> std::path::PathBuf {
-        let ffmpeg = crate::media::tools::resolve_ffmpeg().expect("spike needs ffmpeg");
+        let ffmpeg = crate::tools::resolve_ffmpeg().expect("spike needs ffmpeg");
         let out = dir.join("cache.mp4");
-        let status = crate::process_util::command(&ffmpeg)
+        let status = crate::process::command(&ffmpeg)
             .args([
                 "-y",
                 "-f",
@@ -186,7 +186,7 @@ mod tests {
 
     #[test]
     fn repeated_inspects_agree() {
-        if crate::media::tools::resolve_ffmpeg().is_err() {
+        if crate::tools::resolve_ffmpeg().is_err() {
             eprintln!("SKIP probe cache: ffmpeg not vendored on this machine");
             return;
         }

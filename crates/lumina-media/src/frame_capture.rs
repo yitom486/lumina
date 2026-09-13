@@ -9,9 +9,9 @@
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
-use crate::media::tools::resolve_ffmpeg;
-use crate::media::MediaError;
-use crate::process_util::command;
+use crate::process::command;
+use crate::tools::resolve_ffmpeg;
+use crate::MediaError;
 
 const CAPTURE_TIMEOUT: Duration = Duration::from_secs(15);
 const MAX_FRAME_WIDTH: u32 = 640;

@@ -2,7 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::subtitle::Transcript;
+use lumina_subtitle::Transcript;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

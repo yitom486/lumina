@@ -2,11 +2,11 @@
 
 use std::path::Path;
 
-use crate::asr::error::AsrError;
-use crate::asr::paths::AsrPaths;
-use crate::process_util::command;
-use crate::subtitle::model::Transcript;
-use crate::subtitle::parse::parse_subtitle_text;
+use crate::error::AsrError;
+use crate::paths::AsrPaths;
+use lumina_media::process::command;
+use lumina_subtitle::model::Transcript;
+use lumina_subtitle::parse::parse_subtitle_text;
 
 pub fn transcribe_wav(
     paths: &AsrPaths,

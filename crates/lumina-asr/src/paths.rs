@@ -2,8 +2,8 @@
 
 use std::path::{Path, PathBuf};
 
-use crate::asr::error::AsrError;
-use crate::asr::model::{AsrCatalogModel, AsrModelInfo, AsrStatus};
+use crate::error::AsrError;
+use crate::model::{AsrCatalogModel, AsrModelInfo, AsrStatus};
 
 pub struct AsrPaths {
     pub cli: PathBuf,
@@ -268,14 +268,17 @@ fn dirs_data() -> Option<PathBuf> {
     }
 }
 
-fn whisper_dev_root() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("native")
-        .join("whisper")
+fn whisper_dev_roots() -> Vec<PathBuf> {
+    // monorepo 拆分后 asr crate 不再与 `native/` 同目录，复用 media 的祖先查找。
+    lumina_media::tools::workspace_native_roots()
+        .into_iter()
+        .map(|native| native.join("whisper"))
+        .collect()
 }
 
 fn search_roots() -> Vec<PathBuf> {
-    let mut roots = vec![install_root(), whisper_dev_root()];
+    let mut roots = vec![install_root()];
+    roots.extend(whisper_dev_roots());
     if let Ok(exe) = std::env::current_exe() {
         if let Some(dir) = exe.parent() {
             roots.push(dir.join("whisper"));
@@ -340,7 +343,7 @@ mod tests {
             size_bytes: Some(1),
         }];
         let err = pick_model(&models, Some("missing.bin")).expect_err("unknown");
-        assert_eq!(err.code, crate::asr::AsrErrorCode::InvalidRequest);
+        assert_eq!(err.code, crate::AsrErrorCode::InvalidRequest);
         assert!(err.message.contains("模型"));
     }
 

@@ -1,3 +1,8 @@
 [workspace]
-members = ["apps/desktop/src-tauri"]
+members = [
+    "apps/desktop/src-tauri",
+    "crates/lumina-media",
+    "crates/lumina-subtitle",
+    "crates/lumina-asr",
+]
 resolver = "2"

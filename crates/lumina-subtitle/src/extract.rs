@@ -3,9 +3,9 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use crate::media::tools::resolve_ffmpeg;
-use crate::process_util::command;
-use crate::subtitle::error::SubtitleError;
+use crate::error::SubtitleError;
+use lumina_media::process::command;
+use lumina_media::tools::resolve_ffmpeg;
 
 const BITMAP_CODECS: &[&str] = &[
     "hdmv_pgs_subtitle",
@@ -135,7 +135,7 @@ mod tests {
         let err = extract_text_subtitle(Path::new("x.mkv"), 2, Some("pgssub")).expect_err("bmp");
         assert_eq!(
             err.code,
-            crate::subtitle::error::SubtitleErrorCode::UnsupportedSubtitle
+            crate::error::SubtitleErrorCode::UnsupportedSubtitle
         );
         assert_eq!(err.message, "不支持该字幕格式");
         assert_eq!(err.details.as_deref(), Some("pgssub"));

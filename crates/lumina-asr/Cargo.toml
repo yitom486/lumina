@@ -1,0 +1,13 @@
+[package]
+name = "lumina-asr"
+version = "0.3.0"
+description = "Optional on-demand ASR integration for Lumina"
+edition = "2021"
+
+[dependencies]
+lumina-media = { path = "../lumina-media" }
+lumina-subtitle = { path = "../lumina-subtitle" }
+serde = { version = "1", features = ["derive"] }
+tracing = "0.1"
+ureq = { version = "3.1", features = ["json"] }
+zip = { version = "2", default-features = false, features = ["deflate"] }

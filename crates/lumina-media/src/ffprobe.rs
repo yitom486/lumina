@@ -4,10 +4,10 @@ use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
 
-use crate::media::error::MediaError;
-use crate::media::model::{MediaChapter, MediaInfo, MediaStream, StreamKind};
-use crate::media::tools::resolve_ffprobe_with;
-use crate::process_util::command;
+use crate::error::MediaError;
+use crate::model::{MediaChapter, MediaInfo, MediaStream, StreamKind};
+use crate::process::command;
+use crate::tools::resolve_ffprobe_with;
 
 #[derive(Debug, Deserialize)]
 struct ProbeJson {
@@ -257,7 +257,7 @@ fn parse_frame_rate(value: &str) -> Option<f64> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::media::tools::resolve_ffprobe;
+    use crate::tools::resolve_ffprobe;
 
     #[test]
     fn frame_rate_fraction() {
@@ -291,7 +291,7 @@ mod tests {
     /// Check `-encoders` output: `-h encoder=<name>` still exits 0 for
     /// unknown encoders on some ffmpeg builds, so parse the list instead.
     fn encoder_available(ffmpeg: &std::path::Path, encoder: &str) -> bool {
-        crate::process_util::command(ffmpeg)
+        crate::process::command(ffmpeg)
             .args(["-hide_banner", "-encoders"])
             .output()
             .map(|output| {
@@ -309,7 +309,7 @@ mod tests {
         // Probe-level matrix only: mpv playback stays on the same loadfile path
         // for every codec. Unix machines without vendored ffmpeg SKIP (same
         // convention as `resolve_finds_project_ffprobe`).
-        let ffmpeg = match crate::media::tools::resolve_ffmpeg() {
+        let ffmpeg = match crate::tools::resolve_ffmpeg() {
             Ok(path) => path,
             Err(_) => {
                 eprintln!("SKIP codec matrix: ffmpeg not vendored on this machine");
@@ -318,7 +318,7 @@ mod tests {
         };
         // ffprobe travels with ffmpeg; its absence beside a present ffmpeg is real.
         assert!(
-            crate::media::tools::resolve_ffprobe().is_ok(),
+            crate::tools::resolve_ffprobe().is_ok(),
             "ffmpeg resolved but ffprobe is missing next to it"
         );
 
@@ -372,7 +372,7 @@ mod tests {
                 continue;
             };
             let out = dir.join(format!("matrix-{label}.{ext}"));
-            let output = crate::process_util::command(&ffmpeg)
+            let output = crate::process::command(&ffmpeg)
                 .args([
                     "-y",
                     "-f",
@@ -394,11 +394,11 @@ mod tests {
                     .take(2000)
                     .collect::<String>()
             );
-            let info = crate::media::service::MediaInspector::inspect(&out).expect("probe fixture");
+            let info = crate::service::MediaInspector::inspect(&out).expect("probe fixture");
             let video = info
                 .streams
                 .iter()
-                .find(|s| s.kind == crate::media::model::StreamKind::Video)
+                .find(|s| s.kind == crate::model::StreamKind::Video)
                 .expect("video stream");
             let codec = video.codec_name.as_deref().unwrap_or("");
             assert!(
@@ -412,7 +412,7 @@ mod tests {
     #[test]
     fn missing_file_is_chinese_not_found() {
         let err = probe_file(Path::new("Z:\\lumina-missing-media-xyz.mp4")).expect_err("missing");
-        assert_eq!(err.code, crate::media::error::MediaErrorCode::FileNotFound);
+        assert_eq!(err.code, crate::error::MediaErrorCode::FileNotFound);
         assert!(err
             .message
             .chars()

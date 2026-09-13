@@ -1,13 +1,8 @@
-//! Subtitle / transcript domain.
+//! App compat: subtitle implementation lives in `lumina-subtitle` (M3).
+//!
+//! `translate` stays here as a temporary bridge (it depends on ACP) until M5 `lumina-ai`.
+//! Existing `crate::subtitle::…` paths keep working through this re-export.
 
-pub mod error;
-pub mod extract;
-pub mod model;
-pub mod parse;
-pub mod service;
 pub mod translate;
-pub mod write;
 
-pub use error::{SubtitleError, SubtitleErrorCode};
-pub use model::{Cue, SubtitleChoice, SubtitleSource, Transcript};
-pub use service::SubtitleService;
+pub use lumina_subtitle::*;

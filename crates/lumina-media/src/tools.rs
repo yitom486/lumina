@@ -2,8 +2,8 @@
 
 use std::path::PathBuf;
 
-use crate::media::error::MediaError;
-use crate::media::model::MediaToolStatus;
+use crate::error::MediaError;
+use crate::model::MediaToolStatus;
 
 /// Lightweight ffprobe presence check (no media file needed) for startup/settings UI.
 /// Missing tool is data (`available: false`), never an error.
@@ -63,6 +63,30 @@ fn resolve_tool(
     ))))
 }
 
+/// Dev-workspace `native/` roots, ordered by proximity to this crate manifest.
+/// Monorepo 拆分后 media crate 不再与 `native/` 同目录：先保留 manifest 直系，
+/// 再向上兼容查找 `apps/desktop/src-tauri/native`（M1 布局）与旧 `src-tauri/native`。
+/// 打包期/测试期的显式 `resource_dir` 与 exe 相对路径不受影响。
+pub fn workspace_native_roots() -> Vec<PathBuf> {
+    let mut roots = Vec::new();
+    let mut dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    roots.push(dir.join("native"));
+    for _ in 0..6 {
+        let Some(parent) = dir.parent().map(PathBuf::from) else {
+            break;
+        };
+        dir = parent;
+        roots.push(dir.join("native"));
+        roots.push(
+            dir.join("apps")
+                .join("desktop")
+                .join("src-tauri")
+                .join("native"),
+        );
+    }
+    roots
+}
+
 fn tool_candidates(
     unix_name: &str,
     windows_name: &str,
@@ -76,10 +100,11 @@ fn tool_candidates(
         paths.push(res.join("ffmpeg").join(unix_name));
     }
 
-    // 1. 开发期：CARGO_MANIFEST_DIR/native/ffmpeg/
-    let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    paths.push(manifest.join("native").join("ffmpeg").join(windows_name));
-    paths.push(manifest.join("native").join("ffmpeg").join(unix_name));
+    // 1. 开发期：crate manifest 或其祖先目录下的 native/ffmpeg/
+    for root in workspace_native_roots() {
+        paths.push(root.join("ffmpeg").join(windows_name));
+        paths.push(root.join("ffmpeg").join(unix_name));
+    }
 
     if let Ok(exe) = std::env::current_exe() {
         if let Some(dir) = exe.parent() {

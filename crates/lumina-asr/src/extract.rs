@@ -2,9 +2,9 @@
 
 use std::path::{Path, PathBuf};
 
-use crate::asr::error::AsrError;
-use crate::media::tools::resolve_ffmpeg;
-use crate::process_util::command;
+use crate::error::AsrError;
+use lumina_media::process::command;
+use lumina_media::tools::resolve_ffmpeg;
 
 /// Optional half-open media window `[from_ms, to_ms)`.
 pub fn extract_wav_16k_mono(

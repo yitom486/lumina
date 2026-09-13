@@ -2248,6 +2248,9 @@ dependencies = [
  "libloading 0.8.9",
  "libmpv2",
  "libmpv2-sys",
+ "lumina-asr",
+ "lumina-media",
+ "lumina-subtitle",
  "objc",
  "pkg-config",
  "raw-window-handle",
@@ -2268,6 +2271,37 @@ dependencies = [
  "windows",
  "x11",
  "zip 2.4.2",
+]
+
+[[package]]
+name = "lumina-asr"
+version = "0.3.0"
+dependencies = [
+ "lumina-media",
+ "lumina-subtitle",
+ "serde",
+ "tracing",
+ "ureq",
+ "zip 2.4.2",
+]
+
+[[package]]
+name = "lumina-media"
+version = "0.3.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "tracing",
+ "which",
+]
+
+[[package]]
+name = "lumina-subtitle"
+version = "0.3.0"
+dependencies = [
+ "lumina-media",
+ "serde",
+ "tracing",
 ]
 
 [[package]]

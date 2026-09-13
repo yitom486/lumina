@@ -3,8 +3,8 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use crate::subtitle::error::SubtitleError;
-use crate::subtitle::model::{Cue, Transcript};
+use crate::error::SubtitleError;
+use crate::model::{Cue, Transcript};
 
 /// Token between media stem and extension: `video.asr.srt`.
 pub const ASR_SIDECAR_TOKEN: &str = "asr";
@@ -140,7 +140,7 @@ pub fn export_asr_sidecar(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::subtitle::parse::parse_srt;
+    use crate::parse::parse_srt;
     use std::time::{SystemTime, UNIX_EPOCH};
 
     #[test]

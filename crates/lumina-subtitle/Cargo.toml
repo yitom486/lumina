@@ -1,0 +1,10 @@
+[package]
+name = "lumina-subtitle"
+version = "0.3.0"
+description = "Subtitle discovery, extraction, parsing, and export for Lumina"
+edition = "2021"
+
+[dependencies]
+lumina-media = { path = "../lumina-media" }
+serde = { version = "1", features = ["derive"] }
+tracing = "0.1"

@@ -6,9 +6,9 @@ use std::path::{Path, PathBuf};
 
 use zip::ZipArchive;
 
-use crate::asr::error::AsrError;
-use crate::asr::model::{AsrInstallEvent, AsrStatus};
-use crate::asr::paths::{
+use crate::error::AsrError;
+use crate::model::{AsrInstallEvent, AsrStatus};
+use crate::paths::{
     find_cli_any, install_root, install_supported, models_install_dir, resolve_catalog_model,
     status,
 };
@@ -284,7 +284,7 @@ mod tests {
     #[test]
     fn catalog_resolve_used_by_install_guard() {
         assert!(resolve_catalog_model("base").is_ok());
-        assert!(crate::asr::paths::install_root()
+        assert!(crate::paths::install_root()
             .to_string_lossy()
             .contains("whisper"));
     }

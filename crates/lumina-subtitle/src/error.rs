@@ -126,9 +126,9 @@ impl fmt::Display for SubtitleError {
 
 impl std::error::Error for SubtitleError {}
 
-impl From<crate::media::MediaError> for SubtitleError {
-    fn from(value: crate::media::MediaError) -> Self {
-        use crate::media::MediaErrorCode;
+impl From<lumina_media::MediaError> for SubtitleError {
+    fn from(value: lumina_media::MediaError) -> Self {
+        use lumina_media::MediaErrorCode;
         let details = value.details.as_deref();
         match value.code {
             MediaErrorCode::ProbeNotFound => Self::tool_not_found(details),
@@ -170,7 +170,7 @@ mod tests {
 
     #[test]
     fn media_error_maps_to_subtitle_business_messages() {
-        let media = crate::media::MediaError::probe_not_found(None);
+        let media = lumina_media::MediaError::probe_not_found(None);
         let sub = SubtitleError::from(media);
         assert_eq!(sub.code, SubtitleErrorCode::ToolNotFound);
         assert_eq!(sub.message, "字幕工具未就绪");

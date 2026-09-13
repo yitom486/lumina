@@ -11,7 +11,7 @@
     "lint": "cd apps/desktop && bun run lint",
     "lint:ox": "oxlint apps/desktop/src packages/contracts/src packages/query-keys/src",
     "lint:all": "cd apps/desktop && bun run lint:all",
-    "check:rust": "cargo fmt --manifest-path apps/desktop/src-tauri/Cargo.toml --check && cargo check --workspace --all-targets && cargo test --workspace --lib && cargo clippy --workspace --all-targets -- -D warnings",
+    "check:rust": "cargo fmt --all --check && cargo check --workspace --all-targets && cargo test --workspace --lib && cargo clippy --workspace --all-targets -- -D warnings",
     "test": "cd apps/desktop && bun run test",
     "test:e2e:online": "cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml --lib public_youtube_resolves_and_reaches_mpv_demux_without_cookies -- --ignored --nocapture",
     "test:unit": "cd apps/desktop && bun run test:unit",

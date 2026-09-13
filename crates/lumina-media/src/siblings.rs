@@ -3,7 +3,7 @@
 use std::cmp::Ordering;
 use std::path::{Path, PathBuf};
 
-use crate::media::error::MediaError;
+use crate::error::MediaError;
 
 const VIDEO_EXTS: &[&str] = &[
     "mp4", "mkv", "webm", "avi", "mov", "m4v", "wmv", "flv", "ts", "m2ts",
@@ -302,7 +302,7 @@ mod tests {
     #[test]
     fn missing_file_lists_as_not_found() {
         let err = list_sibling_videos(r"Z:\lumina-no-such-file.mp4").expect_err("missing");
-        assert_eq!(err.code, crate::media::error::MediaErrorCode::FileNotFound);
+        assert_eq!(err.code, crate::error::MediaErrorCode::FileNotFound);
     }
 
     #[test]
