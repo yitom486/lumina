@@ -1,0 +1,20 @@
+{
+  "name": "@lumina/ui",
+  "private": true,
+  "version": "0.3.0",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    },
+    "./*": {
+      "types": "./src/*.ts",
+      "default": "./src/*.ts"
+    }
+  },
+  "dependencies": {
+    "clsx": "^2.1.1",
+    "tailwind-merge": "^3.6.0"
+  }
+}

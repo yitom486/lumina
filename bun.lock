@@ -13,6 +13,7 @@
         "@lumina/contracts": "workspace:*",
         "@lumina/player-ui": "workspace:*",
         "@lumina/query-keys": "workspace:*",
+        "@lumina/ui": "workspace:*",
         "@radix-ui/react-alert-dialog": "^1.1.23",
         "@radix-ui/react-dialog": "^1.1.23",
         "@radix-ui/react-dropdown-menu": "^2.1.24",
@@ -97,6 +98,14 @@
         "react": "^19.1.0",
         "react-dom": "^19.1.0",
         "zustand": "^5.0.15",
+      },
+    },
+    "packages/ui": {
+      "name": "@lumina/ui",
+      "version": "0.3.0",
+      "dependencies": {
+        "clsx": "^2.1.1",
+        "tailwind-merge": "^3.6.0",
       },
     },
   },
@@ -226,6 +235,8 @@
     "@lumina/query-keys": ["@lumina/query-keys@workspace:packages/query-keys"],
 
     "@lumina/transcript-ui": ["@lumina/transcript-ui@workspace:packages/transcript-ui"],
+
+    "@lumina/ui": ["@lumina/ui@workspace:packages/ui"],
 
     "@napi-rs/lzma-linux-x64-gnu": ["@napi-rs/lzma-linux-x64-gnu@1.5.1", "", { "os": "linux", "cpu": "x64" }, "sha512-oTXEIha4SsuXdTA4Iyskj0kpdx2yVXdhd75c2v3xGrHFfVMsbhTPZU/nMPL4sWKo4pBHm3aucLaqGlF696dTyQ=="],
 

@@ -12,6 +12,7 @@ export default defineConfig({
       "@": path.resolve(import.meta.dirname, "./src"),
       "@lumina/player-ui": path.resolve(import.meta.dirname, "../../packages/player-ui/src"),
       "@lumina/chat-ui": path.resolve(import.meta.dirname, "../../packages/chat-ui/src"),
+      "@lumina/ui": path.resolve(import.meta.dirname, "../../packages/ui/src"),
     },
   },
   // Dev cold start: pre-bundle heavy deps at server boot (parallel + cached
