@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 
 import { Button } from "@lumina/ui/button";
+import { ytdlResolveKey } from "@lumina/query-keys";
 import { OnlineSourceSettings } from "@/features/ytdl/components/OnlineSourceSettings";
 import { usePlayerStore } from "@/features/player";
 import { getCachedYtdlResolve } from "../api";
@@ -35,7 +36,7 @@ export function OnlineSourcePanel() {
   const playingRemote =
     sourceKind === "remote" && Boolean(currentFile) && status !== "Error";
   const mediaQuery = useQuery({
-    queryKey: ["ytdl-resolve", currentFile],
+    queryKey: ytdlResolveKey(currentFile),
     queryFn: () => getCachedYtdlResolve(currentFile as string),
     enabled: playingRemote,
     staleTime: Infinity,

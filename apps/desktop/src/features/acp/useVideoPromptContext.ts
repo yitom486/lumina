@@ -3,7 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 
 import { useMediaInfoQuery } from "@/features/media";
 import { listNotes } from "@/features/notes/api";
-import { notesKey } from "@lumina/query-keys";
+import { notesKey, ytdlResolveKey } from "@lumina/query-keys";
 import { usePlayerStore } from "@/features/player";
 import { useTrackStore } from "@/features/player/trackStore";
 import { getCachedYtdlResolve } from "@/features/ytdl";
@@ -27,7 +27,7 @@ export function useVideoPromptContext(): VideoPromptContext | undefined {
 
   const mediaQuery = useMediaInfoQuery();
   const onlineQuery = useQuery({
-    queryKey: ["ytdl-resolve", path],
+    queryKey: ytdlResolveKey(path),
     queryFn: () => getCachedYtdlResolve(path as string),
     enabled: mediaReady && /^https?:\/\//i.test(path ?? ""),
     staleTime: Infinity,

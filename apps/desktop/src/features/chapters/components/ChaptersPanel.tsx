@@ -4,8 +4,10 @@ import { useMediaInfoQuery } from "@/features/media";
 import { usePlayerStore } from "@/features/player";
 import { useTrackStore } from "@/features/player/trackStore";
 import { loadSubtitleChoice } from "@/features/transcript/api";
-import { transcriptKey } from "@lumina/query-keys";
+import { transcriptKey, ytdlResolveKey } from "@lumina/query-keys";
+import { getCachedYtdlResolve } from "@/features/ytdl";
 import { formatTime } from "@/lib/format";
+import type { MediaChapter } from "@lumina/contracts";
 
 import { buildSoftSegments } from "../softSegments";
 
@@ -15,13 +17,25 @@ export function ChaptersPanel() {
   const seek = usePlayerStore((s) => s.seek);
   const positionMs = usePlayerStore((s) => s.currentTimeMs);
   const subtitleChoiceId = useTrackStore((s) => s.subtitleChoiceId);
+  const isRemote =
+    sourceKind === "remote" || (mediaPath?.startsWith("http") ?? false);
   const { data, isLoading, error } = useMediaInfoQuery();
   // Shared transcript cache with the transcript tab (same query key, no refetch).
   const transcriptQuery = useQuery({
     queryKey: transcriptKey(mediaPath, subtitleChoiceId),
     queryFn: () =>
       loadSubtitleChoice(mediaPath as string, subtitleChoiceId as string),
-    enabled: Boolean(mediaPath && subtitleChoiceId),
+    // Remote chapters never fall back to local subtitle segmentation.
+    enabled: Boolean(mediaPath && subtitleChoiceId && !isRemote),
+    retry: false,
+    staleTime: Infinity,
+  });
+  // Online chapters come from the cached ytdl resolve result shared with the
+  // online/transcript/ACP surfaces (same query key, no refetch, no fresh resolve).
+  const onlineQuery = useQuery({
+    queryKey: ytdlResolveKey(mediaPath),
+    queryFn: () => getCachedYtdlResolve(mediaPath as string),
+    enabled: Boolean(isRemote && mediaPath),
     retry: false,
     staleTime: Infinity,
   });
@@ -32,11 +46,20 @@ export function ChaptersPanel() {
     );
   }
 
-  if (sourceKind === "remote" || mediaPath.startsWith("http")) {
+  if (isRemote) {
+    const onlineChapters = onlineQuery.data?.chapters ?? [];
+    if (onlineQuery.isLoading) {
+      return <div className="p-3 text-xs text-muted-foreground">正在读取在线章节…</div>;
+    }
+    if (onlineChapters.length === 0) {
+      return (
+        <div className="p-3 text-xs text-muted-foreground">
+          该在线视频暂无章节信息。
+        </div>
+      );
+    }
     return (
-      <div className="p-3 text-xs text-muted-foreground">
-        在线视频的章节将由解析结果提供（后续版本）；本地容器章节探测不适用于网页链接。
-      </div>
+      <ChapterList chapters={onlineChapters} positionMs={positionMs} seek={seek} />
     );
   }
 
@@ -91,6 +114,20 @@ export function ChaptersPanel() {
     );
   }
 
+  return (
+    <ChapterList chapters={chapters} positionMs={positionMs} seek={seek} />
+  );
+}
+
+function ChapterList({
+  chapters,
+  positionMs,
+  seek,
+}: {
+  chapters: MediaChapter[];
+  positionMs: number;
+  seek: (ms: number) => unknown;
+}) {
   return (
     <div className="min-h-0 flex-1 space-y-1 overflow-auto p-3">
       {chapters.map((chapter, index) => {

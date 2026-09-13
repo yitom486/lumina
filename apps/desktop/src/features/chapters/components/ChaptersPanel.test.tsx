@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { usePlayerStore } from "@/features/player";
 import { useTrackStore } from "@/features/player/trackStore";
+import { ytdlResolveKey } from "@lumina/query-keys";
 
 import { ChaptersPanel } from "./ChaptersPanel";
 
@@ -20,6 +21,7 @@ const CUES = [
 ];
 
 let chapters: unknown[] = [];
+let onlineResolve: unknown = null;
 
 function renderPanel() {
   const client = new QueryClient({
@@ -34,11 +36,13 @@ function renderPanel() {
 
 beforeEach(() => {
   chapters = [];
+  onlineResolve = null;
   vi.mocked(invoke).mockImplementation((cmd: string) => {
     if (cmd === "media_inspect")
       return Promise.resolve({ path: "C:\\v\\a.mp4", streams: [], chapters });
     if (cmd === "subtitle_load_choice")
       return Promise.resolve({ choiceId: "s1", cues: CUES });
+    if (cmd === "ytdl_cached_resolve") return Promise.resolve(onlineResolve);
     if (cmd === "player_seek")
       return Promise.resolve({ status: "Paused", currentTimeMs: 0 });
     return Promise.resolve(null);
@@ -94,5 +98,69 @@ describe("ChaptersPanel soft segments", () => {
         screen.getByText("该文件没有容器章节元数据，也没有可用字幕可供分段。"),
       ).toBeInTheDocument();
     });
+  });
+});
+
+const REMOTE_URL = "https://www.youtube.com/watch?v=remote1";
+
+function renderRemote() {
+  usePlayerStore.setState({
+    currentFile: REMOTE_URL,
+    sourceKind: "remote",
+    status: "Paused",
+    currentTimeMs: 500,
+  });
+  renderPanel();
+}
+
+function invokeCmds(cmd: string) {
+  return vi.mocked(invoke).mock.calls.filter(([name]) => name === cmd);
+}
+
+describe("ChaptersPanel online chapters", () => {
+  it("lists cached resolve chapters without fresh resolve or probe", async () => {
+    onlineResolve = {
+      chapters: [
+        { id: 1, startMs: 0, endMs: 60_000, title: " 开场 " },
+        { id: 2, startMs: 60_000, endMs: null, title: "" },
+      ],
+    };
+    renderRemote();
+    await waitFor(() => {
+      // Title is trimmed, empty title falls back to 章节 N.
+      expect(screen.getByText("开场")).toBeInTheDocument();
+    });
+    expect(screen.getByText("章节 2")).toBeInTheDocument();
+    expect(invokeCmds("ytdl_cached_resolve")).toHaveLength(1);
+    expect(invokeCmds("ytdl_resolve")).toHaveLength(0);
+    expect(invokeCmds("media_inspect")).toHaveLength(0);
+    expect(invokeCmds("subtitle_load_choice")).toHaveLength(0);
+  });
+
+  it("shows empty state without chapters and never falls back to segments", async () => {
+    onlineResolve = { chapters: [] };
+    renderRemote();
+    await waitFor(() => {
+      expect(screen.getByText("该在线视频暂无章节信息。")).toBeInTheDocument();
+    });
+    expect(screen.queryByText(/按字幕停顿机械分段/)).not.toBeInTheDocument();
+  });
+
+  it("seeks when an online chapter is clicked", async () => {
+    onlineResolve = {
+      chapters: [{ id: 7, startMs: 30_000, endMs: null, title: "中段" }],
+    };
+    renderRemote();
+    await waitFor(() => {
+      expect(screen.getByText("中段")).toBeInTheDocument();
+    });
+    fireEvent.click(screen.getByText("中段"));
+    await waitFor(() => {
+      expect(invokeCmds("player_seek")).toHaveLength(1);
+    });
+  });
+
+  it("shares one frozen query key shape across surfaces", () => {
+    expect(ytdlResolveKey(REMOTE_URL)).toEqual(["ytdl-resolve", REMOTE_URL]);
   });
 });

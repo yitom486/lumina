@@ -36,7 +36,7 @@ import {
   loadSubtitleChoice,
   translateSubtitleTrack,
 } from "../api";
-import { subtitleChoicesKey, transcriptKey } from "@lumina/query-keys";
+import { subtitleChoicesKey, transcriptKey, ytdlResolveKey } from "@lumina/query-keys";
 import { useSubtitleWorkshopModels } from "../useSubtitleWorkshopModels";
 import type { SubtitleChoice } from "@lumina/contracts";
 import { followMode, useFollowStore } from "@lumina/transcript-ui";
@@ -78,7 +78,7 @@ export function TranscriptPanel() {
 
   const mediaInfoQuery = useMediaInfoQuery();
   const onlineInfoQuery = useQuery({
-    queryKey: ["ytdl-resolve", path],
+    queryKey: ytdlResolveKey(path),
     queryFn: () => getCachedYtdlResolve(path as string),
     enabled: mediaReady && /^https?:\/\//i.test(path ?? ""),
     staleTime: Infinity,
