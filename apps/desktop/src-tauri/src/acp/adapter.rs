@@ -27,8 +27,27 @@ impl SessionEnvironment for AppSessionEnvironment {
         sync_snapshot_capabilities(snapshot_path, vision_capable)
     }
 
-    fn mcp_servers(&self, snapshot_path: &Path) -> serde_json::Value {
-        crate::mcp::lumina_mcp_servers(snapshot_path)
+    fn mcp_servers(&self, snapshot_path: &Path, isolated: bool) -> serde_json::Value {
+        // Chat selects `Chat`; isolated AI tasks select `NoTools` so the
+        // server lists nothing and never loads Chat snapshot state.
+        let profile = if isolated {
+            crate::mcp::McpToolProfile::NoTools
+        } else {
+            crate::mcp::McpToolProfile::Chat
+        };
+        let mut servers = crate::mcp::lumina_mcp_servers(snapshot_path);
+        if let Some(env) = servers
+            .as_array_mut()
+            .and_then(|list| list.first_mut())
+            .and_then(|server| server.get_mut("env"))
+            .and_then(serde_json::Value::as_array_mut)
+        {
+            env.push(serde_json::json!({
+                "name": crate::mcp::TOOL_PROFILE_ENV,
+                "value": profile.env_value(),
+            }));
+        }
+        servers
     }
 
     fn snapshot_vision_capable(&self, workspace: &Path) -> Option<bool> {

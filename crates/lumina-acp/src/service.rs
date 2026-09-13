@@ -709,6 +709,12 @@ impl AcpService {
         Ok((final_text, Some("end_turn".into())))
     }
 
+    /// Isolated AI tasks (translation/polishing) run tool-free: no MCP tools,
+    /// no Chat snapshot/history reuse.
+    fn isolated_task(&self) -> bool {
+        !self.tool_access_enabled.load(Ordering::SeqCst)
+    }
+
     fn spawn_session(
         &self,
         cwd_hint: Option<&str>,
@@ -904,7 +910,7 @@ impl AcpService {
         let snapshot_path = env.snapshot_path(std::path::Path::new(&cwd));
         env.sync_snapshot(&snapshot_path, vision_capable)
             .map_err(|error| AcpError::internal(Some(&error)))?;
-        let mcp_servers = env.mcp_servers(&snapshot_path);
+        let mcp_servers = env.mcp_servers(&snapshot_path, self.isolated_task());
 
         on_event(AcpEvent::Progress {
             message: "正在创建会话…".into(),
@@ -988,7 +994,7 @@ impl AcpService {
             .map_err(|error| AcpError::internal(Some(&error)))?;
         let new_id = session.next_id;
         session.next_id += 1;
-        let mcp_servers = env.mcp_servers(&snapshot_path);
+        let mcp_servers = env.mcp_servers(&snapshot_path, self.isolated_task());
         tracing::info!(
             cwd,
             snapshot = %snapshot_path.display(),

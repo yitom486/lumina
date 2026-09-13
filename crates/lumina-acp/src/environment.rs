@@ -19,7 +19,10 @@ pub trait SessionEnvironment: Send + Sync + 'static {
     /// Record session capabilities (e.g. vision) into the snapshot file.
     fn sync_snapshot(&self, snapshot_path: &Path, vision_capable: bool) -> Result<(), String>;
     /// Generalized MCP server spec for `session/new|resume`.
-    fn mcp_servers(&self, snapshot_path: &Path) -> Value;
+    /// `isolated` marks short-lived tool-free tasks (translation/polishing):
+    /// the app advertises the `NoTools` profile so the server never serves
+    /// tools or loads Chat state. Chat sessions pass `false` (`Chat`).
+    fn mcp_servers(&self, snapshot_path: &Path, isolated: bool) -> Value;
     /// Vision flag previously recorded for a workspace, if any.
     fn snapshot_vision_capable(&self, workspace: &Path) -> Option<bool>;
 }

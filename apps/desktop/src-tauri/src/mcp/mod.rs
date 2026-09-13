@@ -1,9 +1,11 @@
 mod build;
+mod policy;
 mod server;
 mod snapshot;
 mod tools;
 
 pub use build::PromptSnapshotState;
+pub use policy::{tool_profile_from_env, McpToolProfile, ToolPolicy, TOOL_PROFILE_ENV};
 pub use snapshot::{
     read_snapshot, snapshot_path_for_cwd, sync_snapshot_capabilities, write_snapshot,
     AgentCapabilities, LuminaMcpSnapshot, OnlineMediaSnapshot, PlaybackLite, PromptAnchor,
