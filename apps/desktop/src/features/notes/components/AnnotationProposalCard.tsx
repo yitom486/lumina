@@ -7,8 +7,8 @@ import { errorMessage, formatTime } from "@/lib/format";
 import { cn } from "@lumina/ui/utils";
 
 import { createNote, dismissAnnotationProposal } from "../api";
-import type { VideoAnnotationProposal } from "../proposalTypes";
-import { notesKey } from "../queries";
+import type { VideoAnnotationProposal } from "@lumina/contracts";
+import { notesKey } from "@lumina/query-keys";
 
 type Props = {
   proposal: VideoAnnotationProposal;

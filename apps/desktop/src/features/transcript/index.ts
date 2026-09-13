@@ -3,7 +3,7 @@ export type {
   SubtitleChoice,
   SubtitleSource,
   Transcript,
-} from "./types";
+} from "@lumina/contracts";
 export { TranscriptPanel } from "./components/TranscriptPanel";
-export { followMode, useFollowStore } from "./followStore";
-export type { FollowMode } from "./followStore";
+export { followMode, useFollowStore } from "@lumina/transcript-ui";
+export type { FollowMode } from "@lumina/transcript-ui";

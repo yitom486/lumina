@@ -5,7 +5,7 @@ import { useEffect, useRef } from "react";
 import { useChatUiStore } from "@lumina/chat-ui/chatUiStore";
 import { usePlayerStore } from "../store";
 import { useUiStore } from "../uiStore";
-import { shouldSuppressPlayerHotkeyDuringAcp } from "./playerHotkeyPolicy";
+import { shouldSuppressPlayerHotkeyDuringAcp } from "@lumina/player-ui";
 
 function isTypingTarget(target: EventTarget | null): boolean {
   if (!(target instanceof HTMLElement)) return false;

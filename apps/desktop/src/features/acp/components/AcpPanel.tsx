@@ -55,8 +55,8 @@ import {
 import { formatConversationHistoryContext } from "@lumina/chat-ui/conversationContext";
 import { useChatUiStore } from "@lumina/chat-ui/chatUiStore";
 import { buildAnchoredVideoPromptContext } from "../context";
-import { mediaInfoKey } from "@/features/media/queries";
-import { notesKey } from "@/features/notes/queries";
+import { mediaInfoKey } from "@lumina/query-keys";
+import { notesKey } from "@lumina/query-keys";
 import { workspaceCwdFromMedia } from "@lumina/player-ui/cwd";
 import { profilesSignature } from "@lumina/chat-ui/profilesSignature";
 import {

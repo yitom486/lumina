@@ -1,6 +1,6 @@
 import { create } from "zustand";
 
-import type { Cue } from "@/features/transcript/types";
+import type { Cue } from "@lumina/contracts";
 
 import {
   cueIndicesInListRange,

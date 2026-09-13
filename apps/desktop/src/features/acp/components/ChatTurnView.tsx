@@ -6,7 +6,7 @@ import { errorMessage, formatTime } from "@/lib/format";
 
 import { AnnotationProposalCard } from "@/features/notes/components/AnnotationProposalCard";
 import { createNote } from "@/features/notes/api";
-import { notesKey } from "@/features/notes/queries";
+import { notesKey } from "@lumina/query-keys";
 import { usePlayerStore } from "@/features/player";
 
 import { waitingLabel, hasActiveToolActivity } from "@lumina/chat-ui/activityStatus";

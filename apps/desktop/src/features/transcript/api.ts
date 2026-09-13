@@ -2,7 +2,7 @@ import { Channel, invoke } from "@tauri-apps/api/core";
 
 import type { AgentProfilesHint } from "@/features/acp/types";
 
-import type { Cue, SubtitleChoice, Transcript } from "./types";
+import type { Cue, SubtitleChoice, Transcript } from "@lumina/contracts";
 
 export function listSubtitleChoices(path: string): Promise<SubtitleChoice[]> {
   return invoke("subtitle_list_choices", { path });

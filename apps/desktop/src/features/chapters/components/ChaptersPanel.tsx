@@ -4,7 +4,7 @@ import { useMediaInfoQuery } from "@/features/media";
 import { usePlayerStore } from "@/features/player";
 import { useTrackStore } from "@/features/player/trackStore";
 import { loadSubtitleChoice } from "@/features/transcript/api";
-import { transcriptKey } from "@/features/transcript/queries";
+import { transcriptKey } from "@lumina/query-keys";
 import { formatTime } from "@/lib/format";
 
 import { buildSoftSegments } from "../softSegments";

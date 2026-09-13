@@ -3,14 +3,14 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
 
-import type { SubtitleChoice } from "@/features/transcript/types";
+import type { SubtitleChoice } from "@lumina/contracts";
 
 import {
   type DirectoryTrackPreference,
   audioPreferenceFromTrack,
   mediaDirectoryKey,
   subtitlePreferenceFromChoice,
-} from "./trackPreferences";
+} from "@lumina/player-ui";
 
 type TrackState = {
   subtitleChoiceId: string | null;

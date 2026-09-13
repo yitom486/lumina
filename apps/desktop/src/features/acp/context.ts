@@ -1,6 +1,6 @@
 import type { MediaChapter } from "@/features/media/types";
 import type { Note } from "@/features/notes/types";
-import type { Cue } from "@/features/transcript/types";
+import type { Cue } from "@lumina/contracts";
 import { formatTime } from "@/lib/format";
 
 import type { VideoPromptContext } from "./types";

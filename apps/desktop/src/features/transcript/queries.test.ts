@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { subtitleChoicesKey, transcriptKey } from "./queries";
+import { subtitleChoicesKey, transcriptKey } from "@lumina/query-keys";
 
 describe("transcript query keys", () => {
   it("builds the shared transcript key", () => {

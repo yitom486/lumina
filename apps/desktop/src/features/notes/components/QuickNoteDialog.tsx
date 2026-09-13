@@ -7,13 +7,13 @@ import { ScrollArea } from "@lumina/ui/scroll-area";
 import { usePlayerStore } from "@/features/player";
 import { useTrackStore } from "@/features/player/trackStore";
 import { loadSubtitleChoice } from "@/features/transcript/api";
-import { transcriptKey } from "@/features/transcript/queries";
+import { transcriptKey } from "@lumina/query-keys";
 import { errorMessage, formatTime } from "@/lib/format";
 import { cn } from "@lumina/ui/utils";
 
 import { createNote } from "../api";
 import { useNoteComposeStore } from "../noteComposeStore";
-import { notesKey } from "../queries";
+import { notesKey } from "@lumina/query-keys";
 import {
   activeCueListIndex,
   indicesAroundPlayback,

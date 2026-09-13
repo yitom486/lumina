@@ -3,7 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 
 import { useMediaInfoQuery } from "@/features/media";
 import { listNotes } from "@/features/notes/api";
-import { notesKey } from "@/features/notes/queries";
+import { notesKey } from "@lumina/query-keys";
 import { usePlayerStore } from "@/features/player";
 import { useTrackStore } from "@/features/player/trackStore";
 import { getCachedYtdlResolve } from "@/features/ytdl";

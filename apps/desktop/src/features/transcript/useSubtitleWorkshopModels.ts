@@ -12,7 +12,7 @@ import {
   mergeAgentDiscoverySettings,
 } from "@/features/library/resolverSettings";
 
-import { useSubtitleWorkshopStore } from "./subtitleWorkshopStore";
+import { useSubtitleWorkshopStore } from "@lumina/transcript-ui";
 
 export function useSubtitleWorkshopModels(enabled = true) {
   const profileId = useSubtitleWorkshopStore((s) => s.profileId);

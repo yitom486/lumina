@@ -9,7 +9,7 @@ import { useChatUiStore } from "@lumina/chat-ui/chatUiStore";
 
 import * as api from "../api";
 import { setSurfaceReporter } from "../surfaceBridge";
-import { createLatestBoundsQueue } from "../surfaceBoundsQueue";
+import { createLatestBoundsQueue } from "@lumina/player-ui";
 import { usePlayerStore } from "../store";
 import { useUiStore } from "../uiStore";
 

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { mediaInfoKey, mediaToolStatusKey } from "./queries";
+import { mediaInfoKey, mediaToolStatusKey } from "@lumina/query-keys";
 
 describe("media query keys", () => {
   it("builds the shared media-info key", () => {

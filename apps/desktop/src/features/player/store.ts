@@ -9,19 +9,19 @@ import {
   shouldOfferResume,
   shouldRestoreSessionPosition,
   useProgressStore,
-} from "./progressStore";
-import { planResumeToast, seekForResume } from "./resumePlayback";
+} from "@lumina/player-ui";
+import { planResumeToast, seekForResume } from "@lumina/player-ui";
 import {
   isRemotePath,
   resolveRestorePositionMs,
   useSessionStore,
-} from "./sessionStore";
+} from "@lumina/player-ui";
 import {
   IDLE_SNAPSHOT,
   type PlayerErrorDto,
   type PlayerEvent,
   type PlayerSnapshot,
-} from "./types";
+} from "@lumina/contracts";
 import { ensureSurfaceBounds } from "./surfaceBridge";
 import { useUiStore } from "./uiStore";
 

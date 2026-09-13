@@ -12,7 +12,7 @@ import * as api from "../api";
 import { ensureSurfaceBounds } from "../surfaceBridge";
 import { usePlayerStore } from "../store";
 import { useUiStore } from "../uiStore";
-import type { PlayerEvent } from "../types";
+import type { PlayerEvent } from "@lumina/contracts";
 
 const CLICK_DELAY_MS = 280;
 

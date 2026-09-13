@@ -9,10 +9,10 @@ import {
 } from "react";
 
 import { inspectMedia } from "@/features/media/api";
-import { mediaInfoKey } from "@/features/media/queries";
+import { mediaInfoKey } from "@lumina/query-keys";
 import { resolveEpisodeFile } from "@/features/library/api";
 import { usePlayerStore } from "@/features/player";
-import { useProgressStore } from "@/features/player/progressStore";
+import { useProgressStore } from "@lumina/player-ui";
 import { errorMessage, formatTime } from "@/lib/format";
 import { cn } from "@lumina/ui/utils";
 

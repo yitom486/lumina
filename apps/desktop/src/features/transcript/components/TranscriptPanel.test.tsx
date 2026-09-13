@@ -8,7 +8,7 @@ import { useAskAboutStore } from "@lumina/chat-ui/askAboutStore";
 import { useChatUiStore } from "@lumina/chat-ui/chatUiStore";
 
 import { TranscriptPanel } from "./TranscriptPanel";
-import { useFollowStore } from "../followStore";
+import { useFollowStore } from "@lumina/transcript-ui";
 
 vi.mock("@tauri-apps/api/core", () => ({
   invoke: vi.fn(),

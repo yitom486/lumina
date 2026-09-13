@@ -1,7 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 
 import { usePlayerStore } from "@/features/player";
-import { useProgressStore } from "@/features/player/progressStore";
+import { useProgressStore } from "@lumina/player-ui";
 import { Button } from "@lumina/ui/button";
 import { cn } from "@lumina/ui/utils";
 

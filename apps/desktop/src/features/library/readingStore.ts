@@ -1,7 +1,7 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
 
-import { useProgressStore } from "@/features/player/progressStore";
+import { useProgressStore } from "@lumina/player-ui";
 
 import type { EpisodeFile } from "./types";
 

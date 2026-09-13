@@ -4,7 +4,7 @@ import { useEffect, useRef } from "react";
 
 import { flushPlaybackPersistence } from "./useSessionPersistence";
 import { usePlayerStore } from "../store";
-import { useProgressStore } from "../progressStore";
+import { useProgressStore } from "@lumina/player-ui";
 
 const SAVE_INTERVAL_MS = 2_500;
 

@@ -1,5 +1,5 @@
 import { formatTime } from "@/lib/format";
-import type { Cue } from "@/features/transcript/types";
+import type { Cue } from "@lumina/contracts";
 
 export type SoftSegment = {
   id: string;

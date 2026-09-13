@@ -1,4 +1,4 @@
-import type { Cue } from "@/features/transcript/types";
+import type { Cue } from "@lumina/contracts";
 
 /** List-index range → stable cue.index values (inclusive). */
 export function cueIndicesInListRange(

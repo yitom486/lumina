@@ -1,4 +1,4 @@
-import { parentDirectory } from "@/features/player/sessionStore";
+import { parentDirectory } from "@lumina/player-ui";
 
 /** Parent folder of the currently opened media file, for library watch roots. */
 export function libraryRootFromPlaybackPath(

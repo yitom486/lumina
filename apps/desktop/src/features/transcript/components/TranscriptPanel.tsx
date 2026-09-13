@@ -36,10 +36,10 @@ import {
   loadSubtitleChoice,
   translateSubtitleTrack,
 } from "../api";
-import { subtitleChoicesKey, transcriptKey } from "../queries";
+import { subtitleChoicesKey, transcriptKey } from "@lumina/query-keys";
 import { useSubtitleWorkshopModels } from "../useSubtitleWorkshopModels";
-import type { SubtitleChoice } from "../types";
-import { followMode, useFollowStore } from "../followStore";
+import type { SubtitleChoice } from "@lumina/contracts";
+import { followMode, useFollowStore } from "@lumina/transcript-ui";
 import { findChapterAt } from "../../../../../../packages/transcript-ui/src/chapterSelectors";
 
 export function TranscriptPanel() {

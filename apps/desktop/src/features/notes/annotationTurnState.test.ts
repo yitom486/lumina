@@ -11,7 +11,7 @@ import {
   createProposalBindings,
   seedProposalBindingsFromTurns,
 } from "./annotationTurnState";
-import type { VideoAnnotationProposal } from "./proposalTypes";
+import type { VideoAnnotationProposal } from "@lumina/contracts";
 
 function makeProposal(id: string): VideoAnnotationProposal {
   return {

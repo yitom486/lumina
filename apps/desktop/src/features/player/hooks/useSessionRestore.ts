@@ -7,7 +7,7 @@ import { useEffect, useRef } from "react";
 import { errorMessage } from "@/lib/format";
 
 import { usePlayerStore } from "../store";
-import { isRemotePath, useSessionStore } from "../sessionStore";
+import { isRemotePath, useSessionStore } from "@lumina/player-ui";
 
 export function useSessionRestore(): void {
   const runtimeSynced = usePlayerStore((s) => s.runtimeSynced);

@@ -1,10 +1,10 @@
 import { useQuery } from "@tanstack/react-query";
 
 import { usePlayerStore } from "@/features/player";
-import { isRemotePath } from "@/features/player/sessionStore";
+import { isRemotePath } from "@lumina/player-ui";
 
 import { inspectMedia } from "../api";
-import { mediaInfoKey } from "../queries";
+import { mediaInfoKey } from "@lumina/query-keys";
 
 export function useMediaInfoQuery() {
   const path = usePlayerStore((s) => s.currentFile);

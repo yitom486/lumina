@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { noteFrameKey, notesKey } from "./queries";
+import { noteFrameKey, notesKey } from "@lumina/query-keys";
 
 describe("notes query keys", () => {
   it("builds the shared notes key", () => {

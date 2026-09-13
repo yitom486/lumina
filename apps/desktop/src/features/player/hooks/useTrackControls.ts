@@ -6,14 +6,14 @@ import {
   listSubtitleChoices,
   loadSubtitleChoice,
 } from "@/features/transcript/api";
-import { subtitleChoicesKey } from "@/features/transcript/queries";
+import { subtitleChoicesKey } from "@lumina/query-keys";
 
 import { usePlayerStore } from "../store";
 import {
   mediaDirectoryKey,
   resolveDirectoryTrackSelection,
   pickDefaultSubtitleId,
-} from "../trackPreferences";
+} from "@lumina/player-ui";
 import { useTrackStore } from "../trackStore";
 
 /** Compat facade: canonical implementations live in @lumina/player-ui. */
