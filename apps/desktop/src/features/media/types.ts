@@ -20,12 +20,8 @@ export type MediaStream = {
   language?: string | null;
 };
 
-export type MediaChapter = {
-  id: number;
-  startMs: number;
-  endMs?: number | null;
-  title?: string | null;
-};
+import type { MediaChapter } from "@lumina/contracts";
+export type { MediaChapter } from "@lumina/contracts";
 
 export type MediaInfo = {
   path: string;
