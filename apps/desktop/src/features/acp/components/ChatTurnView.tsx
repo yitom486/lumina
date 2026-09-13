@@ -9,7 +9,7 @@ import { createNote } from "@/features/notes/api";
 import { notesKey } from "@/features/notes/queries";
 import { usePlayerStore } from "@/features/player";
 
-import { waitingLabel, hasActiveToolActivity } from "../activityStatus";
+import { waitingLabel, hasActiveToolActivity } from "@lumina/chat-ui/activityStatus";
 import type { ChatTurn } from "../types";
 import { ChatActivityFeed } from "./ChatActivityFeed";
 import { ChatColumn } from "./ChatShell";

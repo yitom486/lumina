@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   defaultAgentProfiles,
   profilesHintFromStore,
-} from "./defaultAgentProfiles";
+} from "@lumina/chat-ui/defaultAgentProfiles";
 
 describe("profilesHintFromStore", () => {
   it("falls back when persisted profiles are missing", () => {

@@ -10,8 +10,8 @@ import {
   explainSegmentPreset,
   summarizeChapterPreset,
   useAskAboutStore,
-} from "@/features/acp/askAboutStore";
-import { useChatUiStore } from "@/features/acp/chatUiStore";
+} from "@lumina/chat-ui/askAboutStore";
+import { useChatUiStore } from "@lumina/chat-ui/chatUiStore";
 import type { AsrRange } from "@/features/asr";
 import { useMediaInfoQuery } from "@/features/media";
 import type { Transcript } from "@/features/transcript";

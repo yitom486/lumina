@@ -5,7 +5,7 @@ import { Button } from "@lumina/ui/button";
 import { cn } from "@lumina/ui/utils";
 
 import type { AcpStatus, PermissionMode } from "../types";
-import { previewQueuedText, type QueuedPrompt } from "../promptQueue";
+import { previewQueuedText, type QueuedPrompt } from "@lumina/chat-ui/promptQueue";
 import { useAgentModelControls } from "../useAgentModelControls";
 import { focusComposerTextarea } from "./composerFocus";
 import { ChatColumn } from "./ChatShell";

@@ -5,7 +5,7 @@
 import { useCallback, useEffect, useLayoutEffect, useRef } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 
-import { useChatUiStore } from "@/features/acp/chatUiStore";
+import { useChatUiStore } from "@lumina/chat-ui/chatUiStore";
 
 import * as api from "../api";
 import { setSurfaceReporter } from "../surfaceBridge";

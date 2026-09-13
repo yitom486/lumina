@@ -3,8 +3,8 @@ import { useQueryClient } from "@tanstack/react-query";
 
 import { Button } from "@lumina/ui/button";
 
-import { useAcpProfilesStore } from "../acpProfilesStore";
-import { clientSettingsFromStore, useAcpSettingsStore } from "../acpSettingsStore";
+import { useAcpProfilesStore } from "@lumina/chat-ui/acpProfilesStore";
+import { clientSettingsFromStore, useAcpSettingsStore } from "@lumina/chat-ui/acpSettingsStore";
 import type { AgentProfileStatus, ThinkingLevel } from "../types";
 import { acpSyncMcpCapabilities } from "../api";
 import { useAgentModelControls } from "../useAgentModelControls";

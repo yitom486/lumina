@@ -8,7 +8,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@lumina/ui/tooltip";
-import { useChatUiStore } from "@/features/acp/chatUiStore";
+import { useChatUiStore } from "@lumina/chat-ui/chatUiStore";
 
 import { useUiStore } from "../uiStore";
 

@@ -1,4 +1,4 @@
-import { isToolSucceeded } from "@/features/acp/toolStatus";
+import { isToolSucceeded } from "@lumina/chat-ui/toolStatus";
 import type { AcpEvent, ChatActivity, ChatTurn } from "@/features/acp/types";
 
 export const PROPOSE_ANNOTATION_TOOL = "lumina_propose_video_annotation";

@@ -5,7 +5,7 @@ import { PanelErrorBoundary } from "@/components/PanelErrorBoundary";
 import { Button } from "@lumina/ui/button";
 import { cn } from "@lumina/ui/utils";
 
-import { useChatUiStore } from "../chatUiStore";
+import { useChatUiStore } from "@lumina/chat-ui/chatUiStore";
 import { AcpPanel } from "./AcpPanel";
 
 /** Layout dock, not a WebView overlay.

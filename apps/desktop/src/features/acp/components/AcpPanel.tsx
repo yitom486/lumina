@@ -25,13 +25,13 @@ import { errorMessage } from "@/lib/format";
 
 import "../chat-motion.css";
 
-import { useAcpProfilesStore } from "../acpProfilesStore";
-import { useAskAboutStore } from "../askAboutStore";
+import { useAcpProfilesStore } from "@lumina/chat-ui/acpProfilesStore";
+import { useAskAboutStore } from "@lumina/chat-ui/askAboutStore";
 import {
   clientSettingsFromStore,
   useAcpSettingsStore,
-} from "../acpSettingsStore";
-import { useAcpSessionStore } from "../acpSessionStore";
+} from "@lumina/chat-ui/acpSettingsStore";
+import { useAcpSessionStore } from "@lumina/chat-ui/acpSessionStore";
 import {
   acpCancel,
   acpClose,
@@ -40,25 +40,25 @@ import {
   acpPrompt,
   getAcpStatus,
 } from "../api";
-import { profilesHintFromStore } from "../defaultAgentProfiles";
+import { profilesHintFromStore } from "@lumina/chat-ui/defaultAgentProfiles";
 import {
   applyAcpEventToTurn,
   createTurn,
   pushNotice,
   syncTurnIdSeq,
   type SystemNotice,
-} from "../chatTurns";
+} from "@lumina/chat-ui/chatTurns";
 import {
   listConversationsForScope,
   useChatHistoryStore,
-} from "../chatHistoryStore";
-import { formatConversationHistoryContext } from "../conversationContext";
-import { useChatUiStore } from "../chatUiStore";
+} from "@lumina/chat-ui/chatHistoryStore";
+import { formatConversationHistoryContext } from "@lumina/chat-ui/conversationContext";
+import { useChatUiStore } from "@lumina/chat-ui/chatUiStore";
 import { buildAnchoredVideoPromptContext } from "../context";
 import { mediaInfoKey } from "@/features/media/queries";
 import { notesKey } from "@/features/notes/queries";
-import { workspaceCwdFromMedia } from "../cwd";
-import { profilesSignature } from "../profilesSignature";
+import { workspaceCwdFromMedia } from "@lumina/player-ui/cwd";
+import { profilesSignature } from "@lumina/chat-ui/profilesSignature";
 import {
   bargeInPrompt,
   createQueuedPrompt,
@@ -66,7 +66,7 @@ import {
   enqueuePrompt,
   removeQueuedPrompt,
   type QueuedPrompt,
-} from "../promptQueue";
+} from "@lumina/chat-ui/promptQueue";
 import type {
   AcpConnectionState,
   AcpEvent,

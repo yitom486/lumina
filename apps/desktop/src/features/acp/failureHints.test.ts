@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { hintForAcpFailure } from "./failureHints";
+import { hintForAcpFailure } from "@lumina/chat-ui/failureHints";
 
 describe("hintForAcpFailure", () => {
   it("returns actionable Chinese hints without tool names", () => {

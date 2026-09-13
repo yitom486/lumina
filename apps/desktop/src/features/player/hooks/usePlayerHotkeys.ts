@@ -2,7 +2,7 @@
 
 import { useEffect, useRef } from "react";
 
-import { useChatUiStore } from "@/features/acp/chatUiStore";
+import { useChatUiStore } from "@lumina/chat-ui/chatUiStore";
 import { usePlayerStore } from "../store";
 import { useUiStore } from "../uiStore";
 import { shouldSuppressPlayerHotkeyDuringAcp } from "./playerHotkeyPolicy";

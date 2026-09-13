@@ -5,7 +5,7 @@ import { discoverAcpModels } from "@/features/acp/api";
 import {
   defaultAgentProfiles,
   profilesHintFromStore,
-} from "@/features/acp/defaultAgentProfiles";
+} from "@lumina/chat-ui/defaultAgentProfiles";
 import {
   buildAgentModelOptions,
   buildAgentReasoningOptions,

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { formatConversationHistoryContext } from "./conversationContext";
+import { formatConversationHistoryContext } from "@lumina/chat-ui/conversationContext";
 import type { ChatTurn } from "./types";
 
 function turn(id: string, userText: string, answer: string): ChatTurn {

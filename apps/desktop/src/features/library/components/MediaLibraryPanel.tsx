@@ -3,8 +3,8 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { useEffect, useMemo, useState } from "react";
 
 import { Button } from "@lumina/ui/button";
-import { profilesHintFromStore } from "@/features/acp/defaultAgentProfiles";
-import { useAcpProfilesStore } from "@/features/acp/acpProfilesStore";
+import { profilesHintFromStore } from "@lumina/chat-ui/defaultAgentProfiles";
+import { useAcpProfilesStore } from "@lumina/chat-ui/acpProfilesStore";
 import { usePlayerStore } from "@/features/player";
 import { errorMessage } from "@/lib/format";
 

@@ -4,8 +4,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { usePlayerStore } from "@/features/player";
 import { useTrackStore } from "@/features/player/trackStore";
-import { useAskAboutStore } from "@/features/acp/askAboutStore";
-import { useChatUiStore } from "@/features/acp/chatUiStore";
+import { useAskAboutStore } from "@lumina/chat-ui/askAboutStore";
+import { useChatUiStore } from "@lumina/chat-ui/chatUiStore";
 
 import { TranscriptPanel } from "./TranscriptPanel";
 import { useFollowStore } from "../followStore";

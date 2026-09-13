@@ -20,7 +20,7 @@ import { PanelErrorBoundary } from "@/components/PanelErrorBoundary";
 import { AppShell } from "@/layouts/AppShell";
 import { FullscreenTopChrome } from "@/layouts/FullscreenTopChrome";
 import { ChatDock } from "@/features/acp/components/ChatDock";
-import { useChatUiStore } from "@/features/acp/chatUiStore";
+import { useChatUiStore } from "@lumina/chat-ui/chatUiStore";
 import { ChaptersPanel } from "@/features/chapters";
 import { MediaInfoPanel } from "@/features/media";
 import { MediaLibraryPanel, useLibraryPlaybackRootSync } from "@/features/library";
