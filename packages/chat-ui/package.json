@@ -27,6 +27,14 @@
     "./components/ChatComposer": {
       "types": "./src/components/ChatComposer.tsx",
       "default": "./src/components/ChatComposer.tsx"
+    },
+    "./components/ChatHistorySheet": {
+      "types": "./src/components/ChatHistorySheet.tsx",
+      "default": "./src/components/ChatHistorySheet.tsx"
+    },
+    "./components/ChatToggleButton": {
+      "types": "./src/components/ChatToggleButton.tsx",
+      "default": "./src/components/ChatToggleButton.tsx"
     }
   },
   "dependencies": {

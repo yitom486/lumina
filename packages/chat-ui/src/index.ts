@@ -22,3 +22,5 @@ export * from "./components/ChatWaitingDots";
 export * from "./components/ChatShell";
 export * from "./components/ChatActivityFeed";
 export * from "./components/ChatComposer";
+export * from "./components/ChatHistorySheet";
+export * from "./components/ChatToggleButton";
