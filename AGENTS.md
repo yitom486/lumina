@@ -76,7 +76,9 @@ React 不得知道：mpv handle、native window handle、FFI pointer、libmpv / 
 ```bash
 bun run lint
 bun run test
-cd src-tauri && cargo test --lib
+cargo fmt --all --check
+cargo test --workspace --lib
+cargo clippy --workspace --all-targets -- -D warnings
 ```
 
 ## ASR（Phase 4）
