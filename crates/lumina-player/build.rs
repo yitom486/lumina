@@ -11,9 +11,9 @@ use std::path::PathBuf;
 
 fn main() {
     let manifest_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR"));
-    let dir = env::var("LUMINA_MPV_DIR").map(PathBuf::from).unwrap_or_else(|_| {
-        manifest_dir.join("../../apps/desktop/src-tauri/native/mpv")
-    });
+    let dir = env::var("LUMINA_MPV_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| manifest_dir.join("../../apps/desktop/src-tauri/native/mpv"));
     println!("cargo:rerun-if-changed={}", dir.display());
     let dir = dir.canonicalize().unwrap_or(dir);
     if dir.join("mpv.lib").is_file() || dir.join("libmpv-2.dll").is_file() {

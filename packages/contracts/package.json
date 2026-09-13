@@ -19,6 +19,14 @@
     "./subtitle": {
       "types": "./src/subtitle.ts",
       "default": "./src/subtitle.ts"
+    },
+    "./notes": {
+      "types": "./src/notes.ts",
+      "default": "./src/notes.ts"
+    },
+    "./media": {
+      "types": "./src/media.ts",
+      "default": "./src/media.ts"
     }
   }
 }
