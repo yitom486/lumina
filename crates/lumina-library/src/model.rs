@@ -147,11 +147,18 @@ pub enum MediaGroupKind {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(tag = "state", rename_all = "camelCase")]
+#[serde(
+    tag = "state",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
 pub enum GroupResolution {
     Pending,
     Matched {
+        // Aliases keep pre-fix index files (`tmdb_id`) parsing.
+        #[serde(alias = "tmdb_id")]
         tmdb_id: u64,
+        #[serde(alias = "media_type")]
         media_type: MetadataMediaType,
     },
     Ignored,
@@ -404,6 +411,10 @@ pub struct StoredMetadata {
     pub series_tmdb_id: Option<u64>,
     pub title: String,
     pub original_title: Option<String>,
+    /// TMDb `original_language` (e.g. `ko`): feeds the subtitle language
+    /// priority chain. Old files without it still parse.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub original_language: Option<String>,
     /// Localized Chinese work title when TMDB actually returned CJK text.
     /// TMDB falls back per-field, so `title` alone is unreliable for glossary
     /// use; explicit `None` beats guessing. Old files without it still parse.
@@ -446,7 +457,8 @@ pub struct MetadataWriteResult {
     pub written_files: Vec<String>,
 }
 
-pub const WIKI_METADATA_SCHEMA_VERSION: u32 = 1;
+/// Bumped for the `zh_cast` sidecar; old files without it still parse.
+pub const WIKI_METADATA_SCHEMA_VERSION: u32 = 2;
 /// Local wiki.json older than this is considered stale (30 days).
 pub const WIKI_STALE_AFTER_MS: u128 = 30 * 24 * 60 * 60 * 1000;
 
@@ -510,6 +522,15 @@ pub struct WikiMetadata {
     pub episodes: Vec<WikiEpisodeSummary>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub relationships: Option<String>,
+    /// Chinese name sidecar from the aligned zh article: actor/character
+    /// triples in Chinese (`WikiCharacter.name` = character, `actor` =
+    /// actor). The selected page stays the detail backbone; this only adds
+    /// human-translated names — never machine translation, never joined by
+    /// string matching. Empty when the zh page is missing or unparseable.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub zh_cast: Vec<WikiCharacter>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub zh_page_url: Option<String>,
     pub updated_at_ms: u128,
 }
 
@@ -624,6 +645,8 @@ pub struct MergedMediaContext {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub characters: Option<Vec<WikiCharacter>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub zh_cast: Option<Vec<WikiCharacter>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub wiki_episode_plot: Option<String>,
     pub wiki_attribution: Option<String>,
     pub wiki_page_url: Option<String>,
@@ -668,6 +691,26 @@ mod tests {
         })
         .expect("json");
         assert_eq!(text["payload"]["rootsCompleted"], 1);
+    }
+
+    #[test]
+    fn matched_resolution_uses_camel_case_fields_with_legacy_aliases() {
+        let matched = GroupResolution::Matched {
+            tmdb_id: 135897,
+            media_type: MetadataMediaType::Tv,
+        };
+        let text = serde_json::to_value(&matched).expect("json");
+        assert_eq!(text["state"], "matched");
+        assert_eq!(text["tmdbId"], 135897);
+        assert_eq!(text["mediaType"], "tv");
+        // Index files written before the fix (snake_case) still parse.
+        let legacy: GroupResolution = serde_json::from_value(json!({
+            "state": "matched",
+            "tmdb_id": 135897,
+            "media_type": "tv"
+        }))
+        .expect("legacy json");
+        assert_eq!(legacy, matched);
     }
 
     #[test]

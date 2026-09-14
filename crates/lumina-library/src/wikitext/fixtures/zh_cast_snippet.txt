@@ -1,0 +1,28 @@
+==演員陣容==
+===主要角色===
+{|class="wikitable" style="text-align:center;"
+|-
+!width=15%|演員 ||width=15%|角色 ||width=50%|介紹
+|-
+| [[崔宇植]]<ref>{{cite news |agency=Sports Seoul}}</ref><br>{{small|（童年：宋河賢）}}|| 崔雄 ||align=left| 29歲，筆名「高午」的建築插畫家。
+|-
+| [[金多美]] || 國延秀 ||align=left| 29歲，「奔逐」行銷公司組長。
+|-
+| [[盧正義 (演員)|盧正義]] || NJ ||align=left| 25歲，頂級IDOL。
+|-
+|}
+
+===崔雄周邊角色===
+{|class="wikitable" style="text-align:center"
+|-
+! width=15%|演員
+! width=15%|角色
+! width=50%|介紹
+|-
+| {{lk|鄭強熙|정강희}} || 昌植 ||align=left| 五金店老闆。
+|-
+| 車承燁 || 姜志雲 ||align=left| 實習生。
+|-
+| [[金柱憲]] || {{n/a|僅聲音出演}} ||align=left| 紀錄片旁白
+|-
+|}

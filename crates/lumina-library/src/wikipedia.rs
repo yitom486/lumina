@@ -21,6 +21,7 @@ const USER_AGENT: &str = "Lumina/0.1 (local media reader; Tauri app)";
 const PREFERRED_WIKI_LANG: &str = "en";
 const ZHWIKI_LANG: &str = "zh";
 const SEARCH_LIMIT: usize = 3;
+const MAX_ZH_CAST_MEMBERS: usize = 40;
 
 pub fn load_existing_wiki(
     root: &Path,
@@ -135,12 +136,21 @@ pub fn write_selected_page(
     match_method: WikiMatchMethod,
     candidates_considered: u32,
 ) -> Result<WikiWriteResult, LibraryError> {
-    let summary = fetch_page_summary(&candidate.page_lang, &candidate.page_title)?;
+    // Round 1 (parallel): the main summary — fatal, the whole write needs
+    // it — plus the zh sitelink title, which only feeds the best-effort
+    // sidecar below.
+    let (summary, zh_title) = fetch_summary_and_zh_title(candidate)?;
+    // Round 2 (parallel): every remaining fetch is best-effort; a missing
+    // piece degrades to a summary-only (or sidecar-less) document.
+    // Note the zh summary is deliberately NOT fetched here: the write path
+    // only needs the zh title, wikitext, and qid (the preview path is what
+    // shows the zh extract).
+    let details = fetch_detail_texts(candidate, summary.title.as_str(), zh_title.as_deref());
     let mut characters = Vec::new();
     let mut episodes = Vec::new();
     if candidate.page_lang == PREFERRED_WIKI_LANG {
-        match fetch_page_wikitext(&candidate.page_lang, &summary.title) {
-            Ok(wikitext) => {
+        match details.main_wikitext {
+            Some(wikitext) => {
                 let structured = wikitext::parse_structured_content(&wikitext);
                 characters = structured.characters;
                 episodes = structured.episodes;
@@ -151,15 +161,58 @@ pub fn write_selected_page(
                     "parsed wikipedia structured content"
                 );
             }
-            Err(error) => {
+            None => {
                 tracing::warn!(
-                    details = ?error.details,
                     page = %summary.title,
                     "wikipedia wikitext fetch skipped; keeping summary only"
                 );
             }
         }
+    } else if candidate.page_lang == ZHWIKI_LANG {
+        // A zh main page carries its own cast triples; no sidecar needed.
+        match details.main_wikitext {
+            Some(wikitext) => {
+                characters = wikitext::zh_cast_from_wikitext(&wikitext);
+                tracing::info!(
+                    characters = characters.len(),
+                    page = %summary.title,
+                    "parsed zh wikipedia cast content"
+                );
+            }
+            None => {
+                tracing::warn!(
+                    page = %summary.title,
+                    "zh wikipedia wikitext fetch skipped; keeping summary only"
+                );
+            }
+        }
     }
+    // The en detail document travels with the aligned zh article's cast
+    // triples (Chinese names + bios).
+    let (zh_cast, zh_page_url) = match (
+        zh_title.as_deref(),
+        details.zh_qid.as_deref(),
+        details.zh_wikitext.as_deref(),
+    ) {
+        (Some(title), Some(qid), Some(wikitext))
+            if candidate.page_lang == PREFERRED_WIKI_LANG
+                && qid == normalize_wikidata_id(candidate.wikidata_id.as_deref().unwrap_or("")) =>
+        {
+            let mut cast = wikitext::zh_cast_from_wikitext(wikitext);
+            cast.truncate(MAX_ZH_CAST_MEMBERS);
+            if cast.is_empty() {
+                (Vec::new(), None)
+            } else {
+                tracing::info!(
+                    members = cast.len(),
+                    page = %title,
+                    "zh cast sidecar attached"
+                );
+                (cast, Some(wiki_page_url(ZHWIKI_LANG, title)))
+            }
+        }
+        _ => (Vec::new(), None),
+    };
     let document = WikiMetadata {
         schema_version: WIKI_METADATA_SCHEMA_VERSION,
         wikidata_id: candidate.wikidata_id.clone(),
@@ -176,6 +229,8 @@ pub fn write_selected_page(
         characters,
         episodes,
         relationships: None,
+        zh_cast,
+        zh_page_url,
         updated_at_ms: now_ms(),
     };
     let path = store::save_group_json(root, group_key, "wiki.json", &document)?;
@@ -184,6 +239,92 @@ pub fn write_selected_page(
         group_key: group_key.to_string(),
         written_file: crate::paths::display_relative_path(root, &path),
     })
+}
+
+/// Main summary (fatal) plus zh sitelink title (best-effort), fetched in
+/// parallel: neither depends on the other.
+fn fetch_summary_and_zh_title(
+    candidate: &WikiEnrichmentCandidate,
+) -> Result<(PageSummary, Option<String>), LibraryError> {
+    std::thread::scope(
+        |scope| -> Result<(PageSummary, Option<String>), LibraryError> {
+            let summary_handle =
+                scope.spawn(|| fetch_page_summary(&candidate.page_lang, &candidate.page_title));
+            let zh_title_handle = scope.spawn(|| match candidate.wikidata_id.as_deref() {
+                Some(qid) if candidate.page_lang == PREFERRED_WIKI_LANG => {
+                    Ok(fetch_wikidata_sitelink(qid, ZHWIKI_LANG).ok().flatten())
+                }
+                _ => Ok(None),
+            });
+            let summary = summary_handle
+                .join()
+                .map_err(|_| LibraryError::internal(Some("wiki fetch thread panicked")))??;
+            let zh_title = zh_title_handle
+                .join()
+                .map_err(|_| LibraryError::internal(Some("wiki fetch thread panicked")))??;
+            Ok((summary, zh_title))
+        },
+    )
+}
+
+/// Best-effort detail texts, fetched in parallel. Join failures and request
+/// failures both degrade to `None` with a warning, never failing the write.
+struct WikiDetailTexts {
+    main_wikitext: Option<String>,
+    zh_wikitext: Option<String>,
+    zh_qid: Option<String>,
+}
+
+fn fetch_detail_texts(
+    candidate: &WikiEnrichmentCandidate,
+    summary_title: &str,
+    zh_title: Option<&str>,
+) -> WikiDetailTexts {
+    std::thread::scope(|scope| {
+        let main_handle = scope.spawn(|| {
+            if candidate.page_lang == PREFERRED_WIKI_LANG || candidate.page_lang == ZHWIKI_LANG {
+                fetch_page_wikitext(&candidate.page_lang, summary_title).map(Some)
+            } else {
+                Ok(None)
+            }
+        });
+        let zh_wikitext_handle = scope.spawn(|| match zh_title {
+            Some(title) if candidate.page_lang == PREFERRED_WIKI_LANG => {
+                fetch_page_wikitext(ZHWIKI_LANG, title).map(Some)
+            }
+            _ => Ok(None),
+        });
+        let zh_qid_handle = scope.spawn(|| match zh_title {
+            Some(title) if candidate.page_lang == PREFERRED_WIKI_LANG => {
+                Ok(lookup_page_wikidata_id(ZHWIKI_LANG, title).ok().flatten())
+            }
+            _ => Ok(None),
+        });
+        WikiDetailTexts {
+            main_wikitext: quiet_fetch(summary_title, main_handle.join()),
+            zh_wikitext: quiet_fetch("zh-cast", zh_wikitext_handle.join()),
+            zh_qid: quiet_fetch("zh-qid", zh_qid_handle.join()),
+        }
+    })
+}
+
+/// Unwrap a best-effort fetch: join panics and request failures both degrade
+/// to `None` with a warning, never failing the write.
+fn quiet_fetch<T>(
+    page: &str,
+    result: std::thread::Result<Result<Option<T>, LibraryError>>,
+) -> Option<T> {
+    match result {
+        Ok(Ok(value)) => value,
+        Ok(Err(error)) => {
+            tracing::warn!(details = ?error.details, page, "wikipedia detail fetch skipped");
+            None
+        }
+        Err(_) => {
+            tracing::warn!(page, "wikipedia detail fetch thread panicked");
+            None
+        }
+    }
 }
 
 pub(crate) struct AlignmentResult {
@@ -504,10 +645,20 @@ fn fetch_zhwiki_reference(wikidata_id: &str) -> Option<WikiZhReference> {
     let page_title = fetch_wikidata_sitelink(&normalized, ZHWIKI_LANG)
         .ok()
         .flatten()?;
-    let summary = fetch_page_summary(ZHWIKI_LANG, &page_title).ok()?;
-    let zh_qid = lookup_page_wikidata_id(ZHWIKI_LANG, &page_title)
-        .ok()
-        .flatten();
+    // Summary and qid only need the title: fetch them in parallel.
+    let (summary, zh_qid) = std::thread::scope(|scope| {
+        let summary_handle = scope.spawn(|| fetch_page_summary(ZHWIKI_LANG, &page_title).ok());
+        let qid_handle = scope.spawn(|| {
+            lookup_page_wikidata_id(ZHWIKI_LANG, &page_title)
+                .ok()
+                .flatten()
+        });
+        (
+            summary_handle.join().ok().flatten(),
+            qid_handle.join().ok().flatten(),
+        )
+    });
+    let summary = summary?;
     let aligned_with_en = zh_qid
         .as_deref()
         .map(|id| id == normalized)
@@ -523,18 +674,31 @@ fn fetch_zhwiki_reference(wikidata_id: &str) -> Option<WikiZhReference> {
 }
 
 fn fetch_wikidata_sitelink(wikidata_id: &str, lang: &str) -> Result<Option<String>, LibraryError> {
+    // `props=sitelinks` answers in ~2KB instead of the ~29KB full entity and
+    // carries the same `entities.Q.sitelinks.{lang}wiki.title` shape.
     let normalized = normalize_wikidata_id(wikidata_id);
-    let endpoint = format!("https://www.wikidata.org/wiki/Special:EntityData/{normalized}.json");
+    let query_string = form_urlencoded::Serializer::new(String::new())
+        .append_pair("action", "wbgetentities")
+        .append_pair("ids", &normalized)
+        .append_pair("props", "sitelinks")
+        .append_pair("format", "json")
+        .append_pair("origin", "*")
+        .finish();
+    let endpoint = format!("https://www.wikidata.org/w/api.php?{query_string}");
     let payload: Value = get_json(&endpoint, "wikidata entity")?;
-    let title = payload
+    Ok(sitelink_from_wikidata_payload(&payload, &normalized, lang))
+}
+
+/// Pure sitelink extraction, covered offline with a real slim response.
+fn sitelink_from_wikidata_payload(payload: &Value, qid: &str, lang: &str) -> Option<String> {
+    payload
         .get("entities")
-        .and_then(|entities| entities.get(&normalized))
+        .and_then(|entities| entities.get(qid))
         .and_then(|entity| entity.get("sitelinks"))
         .and_then(|links| links.get(format!("{lang}wiki")))
         .and_then(|link| link.get("title"))
         .and_then(Value::as_str)
-        .map(str::to_string);
-    Ok(title)
+        .map(str::to_string)
 }
 
 fn search_wikipedia(lang: &str, query: &str) -> Result<Vec<WikiEnrichmentCandidate>, LibraryError> {
@@ -556,23 +720,53 @@ fn search_wikipedia(lang: &str, query: &str) -> Result<Vec<WikiEnrichmentCandida
         return Ok(Vec::new());
     };
 
-    let mut candidates = Vec::new();
-    for hit in results {
-        let Some(title) = hit.get("title").and_then(Value::as_str) else {
-            continue;
-        };
-        let wikidata_id = lookup_page_wikidata_id(lang, title).ok().flatten();
-        let summary = fetch_page_summary(lang, title).ok();
-        candidates.push(WikiEnrichmentCandidate {
-            page_lang: lang.to_string(),
-            page_title: title.to_string(),
-            page_url: wiki_page_url(lang, title),
-            wikidata_id,
-            extract: summary.map(|item| item.extract),
-            source: WikiCandidateSource::Search,
-        });
+    let titles: Vec<String> = results
+        .iter()
+        .filter_map(|hit| hit.get("title").and_then(Value::as_str).map(str::to_string))
+        .collect();
+    // Hits are independent: enrich them in parallel (bounded), joining in
+    // order so recommendation and first-pick order never change. Per-hit
+    // failures stay tolerant, exactly as before. Kept at 3, not higher:
+    // measured 6-wide bursts self-trigger 429 storms on the anon API
+    // (backoff then eats the gain), and a throttled UA punishes later clicks.
+    const HIT_CONCURRENCY: usize = 3;
+    let mut enriched = Vec::with_capacity(titles.len());
+    for chunk in titles.chunks(HIT_CONCURRENCY) {
+        std::thread::scope(|scope| -> Result<(), LibraryError> {
+            let handles: Vec<_> = chunk
+                .iter()
+                .map(|title| {
+                    scope.spawn(move || {
+                        let wikidata_id = lookup_page_wikidata_id(lang, title).ok().flatten();
+                        let summary = fetch_page_summary(lang, title).ok();
+                        (wikidata_id, summary)
+                    })
+                })
+                .collect();
+            for handle in handles {
+                let pair = handle
+                    .join()
+                    .map_err(|_| LibraryError::internal(Some("wiki search thread panicked")))?;
+                enriched.push(pair);
+            }
+            Ok(())
+        })?;
     }
-    Ok(candidates)
+    Ok(titles
+        .into_iter()
+        .zip(enriched)
+        .map(|(title, (wikidata_id, summary))| {
+            let page_url = wiki_page_url(lang, &title);
+            WikiEnrichmentCandidate {
+                page_lang: lang.to_string(),
+                page_title: title,
+                page_url,
+                wikidata_id,
+                extract: summary.map(|item| item.extract),
+                source: WikiCandidateSource::Search,
+            }
+        })
+        .collect())
 }
 
 fn lookup_page_wikidata_id(lang: &str, title: &str) -> Result<Option<String>, LibraryError> {
@@ -742,6 +936,41 @@ fn is_wikipedia_not_found(error: &LibraryError) -> bool {
 }
 
 fn get_json(endpoint: &str, context: &str) -> Result<Value, LibraryError> {
+    // Wikipedia answers bursts with 429; back off and retry instead of
+    // failing the enrichment (the exhausted error already says "try later").
+    // Fixed delays (ureq surfaces only the status, not Retry-After).
+    const MAX_ATTEMPTS: u32 = 3;
+    const RETRY_BASE_SECS: u64 = 2;
+
+    let mut attempt = 0;
+    loop {
+        attempt += 1;
+        let result = fetch_json_once(endpoint, context);
+        match result {
+            Ok(payload) => return Ok(payload),
+            Err(error) if attempt < MAX_ATTEMPTS && is_http_429(&error) => {
+                let wait_secs = RETRY_BASE_SECS * u64::from(attempt);
+                tracing::info!(
+                    context,
+                    attempt,
+                    wait_secs,
+                    "wikipedia throttled; backing off"
+                );
+                std::thread::sleep(std::time::Duration::from_secs(wait_secs));
+            }
+            Err(error) => return Err(error),
+        }
+    }
+}
+
+fn is_http_429(error: &LibraryError) -> bool {
+    error
+        .details
+        .as_deref()
+        .is_some_and(|details| details.contains("http status: 429"))
+}
+
+fn fetch_json_once(endpoint: &str, context: &str) -> Result<Value, LibraryError> {
     let mut response = ureq::get(endpoint)
         .header("User-Agent", USER_AGENT)
         .header("Accept", "application/json")
@@ -857,6 +1086,46 @@ mod tests {
     fn normalize_wikidata_id_adds_prefix() {
         assert_eq!(normalize_wikidata_id("12345"), "Q12345");
         assert_eq!(normalize_wikidata_id("q99"), "Q99");
+    }
+
+    #[test]
+    fn throttled_responses_are_detected_for_backoff() {
+        let throttled =
+            LibraryError::remote_request_failed(Some("wikipedia search: http status: 429"));
+        assert!(is_http_429(&throttled));
+        let other = LibraryError::remote_request_failed(Some("wikipedia search: http status: 500"));
+        assert!(!is_http_429(&other));
+        assert!(!is_http_429(&LibraryError::remote_request_failed(None)));
+    }
+
+    #[test]
+    fn slim_sitelink_payload_resolves_titles() {
+        // Shape of `wbgetentities?props=sitelinks` (live Q107474096, trimmed).
+        let payload = serde_json::json!({
+            "entities": {
+                "Q107474096": {
+                    "type": "item",
+                    "id": "Q107474096",
+                    "sitelinks": {
+                        "enwiki": {"site": "enwiki", "title": "Our Beloved Summer"},
+                        "zhwiki": {"site": "zhwiki", "title": "那年，我们的夏天"}
+                    }
+                }
+            },
+            "success": 1
+        });
+        assert_eq!(
+            sitelink_from_wikidata_payload(&payload, "Q107474096", "zh").as_deref(),
+            Some("那年，我们的夏天")
+        );
+        assert_eq!(
+            sitelink_from_wikidata_payload(&payload, "Q107474096", "en").as_deref(),
+            Some("Our Beloved Summer")
+        );
+        assert_eq!(
+            sitelink_from_wikidata_payload(&payload, "Q107474096", "ko"),
+            None
+        );
     }
 
     #[test]

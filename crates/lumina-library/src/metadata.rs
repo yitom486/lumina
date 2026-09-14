@@ -74,26 +74,17 @@ pub fn write_confirmed_metadata(
                 &store::save_group_json(root, &group.key, "series.json", &document)?,
             ));
             if fields.episodes {
-                for file in group_files(index, group) {
-                    let (Some(season), Some(episode)) = (file.season, file.episode) else {
-                        continue;
-                    };
-                    let detail = resolver::fetch_tmdb_details(
-                        config,
-                        tmdb_id,
-                        media_type,
-                        Some(season),
-                        Some(episode),
-                    )?;
-                    let document = document_from_tmdb(
-                        &detail,
-                        None,
-                        StoredMetadataKind::Episode,
-                        tmdb_id,
-                        Some(tmdb_id),
-                        Some(season),
-                        Some(episode),
-                    )?;
+                let mut targets: Vec<(u32, u32)> = group_files(index, group)
+                    .iter()
+                    .filter_map(|file| episode_address(file.season, file.episode))
+                    .collect();
+                // De-duplicate (e.g. EP01.mkv + EP01.mp4 twins) so each
+                // episode is fetched once and `written_files` stays ordered.
+                targets.sort();
+                targets.dedup();
+                for document in fetch_episode_documents(config, tmdb_id, &targets)? {
+                    let season = document.season.unwrap_or(1);
+                    let episode = document.episode.unwrap_or(0);
                     let file_name = format!("S{season:02}E{episode:02}.json");
                     written_files.push(relative_group_path(
                         root,
@@ -143,11 +134,16 @@ pub fn load_context(
     let Some(group_document) = store::load_group_json(root, &group.key, overview_name)? else {
         return Ok(None);
     };
-    let item = match (media_type, file.season, file.episode) {
-        (MetadataMediaType::Tv, Some(season), Some(episode)) => {
-            store::load_group_json(root, &group.key, &format!("S{season:02}E{episode:02}.json"))?
-        }
-        _ => None,
+    let item = match media_type {
+        MetadataMediaType::Tv => match episode_address(file.season, file.episode) {
+            Some((season, episode)) => store::load_group_json(
+                root,
+                &group.key,
+                &format!("S{season:02}E{episode:02}.json"),
+            )?,
+            None => None,
+        },
+        MetadataMediaType::Movie => None,
     };
     Ok(Some(build_media_context(
         media_path.to_string_lossy().to_string(),
@@ -194,11 +190,15 @@ pub fn merge_media_context(
     let characters = wiki
         .filter(|entry| !entry.characters.is_empty())
         .map(|entry| entry.characters.clone());
+    let zh_cast = wiki
+        .filter(|entry| !entry.zh_cast.is_empty())
+        .map(|entry| entry.zh_cast.clone());
     MergedMediaContext {
         overview,
         synopsis,
         episode_overview,
         characters,
+        zh_cast,
         wiki_episode_plot,
         wiki_attribution: wiki.map(|entry| entry.attribution.clone()),
         wiki_page_url: wiki.map(|entry| entry.page_url.clone()),
@@ -348,10 +348,7 @@ pub fn assemble_series(
         .iter()
         .filter(|file| file.group_key == group_key)
         .filter_map(|file| {
-            let (season, episode) = match (file.season, file.episode) {
-                (Some(season), Some(episode)) if season > 0 && episode > 0 => (season, episode),
-                _ => return None,
-            };
+            let (season, episode) = episode_address(file.season, file.episode)?;
             let title = titles
                 .get(&(season, episode))
                 .cloned()
@@ -410,11 +407,11 @@ pub fn load_context_for_group(
     let Some(group_document) = store::load_group_json(root, group_key, "series.json")? else {
         return Ok(None);
     };
-    let item = match (season, episode) {
-        (Some(season), Some(episode)) => {
+    let item = match episode_address(season, episode) {
+        Some((season, episode)) => {
             store::load_group_json(root, group_key, &format!("S{season:02}E{episode:02}.json"))?
         }
-        _ => None,
+        None => None,
     };
     Ok(Some(build_media_context(
         media_path.to_string_lossy().to_string(),
@@ -422,6 +419,16 @@ pub fn load_context_for_group(
         item,
         store::load_group_json(root, group_key, "wiki.json")?,
     )))
+}
+
+/// Resolve the (season, episode) address for TMDb episode detail files and
+/// the reading shelf. Bare-episode filenames (`EP01`) carry no season; those
+/// default to season 1 (the Sonarr-style convention — a real multi-season
+/// release names its seasons explicitly). Files without an episode number
+/// stay unaddressable.
+fn episode_address(season: Option<u32>, episode: Option<u32>) -> Option<(u32, u32)> {
+    let episode = episode.filter(|episode| *episode > 0)?;
+    Some((season.filter(|season| *season > 0).unwrap_or(1), episode))
 }
 
 fn parse_episode_file_name(file_name: &str) -> Option<(u32, u32)> {
@@ -547,6 +554,63 @@ pub fn apply_wikipedia_page(
     )
 }
 
+/// Fetch per-episode TMDb documents concurrently: episode detail calls are
+/// independent of each other (and of the series document), so a 16-episode
+/// season no longer pays 16 sequential round trips. Handles join in spawn
+/// order, so `written_files` stays deterministic. A failed episode still
+/// fails the whole match, exactly as before.
+fn fetch_episode_documents(
+    config: &TmdbConfig,
+    tmdb_id: u64,
+    targets: &[(u32, u32)],
+) -> Result<Vec<StoredMetadata>, LibraryError> {
+    const EPISODE_FETCH_CONCURRENCY: usize = 8;
+
+    let mut documents = Vec::with_capacity(targets.len());
+    for chunk in targets.chunks(EPISODE_FETCH_CONCURRENCY) {
+        std::thread::scope(|scope| -> Result<(), LibraryError> {
+            let handles: Vec<_> = chunk
+                .iter()
+                .map(|(season, episode)| {
+                    scope.spawn(move || fetch_episode_document(config, tmdb_id, *season, *episode))
+                })
+                .collect();
+            for handle in handles {
+                let document = handle
+                    .join()
+                    .map_err(|_| LibraryError::internal(Some("episode fetch thread panicked")))?;
+                documents.push(document?);
+            }
+            Ok(())
+        })?;
+    }
+    Ok(documents)
+}
+
+fn fetch_episode_document(
+    config: &TmdbConfig,
+    tmdb_id: u64,
+    season: u32,
+    episode: u32,
+) -> Result<StoredMetadata, LibraryError> {
+    let detail = resolver::fetch_tmdb_details(
+        config,
+        tmdb_id,
+        MetadataMediaType::Tv,
+        Some(season),
+        Some(episode),
+    )?;
+    document_from_tmdb(
+        &detail,
+        None,
+        StoredMetadataKind::Episode,
+        tmdb_id,
+        Some(tmdb_id),
+        Some(season),
+        Some(episode),
+    )
+}
+
 fn group_files<'a>(index: &'a LibraryIndex, group: &MediaGroup) -> Vec<&'a IndexedMediaFile> {
     index
         .files
@@ -618,6 +682,12 @@ fn document_from_tmdb(
             .or_else(|| detail.get("original_name"))
             .and_then(Value::as_str)
             .filter(|text| !text.trim().is_empty())
+            .map(str::to_string),
+        original_language: detail
+            .get("original_language")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|text| !text.is_empty())
             .map(str::to_string),
         title_zh,
         overview: detail
@@ -776,6 +846,7 @@ mod tests {
                 "id": 289424,
                 "name": "努力克服自卑的我们",
                 "original_name": "모두가 자신의 무가치함과 싸우고 있다",
+                "original_language": "ko",
                 "first_air_date": "2026-04-18",
                 "overview": "简介",
                 "status": "Ended",
@@ -799,6 +870,7 @@ mod tests {
         assert_eq!(document.schema_version, METADATA_SCHEMA_VERSION);
         assert_eq!(document.title, "努力克服自卑的我们");
         assert_eq!(document.title_zh.as_deref(), Some("努力克服自卑的我们"));
+        assert_eq!(document.original_language.as_deref(), Some("ko"));
         assert_eq!(document.year, Some(2026));
         assert_eq!(document.genres, vec!["剧情"]);
         assert_eq!(document.cast.len(), 2);
@@ -910,6 +982,18 @@ mod tests {
     }
 
     #[test]
+    fn bare_episode_names_default_to_season_one() {
+        // The user's EP01…EP16 files parse with season None; they must still
+        // address S01E01…S01E16 instead of being skipped everywhere.
+        assert_eq!(episode_address(None, Some(1)), Some((1, 1)));
+        assert_eq!(episode_address(Some(0), Some(2)), Some((1, 2)));
+        assert_eq!(episode_address(Some(3), Some(4)), Some((3, 4)));
+        assert_eq!(episode_address(None, None), None);
+        assert_eq!(episode_address(Some(1), Some(0)), None);
+        assert_eq!(episode_address(Some(1), None), None);
+    }
+
+    #[test]
     fn parse_episode_file_name_accepts_standard_season_episode_json() {
         assert_eq!(parse_episode_file_name("S01E01.json"), Some((1, 1)));
         assert_eq!(parse_episode_file_name("S12E08.json"), Some((12, 8)));
@@ -937,6 +1021,7 @@ mod tests {
             series_tmdb_id: Some(289424),
             title: "第一集".into(),
             original_title: None,
+            original_language: None,
             title_zh: None,
             overview: Some("分集简介".into()),
             year: None,
@@ -986,6 +1071,7 @@ mod tests {
             series_tmdb_id: None,
             title: "开篇".into(),
             original_title: None,
+            original_language: None,
             title_zh: None,
             overview: None,
             year: None,
@@ -1044,6 +1130,7 @@ mod tests {
             series_tmdb_id: None,
             title: "示例".into(),
             original_title: None,
+            original_language: None,
             title_zh: None,
             overview: Some("短简介".into()),
             year: None,
@@ -1063,6 +1150,7 @@ mod tests {
             series_tmdb_id: Some(1),
             title: "第一集".into(),
             original_title: None,
+            original_language: None,
             title_zh: None,
             overview: Some("TMDb 分集简介".into()),
             year: None,
@@ -1100,6 +1188,12 @@ mod tests {
                 plot: "Wiki 分集 plot".into(),
             }],
             relationships: None,
+            zh_cast: vec![WikiCharacter {
+                name: "主角中文名".into(),
+                actor: "演员中文名".into(),
+                bio: None,
+            }],
+            zh_page_url: None,
             updated_at_ms: 0,
         };
 
@@ -1108,6 +1202,14 @@ mod tests {
         assert_eq!(merged.episode_overview.as_deref(), Some("TMDb 分集简介"));
         assert_eq!(merged.wiki_episode_plot.as_deref(), Some("Wiki 分集 plot"));
         assert_eq!(merged.characters.as_ref().map(|items| items.len()), Some(1));
+        assert_eq!(
+            merged
+                .zh_cast
+                .as_ref()
+                .and_then(|items| items.first())
+                .map(|member| member.name.as_str()),
+            Some("主角中文名")
+        );
     }
 
     #[test]

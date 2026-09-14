@@ -4,7 +4,7 @@ mod plain;
 mod sections;
 mod table;
 
-pub use characters::characters_from_wikitext;
+pub use characters::{characters_from_wikitext, zh_cast_from_wikitext};
 pub use episodes::{episode_plot_for, episodes_from_wikitext};
 
 use crate::model::{WikiCharacter, WikiEpisodeSummary};

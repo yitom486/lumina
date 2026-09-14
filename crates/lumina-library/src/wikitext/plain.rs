@@ -25,7 +25,7 @@ fn strip_html_comments(input: &str) -> String {
     out
 }
 
-fn strip_refs(input: &str) -> String {
+pub(crate) fn strip_refs(input: &str) -> String {
     let mut out = String::with_capacity(input.len());
     let mut rest = input;
     while let Some(start) = rest.find("<ref") {
@@ -96,7 +96,23 @@ where
 }
 
 fn template_plain_fallback(body: &str) -> String {
-    body.rsplit('|').next().unwrap_or("").trim().to_string()
+    let mut parts = body.split('|');
+    let name = parts.next().unwrap_or("").trim().to_ascii_lowercase();
+    let params: Vec<&str> = parts
+        .map(str::trim)
+        .filter(|part| !part.is_empty())
+        .collect();
+    match name.as_str() {
+        // Display-link templates: keep the local label, drop the foreign target.
+        "lk" | "link-en" | "link-ko" | "link-ja" | "ill" => {
+            params.first().unwrap_or(&"").to_string()
+        }
+        // Annotation wrappers contribute no readable text of their own
+        // (e.g. `{{small|（童年：宋河賢）}}` must not leak into the actor name).
+        "small" | "smalldiv" | "refn" | "efn" => String::new(),
+        // Anything else keeps the previous behavior (last parameter).
+        _ => params.last().unwrap_or(&"").to_string(),
+    }
 }
 
 fn strip_links(input: &str) -> String {
@@ -141,5 +157,23 @@ mod tests {
         let plain =
             wikitext_to_plain("[[Choi Ung|Ung]] meets {{nowrap|Na Bo-ra}} at school.<ref name=x/>");
         assert_eq!(plain, "Ung meets Na Bo-ra at school.");
+    }
+
+    #[test]
+    fn display_link_templates_keep_the_local_label() {
+        assert_eq!(wikitext_to_plain("{{lk|鄭強熙|정강희}}"), "鄭強熙");
+        assert_eq!(
+            wikitext_to_plain("{{link-en|李善熙|Lee Seung-hee}}"),
+            "李善熙"
+        );
+        assert_eq!(wikitext_to_plain("{{n/a|僅聲音出演}}"), "僅聲音出演");
+    }
+
+    #[test]
+    fn annotation_wrappers_contribute_no_text() {
+        assert_eq!(
+            wikitext_to_plain("[[崔宇植]]<br>{{small|（童年：宋河賢）}}"),
+            "崔宇植"
+        );
     }
 }

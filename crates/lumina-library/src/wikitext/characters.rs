@@ -1,7 +1,86 @@
 use crate::model::WikiCharacter;
-use crate::wikitext::plain::wikitext_to_plain;
+use crate::wikitext::plain::{strip_refs, wikitext_to_plain};
 use crate::wikitext::sections::{section_content, subsection_content};
 use crate::wikitext::table::{header_column_map, parse_tables, pick_column};
+
+/// Header aliases shared by the English and Chinese cast tables. Traditional
+/// forms matter: zh articles use 演員/介紹 while the simplified aliases
+/// below would never `contains`-match them.
+const CHARACTER_COLUMN_ALIASES: &[&str] = &["character", "role", "name", "角色", "人物"];
+const ACTOR_COLUMN_ALIASES: &[&str] =
+    &["actor", "portrayedby", "castmember", "演员", "演員", "饰演"];
+const BIO_COLUMN_ALIASES: &[&str] = &["description", "intro", "biography", "介绍", "介紹", "简介"];
+
+/// Cast triples from a Chinese article's 演員陣容 section. Every table in
+/// the section is read (main + supporting groups). The English
+/// `WikiCharacter` fields carry the Chinese names (`name` = character,
+/// `actor` = actor) so no new model type is needed downstream.
+pub fn zh_cast_from_wikitext(wikitext: &str) -> Vec<WikiCharacter> {
+    const ZH_CAST_SECTIONS: &[&str] = &["演員陣容", "演员阵容", "登場人物", "登场人物"];
+    const MAX_ZH_CAST: usize = 40;
+
+    let Some(section) = section_content(wikitext, ZH_CAST_SECTIONS) else {
+        return Vec::new();
+    };
+    // Citations only add noise (and stray pipes) to table cells.
+    let section = strip_refs(&section);
+    let mut members = Vec::new();
+    for table in parse_tables(&section) {
+        let cleaned: Vec<Vec<String>> = table
+            .iter()
+            .map(|row| row.iter().map(|cell| strip_table_cell_attr(cell)).collect())
+            .collect();
+        let Some((header_index, header_map)) = find_cast_header(&cleaned) else {
+            continue;
+        };
+        let character_col = pick_column(&header_map, CHARACTER_COLUMN_ALIASES);
+        let actor_col = pick_column(&header_map, ACTOR_COLUMN_ALIASES);
+        let bio_col = pick_column(&header_map, BIO_COLUMN_ALIASES);
+        let (Some(character_col), Some(actor_col)) = (character_col, actor_col) else {
+            continue;
+        };
+        for row in cleaned.iter().skip(header_index + 1) {
+            let name = cell_at(row, character_col);
+            let actor = cell_at(row, actor_col);
+            if name.is_empty() || actor.is_empty() {
+                continue;
+            }
+            let bio = bio_col.and_then(|index| {
+                let text = cell_at(row, index);
+                if text.is_empty() {
+                    None
+                } else {
+                    Some(text)
+                }
+            });
+            members.push(WikiCharacter { name, actor, bio });
+            if members.len() >= MAX_ZH_CAST {
+                return members;
+            }
+        }
+    }
+    members
+}
+
+/// Drop leading `align=left|` / `width=15%|` style cell attributes. The guard
+/// keeps real content: piped links (`[[盧正義 (演員)|盧正義]]`) and templates
+/// (`{{lk|…}}`) never match the attribute shape.
+fn strip_table_cell_attr(cell: &str) -> String {
+    let trimmed = cell.trim();
+    if let Some((attr, rest)) = trimmed.split_once('|') {
+        let attr = attr.trim().trim_start_matches(['!', '|']).trim();
+        let rest = rest.trim();
+        if !rest.is_empty()
+            && attr.contains('=')
+            && !attr
+                .chars()
+                .any(|c| c == ' ' || ('\u{4e00}'..='\u{9fff}').contains(&c))
+        {
+            return rest.to_string();
+        }
+    }
+    trimmed.to_string()
+}
 
 const CAST_SECTIONS: &[&str] = &[
     "cast and characters",
@@ -89,15 +168,9 @@ pub fn characters_from_cast_section(section: &str) -> Vec<WikiCharacter> {
         return Vec::new();
     };
 
-    let character_col = pick_column(&header_map, &["character", "role", "name", "角色", "人物"]);
-    let actor_col = pick_column(
-        &header_map,
-        &["actor", "portrayedby", "castmember", "演员", "饰演"],
-    );
-    let bio_col = pick_column(
-        &header_map,
-        &["description", "intro", "biography", "介绍", "简介"],
-    );
+    let character_col = pick_column(&header_map, CHARACTER_COLUMN_ALIASES);
+    let actor_col = pick_column(&header_map, ACTOR_COLUMN_ALIASES);
+    let bio_col = pick_column(&header_map, BIO_COLUMN_ALIASES);
 
     let (character_col, actor_col) = match (character_col, actor_col) {
         (Some(c), Some(a)) => (c, a),
@@ -127,12 +200,8 @@ pub fn characters_from_cast_section(section: &str) -> Vec<WikiCharacter> {
 fn find_cast_header(table: &[Vec<String>]) -> Option<(usize, Vec<(String, usize)>)> {
     for (index, row) in table.iter().enumerate() {
         let header_map = header_column_map(row);
-        let has_character =
-            pick_column(&header_map, &["character", "role", "name", "角色", "人物"]);
-        let has_actor = pick_column(
-            &header_map,
-            &["actor", "portrayedby", "castmember", "演员", "饰演"],
-        );
+        let has_character = pick_column(&header_map, CHARACTER_COLUMN_ALIASES);
+        let has_actor = pick_column(&header_map, ACTOR_COLUMN_ALIASES);
         if has_character.is_some() && has_actor.is_some() {
             return Some((index, header_map));
         }
@@ -177,6 +246,38 @@ mod tests {
             .as_deref()
             .unwrap_or("")
             .contains("cartoonist"));
+    }
+
+    const ZH_CAST_FIXTURE: &str = include_str!("fixtures/zh_cast_snippet.txt");
+
+    #[test]
+    fn parses_zh_cast_tables_across_sections() {
+        let members = zh_cast_from_wikitext(ZH_CAST_FIXTURE);
+        assert_eq!(members.len(), 6);
+        assert_eq!(members[0].name, "崔雄");
+        assert_eq!(members[0].actor, "崔宇植");
+        assert!(members[0]
+            .bio
+            .as_deref()
+            .unwrap_or("")
+            .contains("建築插畫家"));
+        // Piped link keeps the display label, not the target.
+        assert_eq!(members[2].actor, "盧正義");
+        assert_eq!(members[2].name, "NJ");
+        // Display-link template keeps the local label.
+        assert_eq!(members[3].actor, "鄭強熙");
+        assert_eq!(members[3].name, "昌植");
+        // Plain-text actor without any link.
+        assert_eq!(members[4].actor, "車承燁");
+        // `n/a` role falls back to its display text.
+        assert_eq!(members[5].actor, "金柱憲");
+        assert_eq!(members[5].name, "僅聲音出演");
+        for member in &members {
+            assert!(!member.name.contains("align="));
+            assert!(!member.actor.contains("童年"));
+            let bio = member.bio.as_deref().unwrap_or("");
+            assert!(!bio.contains("align="));
+        }
     }
 
     #[test]

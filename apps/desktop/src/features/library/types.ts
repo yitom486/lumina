@@ -233,6 +233,7 @@ export type StoredMetadata = {
   seriesTmdbId?: number | null;
   title: string;
   originalTitle?: string | null;
+  originalLanguage?: string | null;
   overview?: string | null;
   year?: number | null;
   season?: number | null;
@@ -288,6 +289,9 @@ export type WikiMetadata = {
   characters?: WikiCharacter[];
   episodes?: WikiEpisodeSummary[];
   relationships?: string | null;
+  /** Chinese name sidecar from the aligned zh article (en stays the backbone). */
+  zhCast?: WikiCharacter[];
+  zhPageUrl?: string | null;
   updatedAtMs: number;
 };
 
@@ -350,6 +354,7 @@ export type MergedMediaContext = {
   synopsis?: string | null;
   episodeOverview?: string | null;
   characters?: WikiCharacter[] | null;
+  zhCast?: WikiCharacter[] | null;
   wikiEpisodePlot?: string | null;
   wikiAttribution?: string | null;
   wikiPageUrl?: string | null;

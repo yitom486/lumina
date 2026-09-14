@@ -538,19 +538,40 @@ pub fn search_tmdb_direct(
         &config.access_token_env,
         "TMDb token",
     )?;
-    let mut candidates =
-        search_tmdb_endpoint(config, &token, "tv", MetadataMediaType::Tv, title, year)?;
-    let mut movies = search_tmdb_endpoint(
-        config,
-        &token,
-        "movie",
-        MetadataMediaType::Movie,
-        title,
-        year,
-    )?;
-    candidates.append(&mut movies);
-    candidates.truncate(12);
-    Ok(candidates)
+    // The two endpoints are independent: query them in parallel.
+    let (tv, movies) = std::thread::scope(|scope| {
+        let tv_handle = scope.spawn(|| {
+            search_tmdb_endpoint(config, &token, "tv", MetadataMediaType::Tv, title, year)
+        });
+        let movie_handle = scope.spawn(|| {
+            search_tmdb_endpoint(
+                config,
+                &token,
+                "movie",
+                MetadataMediaType::Movie,
+                title,
+                year,
+            )
+        });
+        let tv = tv_handle
+            .join()
+            .map_err(|_| LibraryError::internal(Some("tmdb search thread panicked")))??;
+        let movies = movie_handle
+            .join()
+            .map_err(|_| LibraryError::internal(Some("tmdb search thread panicked")))??;
+        Ok::<_, LibraryError>((tv, movies))
+    })?;
+    Ok(merge_search_candidates(tv, movies))
+}
+
+/// TV hits come first because pending series groups dominate the manual flow.
+fn merge_search_candidates(
+    mut tv: Vec<TmdbCandidate>,
+    mut movies: Vec<TmdbCandidate>,
+) -> Vec<TmdbCandidate> {
+    tv.append(&mut movies);
+    tv.truncate(12);
+    tv
 }
 
 /// Split a trailing release year ("Our Beloved Summer 2021") off a manually
@@ -823,6 +844,33 @@ mod tests {
         // A bare year stays whole so the film "2012" remains searchable.
         assert_eq!(split_trailing_year("2012"), ("2012", None));
         assert_eq!(split_trailing_year("Show S01"), ("Show S01", None));
+    }
+
+    #[test]
+    fn merged_search_prefers_tv_and_caps_at_twelve() {
+        let tv: Vec<TmdbCandidate> = (1..=10)
+            .map(|id| TmdbCandidate {
+                tmdb_id: id,
+                media_type: MetadataMediaType::Tv,
+                title: format!("Show {id}"),
+                year: None,
+                overview: None,
+            })
+            .collect();
+        let movies: Vec<TmdbCandidate> = (11..=15)
+            .map(|id| TmdbCandidate {
+                tmdb_id: id,
+                media_type: MetadataMediaType::Movie,
+                title: format!("Film {id}"),
+                year: None,
+                overview: None,
+            })
+            .collect();
+        let merged = merge_search_candidates(tv, movies);
+        assert_eq!(merged.len(), 12);
+        assert!(merged.iter().take(10).all(|item| item.tmdb_id <= 10));
+        assert_eq!(merged[10].tmdb_id, 11);
+        assert_eq!(merged[11].tmdb_id, 12);
     }
 
     #[test]

@@ -38,18 +38,39 @@ fn split_row_cells(row: &str) -> Vec<String> {
     let mut cells = Vec::new();
     let mut current = String::new();
     let mut chars = normalized.chars().peekable();
+    // Start of row behaves like after a newline: some tables (zh cast lists)
+    // write one header cell per line (`! width=15%|演員` on its own line).
+    let mut at_cell_start = true;
     while let Some(ch) = chars.next() {
         if ch == '|' {
             if chars.peek() == Some(&'|') {
                 chars.next();
                 cells.push(clean_cell(&current));
                 current.clear();
+                at_cell_start = false;
                 continue;
             }
-            if current.trim().is_empty() && cells.is_empty() {
+            if at_cell_start {
+                // Leading `|`/`!` of the row, or a cell starting on a new
+                // line. A lone `|` mid-line stays literal so template pipes
+                // (`{{cite news |agency=…}}`) never split cells.
+                if current.trim().is_empty() && cells.is_empty() {
+                    continue;
+                }
+                cells.push(clean_cell(&current));
+                current.clear();
                 continue;
             }
         }
+        if ch == '!' && at_cell_start {
+            if current.trim().is_empty() && cells.is_empty() {
+                continue;
+            }
+            cells.push(clean_cell(&current));
+            current.clear();
+            continue;
+        }
+        at_cell_start = ch == '\n';
         current.push(ch);
     }
     if !current.trim().is_empty() || !cells.is_empty() {
@@ -109,5 +130,28 @@ mod tests {
         assert_eq!(tables[0].len(), 2);
         assert_eq!(tables[0][0][0], "Character");
         assert_eq!(tables[0][1][1], "[[Choi Woo-shik]]");
+    }
+
+    #[test]
+    fn parses_multiline_header_cells() {
+        // zh cast tables often write one `!` header cell per line.
+        let tables = parse_tables(
+            r#"{|class="wikitable"
+|-
+! width=15%|演員
+! width=15%|角色
+! width=50%|介紹
+|-
+| 車承燁 || 姜志雲 ||align=left| 實習生。
+|}"#,
+        );
+        assert_eq!(tables.len(), 1);
+        // Row 0 is the `{|class=…}` attribute line (pre-existing behavior);
+        // the header lands on row 1.
+        assert_eq!(
+            tables[0][1],
+            vec!["width=15%|演員", "width=15%|角色", "width=50%|介紹"]
+        );
+        assert_eq!(tables[0][2][0], "車承燁");
     }
 }
