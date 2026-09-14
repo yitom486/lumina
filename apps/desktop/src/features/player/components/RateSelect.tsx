@@ -27,7 +27,7 @@ export function RateSelect() {
           {rate}x
         </Button>
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="start" side="bottom">
+      <DropdownMenuContent align="start" side="bottom" className="z-[100]">
         <DropdownMenuLabel>播放速度</DropdownMenuLabel>
         {RATES.map((value) => (
           <DropdownMenuCheckboxItem

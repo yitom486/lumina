@@ -97,6 +97,7 @@ describe("TrackControlButtons subtitle menu", () => {
       timeout: 8000,
     });
     expect(toggle).toBeInTheDocument();
+    expect(toggle.parentElement).toHaveClass("z-[100]");
     await user.click(toggle);
     await waitFor(() => {
       expect(useTrackStore.getState().subtitleVisible).toBe(false);
@@ -153,7 +154,9 @@ describe("RateSelect menu", () => {
 
     await user.click(screen.getByRole("button", { name: "0.5x" }));
 
-    expect(await screen.findByText("播放速度")).toBeInTheDocument();
+    const label = await screen.findByText("播放速度");
+    expect(label).toBeInTheDocument();
+    expect(label.parentElement).toHaveClass("z-[100]");
     expect(screen.getByRole("menuitemcheckbox", { name: "1x" })).toBeInTheDocument();
   });
 });

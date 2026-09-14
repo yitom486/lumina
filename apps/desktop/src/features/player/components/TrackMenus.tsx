@@ -7,7 +7,7 @@ import { TrackControlButtons } from "./TrackControlButtons";
 /** Compact track + rate row for the reader sidebar. */
 export function TrackMenus() {
   return (
-    <div className="flex flex-wrap items-center gap-1.5 border-b border-border px-2 py-1.5">
+    <div className="relative z-20 flex flex-wrap items-center gap-1.5 border-b border-border bg-card px-2 py-1.5">
       <TrackControlButtons variant="sidebar" />
       <RateSelect />
       <QualitySelect />

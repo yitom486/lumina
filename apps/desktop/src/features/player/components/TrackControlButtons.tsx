@@ -153,7 +153,11 @@ export function TrackControlButtons({
                 </TooltipTrigger>
                 <TooltipContent>音轨</TooltipContent>
               </Tooltip>
-              <DropdownMenuContent align="start" side="bottom" className="min-w-[14rem]">
+              <DropdownMenuContent
+                align="start"
+                side="bottom"
+                className="z-[100] min-w-[14rem]"
+              >
                 <DropdownMenuLabel>音轨</DropdownMenuLabel>
                 <DropdownMenuSeparator />
                 {audioTracks.length === 0 ? (
@@ -180,7 +184,11 @@ export function TrackControlButtons({
                 </TooltipTrigger>
                 <TooltipContent>字幕</TooltipContent>
               </Tooltip>
-              <DropdownMenuContent align="start" side="bottom" className="min-w-[16rem]">
+              <DropdownMenuContent
+                align="start"
+                side="bottom"
+                className="z-[100] min-w-[16rem]"
+              >
                 <DropdownMenuLabel>字幕</DropdownMenuLabel>
                 <DropdownMenuSeparator />
                 <DropdownMenuCheckboxItem

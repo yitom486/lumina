@@ -48,7 +48,7 @@ export function QualitySelect() {
           {current?.label ?? "清晰度"}
         </Button>
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="start" side="bottom">
+      <DropdownMenuContent align="start" side="bottom" className="z-[100]">
         <DropdownMenuLabel>清晰度</DropdownMenuLabel>
         {data.formats.map((format) => (
           <DropdownMenuCheckboxItem
