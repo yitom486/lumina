@@ -60,8 +60,8 @@ use commands::library::{
     library_credential_delete, library_credential_status, library_credentials_save,
     library_credentials_validate, library_list_groups, library_models_discover,
     library_pending_groups, library_resolve_episode_file, library_resolve_preview,
-    library_scan_now, library_series_for_media, library_set_manual_title, library_status,
-    library_tmdb_credentials_validate, library_tmdb_refresh, library_tmdb_statuses,
+    library_scan_now, library_search_tmdb, library_series_for_media, library_set_manual_title,
+    library_status, library_tmdb_credentials_validate, library_tmdb_refresh, library_tmdb_statuses,
     library_watch_start, library_watch_stop, library_wikipedia_apply, library_wikipedia_preview,
     library_wikipedia_refresh, library_wikipedia_statuses,
 };
@@ -172,6 +172,7 @@ pub fn run() {
             library_set_manual_title,
             library_resolve_episode_file,
             library_resolve_preview,
+            library_search_tmdb,
             library_apply_tmdb_match,
             library_context_for_media,
             library_list_groups,

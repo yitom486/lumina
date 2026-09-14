@@ -11,8 +11,9 @@ use crate::model::{
     EpisodeFile, EpisodeIndexEntry, GroupResolution, IndexedMediaFile, LibraryIndex, MediaGroup,
     MediaMetadataContext, MergedMediaContext, MetadataCastMember, MetadataMediaType,
     MetadataWriteResult, SeriesLibraryCache, SeriesReading, StoredMetadata, StoredMetadataKind,
-    TmdbConfig, TmdbGroupStatus, WikiEnrichmentCandidate, WikiEnrichmentPreview, WikiGroupStatus,
-    WikiMatchMethod, WikiMetadata, WikiWriteResult, METADATA_SCHEMA_VERSION,
+    TmdbConfig, TmdbFieldSelection, TmdbGroupStatus, WikiEnrichmentCandidate,
+    WikiEnrichmentPreview, WikiGroupStatus, WikiMatchMethod, WikiMetadata, WikiWriteResult,
+    METADATA_SCHEMA_VERSION,
 };
 use crate::paths::{display_relative_path, relativize_under_root};
 use crate::wikitext::episode_plot_for;
@@ -28,15 +29,20 @@ pub fn write_confirmed_metadata(
     tmdb_id: u64,
     media_type: MetadataMediaType,
     config: &TmdbConfig,
+    fields: &TmdbFieldSelection,
 ) -> Result<MetadataWriteResult, LibraryError> {
+    let fields = fields.normalized();
     let mut written_files = Vec::new();
     match media_type {
         MetadataMediaType::Movie => {
             let detail = resolver::fetch_tmdb_details(config, tmdb_id, media_type, None, None)?;
-            let credits = resolver::fetch_tmdb_credits(config, tmdb_id, media_type, None, None)?;
+            let credits = fields
+                .cast
+                .then(|| resolver::fetch_tmdb_credits(config, tmdb_id, media_type, None, None))
+                .transpose()?;
             let document = document_from_tmdb(
                 &detail,
-                Some(&credits),
+                credits.as_ref(),
                 StoredMetadataKind::Movie,
                 tmdb_id,
                 None,
@@ -50,10 +56,13 @@ pub fn write_confirmed_metadata(
         }
         MetadataMediaType::Tv => {
             let detail = resolver::fetch_tmdb_details(config, tmdb_id, media_type, None, None)?;
-            let credits = resolver::fetch_tmdb_credits(config, tmdb_id, media_type, None, None)?;
+            let credits = fields
+                .cast
+                .then(|| resolver::fetch_tmdb_credits(config, tmdb_id, media_type, None, None))
+                .transpose()?;
             let document = document_from_tmdb(
                 &detail,
-                Some(&credits),
+                credits.as_ref(),
                 StoredMetadataKind::Series,
                 tmdb_id,
                 None,
@@ -64,31 +73,33 @@ pub fn write_confirmed_metadata(
                 root,
                 &store::save_group_json(root, &group.key, "series.json", &document)?,
             ));
-            for file in group_files(index, group) {
-                let (Some(season), Some(episode)) = (file.season, file.episode) else {
-                    continue;
-                };
-                let detail = resolver::fetch_tmdb_details(
-                    config,
-                    tmdb_id,
-                    media_type,
-                    Some(season),
-                    Some(episode),
-                )?;
-                let document = document_from_tmdb(
-                    &detail,
-                    None,
-                    StoredMetadataKind::Episode,
-                    tmdb_id,
-                    Some(tmdb_id),
-                    Some(season),
-                    Some(episode),
-                )?;
-                let file_name = format!("S{season:02}E{episode:02}.json");
-                written_files.push(relative_group_path(
-                    root,
-                    &store::save_group_json(root, &group.key, &file_name, &document)?,
-                ));
+            if fields.episodes {
+                for file in group_files(index, group) {
+                    let (Some(season), Some(episode)) = (file.season, file.episode) else {
+                        continue;
+                    };
+                    let detail = resolver::fetch_tmdb_details(
+                        config,
+                        tmdb_id,
+                        media_type,
+                        Some(season),
+                        Some(episode),
+                    )?;
+                    let document = document_from_tmdb(
+                        &detail,
+                        None,
+                        StoredMetadataKind::Episode,
+                        tmdb_id,
+                        Some(tmdb_id),
+                        Some(season),
+                        Some(episode),
+                    )?;
+                    let file_name = format!("S{season:02}E{episode:02}.json");
+                    written_files.push(relative_group_path(
+                        root,
+                        &store::save_group_json(root, &group.key, &file_name, &document)?,
+                    ));
+                }
             }
         }
     }
@@ -462,7 +473,15 @@ pub fn refresh_tmdb_metadata(
     else {
         return Err(LibraryError::invalid_input("请先完成 TMDb 匹配"));
     };
-    write_confirmed_metadata(root, index, group, tmdb_id, media_type, config)
+    write_confirmed_metadata(
+        root,
+        index,
+        group,
+        tmdb_id,
+        media_type,
+        config,
+        &TmdbFieldSelection::all(),
+    )
 }
 
 pub fn tmdb_statuses_for_root(

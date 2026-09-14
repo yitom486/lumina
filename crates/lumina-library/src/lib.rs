@@ -31,14 +31,15 @@ pub use model::{
     MetadataMediaType, MetadataWriteResult, ModelDiscoveryConfig, ModelDiscoveryResult,
     ModelResolverConfig, PendingMediaGroup, ResolverIntent, ResolverPreview,
     ResolverProviderConfig, ResolverRunConfig, ResolverSelection, SeriesLibraryCache,
-    SeriesReading, StoredMetadata, StoredMetadataKind, TmdbCandidate, TmdbConfig, TmdbGroupStatus,
-    WikiCharacter, WikiEnrichmentCandidate, WikiEnrichmentPreview, WikiEpisodeSummary,
-    WikiGroupStatus, WikiMatchMethod, WikiMetadata, WikiWriteResult, WikiZhReference,
-    WIKI_STALE_AFTER_MS,
+    SeriesReading, StoredMetadata, StoredMetadataKind, TmdbCandidate, TmdbConfig,
+    TmdbFieldSelection, TmdbGroupStatus, WikiCharacter, WikiEnrichmentCandidate,
+    WikiEnrichmentPreview, WikiEpisodeSummary, WikiGroupStatus, WikiMatchMethod, WikiMetadata,
+    WikiWriteResult, WikiZhReference, WIKI_STALE_AFTER_MS,
 };
 pub use paths::{discover_library_root_for_media, lumina_agent_context_path, lumina_tmp_dir};
 pub use resolver::{
-    discover_models, validate_credentials, validate_tmdb_credentials, RemoteResolver,
+    discover_models, search_tmdb_direct, validate_credentials, validate_tmdb_credentials,
+    RemoteResolver,
 };
 pub use service::MediaLibraryService;
 pub use store::load as load_library_index;

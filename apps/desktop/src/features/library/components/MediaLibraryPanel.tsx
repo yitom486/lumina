@@ -29,6 +29,7 @@ import {
   previewWikipediaEnrichment,
   scanLibraryNow,
   saveMetadataCredentials,
+  searchTmdbDirect,
   setManualMediaTitle,
   startLibraryWatch,
   stopLibraryWatch,
@@ -49,11 +50,14 @@ import type {
   CredentialValidationItem,
   AgentModelDiscoveryResult,
   MediaGroup,
+  MetadataWriteResult,
   ModelDiscoveryResult,
   PendingMediaGroup,
   ResolverPreview,
   ResolverRunConfig,
   LibraryScanEvent,
+  TmdbCandidate,
+  TmdbFieldSelection,
   WikiEnrichmentCandidate,
   WikiEnrichmentPreview,
   WikiGroupStatus,
@@ -517,21 +521,27 @@ export function MediaLibraryPanel() {
             title={titles[pending.group.key] ?? pending.group.manualTitle ?? pending.group.displayName}
             preview={previews[pending.group.key]}
             disabled={!statusQuery.data?.running || !resolverReady}
+            directDisabled={!statusQuery.data?.running || !privacyAcknowledged || !tmdbTokenSaved}
             onTitle={(title) => setTitles((state) => ({ ...state, [pending.group.key]: title }))}
             onSaveTitle={async (title) => {
               setError(null);
               await setManualMediaTitle({ root: pending.root, groupKey: pending.group.key, title });
               await refresh();
             }}
+            onSearchTitle={async (title) => {
+              setError(null);
+              return searchTmdbDirect({ root: pending.root, groupKey: pending.group.key, title, privacyAcknowledged, tmdb: config.tmdb });
+            }}
             onPreview={async () => {
               setError(null);
               const preview = await previewMediaMatch({ root: pending.root, groupKey: pending.group.key, config });
               setPreviews((state) => ({ ...state, [pending.group.key]: preview }));
             }}
-            onApply={async (tmdbId, mediaType) => {
+            onApply={async (tmdbId, mediaType, fields) => {
               setError(null);
-              await applyTmdbMediaMatch({ root: pending.root, groupKey: pending.group.key, tmdbId, mediaType, tmdb: config.tmdb });
+              const result = await applyTmdbMediaMatch({ root: pending.root, groupKey: pending.group.key, tmdbId, mediaType, tmdb: config.tmdb, fields });
               await refresh();
+              return result;
             }}
             onError={(err) => setError(errorMessage(err))}
           />
@@ -827,20 +837,27 @@ function MatchedGroupCard({
   );
 }
 
-function PendingGroupCard({ pending, title, preview, disabled, onTitle, onSaveTitle, onPreview, onApply, onError }: {
+const FULL_TMDB_FIELDS: TmdbFieldSelection = { basic: true, cast: true, episodes: true };
+
+function PendingGroupCard({ pending, title, preview, disabled, directDisabled, onTitle, onSaveTitle, onSearchTitle, onPreview, onApply, onError }: {
   pending: PendingMediaGroup; title: string; preview?: ResolverPreview; disabled: boolean;
+  directDisabled: boolean;
   onTitle: (value: string) => void; onSaveTitle: (value: string) => Promise<void>;
-  onPreview: () => Promise<void>; onApply: (id: number, type: "movie" | "tv") => Promise<void>;
+  onSearchTitle: (value: string) => Promise<TmdbCandidate[]>;
+  onPreview: () => Promise<void>; onApply: (id: number, type: "movie" | "tv", fields: TmdbFieldSelection) => Promise<MetadataWriteResult>;
   onError: (error: unknown) => void;
 }) {
-  const [busy, setBusy] = useState<"preview" | "apply" | "save" | null>(null);
+  const [busy, setBusy] = useState<"preview" | "apply" | "save" | "search" | null>(null);
   const [applyingId, setApplyingId] = useState<number | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [direct, setDirect] = useState<TmdbCandidate[] | null>(null);
+  const [withCast, setWithCast] = useState(true);
+  const [withEpisodes, setWithEpisodes] = useState(true);
   const isBusy = busy !== null;
   const first = preview?.candidates[0] ?? null;
 
   const run = async (
-    action: "preview" | "apply" | "save",
+    action: "preview" | "apply" | "save" | "search",
     fn: () => Promise<void>,
     applyingCandidateId?: number,
   ) => {
@@ -857,16 +874,33 @@ function PendingGroupCard({ pending, title, preview, disabled, onTitle, onSaveTi
     }
   };
 
+  const confirmCandidate = (candidate: TmdbCandidate, fields: TmdbFieldSelection) =>
+    run("apply", async () => {
+      const result = await onApply(candidate.tmdbId, candidate.mediaType, fields);
+      setDirect(null);
+      setNotice(`已写入 ${result.writtenFiles.length} 个文件`);
+    }, candidate.tmdbId);
+
   return <div className="space-y-2 rounded-md border border-border p-2">
     <p className="font-medium">{pending.group.displayName}</p>
     <p className="text-muted-foreground">{pending.group.files.length} 个文件 · {pending.group.kind === "series" ? "剧集候选" : "电影候选"}</p>
-    <div className="flex gap-1"><input className="h-7 min-w-0 flex-1 rounded border border-border bg-background px-2" value={title} placeholder="匹配不到时输入作品名" disabled={isBusy} onChange={(e) => onTitle(e.target.value)} /><Button size="sm" variant="outline" disabled={!title.trim() || isBusy} onClick={() => void run("save", async () => { await onSaveTitle(title); setNotice("标题已保存"); })}>{busy === "save" ? "保存中…" : "保存标题"}</Button></div>
-    <Button size="sm" disabled={disabled || isBusy} onClick={() => void run("preview", onPreview)}>{busy === "preview" ? "识别中…" : "智能识别"}</Button>
-    {preview ? <div className="space-y-1 rounded bg-muted/40 p-2"><p>识别：{preview.intent.title} · {preview.intent.mediaType}</p>
-      {first ? <Button size="sm" disabled={disabled || isBusy} onClick={() => void run("apply", async () => { await onApply(first.tmdbId, first.mediaType); setNotice(`已确认：${first.title}`); }, first.tmdbId)}>{busy === "apply" && applyingId === first.tmdbId ? "确认中…" : `确认首选：${first.title}${first.year ? ` (${first.year})` : ""}`}</Button> : null}
-      {preview.candidates.map((candidate) => <div key={candidate.tmdbId} className="flex items-center justify-between gap-2"><span className="min-w-0 truncate">{candidate.title}{candidate.year ? ` (${candidate.year})` : ""}</span><Button size="sm" variant="outline" disabled={disabled || isBusy} onClick={() => void run("apply", async () => { await onApply(candidate.tmdbId, candidate.mediaType); setNotice(`已确认：${candidate.title}`); }, candidate.tmdbId)}>{busy === "apply" && applyingId === candidate.tmdbId ? "确认中…" : "确认"}</Button></div>)}
-      {notice ? <p className="text-xs text-emerald-600 dark:text-emerald-400">{notice}</p> : null}
+    <div className="flex gap-1"><input className="h-7 min-w-0 flex-1 rounded border border-border bg-background px-2" value={title} placeholder="输入作品名后查 TMDb" disabled={isBusy} onChange={(e) => onTitle(e.target.value)} /><Button size="sm" disabled={!title.trim() || directDisabled || isBusy} onClick={() => { setDirect(null); void run("search", async () => { setDirect(await onSearchTitle(title)); }); }}>{busy === "search" ? "查询中…" : "查 TMDb"}</Button></div>
+    <div className="flex items-center gap-2"><Button size="sm" variant="outline" disabled={disabled || isBusy} onClick={() => void run("preview", onPreview)}>{busy === "preview" ? "识别中…" : "智能识别"}</Button><button type="button" className="text-muted-foreground underline" disabled={!title.trim() || isBusy} onClick={() => void run("save", async () => { await onSaveTitle(title); setNotice("标题已保存（未联网）"); })}>{busy === "save" ? "保存中…" : "仅存标题不上网"}</button></div>
+    {direct ? <div className="space-y-1 rounded bg-muted/40 p-2">
+      <p className="text-muted-foreground">只把你输入的标题发给 TMDb；勾选要拉取的字段后确认。</p>
+      <div className="flex flex-wrap gap-2 text-muted-foreground">
+        <label className="flex items-center gap-1"><input type="checkbox" checked disabled />基本信息（含简介，必需）</label>
+        <label className="flex items-center gap-1"><input type="checkbox" checked={withCast} disabled={isBusy} onChange={(e) => setWithCast(e.target.checked)} />演员阵容</label>
+        <label className="flex items-center gap-1"><input type="checkbox" checked={withEpisodes} disabled={isBusy} onChange={(e) => setWithEpisodes(e.target.checked)} />分集信息</label>
+      </div>
+      {direct.length === 0 ? <p className="text-muted-foreground">TMDb 没有返回候选，换个标题再试。</p> : null}
+      {direct.map((candidate) => <div key={`${candidate.mediaType}:${candidate.tmdbId}`} className="flex items-center justify-between gap-2"><span className="min-w-0 truncate">[{candidate.mediaType === "tv" ? "剧集" : "电影"}] {candidate.title}{candidate.year ? ` (${candidate.year})` : ""}</span><Button size="sm" variant="outline" disabled={directDisabled || isBusy} onClick={() => void confirmCandidate(candidate, { basic: true, cast: withCast, episodes: withEpisodes })}>{busy === "apply" && applyingId === candidate.tmdbId ? "写入中…" : "确认拉取"}</Button></div>)}
     </div> : null}
+    {preview ? <div className="space-y-1 rounded bg-muted/40 p-2"><p>识别：{preview.intent.title} · {preview.intent.mediaType}</p>
+      {first ? <Button size="sm" disabled={disabled || isBusy} onClick={() => void confirmCandidate(first, FULL_TMDB_FIELDS)}>{busy === "apply" && applyingId === first.tmdbId ? "确认中…" : `确认首选：${first.title}${first.year ? ` (${first.year})` : ""}`}</Button> : null}
+      {preview.candidates.map((candidate) => <div key={candidate.tmdbId} className="flex items-center justify-between gap-2"><span className="min-w-0 truncate">{candidate.title}{candidate.year ? ` (${candidate.year})` : ""}</span><Button size="sm" variant="outline" disabled={disabled || isBusy} onClick={() => void confirmCandidate(candidate, FULL_TMDB_FIELDS)}>{busy === "apply" && applyingId === candidate.tmdbId ? "确认中…" : "确认"}</Button></div>)}
+    </div> : null}
+    {notice ? <p className="text-xs text-emerald-600 dark:text-emerald-400">{notice}</p> : null}
   </div>;
 }
 

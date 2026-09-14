@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -8,12 +8,12 @@ use crate::error::LibraryError;
 use crate::model::{
     GroupResolution, LibraryIndex, LibraryScanEvent, LibraryScanIssue, LibraryStatus,
     LibraryWatchConfig, MediaGroup, MediaMetadataContext, MetadataMediaType, MetadataWriteResult,
-    PendingMediaGroup, ResolverPreview, ResolverRunConfig, SeriesReading, TmdbConfig,
-    TmdbGroupStatus, WikiEnrichmentCandidate, WikiEnrichmentPreview, WikiGroupStatus,
-    WikiMatchMethod, WikiWriteResult,
+    PendingMediaGroup, ResolverPreview, ResolverRunConfig, SeriesReading, TmdbCandidate,
+    TmdbConfig, TmdbFieldSelection, TmdbGroupStatus, WikiEnrichmentCandidate,
+    WikiEnrichmentPreview, WikiGroupStatus, WikiMatchMethod, WikiWriteResult,
 };
 use crate::paths::library_root_for_media_path;
-use crate::resolver::RemoteResolver;
+use crate::resolver::{self, RemoteResolver};
 use crate::{metadata, scanner, store};
 
 struct WatchWorker {
@@ -204,9 +204,7 @@ impl MediaLibraryService {
         }
         self.ensure_configured_root(&root)?;
         let path = PathBuf::from(&root);
-        let mut index = store::load(&path)?.ok_or_else(|| {
-            LibraryError::group_not_found(Some("library index is not available for root"))
-        })?;
+        let mut index = self.load_index_or_rescan(&path)?;
         let group = index
             .groups
             .iter_mut()
@@ -234,15 +232,33 @@ impl MediaLibraryService {
     ) -> Result<ResolverPreview, LibraryError> {
         self.ensure_configured_root(&root)?;
         let path = PathBuf::from(&root);
-        let index = store::load(&path)?.ok_or_else(|| {
-            LibraryError::group_not_found(Some("library index is not available for root"))
-        })?;
+        let index = self.load_index_or_rescan(&path)?;
         let group = index
             .groups
             .into_iter()
             .find(|group| group.key == group_key)
             .ok_or_else(|| LibraryError::group_not_found(Some(&group_key)))?;
         RemoteResolver::new(config)?.preview(&group, agent)
+    }
+
+    /// Manual TMDb search for one pending group. Records the typed title
+    /// (same write as saving it) so a later scan keeps it, then queries
+    /// TMDb directly — no model or Agent is spawned, and only the typed
+    /// title leaves the device.
+    pub fn search_tmdb_direct(
+        &self,
+        root: String,
+        group_key: String,
+        title: String,
+        year: Option<u16>,
+        privacy_acknowledged: bool,
+        tmdb: TmdbConfig,
+    ) -> Result<Vec<TmdbCandidate>, LibraryError> {
+        if !privacy_acknowledged {
+            return Err(LibraryError::privacy_consent_required());
+        }
+        self.set_manual_title(root, group_key, title.clone())?;
+        resolver::search_tmdb_direct(&tmdb, &title, year)
     }
 
     pub fn apply_tmdb_match(
@@ -252,6 +268,7 @@ impl MediaLibraryService {
         tmdb_id: u64,
         media_type: MetadataMediaType,
         tmdb: TmdbConfig,
+        fields: TmdbFieldSelection,
     ) -> Result<MetadataWriteResult, LibraryError> {
         self.ensure_configured_root(&root)?;
         let _guard = self
@@ -259,17 +276,16 @@ impl MediaLibraryService {
             .lock()
             .map_err(|_| LibraryError::internal(Some("library scan mutex poisoned")))?;
         let path = PathBuf::from(&root);
-        let mut index = store::load(&path)?.ok_or_else(|| {
-            LibraryError::group_not_found(Some("library index is not available for root"))
-        })?;
+        let mut index = self.load_index_or_rescan(&path)?;
         let group = index
             .groups
             .iter()
             .find(|group| group.key == group_key)
             .cloned()
             .ok_or_else(|| LibraryError::group_not_found(Some(&group_key)))?;
-        let result =
-            metadata::write_confirmed_metadata(&path, &index, &group, tmdb_id, media_type, &tmdb)?;
+        let result = metadata::write_confirmed_metadata(
+            &path, &index, &group, tmdb_id, media_type, &tmdb, &fields,
+        )?;
         let stored = index
             .groups
             .iter_mut()
@@ -408,9 +424,7 @@ impl MediaLibraryService {
     pub fn list_groups(&self, root: String) -> Result<Vec<MediaGroup>, LibraryError> {
         self.ensure_configured_root(&root)?;
         let path = PathBuf::from(&root);
-        let index = store::load(&path)?.ok_or_else(|| {
-            LibraryError::group_not_found(Some("library index is not available for root"))
-        })?;
+        let index = self.load_index_or_rescan(&path)?;
         Ok(index.groups)
     }
 
@@ -422,9 +436,7 @@ impl MediaLibraryService {
     ) -> Result<WikiEnrichmentPreview, LibraryError> {
         self.ensure_configured_root(&root)?;
         let path = PathBuf::from(&root);
-        let index = store::load(&path)?.ok_or_else(|| {
-            LibraryError::group_not_found(Some("library index is not available for root"))
-        })?;
+        let index = self.load_index_or_rescan(&path)?;
         let group = index
             .groups
             .iter()
@@ -450,9 +462,7 @@ impl MediaLibraryService {
     ) -> Result<WikiWriteResult, LibraryError> {
         self.ensure_configured_root(&root)?;
         let path = PathBuf::from(&root);
-        let index = store::load(&path)?.ok_or_else(|| {
-            LibraryError::group_not_found(Some("library index is not available for root"))
-        })?;
+        let index = self.load_index_or_rescan(&path)?;
         if !index.groups.iter().any(|group| group.key == group_key) {
             return Err(LibraryError::group_not_found(Some(&group_key)));
         }
@@ -472,9 +482,7 @@ impl MediaLibraryService {
     ) -> Result<WikiWriteResult, LibraryError> {
         self.ensure_configured_root(&root)?;
         let path = PathBuf::from(&root);
-        let index = store::load(&path)?.ok_or_else(|| {
-            LibraryError::group_not_found(Some("library index is not available for root"))
-        })?;
+        let index = self.load_index_or_rescan(&path)?;
         if !index.groups.iter().any(|group| group.key == group_key) {
             return Err(LibraryError::group_not_found(Some(&group_key)));
         }
@@ -484,9 +492,7 @@ impl MediaLibraryService {
     pub fn wikipedia_statuses(&self, root: String) -> Result<Vec<WikiGroupStatus>, LibraryError> {
         self.ensure_configured_root(&root)?;
         let path = PathBuf::from(&root);
-        let index = store::load(&path)?.ok_or_else(|| {
-            LibraryError::group_not_found(Some("library index is not available for root"))
-        })?;
+        let index = self.load_index_or_rescan(&path)?;
         metadata::wikipedia_statuses_for_root(&path, &index)
     }
 
@@ -498,9 +504,7 @@ impl MediaLibraryService {
     ) -> Result<MetadataWriteResult, LibraryError> {
         self.ensure_configured_root(&root)?;
         let path = PathBuf::from(&root);
-        let index = store::load(&path)?.ok_or_else(|| {
-            LibraryError::group_not_found(Some("library index is not available for root"))
-        })?;
+        let index = self.load_index_or_rescan(&path)?;
         let group = index
             .groups
             .iter()
@@ -513,10 +517,20 @@ impl MediaLibraryService {
     pub fn tmdb_statuses(&self, root: String) -> Result<Vec<TmdbGroupStatus>, LibraryError> {
         self.ensure_configured_root(&root)?;
         let path = PathBuf::from(&root);
-        let index = store::load(&path)?.ok_or_else(|| {
-            LibraryError::group_not_found(Some("library index is not available for root"))
-        })?;
+        let index = self.load_index_or_rescan(&path)?;
         metadata::tmdb_statuses_for_root(&path, &index, &index.groups)
+    }
+
+    /// Load the root index, rescanning once when the file is missing
+    /// (deleted by hand, or never scanned). A present index is returned
+    /// as-is: rescanning cannot bring back a genuinely renamed group, and
+    /// must not mask it with a fresh truth.
+    fn load_index_or_rescan(&self, root: &Path) -> Result<LibraryIndex, LibraryError> {
+        if let Some(index) = store::load(root)? {
+            return Ok(index);
+        }
+        let cancel = AtomicBool::new(false);
+        scan_and_store_with_progress(root, |_| {}, &cancel)
     }
 
     fn ensure_configured_root(&self, root: &str) -> Result<(), LibraryError> {
@@ -785,6 +799,47 @@ mod tests {
         resolved_index.groups[0].resolution = GroupResolution::Ignored;
         update_runtime(&service.runtime, &[resolved_index]).expect("update runtime");
         assert_eq!(service.status().expect("status").pending_groups, 0);
+
+        service.stop().expect("stop watcher");
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn set_manual_title_rescans_when_index_file_is_missing() {
+        let root = test_root();
+        fs::create_dir_all(&root).expect("create test root");
+        fs::write(root.join("Example.Show.S01E01.mkv"), b"video").expect("write media");
+
+        let service = MediaLibraryService::new();
+        service
+            .start(LibraryWatchConfig {
+                roots: vec![root.to_string_lossy().to_string()],
+                poll_interval_secs: 3600,
+            })
+            .expect("start watcher");
+        // Simulate a hand-deleted index: the next save rescans instead of
+        // erroring, so a missing cache file self-heals.
+        fs::remove_file(store::index_path(&root)).expect("delete index");
+        let titled = service
+            .set_manual_title(
+                root.to_string_lossy().to_string(),
+                "Example.Show".into(),
+                "示例剧集".into(),
+            )
+            .expect("manual title after rescan");
+        assert_eq!(titled.group.manual_title.as_deref(), Some("示例剧集"));
+        assert!(store::index_path(&root).is_file());
+
+        // A present index with an unknown key still errors: rescan must not
+        // mask a genuinely renamed group.
+        let err = service
+            .set_manual_title(
+                root.to_string_lossy().to_string(),
+                "No.Such.Group".into(),
+                "标题".into(),
+            )
+            .expect_err("unknown group");
+        assert_eq!(err.code, crate::error::LibraryErrorCode::GroupNotFound);
 
         service.stop().expect("stop watcher");
         let _ = fs::remove_dir_all(root);

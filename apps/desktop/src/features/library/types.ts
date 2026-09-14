@@ -196,6 +196,13 @@ export type ResolverSelection = {
   confidenceMilli: number;
 };
 
+/** Manual-match fetch scope. `basic` is mandatory backend-side. */
+export type TmdbFieldSelection = {
+  basic: boolean;
+  cast: boolean;
+  episodes: boolean;
+};
+
 export type ResolverPreview = {
   intent: ResolverIntent;
   candidates: TmdbCandidate[];

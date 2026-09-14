@@ -49,7 +49,12 @@ pub struct LibraryScanIssue {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(tag = "type", content = "payload", rename_all = "PascalCase")]
+#[serde(
+    tag = "type",
+    content = "payload",
+    rename_all = "PascalCase",
+    rename_all_fields = "camelCase"
+)]
 pub enum LibraryScanEvent {
     Started {
         root_count: usize,
@@ -188,6 +193,49 @@ pub struct TmdbCandidate {
 pub struct ResolverSelection {
     pub tmdb_id: u64,
     pub confidence_milli: u16,
+}
+
+/// User-chosen TMDb fetch scope for one manual match. `basic` (title /
+/// overview / year / genres) is always written: a match without it cannot
+/// render or refresh, so a request without it is repaired, never rejected.
+/// `cast` skips the credits request; `episodes` skips the per-episode detail
+/// requests (the expensive part for long series).
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct TmdbFieldSelection {
+    #[serde(default = "default_true")]
+    pub basic: bool,
+    #[serde(default = "default_true")]
+    pub cast: bool,
+    #[serde(default = "default_true")]
+    pub episodes: bool,
+}
+
+impl TmdbFieldSelection {
+    pub fn all() -> Self {
+        Self {
+            basic: true,
+            cast: true,
+            episodes: true,
+        }
+    }
+
+    pub fn normalized(self) -> Self {
+        Self {
+            basic: true,
+            ..self
+        }
+    }
+}
+
+impl Default for TmdbFieldSelection {
+    fn default() -> Self {
+        Self::all()
+    }
+}
+
+fn default_true() -> bool {
+    true
 }
 
 /// User-configured, OpenAI-compatible endpoint. `api_key_env` is a process
@@ -600,6 +648,27 @@ mod tests {
     use serde_json::json;
 
     use super::*;
+
+    #[test]
+    fn scan_events_serialize_camel_case_fields() {
+        // The green "scan finished" banner reads payload.indexedFiles; a
+        // snake_case regression renders blank numbers.
+        let text = serde_json::to_value(LibraryScanEvent::Finished {
+            indexed_files: 16,
+            pending_groups: 1,
+        })
+        .expect("json");
+        assert_eq!(text["type"], "Finished");
+        assert_eq!(text["payload"]["indexedFiles"], 16);
+        assert_eq!(text["payload"]["pendingGroups"], 1);
+        let text = serde_json::to_value(LibraryScanEvent::Progress {
+            roots_completed: 1,
+            root_count: 2,
+            indexed_files: 5,
+        })
+        .expect("json");
+        assert_eq!(text["payload"]["rootsCompleted"], 1);
+    }
 
     #[test]
     fn provider_config_accepts_frontend_camel_case_fields() {

@@ -514,6 +514,62 @@ fn chat_json(
     })
 }
 
+/// Manual TMDb lookup: the user typed the title themselves, so no model or
+/// Agent is involved and only that exact title leaves the device. Both TV
+/// and movie endpoints are queried; TV hits come first because pending
+/// series groups dominate the manual flow.
+pub fn search_tmdb_direct(
+    config: &TmdbConfig,
+    title: &str,
+    year: Option<u16>,
+) -> Result<Vec<TmdbCandidate>, LibraryError> {
+    let title = title.trim();
+    if title.is_empty() {
+        return Err(LibraryError::invalid_input("请填写要匹配的作品名称"));
+    }
+    // The input box is prefilled with the filename-derived group name
+    // ("Our Beloved Summer 2021"). TMDb matches far better with the year as
+    // a dedicated parameter than as a query token, so split it off here —
+    // the same cleaning the model performs on the automatic path.
+    let (title, trailing_year) = split_trailing_year(title);
+    let year = year.or(trailing_year);
+    let token = resolve_secret(
+        CredentialKind::TmdbAccessToken,
+        &config.access_token_env,
+        "TMDb token",
+    )?;
+    let mut candidates =
+        search_tmdb_endpoint(config, &token, "tv", MetadataMediaType::Tv, title, year)?;
+    let mut movies = search_tmdb_endpoint(
+        config,
+        &token,
+        "movie",
+        MetadataMediaType::Movie,
+        title,
+        year,
+    )?;
+    candidates.append(&mut movies);
+    candidates.truncate(12);
+    Ok(candidates)
+}
+
+/// Split a trailing release year ("Our Beloved Summer 2021") off a manually
+/// typed title. Years outside 1900..=2030 stay title text
+/// ("Blade Runner 2049"); a bare year stays whole ("2012").
+fn split_trailing_year(title: &str) -> (&str, Option<u16>) {
+    let text = title.trim();
+    let Some(space) = text.rfind([' ', '　']) else {
+        return (text, None);
+    };
+    let (head, tail) = text.split_at(space);
+    let head = head.trim_end();
+    let year: Option<u16> = tail.trim().parse().ok();
+    match (head.is_empty(), year) {
+        (false, Some(year)) if (1900..=2030).contains(&year) => (head, Some(year)),
+        _ => (text, None),
+    }
+}
+
 fn search_tmdb(
     config: &TmdbConfig,
     token: &str,
@@ -523,11 +579,31 @@ fn search_tmdb(
         MetadataMediaType::Movie => "movie",
         MetadataMediaType::Tv => "tv",
     };
+    let mut candidates = search_tmdb_endpoint(
+        config,
+        token,
+        kind,
+        intent.media_type,
+        &intent.title,
+        intent.year,
+    )?;
+    candidates.truncate(8);
+    Ok(candidates)
+}
+
+fn search_tmdb_endpoint(
+    config: &TmdbConfig,
+    token: &str,
+    kind: &str,
+    media_type: MetadataMediaType,
+    title: &str,
+    year: Option<u16>,
+) -> Result<Vec<TmdbCandidate>, LibraryError> {
     let mut query = form_urlencoded::Serializer::new(String::new());
-    query.append_pair("query", &intent.title);
+    query.append_pair("query", title);
     query.append_pair("include_adult", "false");
     query.append_pair("language", &config.language);
-    if let Some(year) = intent.year {
+    if let Some(year) = year {
         query.append_pair(
             if kind == "movie" {
                 "year"
@@ -554,7 +630,7 @@ fn search_tmdb(
         .and_then(Value::as_array)
         .ok_or_else(|| LibraryError::remote_request_failed(Some("TMDb results missing")))?
         .iter()
-        .filter_map(|item| tmdb_candidate(item, intent.media_type))
+        .filter_map(|item| tmdb_candidate(item, media_type))
         .take(8)
         .collect();
     Ok(candidates)
@@ -727,6 +803,26 @@ mod tests {
         })
         .expect_err("privacy gate");
         assert_eq!(error.message, "请先确认允许发送文件名用于智能匹配");
+    }
+
+    #[test]
+    fn trailing_year_splits_off_manual_titles() {
+        assert_eq!(
+            split_trailing_year("Our Beloved Summer 2021"),
+            ("Our Beloved Summer", Some(2021))
+        );
+        assert_eq!(
+            split_trailing_year("  那年夏天  2021  "),
+            ("那年夏天", Some(2021))
+        );
+        // A futuristic year is title text, not a release year.
+        assert_eq!(
+            split_trailing_year("Blade Runner 2049"),
+            ("Blade Runner 2049", None)
+        );
+        // A bare year stays whole so the film "2012" remains searchable.
+        assert_eq!(split_trailing_year("2012"), ("2012", None));
+        assert_eq!(split_trailing_year("Show S01"), ("Show S01", None));
     }
 
     #[test]

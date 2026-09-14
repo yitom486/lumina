@@ -164,6 +164,18 @@ impl LibraryError {
         )
     }
 
+    /// The OS refused the write. Usually the file is held open by another
+    /// program (editor, Explorer preview); otherwise read-only flag, folder
+    /// ACL, or elevation mismatch. Still a fixed business message — no
+    /// paths, codes, or tool names; those stay in `details`/logs.
+    pub fn storage_access_denied(details: Option<&str>) -> Self {
+        Self::new(
+            LibraryErrorCode::StorageFailed,
+            "媒体库文件无法写入，可能被其他程序占用，请关闭相关程序后重试",
+            details.map(str::to_string),
+        )
+    }
+
     pub fn not_running() -> Self {
         Self::new(LibraryErrorCode::NotRunning, "媒体目录守护服务未启动", None)
     }
@@ -213,5 +225,12 @@ mod tests {
                 .message
                 .contains("404")
         );
+        let denied = LibraryError::storage_access_denied(Some("replace index.json: (os error 5)"));
+        assert_eq!(
+            denied.message,
+            "媒体库文件无法写入，可能被其他程序占用，请关闭相关程序后重试"
+        );
+        assert!(!denied.message.contains("os error"));
+        assert!(!denied.message.contains("index.json"));
     }
 }

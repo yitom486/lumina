@@ -20,6 +20,8 @@ import type {
   PendingMediaGroup,
   ResolverPreview,
   ResolverRunConfig,
+  TmdbCandidate,
+  TmdbFieldSelection,
   SaveMetadataCredentialsInput,
   SeriesReading,
   TmdbConfig,
@@ -113,12 +115,24 @@ export function previewMediaMatch(input: {
   return invoke<ResolverPreview>("library_resolve_preview", input);
 }
 
+export function searchTmdbDirect(input: {
+  root: string;
+  groupKey: string;
+  title: string;
+  year?: number | null;
+  privacyAcknowledged: boolean;
+  tmdb: TmdbConfig;
+}): Promise<TmdbCandidate[]> {
+  return invoke<TmdbCandidate[]>("library_search_tmdb", input);
+}
+
 export function applyTmdbMediaMatch(input: {
   root: string;
   groupKey: string;
   tmdbId: number;
   mediaType: MetadataMediaType;
   tmdb: TmdbConfig;
+  fields?: TmdbFieldSelection;
 }): Promise<MetadataWriteResult> {
   return invoke<MetadataWriteResult>("library_apply_tmdb_match", input);
 }

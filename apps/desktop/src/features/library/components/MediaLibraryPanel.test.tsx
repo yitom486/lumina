@@ -60,11 +60,16 @@ beforeEach(() => {
       });
     if (cmd === "library_pending_groups") return Promise.resolve(PENDING);
     if (cmd === "library_groups") return Promise.resolve([]);
-    if (cmd === "library_credential_status") return Promise.resolve({});
+    if (cmd === "library_credential_status")
+      return Promise.resolve({ modelApiKeySaved: false, tmdbAccessTokenSaved: true });
     if (cmd === "library_resolve_preview")
       return new Promise((resolve) => {
         resolvePreview = resolve as (value: unknown) => void;
       });
+    if (cmd === "library_search_tmdb")
+      return Promise.resolve([
+        { tmdbId: 135897, mediaType: "tv", title: "那年，我们的夏天", year: 2021 },
+      ]);
     if (cmd === "library_apply_tmdb_match")
       return Promise.resolve({ root: "D:\\movie", groupKey: "g", tmdbId: 1, mediaType: "tv", writtenFiles: [] });
     return Promise.resolve(null);
@@ -72,6 +77,7 @@ beforeEach(() => {
   useLibrarySettingsStore.setState({
     resolverProvider: "acpAgent",
     agentModelId: "test-model",
+    privacyAcknowledged: true,
   });
   localStorage.clear();
 });
@@ -86,9 +92,27 @@ describe("MediaLibraryPanel pending groups", () => {
   it("prefills the title input with the known group title", async () => {
     renderPanel();
     const input = (await screen.findByPlaceholderText(
-      "匹配不到时输入作品名",
+      "输入作品名后查 TMDb",
     )) as HTMLInputElement;
     expect(input.value).toBe("Our Beloved Summer 2021");
+  });
+
+  it("searches TMDb manually and applies with chosen fields", async () => {
+    renderPanel();
+    fireEvent.click(await screen.findByText("查 TMDb"));
+    const confirm = await screen.findByText("确认拉取");
+    fireEvent.click(screen.getByLabelText("演员阵容"));
+    fireEvent.click(confirm);
+    await waitFor(() => {
+      const call = vi
+        .mocked(invoke)
+        .mock.calls.find(([cmd]) => cmd === "library_apply_tmdb_match");
+      expect(call?.[1]).toMatchObject({
+        tmdbId: 135897,
+        mediaType: "tv",
+        fields: { basic: true, cast: false, episodes: true },
+      });
+    });
   });
 
   it("shows busy state while recognizing and offers one-click confirm", async () => {

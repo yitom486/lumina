@@ -10,10 +10,19 @@ use crate::library::{
     CredentialValidationResult, LibraryError, LibraryIndex, LibraryScanEvent, LibraryStatus,
     LibraryWatchConfig, MediaMetadataContext, MetadataMediaType, MetadataWriteResult,
     ModelDiscoveryConfig, ModelDiscoveryResult, PendingMediaGroup, ResolverPreview,
-    ResolverRunConfig, TmdbConfig, TmdbGroupStatus, WikiEnrichmentCandidate, WikiEnrichmentPreview,
-    WikiGroupStatus, WikiMatchMethod, WikiWriteResult,
+    ResolverRunConfig, TmdbCandidate, TmdbConfig, TmdbFieldSelection, TmdbGroupStatus,
+    WikiEnrichmentCandidate, WikiEnrichmentPreview, WikiGroupStatus, WikiMatchMethod,
+    WikiWriteResult,
 };
 use crate::state::AppState;
+
+/// Command-boundary logging: a command error otherwise reaches only the UI
+/// as a fixed business message, leaving the log file without the cause
+/// (e.g. a manual-title save failing while periodic scans succeed).
+/// Details stay in the log; they never enter the user-facing message.
+fn log_command_error(context: &str, error: &LibraryError) {
+    tracing::warn!(context, code = ?error.code, details = ?error.details, "library command failed");
+}
 
 #[tauri::command]
 pub async fn library_watch_start(
@@ -51,9 +60,12 @@ pub async fn library_scan_now(
     state: State<'_, AppState>,
 ) -> Result<Vec<LibraryIndex>, LibraryError> {
     let service = state.library.clone();
-    tauri::async_runtime::spawn_blocking(move || service.scan_now())
+    let result = tauri::async_runtime::spawn_blocking(move || service.scan_now())
         .await
-        .map_err(|error| LibraryError::internal(Some(&format!("library scan join: {error}"))))?
+        .map_err(|error| LibraryError::internal(Some(&format!("library scan join: {error}"))))?;
+    result.inspect_err(|error| {
+        log_command_error("library_scan_now", error);
+    })
 }
 
 #[tauri::command]
@@ -74,9 +86,14 @@ pub async fn library_set_manual_title(
     title: String,
 ) -> Result<PendingMediaGroup, LibraryError> {
     let service = state.library.clone();
-    tauri::async_runtime::spawn_blocking(move || service.set_manual_title(root, group_key, title))
-        .await
-        .map_err(|error| LibraryError::internal(Some(&format!("library title join: {error}"))))?
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        service.set_manual_title(root, group_key, title)
+    })
+    .await
+    .map_err(|error| LibraryError::internal(Some(&format!("library title join: {error}"))))?;
+    result.inspect_err(|error| {
+        log_command_error("library_set_manual_title", error);
+    })
 }
 
 #[tauri::command]
@@ -95,6 +112,29 @@ pub async fn library_resolve_preview(
     .map_err(|error| LibraryError::internal(Some(&format!("library resolver join: {error}"))))?
 }
 
+/// Manual TMDb search: the user typed the title, so no model/Agent runs.
+/// The typed title is saved first (same as saving it offline).
+#[tauri::command]
+pub async fn library_search_tmdb(
+    state: State<'_, AppState>,
+    root: String,
+    group_key: String,
+    title: String,
+    year: Option<u16>,
+    privacy_acknowledged: bool,
+    tmdb: TmdbConfig,
+) -> Result<Vec<TmdbCandidate>, LibraryError> {
+    let service = state.library.clone();
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        service.search_tmdb_direct(root, group_key, title, year, privacy_acknowledged, tmdb)
+    })
+    .await
+    .map_err(|error| LibraryError::internal(Some(&format!("library search join: {error}"))))?;
+    result.inspect_err(|error| {
+        log_command_error("library_search_tmdb", error);
+    })
+}
+
 #[tauri::command]
 pub async fn library_apply_tmdb_match(
     state: State<'_, AppState>,
@@ -103,13 +143,24 @@ pub async fn library_apply_tmdb_match(
     tmdb_id: u64,
     media_type: MetadataMediaType,
     tmdb: TmdbConfig,
+    fields: Option<TmdbFieldSelection>,
 ) -> Result<MetadataWriteResult, LibraryError> {
     let service = state.library.clone();
-    tauri::async_runtime::spawn_blocking(move || {
-        service.apply_tmdb_match(root, group_key, tmdb_id, media_type, tmdb)
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        service.apply_tmdb_match(
+            root,
+            group_key,
+            tmdb_id,
+            media_type,
+            tmdb,
+            fields.unwrap_or_default(),
+        )
     })
     .await
-    .map_err(|error| LibraryError::internal(Some(&format!("library metadata join: {error}"))))?
+    .map_err(|error| LibraryError::internal(Some(&format!("library metadata join: {error}"))))?;
+    result.inspect_err(|error| {
+        log_command_error("library_apply_tmdb_match", error);
+    })
 }
 
 #[tauri::command]
