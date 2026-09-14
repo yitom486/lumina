@@ -9,6 +9,7 @@ import {
 } from "@lumina/ui/dropdown-menu";
 
 import { usePlayerStore } from "../store";
+import { dropdownSelectionItemClass } from "./menuItemStyles";
 
 const RATES = [0.5, 0.75, 1, 1.25, 1.5, 2];
 
@@ -38,7 +39,7 @@ export function RateSelect() {
             <DropdownMenuRadioItem
               key={value}
               value={String(value)}
-              className="pl-10"
+              className={dropdownSelectionItemClass}
             >
               {value}x
             </DropdownMenuRadioItem>

@@ -12,6 +12,7 @@ import {
 
 import { listPlaybackFormats } from "../api";
 import { usePlayerStore } from "../store";
+import { dropdownSelectionItemClass } from "./menuItemStyles";
 
 export function QualitySelect() {
   const sourceKind = usePlayerStore((s) => s.sourceKind);
@@ -66,7 +67,7 @@ export function QualitySelect() {
             <DropdownMenuRadioItem
               key={format.formatId}
               value={format.formatId}
-              className="pl-10"
+              className={dropdownSelectionItemClass}
             >
               {format.label}
             </DropdownMenuRadioItem>

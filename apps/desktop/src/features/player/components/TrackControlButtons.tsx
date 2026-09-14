@@ -21,6 +21,7 @@ import {
 import { cn } from "@lumina/ui/utils";
 
 import { audioTrackLabel, useTrackControls } from "../hooks/useTrackControls";
+import { dropdownSelectionItemClass } from "./menuItemStyles";
 
 type Props = {
   variant?: "sidebar" | "bar";
@@ -178,7 +179,7 @@ export function TrackControlButtons({
                     <DropdownMenuRadioItem
                       key={track.index}
                       value={String(track.index)}
-                      className="pl-10"
+                      className={dropdownSelectionItemClass}
                     >
                       {audioTrackLabel(track)}
                     </DropdownMenuRadioItem>
@@ -203,7 +204,7 @@ export function TrackControlButtons({
                 <DropdownMenuSeparator />
                 <DropdownMenuCheckboxItem
                   checked={subtitleVisible}
-                  className="pl-10"
+                  className={dropdownSelectionItemClass}
                   onCheckedChange={() => {
                     // 只关画面 overlay：选中轨（文稿/AI 数据源）原样保留。
                     setSubtitleVisible(!subtitleVisible);
@@ -220,7 +221,7 @@ export function TrackControlButtons({
                     <DropdownMenuRadioItem
                       key={choice.id}
                       value={choice.id}
-                      className="pl-10"
+                      className={dropdownSelectionItemClass}
                     >
                       {choice.label}
                     </DropdownMenuRadioItem>

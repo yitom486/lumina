@@ -101,7 +101,7 @@ describe("TrackControlButtons subtitle menu", () => {
     const track = screen.getByRole("menuitemradio", {
       name: "下载 · subdl · en",
     });
-    expect(track).toHaveClass("pl-10");
+    expect(track).toHaveClass("grid", "pl-2");
     await user.click(toggle);
     await waitFor(() => {
       expect(useTrackStore.getState().subtitleVisible).toBe(false);
@@ -163,6 +163,6 @@ describe("RateSelect menu", () => {
     expect(label.parentElement).toHaveClass("z-[100]");
     const oneRate = screen.getByRole("menuitemradio", { name: "1x" });
     expect(oneRate).toBeInTheDocument();
-    expect(oneRate).toHaveClass("pl-10");
+    expect(oneRate).toHaveClass("grid", "pl-2");
   });
 });
