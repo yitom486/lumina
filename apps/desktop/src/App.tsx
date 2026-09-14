@@ -58,7 +58,25 @@ function SidebarTabPanel({ tab }: { tab: SidebarTab }) {
     case "playlist":
       return <PlaylistPanel />;
     case "transcript":
-      return <TranscriptPanel />;
+      return (
+        <>
+          <PanelErrorBoundary
+            scope="sidebar:transcript-media"
+            panelLabel="媒体信息"
+            className="relative z-20 shrink-0"
+          >
+            <MediaInfoPanel />
+          </PanelErrorBoundary>
+          <PanelErrorBoundary
+            scope="sidebar:transcript-tracks"
+            panelLabel="音轨/字幕"
+            className="relative z-20 shrink-0"
+          >
+            <TrackMenus />
+          </PanelErrorBoundary>
+          <TranscriptPanel />
+        </>
+      );
     case "notes":
       return <NotesPanel />;
     case "chapters":
@@ -112,21 +130,7 @@ export default function App() {
 
             {!fullscreen && !chatOpen ? (
               <aside className="relative z-10 flex w-[380px] shrink-0 flex-col border-l border-border bg-card">
-                <PanelErrorBoundary
-                  scope="sidebar:media"
-                  panelLabel="媒体信息"
-                  className="shrink-0"
-                >
-                  <MediaInfoPanel />
-                </PanelErrorBoundary>
-                <PanelErrorBoundary
-                  scope="sidebar:tracks"
-                  panelLabel="音轨/字幕"
-                  className="shrink-0"
-                >
-                  <TrackMenus />
-                </PanelErrorBoundary>
-                <div className="flex shrink-0 flex-wrap gap-1 border-b border-border px-2 py-1.5">
+                <div className="relative z-30 flex shrink-0 flex-wrap gap-1 border-b border-border px-2 py-1.5">
                   {TABS.map((tab) => (
                     <button
                       key={tab.id}
