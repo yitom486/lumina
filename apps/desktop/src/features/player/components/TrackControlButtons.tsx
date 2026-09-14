@@ -8,6 +8,8 @@ import {
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuLabel,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@lumina/ui/dropdown-menu";
@@ -163,17 +165,25 @@ export function TrackControlButtons({
                 {audioTracks.length === 0 ? (
                   <DropdownMenuItem disabled>没有音轨</DropdownMenuItem>
                 ) : null}
-                {audioTracks.map((track) => (
-                  <DropdownMenuCheckboxItem
-                    key={track.index}
-                    checked={audioStreamIndex === track.index}
-                    onCheckedChange={() => {
-                      setAudioStreamIndex(track.index);
-                    }}
-                  >
-                    {audioTrackLabel(track)}
-                  </DropdownMenuCheckboxItem>
-                ))}
+                <DropdownMenuRadioGroup
+                  value={
+                    audioStreamIndex == null ? "" : String(audioStreamIndex)
+                  }
+                  onValueChange={(value) => {
+                    const index = Number(value);
+                    if (Number.isFinite(index)) setAudioStreamIndex(index);
+                  }}
+                >
+                  {audioTracks.map((track) => (
+                    <DropdownMenuRadioItem
+                      key={track.index}
+                      value={String(track.index)}
+                      className="pl-10"
+                    >
+                      {audioTrackLabel(track)}
+                    </DropdownMenuRadioItem>
+                  ))}
+                </DropdownMenuRadioGroup>
               </DropdownMenuContent>
             </DropdownMenu>
 
@@ -193,6 +203,7 @@ export function TrackControlButtons({
                 <DropdownMenuSeparator />
                 <DropdownMenuCheckboxItem
                   checked={subtitleVisible}
+                  className="pl-10"
                   onCheckedChange={() => {
                     // 只关画面 overlay：选中轨（文稿/AI 数据源）原样保留。
                     setSubtitleVisible(!subtitleVisible);
@@ -201,15 +212,20 @@ export function TrackControlButtons({
                   显示字幕
                 </DropdownMenuCheckboxItem>
                 <DropdownMenuSeparator />
-                {choices.map((choice) => (
-                  <DropdownMenuCheckboxItem
-                    key={choice.id}
-                    checked={subtitleChoiceId === choice.id}
-                    onCheckedChange={() => setSubtitleChoiceId(choice.id)}
-                  >
-                    {choice.label}
-                  </DropdownMenuCheckboxItem>
-                ))}
+                <DropdownMenuRadioGroup
+                  value={subtitleChoiceId ?? ""}
+                  onValueChange={setSubtitleChoiceId}
+                >
+                  {choices.map((choice) => (
+                    <DropdownMenuRadioItem
+                      key={choice.id}
+                      value={choice.id}
+                      className="pl-10"
+                    >
+                      {choice.label}
+                    </DropdownMenuRadioItem>
+                  ))}
+                </DropdownMenuRadioGroup>
               </DropdownMenuContent>
             </DropdownMenu>
           </>

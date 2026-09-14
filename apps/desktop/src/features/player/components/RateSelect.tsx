@@ -2,8 +2,9 @@ import { Button } from "@lumina/ui/button";
 import {
   DropdownMenu,
   DropdownMenuContent,
-  DropdownMenuCheckboxItem,
   DropdownMenuLabel,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
   DropdownMenuTrigger,
 } from "@lumina/ui/dropdown-menu";
 
@@ -29,15 +30,20 @@ export function RateSelect() {
       </DropdownMenuTrigger>
       <DropdownMenuContent align="start" side="bottom" className="z-[100]">
         <DropdownMenuLabel>播放速度</DropdownMenuLabel>
-        {RATES.map((value) => (
-          <DropdownMenuCheckboxItem
-            key={value}
-            checked={rate === value}
-            onCheckedChange={() => void setRate(value)}
-          >
-            {value}x
-          </DropdownMenuCheckboxItem>
-        ))}
+        <DropdownMenuRadioGroup
+          value={String(rate)}
+          onValueChange={(value) => void setRate(Number(value))}
+        >
+          {RATES.map((value) => (
+            <DropdownMenuRadioItem
+              key={value}
+              value={String(value)}
+              className="pl-10"
+            >
+              {value}x
+            </DropdownMenuRadioItem>
+          ))}
+        </DropdownMenuRadioGroup>
       </DropdownMenuContent>
     </DropdownMenu>
   );

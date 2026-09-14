@@ -3,9 +3,10 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@lumina/ui/button";
 import {
   DropdownMenu,
-  DropdownMenuCheckboxItem,
   DropdownMenuContent,
   DropdownMenuLabel,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
   DropdownMenuTrigger,
 } from "@lumina/ui/dropdown-menu";
 
@@ -50,22 +51,27 @@ export function QualitySelect() {
       </DropdownMenuTrigger>
       <DropdownMenuContent align="start" side="bottom" className="z-[100]">
         <DropdownMenuLabel>清晰度</DropdownMenuLabel>
-        {data.formats.map((format) => (
-          <DropdownMenuCheckboxItem
-            key={format.formatId}
-            checked={format.formatId === (playbackFormatId ?? data.currentFormatId)}
-            onCheckedChange={() => {
-              void (async () => {
-                await setPlaybackFormat(format.formatId);
-                await queryClient.invalidateQueries({
-                  queryKey: ["playback-formats"],
-                });
-              })();
-            }}
-          >
-            {format.label}
-          </DropdownMenuCheckboxItem>
-        ))}
+        <DropdownMenuRadioGroup
+          value={playbackFormatId ?? data.currentFormatId ?? ""}
+          onValueChange={(formatId) => {
+            void (async () => {
+              await setPlaybackFormat(formatId);
+              await queryClient.invalidateQueries({
+                queryKey: ["playback-formats"],
+              });
+            })();
+          }}
+        >
+          {data.formats.map((format) => (
+            <DropdownMenuRadioItem
+              key={format.formatId}
+              value={format.formatId}
+              className="pl-10"
+            >
+              {format.label}
+            </DropdownMenuRadioItem>
+          ))}
+        </DropdownMenuRadioGroup>
       </DropdownMenuContent>
     </DropdownMenu>
   );
