@@ -40,7 +40,7 @@ export function FullscreenToggleButton() {
         <Button
           type="button"
           variant="ghost"
-          size="icon-sm"
+          size="icon" className="size-8"
           onClick={() => void toggleFullscreen()}
           aria-label={fullscreen ? "退出全屏" : "全屏"}
         >
@@ -72,7 +72,7 @@ function LogDirButton() {
         <Button
           type="button"
           variant="ghost"
-          size="icon-sm"
+          size="icon" className="size-8"
           onClick={onClick}
           aria-label="打开日志目录"
         >
@@ -115,7 +115,7 @@ export function AboutButton() {
             <Button
               type="button"
               variant="ghost"
-              size="icon-sm"
+              size="icon" className="size-8"
               aria-label="关于 Lumina"
             >
               <Info className="size-4" />
@@ -124,7 +124,8 @@ export function AboutButton() {
         </TooltipTrigger>
         <TooltipContent>关于 Lumina</TooltipContent>
       </Tooltip>
-      <AlertDialogContent>
+      {/* vendor 还原后默认 bg-background/max-w-lg；转出层保留原深色窄版。 */}
+      <AlertDialogContent className="border-border bg-card max-w-md">
         <AlertDialogHeader>
           <AlertDialogTitle>Lumina · AI Video Reader</AlertDialogTitle>
           <AlertDialogDescription>版本 {version}</AlertDialogDescription>

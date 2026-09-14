@@ -11,6 +11,11 @@ export type SetSubtitleArgs = {
   source: "Embedded" | "Sidecar" | "None";
   streamIndex?: number | null;
   externalPath?: string | null;
+  /** Opaque downloaded-track id (`cache:<provider>:<lang>`); resolved to a
+   * real file inside the backend so the cache path never crosses IPC. */
+  choiceId?: string | null;
+  /** Local media path the cached track belongs to (required with choiceId). */
+  mediaPath?: string | null;
 };
 
 export async function applySubtitleChoice(
@@ -30,6 +35,18 @@ export async function applySubtitleChoice(
     await setSubtitle({
       source: "Embedded",
       streamIndex: choice.streamIndex,
+    });
+    return;
+  }
+  if (choice.id.startsWith("cache:")) {
+    // Downloaded tracks have no file beside the media (process cache):
+    // hand the opaque id to the backend instead of a null externalPath
+    // (which the player rejects and silently shows nothing).
+    await setSubtitle({
+      source: "Sidecar",
+      externalPath: null,
+      choiceId: choice.id,
+      mediaPath: mediaPath ?? null,
     });
     return;
   }

@@ -12,6 +12,7 @@ import { useFollowStore } from "@lumina/transcript-ui";
 
 vi.mock("@tauri-apps/api/core", () => ({
   invoke: vi.fn(),
+  Channel: vi.fn().mockImplementation(() => ({ onmessage: null })),
 }));
 
 import { invoke } from "@tauri-apps/api/core";
@@ -60,6 +61,8 @@ beforeEach(() => {
         },
       ]);
     if (cmd === "subtitle_load_choice")
+      return Promise.resolve({ choiceId: "s1", cues: CUES });
+    if (cmd === "subtitle_proofread_track")
       return Promise.resolve({ choiceId: "s1", cues: CUES });
     if (cmd === "asr_status")
       return Promise.resolve({
@@ -380,6 +383,13 @@ describe("TranscriptPanel downloaded subtitles", () => {
     vi.mocked(invoke).mockImplementation((cmd: string) => {
       if (cmd === "subtitle_provider_status")
         return Promise.resolve([{ id: "subdl", needsKey: true, hasKey: true }]);
+      if (cmd === "library_parse_filename")
+        return Promise.resolve({
+          key: "Our.Beloved.Summer.2021",
+          season: null,
+          episode: 1,
+          year: 2021,
+        });
       if (cmd === "subtitle_validate_provider_key")
         return Promise.resolve({ verified: true, message: "SubDL Key 有效" });
       if (cmd === "subtitle_search_online") return Promise.resolve(CANDIDATES);
@@ -394,6 +404,8 @@ describe("TranscriptPanel downloaded subtitles", () => {
         });
       if (cmd === "subtitle_list_choices") return Promise.resolve([DOWNLOADED]);
       if (cmd === "subtitle_load_choice")
+        return Promise.resolve({ choiceId: "cache:subdl:en", cues: REMOTE_CUES });
+      if (cmd === "subtitle_proofread_track")
         return Promise.resolve({ choiceId: "cache:subdl:en", cues: REMOTE_CUES });
       if (cmd === "asr_status")
         return Promise.resolve({
@@ -501,6 +513,145 @@ describe("TranscriptPanel downloaded subtitles", () => {
     expect(invokeCommands()).not.toContain("subtitle_set_provider_key");
   });
 
+  it("collapses and expands the whole transcript list", async () => {
+    mockDownloadFlow();
+    usePlayerStore.setState({
+      currentFile: "C:\\v\\a.mp4",
+      status: "Paused",
+      currentTimeMs: 500,
+    });
+    useTrackStore.setState({ subtitleChoiceId: "cache:subdl:en" });
+    renderPanel();
+    await waitFor(() => {
+      expect(screen.getByText("downloaded two")).toBeInTheDocument();
+    });
+    fireEvent.click(screen.getByText("收起文稿"));
+    await waitFor(() => {
+      expect(screen.queryByText("downloaded two")).not.toBeInTheDocument();
+    });
+    expect(screen.getByText(/点击展开/)).toBeInTheDocument();
+    fireEvent.click(screen.getByText(/点击展开/));
+    await waitFor(() => {
+      expect(screen.getByText("downloaded two")).toBeInTheDocument();
+    });
+  });
+
+  it("proofreads with sound-tag stripping and applies the result", async () => {
+    mockDownloadFlow();
+    usePlayerStore.setState({
+      currentFile: "C:\\v\\a.mp4",
+      status: "Paused",
+      currentTimeMs: 500,
+    });
+    useTrackStore.setState({ subtitleChoiceId: "cache:subdl:en" });
+    renderPanel();
+    await waitFor(() => {
+      expect(screen.getByText("校对字幕")).toBeInTheDocument();
+      expect(
+        screen.getByText("校对字幕").closest("button")?.hasAttribute("disabled"),
+      ).toBe(false);
+    });
+    fireEvent.click(screen.getByText("校对字幕"));
+    await waitFor(() => {
+      expect(screen.getByText(/已写入/)).toBeInTheDocument();
+    });
+    const proofreadCall = vi
+      .mocked(invoke)
+      .mock.calls.find(([cmd]) => cmd === "subtitle_proofread_track");
+    expect(proofreadCall?.[1]).toMatchObject({
+      choiceId: "cache:subdl:en",
+      stripSoundTags: true,
+    });
+  });
+
+  it("prefills title and episode from the library naming rules", async () => {
+    mockDownloadFlow();
+    usePlayerStore.setState({
+      currentFile: "C:\\v\\Our.Beloved.Summer.2021.EP01.mp4",
+      status: "Paused",
+      currentTimeMs: 500,
+    });
+    useTrackStore.setState({ subtitleChoiceId: null });
+    renderPanel();
+    await waitFor(() => {
+      expect(
+        screen.getByLabelText("Title to search subtitles for"),
+      ).toHaveValue("Our Beloved Summer 2021");
+    });
+    expect(screen.getByLabelText("Episode number")).toHaveValue("1");
+    expect(screen.getByLabelText("Season number")).toHaveValue("");
+  });
+
+  it("unsticks a translation whose backend died without settling", async () => {
+    // 后端进程被杀时 invoke 永不结算：看门狗必须在静默超限后报错并解锁按钮。
+    vi.mocked(invoke).mockImplementation((cmd: string) => {
+      if (cmd === "subtitle_list_choices")
+        return Promise.resolve([
+          {
+            id: "s1",
+            source: "Embedded",
+            label: "英文",
+            supported: true,
+            streamIndex: 0,
+          },
+        ]);
+      if (cmd === "subtitle_load_choice")
+        return Promise.resolve({ choiceId: "s1", cues: CUES });
+      if (cmd === "subtitle_translate_track")
+        return new Promise(() => {});
+      if (cmd === "asr_status")
+        return Promise.resolve({
+          available: false,
+          installSupported: false,
+          models: [],
+          catalog: [],
+        });
+      if (cmd === "media_inspect")
+        return Promise.resolve({ path: "C:\\v\\a.mp4", streams: [], chapters: [] });
+      if (cmd === "library_agent_models_discover") return Promise.resolve(null);
+      return Promise.resolve(null);
+    });
+    usePlayerStore.setState({
+      currentFile: "C:\\v\\a.mp4",
+      status: "Paused",
+      currentTimeMs: 500,
+    });
+    useTrackStore.setState({ subtitleChoiceId: "s1" });
+    // 看门狗 interval 必须在 fake 时钟下创建，否则 advance 够不到它。
+    vi.useFakeTimers();
+    try {
+      renderPanel();
+      let enabled = false;
+      for (let i = 0; i < 50 && !enabled; i++) {
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(100);
+        });
+        enabled =
+          screen
+            .getByText("翻译字幕")
+            .closest("button")
+            ?.hasAttribute("disabled") === false;
+      }
+      expect(enabled).toBe(true);
+      fireEvent.click(screen.getByText("翻译字幕"));
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(0);
+      });
+      expect(screen.getByText("翻译中…")).toBeInTheDocument();
+      const t0 = Date.now();
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(10 * 60 * 1000 + 31_000);
+      });
+      expect(Date.now() - t0).toBeGreaterThan(10 * 60 * 1000);
+      expect(screen.getByText(/长时间没有进展/)).toBeInTheDocument();
+      expect(
+        screen.getByText("翻译字幕").closest("button")?.hasAttribute("disabled"),
+      ).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("downloads on explicit click and applies to the player surface", async () => {
     mockDownloadFlow();
     usePlayerStore.setState({
@@ -525,5 +676,14 @@ describe("TranscriptPanel downloaded subtitles", () => {
     expect(commands).toContain("subtitle_download_candidate");
     expect(commands).toContain("player_set_subtitle");
     expect(commands).not.toContain("player_seek");
+    // 下载轨走后端解析：必须带 choiceId + mediaPath，不能是空路径。
+    const surfaceCall = vi
+      .mocked(invoke)
+      .mock.calls.find(([cmd]) => cmd === "player_set_subtitle");
+    expect(surfaceCall?.[1]).toMatchObject({
+      source: "Sidecar",
+      choiceId: "cache:subdl:en",
+      mediaPath: "C:\\v\\a.mp4",
+    });
   });
 });

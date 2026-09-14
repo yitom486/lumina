@@ -88,7 +88,8 @@ export default function App() {
   const activeTab = TABS.find((tab) => tab.id === sidebarTab);
 
   return (
-    <TooltipProvider>
+    <TooltipProvider delayDuration={400}>
+      {/* delayDuration 是转出配置：vendor TooltipProvider 故意不定默认值。 */}
       <AppShell>
         <div className="relative flex min-h-0 flex-1 flex-col overflow-hidden">
           <div className="flex min-h-0 flex-1 overflow-hidden">

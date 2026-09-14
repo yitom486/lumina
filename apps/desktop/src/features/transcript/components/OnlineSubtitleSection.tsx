@@ -7,6 +7,7 @@ import { LANG_PRESETS } from "../../../../../../packages/transcript-ui/src/cueSe
 import {
   downloadSubtitleCandidate,
   getSubtitleProviderStatus,
+  parseMediaFilename,
   searchOnlineSubtitles,
   setSubtitleProviderKey,
   validateSubtitleProviderKey,
@@ -90,13 +91,42 @@ export function OnlineSubtitleSection({
   const [targetLang, setTargetLang] = useState("zh");
   const [candidates, setCandidates] = useState<SubtitleCandidate[] | null>(null);
   const [searchBusy, setSearchBusy] = useState(false);
-  const [downloadBusy, setDownloadBusy] = useState(false);
+  const [downloadingKey, setDownloadingKey] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  const candidateKey = (candidate: SubtitleCandidate, index: number) =>
+    `${candidate.provider}-${candidate.language}-${candidate.releaseName}-${index}`;
 
   useEffect(() => {
     setCandidates(null);
     setError(null);
-    setTitle(fileStem(mediaPath));
+    const stem = fileStem(mediaPath);
+    let live = true;
+    // Prefill title/season/episode with the library naming rules (same
+    // parser the scanner uses); fall back to the raw stem on any failure.
+    parseMediaFilename(stem).then(
+      (parsed) => {
+        if (!live) return;
+        if (!parsed || typeof parsed.key !== "string") {
+          setTitle(stem);
+          setSeason("");
+          setEpisode("");
+          return;
+        }
+        setTitle(parsed.key.replace(/\./g, " "));
+        setSeason(parsed.season?.toString() ?? "");
+        setEpisode(parsed.episode?.toString() ?? "");
+      },
+      () => {
+        if (!live) return;
+        setTitle(stem);
+        setSeason("");
+        setEpisode("");
+      },
+    );
+    return () => {
+      live = false;
+    };
   }, [mediaPath]);
 
   const statusQuery = useQuery({
@@ -155,7 +185,7 @@ export function OnlineSubtitleSection({
   }
 
   async function handleSearch() {
-    if (searchBusy || downloadBusy) return;
+    if (searchBusy || downloadingKey !== null) return;
     setSearchBusy(true);
     setError(null);
     try {
@@ -183,12 +213,18 @@ export function OnlineSubtitleSection({
     }
   }
 
-  async function handleDownload(candidate: SubtitleCandidate) {
-    if (searchBusy || downloadBusy) return;
-    setDownloadBusy(true);
+  async function handleDownload(candidate: SubtitleCandidate, index: number) {
+    if (searchBusy || downloadingKey) return;
+    const key = candidateKey(candidate, index);
+    setDownloadingKey(key);
     setError(null);
     try {
       const result = await downloadSubtitleCandidate(mediaPath, candidate);
+      setCandidates((prev) =>
+        prev?.map((item, i) =>
+          candidateKey(item, i) === key ? { ...item, cached: true } : item,
+        ) ?? null,
+      );
       onDownloaded(result.choiceId);
     } catch (err) {
       setError(
@@ -197,11 +233,11 @@ export function OnlineSubtitleSection({
           : String(err),
       );
     } finally {
-      setDownloadBusy(false);
+      setDownloadingKey(null);
     }
   }
 
-  const busy = disabled || searchBusy || downloadBusy || keyBusy || checkBusy;
+  const busy = disabled || searchBusy || downloadingKey !== null || keyBusy || checkBusy;
 
   return (
     <div className="flex flex-col gap-2 rounded-md border border-border/70 bg-muted/20 p-2">
@@ -315,9 +351,12 @@ export function OnlineSubtitleSection({
 
       {candidates && candidates.length > 0 ? (
         <ul className="flex max-h-44 flex-col gap-1 overflow-auto">
-          {candidates.map((candidate, index) => (
+          {candidates.map((candidate, index) => {
+            const key = candidateKey(candidate, index);
+            const rowBusy = downloadingKey === key;
+            return (
             <li
-              key={`${candidate.provider}-${candidate.language}-${candidate.releaseName}-${index}`}
+              key={key}
               className="flex items-center gap-2 rounded-md border border-border/50 px-2 py-1 text-xs"
             >
               <span className="shrink-0 rounded bg-secondary px-1.5 py-0.5 font-medium">
@@ -336,12 +375,13 @@ export function OnlineSubtitleSection({
                 size="sm"
                 className="h-6 shrink-0 px-2 text-[11px]"
                 disabled={busy}
-                onClick={() => void handleDownload(candidate)}
+                onClick={() => void handleDownload(candidate, index)}
               >
-                {downloadBusy ? "下载中…" : candidate.cached ? "已下载" : "下载"}
+                {rowBusy ? "下载中…" : candidate.cached ? "已下载" : "下载"}
               </Button>
             </li>
-          ))}
+            );
+          })}
         </ul>
       ) : null}
     </div>

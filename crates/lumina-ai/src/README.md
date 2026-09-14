@@ -74,12 +74,13 @@ let result = translate_and_export_track(
     "D:/Movies/interstellar.mkv",
     "embedded:0", // 源字幕轨 ID
     "zh-Hans",    // 目标语言
+    None,         // 翻译上下文（简介＋人名表，可空）
     "default",    // Profile ID
     Some("gpt-4o"),
     None,
     &invoker,
-    |progress| {
-        println!("当前进度: {}", progress);
+    |update| {
+        println!("当前进度: {}", update.message);
     },
 );
 ```
@@ -93,7 +94,7 @@ let result = translate_and_export_track(
 | 源码文件 | 模块名称 | 核心职责与导出项 |
 | :--- | :--- | :--- |
 | [`lib.rs`](file:///d:/project/rust/tauri/lumina/crates/lumina-ai/src/lib.rs) | 根模块 | 重新导出公开接口；定义隔离调用原则。 |
-| [`translate.rs`](file:///d:/project/rust/tauri/lumina/crates/lumina-ai/src/translate.rs) | `translate` | • `translate_and_export_track`: 完整翻译端到端流水线（加载源字幕、批次切分、调用 AI、输出 `.srt`）。<br>• `translate_cues`: 纯内存字幕队列翻译。<br>• 批处理 Prompt 构造与容错 JSON 反序列化解析。 |
+| [`translate.rs`](file:///d:/project/rust/tauri/lumina/crates/lumina-ai/src/translate.rs) | `translate` | • `translate_and_export_track`: 完整翻译端到端流水线（加载源字幕、批次切分、调用 AI、输出 `.srt`）。<br>• `translate_cues`: 纯内存字幕队列翻译（4 并发、序号对齐、人名 post-check＋单次重试）。<br>• `proofread_cues`: 同语言校对（不翻译不改轴）。<br>• 批处理 Prompt 构造与容错 JSON 反序列化解析。 |
 
 ---
 

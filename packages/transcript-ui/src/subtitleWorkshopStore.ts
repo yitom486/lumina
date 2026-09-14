@@ -7,12 +7,21 @@ export type SubtitleWorkshopSettings = {
   profileId: string;
   modelId: string;
   reasoningEffort: string;
+  /** Record model-reported person names into glossary.json (default on). */
+  backfillGlossary: boolean;
+  /** Queue every new glossary name for review instead of auto-admitting. */
+  glossaryReviewMode: boolean;
+  /** Strip `[...]` sound tags deterministically before AI proofreading. */
+  stripSoundTags: boolean;
 };
 
 const DEFAULT: SubtitleWorkshopSettings = {
   profileId: "codex",
   modelId: "",
   reasoningEffort: "",
+  backfillGlossary: true,
+  glossaryReviewMode: false,
+  stripSoundTags: true,
 };
 
 type SubtitleWorkshopStore = SubtitleWorkshopSettings & {
@@ -31,6 +40,9 @@ export const useSubtitleWorkshopStore = create<SubtitleWorkshopStore>()(
         profileId: state.profileId,
         modelId: state.modelId,
         reasoningEffort: state.reasoningEffort,
+        backfillGlossary: state.backfillGlossary,
+        glossaryReviewMode: state.glossaryReviewMode,
+        stripSoundTags: state.stripSoundTags,
       }),
       merge: (persisted, current) => {
         const saved = (persisted ?? {}) as Partial<SubtitleWorkshopSettings>;
@@ -42,6 +54,16 @@ export const useSubtitleWorkshopStore = create<SubtitleWorkshopStore>()(
             saved.reasoningEffort ??
             current.reasoningEffort ??
             DEFAULT.reasoningEffort,
+          backfillGlossary:
+            saved.backfillGlossary ??
+            current.backfillGlossary ??
+            DEFAULT.backfillGlossary,
+          glossaryReviewMode:
+            saved.glossaryReviewMode ??
+            current.glossaryReviewMode ??
+            DEFAULT.glossaryReviewMode,
+          stripSoundTags:
+            saved.stripSoundTags ?? current.stripSoundTags ?? DEFAULT.stripSoundTags,
         };
       },
     },

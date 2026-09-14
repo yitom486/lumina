@@ -45,7 +45,7 @@ export function TransportControls() {
           <Button
             type="button"
             variant="secondary"
-            size="icon-sm"
+            size="icon" className="size-8"
             onClick={() => void openFile()}
             disabled={busy}
             aria-label="打开文件"
@@ -63,7 +63,7 @@ export function TransportControls() {
           <Button
             type="button"
             variant="ghost"
-            size="icon-sm"
+            size="icon" className="size-8"
             onClick={() => void playPrev()}
             disabled={!canPrev}
             aria-label="上一个"
@@ -79,7 +79,7 @@ export function TransportControls() {
           <Button
             type="button"
             variant="default"
-            size="icon-sm"
+            size="icon" className="size-8"
             onClick={() => void togglePlayPause()}
             disabled={!canToggle}
             aria-label={playing ? "暂停" : "播放"}
@@ -99,7 +99,7 @@ export function TransportControls() {
           <Button
             type="button"
             variant="ghost"
-            size="icon-sm"
+            size="icon" className="size-8"
             onClick={() => void playNext()}
             disabled={!canNext}
             aria-label="下一个"
@@ -115,7 +115,7 @@ export function TransportControls() {
           <Button
             type="button"
             variant="ghost"
-            size="icon-sm"
+            size="icon" className="size-8"
             onClick={() => void stop()}
             disabled={busy || status === "Idle"}
             aria-label="停止"

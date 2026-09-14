@@ -19,7 +19,7 @@ use lumina_media::frame_capture::{
     DEFAULT_FRAME_BUDGET, DEFAULT_SCENE_THRESHOLD,
 };
 use lumina_notes::proposal::{build_proposal, save_latest_proposal};
-use lumina_subtitle::model::Cue;
+use lumina_subtitle::model::{Cue, Transcript};
 use lumina_subtitle::write;
 use lumina_subtitle::SubtitleService;
 
@@ -279,8 +279,7 @@ fn subtitle_cues(snapshot: &LuminaMcpSnapshot, args: &Value) -> Result<Value, St
         return paged_cues_result(&choice_id, &transcript.cues, offset, limit);
     }
     let media_path = PathBuf::from(&anchor.media_path);
-    let transcript = SubtitleService::load_choice(&media_path, &choice_id)
-        .map_err(|error| error.message.clone())?;
+    let transcript = load_tool_transcript(&media_path, &choice_id)?;
     paged_cues_result(&choice_id, &transcript.cues, offset, limit)
 }
 
@@ -452,6 +451,20 @@ fn parse_write_cues(args: &Value) -> Result<Vec<Cue>, String> {
     Ok(cues)
 }
 
+/// Load a transcript for MCP tools, mirroring the UI command dispatcher
+/// (`subtitle_load_choice`): downloaded `cache:<provider>:<lang>` choices live
+/// in the process cache, not beside the media, so they must route to the
+/// download cache instead of `SubtitleService` (which only knows
+/// `embedded:` / `sidecar:` and would report "choice not found").
+fn load_tool_transcript(media_path: &Path, choice_id: &str) -> Result<Transcript, String> {
+    if lumina_ytdl::provider::parse_cache_choice(choice_id).is_some() {
+        lumina_ytdl::provider::load_cached_choice(&media_path.to_string_lossy(), choice_id)
+            .map_err(|error| error.message.clone())
+    } else {
+        SubtitleService::load_choice(media_path, choice_id).map_err(|error| error.message.clone())
+    }
+}
+
 fn fetch_transcript_lines(
     media_path: &Path,
     choice_id: &str,
@@ -459,16 +472,13 @@ fn fetch_transcript_lines(
     before_sec: u32,
     after_sec: u32,
 ) -> Result<Vec<TranscriptLine>, String> {
-    let cues = SubtitleService::excerpt_in_range(
-        media_path,
-        choice_id,
-        center_ms,
-        u64::from(before_sec) * 1000,
-        u64::from(after_sec) * 1000,
-    )
-    .map_err(|error| error.message.clone())?;
-    Ok(cues
+    let transcript = load_tool_transcript(media_path, choice_id)?;
+    let start_ms = center_ms.saturating_sub(u64::from(before_sec) * 1000);
+    let end_ms = center_ms.saturating_add(u64::from(after_sec) * 1000);
+    Ok(transcript
+        .cues
         .into_iter()
+        .filter(|cue| cue.end_ms > start_ms && cue.start_ms < end_ms)
         .map(|cue| TranscriptLine {
             start_ms: cue.start_ms,
             text: cue.text,
@@ -1274,6 +1284,72 @@ mod tests {
         assert!(
             err.contains("尚未缓存") || err.contains("未选择"),
             "stable error: {err}"
+        );
+    }
+
+    #[test]
+    fn downloaded_cache_transcript_window_reads_process_cache() {
+        // Regression: the Transcript UI auto-selects a downloaded track
+        // (`cache:<provider>:<lang>`, living in the process cache, not beside
+        // the media), and the AI context carries that same id. The tool must
+        // resolve it like `subtitle_load_choice` does — previously it only
+        // knew `embedded:` / `sidecar:` and answered "无法提取字幕".
+        // The download cache root follows APPDATA on Windows; redirect it so
+        // the test never touches the user's real subtitle cache.
+        let dir =
+            std::env::temp_dir().join(format!("lumina-mcp-cache-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let previous = std::env::var_os("APPDATA");
+        std::env::set_var("APPDATA", &dir);
+        let outcome = (|| {
+            let candidate = lumina_ytdl::provider::SubtitleCandidate {
+                provider: "subdl".into(),
+                language: "en".into(),
+                release_name: "demo".into(),
+                size_bytes: 60,
+                format: "srt".into(),
+                season: None,
+                episode: None,
+                download_url: "https://example.invalid/sub.srt".into(),
+                cached: true,
+            };
+            let media = "D:\\movie\\demo-cache-test.mp4";
+            let stored = lumina_ytdl::provider::store_download(
+                media,
+                &candidate,
+                b"1\n00:00:01,000 --> 00:00:02,000\nHello downloaded\n",
+            )
+            .map_err(|error| error.message.clone())?;
+            assert_eq!(stored.choice_id, "cache:subdl:en");
+            let snapshot = LuminaMcpSnapshot {
+                anchor: Some(PromptAnchor {
+                    media_path: media.into(),
+                    library_root: None,
+                    group_key: None,
+                    season: None,
+                    episode: None,
+                    position_ms: 1_500,
+                    sent_at_ms: 1,
+                    subtitle_choice_id: Some(stored.choice_id.clone()),
+                }),
+                ..LuminaMcpSnapshot::empty()
+            };
+            transcript_window(&snapshot, &json!({}))
+        })();
+        match previous {
+            Some(value) => std::env::set_var("APPDATA", value),
+            None => std::env::remove_var("APPDATA"),
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+        let payload = tool_text_payload(&outcome.expect("cached window"));
+        let lines = payload
+            .get("lines")
+            .and_then(Value::as_array)
+            .expect("lines");
+        assert_eq!(lines.len(), 1);
+        assert_eq!(
+            lines[0].get("text").and_then(Value::as_str),
+            Some("Hello downloaded")
         );
     }
 

@@ -71,6 +71,17 @@ export function validateSubtitleProviderKey(
   return invoke("subtitle_validate_provider_key", { provider, key });
 }
 
+export type ParsedMediaName = {
+  key: string;
+  season?: number | null;
+  episode?: number | null;
+  year?: number | null;
+};
+
+export function parseMediaFilename(fileName: string): Promise<ParsedMediaName> {
+  return invoke("library_parse_filename", { fileName });
+}
+
 export function searchOnlineSubtitles(
   path: string,
   query: SubtitleQuery,
@@ -87,9 +98,38 @@ export function downloadSubtitleCandidate(
 }
 
 export type SubtitleTranslateEvent =
-  | { type: "Progress"; payload: { message: string } }
+  | {
+      type: "Progress";
+      payload: { message: string; done: number | null; total: number | null };
+    }
   | { type: "Finished"; payload: { transcript: Transcript } }
   | { type: "Failed"; payload: { code: string; message: string } };
+
+export async function proofreadSubtitleTrack(
+  options: {
+    path: string;
+    choiceId: string;
+    stripSoundTags?: boolean;
+    profileId: string;
+    profiles: AgentProfilesHint;
+    modelId?: string | null;
+    reasoningEffort?: string | null;
+    onEvent?: (event: SubtitleTranslateEvent) => void;
+  },
+): Promise<Transcript> {
+  const channel = new Channel<SubtitleTranslateEvent>();
+  if (options.onEvent) channel.onmessage = options.onEvent;
+  return invoke("subtitle_proofread_track", {
+    path: options.path,
+    choiceId: options.choiceId,
+    stripSoundTags: options.stripSoundTags ?? true,
+    profileId: options.profileId,
+    profiles: options.profiles,
+    modelId: options.modelId ?? null,
+    reasoningEffort: options.reasoningEffort ?? null,
+    onEvent: channel,
+  });
+}
 
 export async function translateSubtitleTrack(
   options: {
@@ -100,6 +140,8 @@ export async function translateSubtitleTrack(
     profiles: AgentProfilesHint;
     modelId?: string | null;
     reasoningEffort?: string | null;
+    glossaryBackfill?: boolean;
+    glossaryReviewMode?: boolean;
     onEvent?: (event: SubtitleTranslateEvent) => void;
   },
 ): Promise<Transcript> {
@@ -115,6 +157,8 @@ export async function translateSubtitleTrack(
     profiles: options.profiles,
     modelId: options.modelId ?? null,
     reasoningEffort: options.reasoningEffort ?? null,
+    glossaryBackfill: options.glossaryBackfill ?? true,
+    glossaryReviewMode: options.glossaryReviewMode ?? false,
     onEvent: channel,
   });
 }

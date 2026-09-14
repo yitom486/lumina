@@ -10,6 +10,7 @@ lumina-library = { path = "../lumina-library" }
 lumina-media = { path = "../lumina-media" }
 lumina-notes = { path = "../lumina-notes" }
 lumina-subtitle = { path = "../lumina-subtitle" }
+lumina-ytdl = { path = "../lumina-ytdl" }
 base64 = "0.22"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

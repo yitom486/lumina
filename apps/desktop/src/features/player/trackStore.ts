@@ -13,10 +13,15 @@ import {
 } from "@lumina/player-ui";
 
 type TrackState = {
+  /** 选中的字幕轨：文稿/AI/翻译的数据源。显示开关从不清空它，
+   * 空只代表"无可用轨"。 */
   subtitleChoiceId: string | null;
+  /** 只管 mpv overlay 是否显示，不影响选中轨与 AI 可读性。 */
+  subtitleVisible: boolean;
   audioStreamIndex: number | null;
   directoryPrefs: Record<string, DirectoryTrackPreference>;
   setSubtitleChoiceId: (id: string | null) => void;
+  setSubtitleVisible: (visible: boolean) => void;
   setAudioStreamIndex: (index: number | null) => void;
   rememberSubtitleForMedia: (
     mediaPath: string,
@@ -32,10 +37,12 @@ export const useTrackStore = create<TrackState>()(
   persist(
     (set) => ({
       subtitleChoiceId: null,
+      subtitleVisible: true,
       audioStreamIndex: null,
       directoryPrefs: {},
 
       setSubtitleChoiceId: (subtitleChoiceId) => set({ subtitleChoiceId }),
+      setSubtitleVisible: (subtitleVisible) => set({ subtitleVisible }),
       setAudioStreamIndex: (audioStreamIndex) => set({ audioStreamIndex }),
 
       rememberSubtitleForMedia: (mediaPath, choice) => {
@@ -72,15 +79,17 @@ export const useTrackStore = create<TrackState>()(
       name: "lumina-track-prefs",
       partialize: (state) => ({
         directoryPrefs: state.directoryPrefs,
+        subtitleVisible: state.subtitleVisible,
       }),
       merge: (persisted, current) => {
         const saved = (persisted ?? {}) as Partial<
-          Pick<TrackState, "directoryPrefs">
+          Pick<TrackState, "directoryPrefs" | "subtitleVisible">
         >;
         return {
           ...current,
           directoryPrefs:
             saved.directoryPrefs ?? current.directoryPrefs ?? {},
+          subtitleVisible: saved.subtitleVisible ?? true,
         };
       },
     },

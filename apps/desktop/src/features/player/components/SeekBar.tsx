@@ -1,5 +1,5 @@
 import { formatTime } from "@/lib/format";
-import { Slider } from "@lumina/ui/slider";
+import { PlayerSlider } from "./PlayerSlider";
 import { useMediaInfoQuery } from "@/features/media";
 
 import { usePlayerStore } from "../store";
@@ -40,7 +40,7 @@ export function SeekBar() {
       </span>
       <div className="relative min-w-0 flex-1">
         <ResumeChip />
-        <Slider
+        <PlayerSlider
           className="min-w-0 w-full"
           min={0}
           max={Math.max(effectiveDuration, 1)}

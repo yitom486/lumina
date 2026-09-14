@@ -327,6 +327,53 @@ impl MediaLibraryService {
         library_root_for_media_path(roots.into_iter().map(PathBuf::from), &media_path)
     }
 
+    /// Record model-reported person names into the group glossary.
+    /// Best-effort: returns `Ok(0)` when the media is not indexed, and IO
+    /// failures only warn — translation never fails for glossary bookkeeping.
+    /// Returns the count of pairs that newly entered `auto` or `pending`.
+    pub fn record_subtitle_glossary(
+        &self,
+        media_path: &str,
+        reported: &[(String, String)],
+        origin: String,
+        review_mode: bool,
+    ) -> Result<usize, LibraryError> {
+        if reported.is_empty() {
+            return Ok(0);
+        }
+        let Some(root) = self.library_root_for_media(media_path) else {
+            return Ok(0);
+        };
+        let media_path_buf = PathBuf::from(media_path);
+        let Some(index) = store::load(&root)? else {
+            return Ok(0);
+        };
+        let group_key = metadata::resolve_media_in_index(&index, &media_path_buf, &root)?
+            .map(|(_, group)| group.key.clone());
+        let Some(group_key) = group_key else {
+            return Ok(0);
+        };
+        let current = crate::glossary::load_glossary(&root, &group_key).unwrap_or_else(|error| {
+            tracing::warn!(
+                code = ?error.code,
+                details = ?error.details,
+                "subtitle glossary load skipped"
+            );
+            crate::glossary::NameGlossary::default()
+        });
+        let (merged, changed) =
+            crate::glossary::record_reported(current, reported, &origin, review_mode);
+        if let Err(error) = crate::glossary::save_glossary(&root, &group_key, &merged) {
+            tracing::warn!(
+                code = ?error.code,
+                details = ?error.details,
+                "subtitle glossary save skipped"
+            );
+            return Ok(0);
+        }
+        Ok(changed)
+    }
+
     /// Group display label + parsed season/episode when the file is indexed but metadata is missing.
     pub fn group_label_for_media(
         &self,
@@ -840,6 +887,51 @@ mod tests {
             )
             .expect_err("unknown group");
         assert_eq!(err.code, crate::error::LibraryErrorCode::GroupNotFound);
+
+        service.stop().expect("stop watcher");
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn subtitle_glossary_backfill_promotes_on_second_sighting() {
+        let root = test_root();
+        fs::create_dir_all(&root).expect("create test root");
+        let media = root.join("Example.Show.S01E01.mkv");
+        fs::write(&media, b"video").expect("write media");
+
+        let service = MediaLibraryService::new();
+        service
+            .start(LibraryWatchConfig {
+                roots: vec![root.to_string_lossy().to_string()],
+                poll_interval_secs: 3600,
+            })
+            .expect("start watcher");
+        let media_path = media.to_string_lossy().to_string();
+        let reported = vec![("Choi Woong".to_string(), "崔雄".to_string())];
+        // First sighting only stages a candidate.
+        assert_eq!(
+            service
+                .record_subtitle_glossary(&media_path, &reported, "t1".into(), false)
+                .expect("record"),
+            0
+        );
+        // Second sighting admits to auto.
+        assert_eq!(
+            service
+                .record_subtitle_glossary(&media_path, &reported, "t2".into(), false)
+                .expect("record"),
+            1
+        );
+        let stored = crate::glossary::load_glossary(&root, "Example.Show").expect("load glossary");
+        assert_eq!(stored.auto.len(), 1);
+        assert_eq!(stored.auto[0].target, "崔雄");
+        // Unindexed media degrades to zero, never an error.
+        assert_eq!(
+            service
+                .record_subtitle_glossary(r"C:\nope\Show.S01E01.mkv", &reported, "t".into(), false)
+                .expect("record"),
+            0
+        );
 
         service.stop().expect("stop watcher");
         let _ = fs::remove_dir_all(root);

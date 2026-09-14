@@ -77,6 +77,8 @@ type PlayerStore = PlayerSnapshot & {
     source: "Embedded" | "Sidecar" | "None";
     streamIndex?: number | null;
     externalPath?: string | null;
+    choiceId?: string | null;
+    mediaPath?: string | null;
   }) => Promise<void>;
   setAudio: (streamIndex: number) => Promise<void>;
 };

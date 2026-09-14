@@ -11,10 +11,16 @@
 //! full-width digits, separator-glued markers (`夏天EP01`), multi-season
 //! bare-`EP` mixes in one folder.
 
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ParsedName {
     pub key: String,
     pub season: Option<u32>,
     pub episode: Option<u32>,
+    /// Trailing release year inside the key (`Show.2021` → 2021). The key
+    /// itself is unchanged; a bare year (`2012`) or a futuristic one
+    /// (`Blade.Runner.2049`) stays `None`, mirroring the resolver rule.
+    pub year: Option<u16>,
 }
 
 pub fn parse_filename(file_name: &str) -> ParsedName {
@@ -24,39 +30,63 @@ pub fn parse_filename(file_name: &str) -> ParsedName {
         .unwrap_or(file_name);
     let normalized = stem.replace([' ', '_', '-'], ".");
     let upper = normalized.to_ascii_uppercase();
-    if let Some((at, season, episode)) = find_season_episode(&upper) {
-        return ParsedName {
+    let mut parsed = if let Some((at, season, episode)) = find_season_episode(&upper) {
+        ParsedName {
             key: clean_group_key(&normalized[..at]),
             season: Some(season),
             episode: Some(episode),
-        };
-    }
-    if let Some((at, season, episode)) = find_x_episode(&upper) {
-        return ParsedName {
+            year: None,
+        }
+    } else if let Some((at, season, episode)) = find_x_episode(&upper) {
+        ParsedName {
             key: clean_group_key(&normalized[..at]),
             season: Some(season),
             episode: Some(episode),
-        };
-    }
-    if let Some((at, episode)) = find_ep_episode(&upper) {
-        return ParsedName {
+            year: None,
+        }
+    } else if let Some((at, episode)) = find_ep_episode(&upper) {
+        ParsedName {
             key: clean_group_key(&normalized[..at]),
             season: None,
             episode: Some(episode),
-        };
-    }
-    if let Some((at, episode)) = find_cn_episode(&normalized) {
-        return ParsedName {
+            year: None,
+        }
+    } else if let Some((at, episode)) = find_cn_episode(&normalized) {
+        ParsedName {
             key: clean_group_key(&normalized[..at]),
             season: None,
             episode: Some(episode),
-        };
+            year: None,
+        }
+    } else {
+        ParsedName {
+            key: clean_group_key(&normalized),
+            season: None,
+            episode: None,
+            year: None,
+        }
+    };
+    parsed.year = trailing_year(&parsed.key);
+    parsed
+}
+
+/// Trailing release year inside a group key (`Show.2021` → 2021). The key is
+/// untouched; a bare year, a futuristic year, or a longer digit run stays
+/// `None` — same rule as the resolver-side split.
+fn trailing_year(key: &str) -> Option<u16> {
+    let segment = key.rsplit('.').next()?;
+    if segment.len() != 4 {
+        return None;
     }
-    ParsedName {
-        key: clean_group_key(&normalized),
-        season: None,
-        episode: None,
+    let year: u16 = segment.parse().ok()?;
+    if !(1900..=2030).contains(&year) {
+        return None;
     }
+    let head = key[..key.len() - segment.len()].trim_matches('.');
+    if head.is_empty() {
+        return None;
+    }
+    Some(year)
 }
 
 /// Byte sits on a marker boundary when at string start or after a separator.
@@ -217,6 +247,21 @@ mod tests {
         }
         assert_eq!(keys.len(), 1);
         assert!(keys.contains("Our.Beloved.Summer.2021"));
+    }
+
+    #[test]
+    fn trailing_year_extraction_leaves_the_key_alone() {
+        let parsed =
+            parse_filename("Our.Beloved.Summer.2021.EP01.HD1080P.X264.AAC.Korean.CHS.Mp4er.mp4");
+        assert_eq!(parsed.key, "Our.Beloved.Summer.2021");
+        assert_eq!(parsed.year, Some(2021));
+        assert_eq!(parsed.episode, Some(1));
+        // Year-looking segments that are not release years stay None.
+        assert_eq!(parse_filename("Blade.Runner.2049.1080p.mkv").year, None);
+        assert_eq!(parse_filename("2012.mkv").year, None);
+        assert_eq!(parse_filename("Inception.2010.1080p.mkv").year, None);
+        assert_eq!(parse_filename("Show.S01E02.1080p.mkv").year, None);
+        assert_eq!(parse_filename("剧名.第01集.1080p.mkv").year, None);
     }
 
     #[test]

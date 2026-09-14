@@ -38,6 +38,8 @@ export function TrackControlButtons({
     audioTracks,
     subtitleChoiceId,
     setSubtitleChoiceId,
+    subtitleVisible,
+    setSubtitleVisible,
     audioStreamIndex,
     setAudioStreamIndex,
     selectedSub,
@@ -122,7 +124,7 @@ export function TrackControlButtons({
       <Captions className="size-3.5 shrink-0" />
       <span className="truncate">
         {selectedSub
-          ? selectedSub.label.replace(/^内嵌 · |^外挂 · /, "")
+          ? `${selectedSub.label.replace(/^内嵌 · |^外挂 · |^下载 · /, "")}${subtitleVisible ? "" : " · 已隐藏"}`
           : "字幕"}
       </span>
     </Button>
@@ -182,12 +184,13 @@ export function TrackControlButtons({
                 <DropdownMenuLabel>字幕</DropdownMenuLabel>
                 <DropdownMenuSeparator />
                 <DropdownMenuCheckboxItem
-                  checked={subtitleChoiceId === null}
+                  checked={subtitleVisible}
                   onCheckedChange={() => {
-                    setSubtitleChoiceId(null);
+                    // 只关画面 overlay：选中轨（文稿/AI 数据源）原样保留。
+                    setSubtitleVisible(!subtitleVisible);
                   }}
                 >
-                  关闭字幕
+                  显示字幕
                 </DropdownMenuCheckboxItem>
                 <DropdownMenuSeparator />
                 {choices.map((choice) => (
@@ -231,14 +234,14 @@ export function TrackControlButtons({
               <Button
                 type="button"
                 size="sm"
-                variant={subtitleChoiceId === null ? "secondary" : "ghost"}
+                variant={subtitleVisible ? "secondary" : "ghost"}
                 className="h-7 text-xs"
                 onClick={() => {
-                  setSubtitleChoiceId(null);
+                  setSubtitleVisible(!subtitleVisible);
                   closeInline();
                 }}
               >
-                关闭字幕
+                {subtitleVisible ? "隐藏字幕" : "显示字幕"}
               </Button>
               {choices.map((choice) => (
                 <Button

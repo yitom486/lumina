@@ -96,6 +96,14 @@ pub async fn library_set_manual_title(
     })
 }
 
+/// Parse one media filename with the library naming rules (no index or IO).
+/// Lets the subtitle workshop prefill title/season/episode from the same
+/// logic the scanner uses, instead of a second hand-rolled parser.
+#[tauri::command]
+pub fn library_parse_filename(file_name: String) -> crate::library::ParsedName {
+    crate::library::parse_filename(&file_name)
+}
+
 #[tauri::command]
 pub async fn library_resolve_preview(
     state: State<'_, AppState>,

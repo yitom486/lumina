@@ -17,6 +17,6 @@
     "test:e2e:online": "cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml --lib public_youtube_resolves_and_reaches_mpv_demux_without_cookies -- --ignored --nocapture",
     "test:unit": "cd apps/desktop && bun run test:unit",
     "test:ui": "cd apps/desktop && bun run test:ui",
-    "tauri": "cd apps/desktop && bun run tauri"
+    "tauri": "node scripts/tauri-dev.mjs"
   }
 }

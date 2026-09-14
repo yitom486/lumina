@@ -15,8 +15,8 @@ export function ChatToggleButton({ className }: { className?: string }) {
         <Button
           type="button"
           variant={chatOpen ? "secondary" : "ghost"}
-          size="icon-sm"
-          className={cn("relative gap-0.5 px-2", className)}
+          size="icon"
+          className={cn("relative size-8 gap-0.5 px-2", className)}
           aria-label={chatOpen ? "收起 AI 对话" : "打开 AI 对话"}
           aria-pressed={chatOpen}
           onClick={toggleChat}

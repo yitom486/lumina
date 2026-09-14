@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   keepPreviousData,
   useQuery,
@@ -34,14 +34,19 @@ import {
 import {
   listSubtitleChoices,
   loadSubtitleChoice,
+  proofreadSubtitleTrack,
   translateSubtitleTrack,
 } from "../api";
 import { subtitleChoicesKey, transcriptKey, ytdlResolveKey } from "@lumina/query-keys";
 import { OnlineSubtitleSection } from "./OnlineSubtitleSection";
 import { useSubtitleWorkshopModels } from "../useSubtitleWorkshopModels";
 import type { SubtitleChoice } from "@lumina/contracts";
-import { followMode, useFollowStore } from "@lumina/transcript-ui";
+import { followMode, useFollowStore, useSubtitleWorkshopStore } from "@lumina/transcript-ui";
 import { findChapterAt } from "../../../../../../packages/transcript-ui/src/chapterSelectors";
+
+// 翻译/校对任务超过此时长没有任何进度事件即判死：正常运行时每完成一批
+// （4 并发）必推一次进度，10 分钟静默只可能发生在后端进程已死的情况下。
+const TASK_STALL_MS = 10 * 60 * 1000;
 
 export function TranscriptPanel() {
   const queryClient = useQueryClient();
@@ -53,6 +58,7 @@ export function TranscriptPanel() {
 
   const choiceId = useTrackStore((s) => s.subtitleChoiceId);
   const setSubtitleChoiceId = useTrackStore((s) => s.setSubtitleChoiceId);
+  const setSubtitleVisible = useTrackStore((s) => s.setSubtitleVisible);
   const rememberSubtitleForMedia = useTrackStore(
     (s) => s.rememberSubtitleForMedia,
   );
@@ -129,19 +135,64 @@ export function TranscriptPanel() {
   const [asrProgress, setAsrProgress] = useState<string | null>(null);
   const [asrError, setAsrError] = useState<string | null>(null);
 
-  const [targetLang, setTargetLang] = useState("en");
+  const [targetLang, setTargetLang] = useState("zh");
+  const [listCollapsed, setListCollapsed] = useState(false);
+  const backfillGlossary = useSubtitleWorkshopStore((s) => s.backfillGlossary);
+  const glossaryReviewMode = useSubtitleWorkshopStore((s) => s.glossaryReviewMode);
+  const patchWorkshopSettings = useSubtitleWorkshopStore((s) => s.patchSettings);
+  const workshopSettings = { backfillGlossary, glossaryReviewMode };
   const [translateBusy, setTranslateBusy] = useState(false);
   const [translateProgress, setTranslateProgress] = useState<string | null>(
     null,
   );
   const [translateError, setTranslateError] = useState<string | null>(null);
+  const [proofreadBusy, setProofreadBusy] = useState(false);
+  const [proofreadProgress, setProofreadProgress] = useState<string | null>(
+    null,
+  );
+  const [proofreadError, setProofreadError] = useState<string | null>(null);
+  const [batchCount, setBatchCount] = useState<{
+    done: number;
+    total: number;
+  } | null>(null);
+  // 后台任务心跳：翻译/校对是长任务，进度靠后端单向推送；若后端进程
+  // 被杀（dev 重编/退出应用），invoke 永不结算，UI 会 frozen 在最后一格。
+  // 超过上限没有任何进展就判死并解锁按钮，不再无限等待。
+  const taskHeartbeat = useRef<{
+    task: "translate" | "proofread";
+    lastAt: number;
+  } | null>(null);
+
+  useEffect(() => {
+    const timer = setInterval(() => {
+      const beat = taskHeartbeat.current;
+      if (!beat || Date.now() - beat.lastAt <= TASK_STALL_MS) return;
+      taskHeartbeat.current = null;
+      if (beat.task === "translate") {
+        setTranslateBusy(false);
+        setTranslateProgress(null);
+        setTranslateError(
+          "字幕任务长时间没有进展，已停止等待；可直接重试",
+        );
+      } else {
+        setProofreadBusy(false);
+        setProofreadProgress(null);
+        setProofreadError("字幕任务长时间没有进展，已停止等待；可直接重试");
+      }
+    }, 30_000);
+    return () => clearInterval(timer);
+  }, []);
+  const stripSoundTags = useSubtitleWorkshopStore((s) => s.stripSoundTags);
 
   useEffect(() => {
     setAsrTranscript(null);
+    setListCollapsed(false);
     setAsrProgress(null);
     setAsrError(null);
     setTranslateProgress(null);
     setTranslateError(null);
+    setProofreadProgress(null);
+    setProofreadError(null);
     setInstallProgress(null);
     setInstallError(null);
     setAsrScope("full");
@@ -241,6 +292,8 @@ export function TranscriptPanel() {
     }
 
     setSubtitleChoiceId(exported.id);
+    // 新轨默认上屏（下载/翻译/校对/ASR 完成后沿用此前行为）。
+    setSubtitleVisible(true);
     rememberSubtitleForMedia(mediaPath, exported);
     // Newly arrived tracks (downloaded, translated, ASR) show on the video
     // surface by default; the user can still switch tracks or turn subtitles
@@ -331,6 +384,65 @@ export function TranscriptPanel() {
     }
   }
 
+  async function handleProofread() {
+    if (!path || !choiceId || proofreadBusy || asrBusy || translateBusy) return;
+    if (!selected?.supported) {
+      setProofreadError("请先选择可用的文本字幕轨");
+      return;
+    }
+    setProofreadBusy(true);
+    setProofreadError(null);
+    setProofreadProgress("准备校对字幕…");
+    setBatchCount(null);
+    taskHeartbeat.current = { task: "proofread", lastAt: Date.now() };
+    try {
+      const result = await proofreadSubtitleTrack({
+        path,
+        choiceId,
+        stripSoundTags,
+        profileId: workshopModels.profileId,
+        profiles: workshopModels.profilesHint,
+        modelId: workshopModels.modelId || null,
+        reasoningEffort: workshopModels.reasoningEffort || null,
+        onEvent: (event) => {
+          if (event.type === "Progress") {
+            setProofreadProgress(event.payload.message);
+            taskHeartbeat.current = { task: "proofread", lastAt: Date.now() };
+            setBatchCount(
+              event.payload.done != null && event.payload.total != null
+                ? { done: event.payload.done, total: event.payload.total }
+                : null,
+            );
+          } else if (event.type === "Failed") {
+            setProofreadError(event.payload.message);
+          }
+        },
+      });
+      const exported = await selectExportedTrack(
+        path,
+        result,
+        ".proofread.srt",
+      );
+      setProofreadProgress(
+        exported
+          ? `已写入 ${exported.label}（字幕工坊模型：${workshopModels.modelLabel}）`
+          : "校对完成，请在字幕轨中手动选择",
+      );
+    } catch (error) {
+      const message =
+        typeof error === "object" && error && "message" in error
+          ? String((error as { message: string }).message)
+          : String(error);
+      setProofreadError(message);
+      setProofreadProgress(null);
+    } finally {
+      if (taskHeartbeat.current?.task === "proofread") {
+        taskHeartbeat.current = null;
+      }
+      setProofreadBusy(false);
+    }
+  }
+
   async function handleTranslate() {
     if (!path || !choiceId || translateBusy || asrBusy) return;
     if (!selected?.supported) {
@@ -340,6 +452,8 @@ export function TranscriptPanel() {
     setTranslateBusy(true);
     setTranslateError(null);
     setTranslateProgress("准备翻译字幕…");
+    setBatchCount(null);
+    taskHeartbeat.current = { task: "translate", lastAt: Date.now() };
     try {
       const result = await translateSubtitleTrack({
         path,
@@ -349,9 +463,17 @@ export function TranscriptPanel() {
         profiles: workshopModels.profilesHint,
         modelId: workshopModels.modelId || null,
         reasoningEffort: workshopModels.reasoningEffort || null,
+        glossaryBackfill: workshopSettings.backfillGlossary,
+        glossaryReviewMode: workshopSettings.glossaryReviewMode,
         onEvent: (event) => {
           if (event.type === "Progress") {
             setTranslateProgress(event.payload.message);
+            taskHeartbeat.current = { task: "translate", lastAt: Date.now() };
+            setBatchCount(
+              event.payload.done != null && event.payload.total != null
+                ? { done: event.payload.done, total: event.payload.total }
+                : null,
+            );
           } else if (event.type === "Failed") {
             setTranslateError(event.payload.message);
           }
@@ -375,6 +497,9 @@ export function TranscriptPanel() {
       setTranslateError(message);
       setTranslateProgress(null);
     } finally {
+      if (taskHeartbeat.current?.task === "translate") {
+        taskHeartbeat.current = null;
+      }
       setTranslateBusy(false);
     }
   }
@@ -405,6 +530,7 @@ export function TranscriptPanel() {
       setAsrError(null);
       setTranslateError(null);
       setSubtitleChoiceId(choiceId);
+      setSubtitleVisible(true);
       rememberSubtitleForMedia(path, downloaded);
       await applySubtitleChoice(downloaded, setSubtitle, path, loadSubtitleChoice);
       await queryClient.invalidateQueries({
@@ -417,13 +543,15 @@ export function TranscriptPanel() {
   const installSupported = asrStatusQuery.data?.installSupported === true;
   const catalog = asrStatusQuery.data?.catalog ?? [];
   const canTranslate = Boolean(choiceId && selected?.supported);
-  const busy = asrBusy || translateBusy || installBusy;
+  const busy = asrBusy || translateBusy || installBusy || proofreadBusy;
   const errorText = asrError
     ? asrError
     : installError
       ? installError
       : translateError
       ? translateError
+      : proofreadError
+        ? proofreadError
       : transcriptQuery.isError && !asrTranscript && !transcriptQuery.isFetching
         ? String(
             (transcriptQuery.error as { message?: string }).message ??
@@ -439,7 +567,7 @@ export function TranscriptPanel() {
             : null;
 
   return (
-    <section className="flex min-h-0 flex-1 flex-col">
+    <section className="flex min-h-0 flex-1 flex-col overflow-y-auto">
       <div className="flex shrink-0 flex-col gap-2 border-b border-border px-3 py-2">
         <div className="flex items-center justify-between gap-2">
           <p className="text-sm font-medium">文稿</p>
@@ -467,6 +595,17 @@ export function TranscriptPanel() {
             {transcriptQuery.isFetching || choicesQuery.isFetching ? (
               <span className="text-xs text-muted-foreground">加载中…</span>
             ) : null}
+            <Button
+              type="button"
+              size="sm"
+              variant="ghost"
+              aria-expanded={!listCollapsed}
+              aria-label={listCollapsed ? "展开文稿列表" : "收起文稿列表"}
+              title={listCollapsed ? "展开文稿列表" : "收起文稿列表"}
+              onClick={() => setListCollapsed((collapsed) => !collapsed)}
+            >
+              {listCollapsed ? "展开文稿" : "收起文稿"}
+            </Button>
           </div>
         </div>
 
@@ -484,7 +623,10 @@ export function TranscriptPanel() {
             onChange={(e) => {
               setAsrError(null);
               setTranslateError(null);
-              setSubtitleChoiceId(e.target.value || null);
+              const next = e.target.value || null;
+              setSubtitleChoiceId(next);
+              // 显式选轨即展示；隐藏只能走播放条的显示开关。
+              if (next) setSubtitleVisible(true);
             }}
             aria-label="Subtitle track for transcript"
           >
@@ -755,7 +897,49 @@ export function TranscriptPanel() {
           >
             {translateBusy ? "翻译中…" : "翻译字幕"}
           </Button>
+          <label className="flex items-center gap-1 text-xs text-muted-foreground">
+            <input
+              type="checkbox"
+              checked={backfillGlossary}
+              disabled={busy}
+              onChange={(e) => patchWorkshopSettings({ backfillGlossary: e.target.checked })}
+            />
+            回填译名表
+          </label>
+          <label className="flex items-center gap-1 text-xs text-muted-foreground">
+            <input
+              type="checkbox"
+              checked={glossaryReviewMode}
+              disabled={busy}
+              onChange={(e) => patchWorkshopSettings({ glossaryReviewMode: e.target.checked })}
+            />
+            审核模式
+          </label>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            disabled={busy || !canTranslate}
+            onClick={() => void handleProofread()}
+            title="校对源语言字幕（错别字/OCR/误听），不翻译不改时间轴"
+          >
+            {proofreadBusy ? "校对中…" : "校对字幕"}
+          </Button>
+          <label className="flex items-center gap-1 text-xs text-muted-foreground">
+            <input
+              type="checkbox"
+              checked={stripSoundTags}
+              disabled={busy}
+              onChange={(e) => patchWorkshopSettings({ stripSoundTags: e.target.checked })}
+            />
+            去音效标签
+          </label>
         </div>
+        {proofreadProgress || proofreadError ? (
+          <p className="text-[11px] leading-snug text-muted-foreground">
+            {proofreadError ?? proofreadProgress}
+          </p>
+        ) : null}
         <p className="text-[11px] leading-snug text-muted-foreground">
           翻译走字幕工坊专用模型与隔离会话，不会写入 AI 对话历史；主聊天 Agent
           也不能制作/写入外挂字幕。
@@ -773,6 +957,30 @@ export function TranscriptPanel() {
         {translateProgress ? (
           <p className="text-xs text-muted-foreground">{translateProgress}</p>
         ) : null}
+        {translateError || proofreadError ? (
+          <p className="text-xs text-destructive" role="alert">
+            {translateError ?? proofreadError}
+          </p>
+        ) : null}
+        {(translateBusy || proofreadBusy) &&
+        batchCount &&
+        batchCount.total > 0 ? (
+          <div
+            className="h-1 overflow-hidden rounded bg-border"
+            role="progressbar"
+            aria-valuenow={Math.min(batchCount.done, batchCount.total)}
+            aria-valuemin={0}
+            aria-valuemax={batchCount.total}
+            aria-label="字幕批处理进度"
+          >
+            <div
+              className="h-full bg-primary transition-all"
+              style={{
+                width: `${Math.min(100, (batchCount.done / batchCount.total) * 100)}%`,
+              }}
+            />
+          </div>
+        ) : null}
         {!asrAvailable && asrStatusQuery.data ? (
           <p className="text-[11px] leading-snug text-muted-foreground">
             {asrStatusQuery.data.message}
@@ -783,7 +991,18 @@ export function TranscriptPanel() {
         ) : null}
       </div>
 
-      <ScrollArea className="min-h-0 flex-1">
+      {listCollapsed ? (
+        <button
+          type="button"
+          className="mx-2 mt-1 shrink-0 rounded-md border border-border/50 px-2 py-1.5 text-left text-xs text-muted-foreground"
+          aria-expanded={false}
+          aria-label="展开文稿列表"
+          onClick={() => setListCollapsed(false)}
+        >
+          文稿已收起{transcript ? `（${transcript.cues.length} 句）` : ""} · 点击展开
+        </button>
+      ) : (
+      <ScrollArea className="min-h-96 shrink-0 flex-1">
         <div
           className={`px-2 py-2 ${showStale ? "opacity-50" : ""}`}
           onWheel={() => setBrowsing(true)}
@@ -909,6 +1128,7 @@ export function TranscriptPanel() {
           ) : null}
         </div>
       </ScrollArea>
+      )}
     </section>
   );
 }

@@ -59,11 +59,12 @@ use commands::library::{
     library_agent_models_discover, library_apply_tmdb_match, library_context_for_media,
     library_credential_delete, library_credential_status, library_credentials_save,
     library_credentials_validate, library_list_groups, library_models_discover,
-    library_pending_groups, library_resolve_episode_file, library_resolve_preview,
-    library_scan_now, library_search_tmdb, library_series_for_media, library_set_manual_title,
-    library_status, library_tmdb_credentials_validate, library_tmdb_refresh, library_tmdb_statuses,
-    library_watch_start, library_watch_stop, library_wikipedia_apply, library_wikipedia_preview,
-    library_wikipedia_refresh, library_wikipedia_statuses,
+    library_parse_filename, library_pending_groups, library_resolve_episode_file,
+    library_resolve_preview, library_scan_now, library_search_tmdb, library_series_for_media,
+    library_set_manual_title, library_status, library_tmdb_credentials_validate,
+    library_tmdb_refresh, library_tmdb_statuses, library_watch_start, library_watch_stop,
+    library_wikipedia_apply, library_wikipedia_preview, library_wikipedia_refresh,
+    library_wikipedia_statuses,
 };
 use commands::media::{media_inspect, media_list_siblings, media_tool_status};
 use commands::notes::{
@@ -79,8 +80,9 @@ use commands::player::{
 };
 use commands::subtitle::{
     subtitle_download_candidate, subtitle_export_sidecar, subtitle_list_choices,
-    subtitle_load_choice, subtitle_provider_status, subtitle_search_online,
-    subtitle_set_provider_key, subtitle_translate_track, subtitle_validate_provider_key,
+    subtitle_load_choice, subtitle_proofread_track, subtitle_provider_status,
+    subtitle_search_online, subtitle_set_provider_key, subtitle_translate_track,
+    subtitle_validate_provider_key,
 };
 use commands::system::system_log_dir;
 use commands::ytdl::{
@@ -149,6 +151,7 @@ pub fn run() {
             subtitle_load_choice,
             subtitle_export_sidecar,
             subtitle_translate_track,
+            subtitle_proofread_track,
             subtitle_provider_status,
             subtitle_set_provider_key,
             subtitle_search_online,
@@ -169,6 +172,7 @@ pub fn run() {
             library_watch_stop,
             library_status,
             library_scan_now,
+            library_parse_filename,
             library_pending_groups,
             library_set_manual_title,
             library_resolve_episode_file,

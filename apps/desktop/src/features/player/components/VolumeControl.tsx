@@ -2,7 +2,7 @@ import { useRef, useState } from "react";
 import { Volume2, VolumeX } from "lucide-react";
 
 import { Button } from "@lumina/ui/button";
-import { Slider } from "@lumina/ui/slider";
+import { PlayerSlider } from "./PlayerSlider";
 import {
   Tooltip,
   TooltipContent,
@@ -49,7 +49,7 @@ export function VolumeControl({
             dragging && "h-20 opacity-100",
           )}
         >
-          <Slider
+          <PlayerSlider
             orientation="vertical"
             className="h-20 w-4"
             min={0}
@@ -75,8 +75,8 @@ export function VolumeControl({
             <Button
               type="button"
               variant="ghost"
-              size="icon-sm"
-              className="text-foreground hover:bg-white/10"
+              size="icon"
+              className="size-8 text-foreground hover:bg-white/10"
               aria-label={muted ? "取消静音" : "静音"}
               onClick={muteToggle}
             >
@@ -100,7 +100,8 @@ export function VolumeControl({
           <Button
             type="button"
             variant="ghost"
-            size="icon-sm"
+            size="icon"
+            className="size-8"
             aria-label={muted ? "取消静音" : "静音"}
             onClick={muteToggle}
           >
@@ -113,7 +114,7 @@ export function VolumeControl({
         </TooltipTrigger>
         <TooltipContent>静音 (M)</TooltipContent>
       </Tooltip>
-      <Slider
+      <PlayerSlider
         className="flex-1"
         min={0}
         max={100}

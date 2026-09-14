@@ -6,6 +6,7 @@
 
 pub mod credentials;
 mod error;
+mod glossary;
 mod metadata;
 pub mod model;
 mod naming;
@@ -36,6 +37,7 @@ pub use model::{
     WikiEnrichmentPreview, WikiEpisodeSummary, WikiGroupStatus, WikiMatchMethod, WikiMetadata,
     WikiWriteResult, WikiZhReference, WIKI_STALE_AFTER_MS,
 };
+pub use naming::{parse_filename, ParsedName};
 pub use paths::{discover_library_root_for_media, lumina_agent_context_path, lumina_tmp_dir};
 pub use resolver::{
     discover_models, search_tmdb_direct, validate_credentials, validate_tmdb_credentials,

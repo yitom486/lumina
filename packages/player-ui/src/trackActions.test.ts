@@ -77,6 +77,26 @@ describe("applySubtitleChoice", () => {
     });
   });
 
+  it("hands downloaded cache choices to the backend instead of a null path", async () => {
+    // Regression: `cache:` tracks live in the process cache (no sidecar
+    // file). Sending a null externalPath made the player reject the call and
+    // show nothing; the backend must resolve the opaque id instead.
+    const setSubtitle = vi.fn(async () => {});
+    const choice: SubtitleChoice = {
+      ...embeddedChoice(),
+      id: "cache:subdl:en",
+      source: "Sidecar",
+      externalPath: null,
+    };
+    await applySubtitleChoice(choice, setSubtitle, "D:\\movie\\demo.mp4");
+    expect(setSubtitle).toHaveBeenCalledWith({
+      source: "Sidecar",
+      externalPath: null,
+      choiceId: "cache:subdl:en",
+      mediaPath: "D:\\movie\\demo.mp4",
+    });
+  });
+
   it("skips online choices without a loader", async () => {
     const setSubtitle = vi.fn(async () => {});
     const choice: SubtitleChoice = {

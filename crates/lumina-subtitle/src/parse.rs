@@ -3,6 +3,24 @@
 use crate::error::SubtitleError;
 use crate::model::Cue;
 
+/// Remove `[...]` sound-tag segments (`[Music]`, `[Laughs]`) from cue text.
+/// Unclosed brackets are kept verbatim; surrounding whitespace is collapsed.
+pub fn strip_bracketed_sound_tags(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(start) = rest.find('[') {
+        match rest[start..].find(']') {
+            Some(end) => {
+                out.push_str(&rest[..start]);
+                rest = &rest[start + end + 1..];
+            }
+            None => break,
+        }
+    }
+    out.push_str(rest);
+    out.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
 pub fn parse_subtitle_text(content: &str) -> Result<Vec<Cue>, SubtitleError> {
     let trimmed = content.trim_start_matches('\u{feff}').trim();
     if trimmed.is_empty() {
@@ -391,6 +409,20 @@ mod tests {
         assert_eq!(cues.len(), 1);
         assert_eq!(cues[0].start_ms, 1000);
         assert_eq!(cues[0].text, "Hi");
+    }
+
+    #[test]
+    fn sound_tags_strip_but_unclosed_brackets_stay() {
+        assert_eq!(
+            strip_bracketed_sound_tags("[Music] Hello [Applause]"),
+            "Hello"
+        );
+        assert_eq!(
+            strip_bracketed_sound_tags("Wait [to be continued"),
+            "Wait [to be continued"
+        );
+        assert_eq!(strip_bracketed_sound_tags("干净台词"), "干净台词");
+        assert_eq!(strip_bracketed_sound_tags("[Intro]"), "");
     }
 
     #[test]

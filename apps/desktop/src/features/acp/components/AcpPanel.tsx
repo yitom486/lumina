@@ -729,6 +729,9 @@ export function AcpPanel() {
 
   const cancelCurrentTurn = () => {
     const queued = promptQueueRef.current.length;
+    // 取消要经过后端（等在跑的工具返回＋最多 8 秒优雅期），先给即时反馈，
+    // 否则这段时间 UI 没有任何变化，看起来像"取消没传达过去"。
+    setProgress("正在取消…");
     void acpCancel();
     if (queued > 0) {
       pushSystem(`已取消当前回合，将继续发送排队中的 ${queued} 条`);

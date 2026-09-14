@@ -9,7 +9,7 @@
 use std::collections::BTreeMap;
 use std::fs;
 use std::io::Read as _;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
@@ -638,11 +638,26 @@ pub fn list_cached_choices(media_path: &str) -> Vec<SubtitleChoice> {
         .collect()
 }
 
-/// Load a cached-download choice. Pure file IO: cache miss is a business
-/// error, never an implicit network fetch.
-pub fn load_cached_choice(media_path: &str, choice_id: &str) -> Result<Transcript, SubtitleError> {
+/// Resolve the on-disk file (plus display language) for a cached-download
+/// choice. Pure mapping lookup; the caller reads/parses. Lets the player
+/// surface show `cache:` tracks via mpv `sub-add` without ever exposing the
+/// cache path over IPC (callers pass the opaque choice id).
+pub fn cached_choice_file(
+    media_path: &str,
+    choice_id: &str,
+) -> Result<(PathBuf, String), SubtitleError> {
     let (provider, lang) = parse_cache_choice(choice_id)
         .ok_or_else(|| SubtitleError::extract_failed(Some("invalid cached subtitle choice")))?;
+    resolve_cached_file(media_path, &provider, &lang)
+}
+
+/// Load a cached-download choice. Pure file IO: cache miss is a business
+/// error, never an implicit network fetch.
+fn resolve_cached_file(
+    media_path: &str,
+    provider: &str,
+    lang: &str,
+) -> Result<(PathBuf, String), SubtitleError> {
     let mapping = read_mapping(media_path);
     if mapping.entries.is_empty() {
         return Err(SubtitleError::extract_failed(Some(
@@ -671,20 +686,23 @@ pub fn load_cached_choice(media_path: &str, choice_id: &str) -> Result<Transcrip
             if entry.provider != provider {
                 continue;
             }
-            if let Some(file) = entry.translations.get(&lang) {
+            if let Some(file) = entry.translations.get(lang) {
                 resolved = Some((
                     media_cache_dir(media_path)
                         .join(safe_component(&entry.provider))
                         .join(safe_component(&entry.language))
                         .join(file),
-                    lang.clone(),
+                    lang.to_string(),
                 ));
                 break;
             }
         }
     }
-    let (path, language) = resolved
-        .ok_or_else(|| SubtitleError::extract_failed(Some("cached subtitle choice not found")))?;
+    resolved.ok_or_else(|| SubtitleError::extract_failed(Some("cached subtitle choice not found")))
+}
+
+pub fn load_cached_choice(media_path: &str, choice_id: &str) -> Result<Transcript, SubtitleError> {
+    let (path, language) = cached_choice_file(media_path, choice_id)?;
     let (content, cached_path) = read_external_subtitle(&path)?;
     let cues = parse_subtitle_text(&content)?;
     // Sanitized: the local media path is already known to the caller.
@@ -708,7 +726,13 @@ fn provider_keys_path() -> PathBuf {
 }
 
 fn read_provider_keys() -> BTreeMap<String, String> {
-    fs::read_to_string(provider_keys_path())
+    read_provider_keys_from(&provider_keys_path())
+}
+
+/// Testable core: production callers always pass [`provider_keys_path`];
+/// tests pass temp files so a test run can never wipe the user's real key.
+fn read_provider_keys_from(path: &Path) -> BTreeMap<String, String> {
+    fs::read_to_string(path)
         .ok()
         .and_then(|raw| serde_json::from_str(&raw).ok())
         .unwrap_or_default()
@@ -724,14 +748,18 @@ pub fn provider_key(provider: &str) -> Option<String> {
 }
 
 pub fn save_provider_key(provider: &str, key: &str) -> Result<(), SubtitleError> {
-    let mut keys = read_provider_keys();
+    save_provider_key_to(&provider_keys_path(), provider, key)
+}
+
+fn save_provider_key_to(path: &Path, provider: &str, key: &str) -> Result<(), SubtitleError> {
+    let mut keys = read_provider_keys_from(path);
     let trimmed = key.trim();
     if trimmed.is_empty() {
         keys.remove(provider);
     } else {
         keys.insert(provider.to_string(), trimmed.to_string());
     }
-    if let Some(parent) = provider_keys_path().parent() {
+    if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).map_err(|error| {
             SubtitleError::internal(Some(&format!("create provider settings: {error}")))
         })?;
@@ -739,7 +767,7 @@ pub fn save_provider_key(provider: &str, key: &str) -> Result<(), SubtitleError>
     let body = serde_json::to_string_pretty(&keys).map_err(|error| {
         SubtitleError::internal(Some(&format!("encode provider settings: {error}")))
     })?;
-    fs::write(provider_keys_path(), body).map_err(|error| {
+    fs::write(path, body).map_err(|error| {
         SubtitleError::internal(Some(&format!("write provider settings: {error}")))
     })?;
     tracing::info!(provider = %provider, has_key = !trimmed.is_empty(), "subtitle provider key saved");
@@ -826,6 +854,10 @@ impl ProviderService {
             let key = provider_key(provider.id());
             if provider.needs_key() && key.is_none() {
                 missing_key = true;
+                tracing::warn!(
+                    provider = %provider.id(),
+                    "subtitle provider skipped: key missing"
+                );
                 continue;
             }
             match provider.search(key.as_deref(), query) {
@@ -1095,21 +1127,38 @@ mod tests {
 
     #[test]
     fn provider_status_never_carries_key_material() {
+        // Hermetic: the key store lives in a temp file, never the real one —
+        // a test run must not wipe the user's saved key (regression).
+        let dir = std::env::temp_dir().join(format!(
+            "lumina-provider-keys-{}-status",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&dir);
+        let path = dir.join("provider.json");
+        save_provider_key_to(&path, "subdl", "subdl_testkey123").expect("save key");
+        let keys = read_provider_keys_from(&path);
+        assert_eq!(
+            keys.get("subdl").map(String::as_str),
+            Some("subdl_testkey123")
+        );
+        save_provider_key_to(&path, "subdl", "").expect("clear key");
+        assert!(!read_provider_keys_from(&path).contains_key("subdl"));
         // Even with a key stored, the IPC status exposes only presence flags.
-        save_provider_key("subdl", "subdl_testkey123").expect("save key");
-        let service = ProviderService::new();
-        for status in service.status() {
-            let json = serde_json::to_value(&status).expect("status serializes");
-            let mut fields: Vec<String> = json
-                .as_object()
-                .expect("object")
-                .keys()
-                .map(|key| key.to_ascii_lowercase())
-                .collect();
-            fields.sort();
-            assert_eq!(fields, vec!["haskey", "id", "needskey"]);
-            assert!(!json.to_string().contains("subdl_testkey123"));
-        }
-        let _ = save_provider_key("subdl", "");
+        let status = ProviderStatus {
+            id: "subdl".into(),
+            needs_key: true,
+            has_key: true,
+        };
+        let json = serde_json::to_value(&status).expect("status serializes");
+        let mut fields: Vec<String> = json
+            .as_object()
+            .expect("object")
+            .keys()
+            .map(|key| key.to_ascii_lowercase())
+            .collect();
+        fields.sort();
+        assert_eq!(fields, vec!["haskey", "id", "needskey"]);
+        assert!(!json.to_string().contains("subdl_testkey123"));
+        let _ = fs::remove_dir_all(&dir);
     }
 }

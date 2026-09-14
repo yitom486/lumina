@@ -299,8 +299,25 @@ pub async fn player_set_subtitle(
     source: String,
     stream_index: Option<u32>,
     external_path: Option<String>,
+    media_path: Option<String>,
+    choice_id: Option<String>,
 ) -> Result<PlayerSnapshot, PlayerError> {
     on_worker(app, move |state| {
+        // Downloaded `cache:<provider>:<lang>` tracks live in the backend
+        // process cache (no file beside the media). Resolve to the real file
+        // here so mpv can `sub-add` it; the cache path never crosses IPC —
+        // the UI only passes the opaque choice id + media path.
+        if source == "Sidecar" {
+            if let (Some(media), Some(choice)) = (media_path.as_deref(), choice_id.as_deref()) {
+                if crate::ytdl::provider::parse_cache_choice(choice).is_some() {
+                    let (file, _) = crate::ytdl::provider::cached_choice_file(media, choice)
+                        .map_err(|_| PlayerError::playback(Some("cached subtitle unavailable")))?;
+                    let path = file.to_string_lossy().into_owned();
+                    return state
+                        .with_player(|player| player.set_subtitle(&source, None, Some(&path)));
+                }
+            }
+        }
         state.with_player(|player| {
             player.set_subtitle(&source, stream_index, external_path.as_deref())
         })

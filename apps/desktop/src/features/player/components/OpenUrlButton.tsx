@@ -35,7 +35,7 @@ export function OpenUrlButton() {
         <Button
           type="button"
           variant="secondary"
-          size="icon-sm"
+          size="icon" className="size-8"
           onClick={openOnlinePanel}
           aria-label="打开在线视频"
         >

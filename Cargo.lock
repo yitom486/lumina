@@ -2344,6 +2344,7 @@ dependencies = [
  "lumina-media",
  "lumina-notes",
  "lumina-subtitle",
+ "lumina-ytdl",
  "serde",
  "serde_json",
  "tracing",

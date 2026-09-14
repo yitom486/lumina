@@ -49,7 +49,7 @@ export function ChatDock() {
           <Button
             type="button"
             variant="ghost"
-            size="icon-sm"
+            size="icon" className="size-8"
             aria-label="收起对话"
             onClick={closeChat}
           >

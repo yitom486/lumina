@@ -105,3 +105,6 @@ cargo clippy --workspace --all-targets -- -D warnings
 - 日志用 `tracing`；不要刷 position
 - TanStack Query key 跨文件复用时走各 feature 的 `queries.ts` 工厂，不手写字面量
 - 不与其他产品强行统一 lockfile；对齐领域模型与错误形状即可
+- Vendor 原件只读：`packages/ui` 内 shadcn 拷贝以上游 default 风格为准，禁止直接修改；
+  定制只允许调用方 `className`（经 `cn` 合并）或外层转接拷贝；包 Radix 原语的 wrapper
+  必须透传 `ref`（`asChild` 链的硬性契约，丢 ref 会静默杀死浮层定位）

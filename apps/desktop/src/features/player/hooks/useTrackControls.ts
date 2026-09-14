@@ -31,6 +31,8 @@ export function useTrackControls() {
 
   const subtitleChoiceId = useTrackStore((s) => s.subtitleChoiceId);
   const setSubtitleChoiceId = useTrackStore((s) => s.setSubtitleChoiceId);
+  const subtitleVisible = useTrackStore((s) => s.subtitleVisible);
+  const setSubtitleVisible = useTrackStore((s) => s.setSubtitleVisible);
   const audioStreamIndex = useTrackStore((s) => s.audioStreamIndex);
   const setAudioStreamIndex = useTrackStore((s) => s.setAudioStreamIndex);
   const rememberSubtitleForMedia = useTrackStore(
@@ -98,7 +100,8 @@ export function useTrackControls() {
 
   useEffect(() => {
     if (!mediaReady) return;
-    if (subtitleChoiceId === null) {
+    // 显示开关只管 overlay：隐藏时清画面，但不碰选中轨（文稿/AI 照常可用）。
+    if (subtitleChoiceId === null || !subtitleVisible) {
       void setSubtitle({ source: "None" });
       return;
     }
@@ -117,6 +120,7 @@ export function useTrackControls() {
     setSubtitle,
     setSubtitleChoiceId,
     subtitleChoiceId,
+    subtitleVisible,
   ]);
 
   useEffect(() => {
@@ -127,10 +131,13 @@ export function useTrackControls() {
   const selectSubtitleChoiceId = (id: string | null) => {
     if (!path) {
       setSubtitleChoiceId(id);
+      if (id) setSubtitleVisible(true);
       return;
     }
     const choice = id ? choices.find((c) => c.id === id) : null;
     setSubtitleChoiceId(id);
+    // 显式选轨即展示（下载/切换的新轨默认上屏）；隐藏只能走显示开关。
+    if (id) setSubtitleVisible(true);
     rememberSubtitleForMedia(path, choice ?? null);
   };
 
@@ -155,6 +162,8 @@ export function useTrackControls() {
     audioTracks,
     subtitleChoiceId,
     setSubtitleChoiceId: selectSubtitleChoiceId,
+    subtitleVisible,
+    setSubtitleVisible,
     audioStreamIndex,
     setAudioStreamIndex: selectAudioStreamIndex,
     setSubtitle,

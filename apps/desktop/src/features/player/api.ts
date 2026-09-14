@@ -89,11 +89,15 @@ export function setPlayerSubtitle(args: {
   source: "Embedded" | "Sidecar" | "None";
   streamIndex?: number | null;
   externalPath?: string | null;
+  choiceId?: string | null;
+  mediaPath?: string | null;
 }): Promise<PlayerSnapshot> {
   return invoke<PlayerSnapshot>("player_set_subtitle", {
     source: args.source,
     streamIndex: args.streamIndex ?? null,
     externalPath: args.externalPath ?? null,
+    mediaPath: args.mediaPath ?? null,
+    choiceId: args.choiceId ?? null,
   });
 }
 
