@@ -242,11 +242,10 @@ export function TranscriptPanel() {
 
     setSubtitleChoiceId(exported.id);
     rememberSubtitleForMedia(mediaPath, exported);
-    // Downloaded cache tracks stay off the video surface by default: view in
-    // panel only, never auto-apply to the player.
-    if (!exported.id.startsWith("cache:")) {
-      await applySubtitleChoice(exported, setSubtitle, mediaPath, loadSubtitleChoice);
-    }
+    // Newly arrived tracks (downloaded, translated, ASR) show on the video
+    // surface by default; the user can still switch tracks or turn subtitles
+    // off, and the choice is remembered per media.
+    await applySubtitleChoice(exported, setSubtitle, mediaPath, loadSubtitleChoice);
     await queryClient.invalidateQueries({
       queryKey: transcriptKey(mediaPath, exported.id),
     });
@@ -399,11 +398,15 @@ export function TranscriptPanel() {
     });
     const fresh = await listSubtitleChoices(path);
     queryClient.setQueryData(subtitleChoicesKey(path), fresh);
-    // Panel viewing only: never remember or apply to the player surface.
-    if (fresh.some((choice) => choice.id === choiceId)) {
+    // Downloaded tracks show on the video surface by default and are
+    // remembered; the user can still switch tracks or turn subtitles off.
+    const downloaded = fresh.find((choice) => choice.id === choiceId);
+    if (downloaded) {
       setAsrError(null);
       setTranslateError(null);
       setSubtitleChoiceId(choiceId);
+      rememberSubtitleForMedia(path, downloaded);
+      await applySubtitleChoice(downloaded, setSubtitle, path, loadSubtitleChoice);
       await queryClient.invalidateQueries({
         queryKey: transcriptKey(path, choiceId),
       });

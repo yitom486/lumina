@@ -99,6 +99,22 @@ impl SubtitleError {
         )
     }
 
+    pub fn provider_key_invalid(details: Option<&str>) -> Self {
+        Self::new(
+            SubtitleErrorCode::NotConfigured,
+            "SubDL Key 无效或已过期，请重新填写",
+            details.map(str::to_string),
+        )
+    }
+
+    pub fn provider_forbidden(details: Option<&str>) -> Self {
+        Self::new(
+            SubtitleErrorCode::ExtractFailed,
+            "在线字幕访问被拒绝，请检查网络或稍后重试",
+            details.map(str::to_string),
+        )
+    }
+
     pub fn export_failed(details: Option<&str>) -> Self {
         Self::new(
             SubtitleErrorCode::ExportFailed,

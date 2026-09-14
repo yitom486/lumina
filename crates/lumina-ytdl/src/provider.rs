@@ -55,11 +55,39 @@ pub struct SubtitleCandidate {
     pub cached: bool,
 }
 
+/// Key check result for the settings UI. The typed key is verified without
+/// persisting it, so a bad key never overwrites a working one.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProviderKeyValidation {
+    pub verified: bool,
+    pub message: String,
+}
+
+impl ProviderKeyValidation {
+    fn valid(message: &'static str) -> Self {
+        Self {
+            verified: true,
+            message: message.into(),
+        }
+    }
+
+    fn invalid(message: &'static str) -> Self {
+        Self {
+            verified: false,
+            message: message.into(),
+        }
+    }
+}
+
 /// Extension point for subtitle sources. Keep implementations free of Tauri,
 /// playback, and agent types; errors stay [`SubtitleError`].
 pub trait SubtitleProvider {
     fn id(&self) -> &'static str;
     fn needs_key(&self) -> bool;
+    /// Check a typed key without persisting it. Only reached for providers
+    /// that need a key; empty input is rejected before any network call.
+    fn validate_key(&self, api_key: &str) -> ProviderKeyValidation;
     fn search(
         &self,
         api_key: Option<&str>,
@@ -117,6 +145,33 @@ impl SubtitleProvider for SubdlProvider {
         true
     }
 
+    fn validate_key(&self, api_key: &str) -> ProviderKeyValidation {
+        let key = api_key.trim();
+        if key.is_empty() {
+            return ProviderKeyValidation::invalid("请先填写 Key");
+        }
+        // Minimal authenticated probe: auth is checked before results
+        // matter, so the body is intentionally unread. Costs one search call.
+        let url = with_api_key(
+            &format!(
+                "https://api.subdl.com/api/v1/subtitles?unpack=1&film_name={}",
+                url_encode("Lumina key probe")
+            ),
+            key,
+        );
+        match ureq::get(&url).header("User-Agent", "Mozilla/5.0").call() {
+            Ok(_) => ProviderKeyValidation::valid("SubDL Key 有效"),
+            Err(error) => {
+                tracing::warn!(
+                    provider = "subdl",
+                    error = %redact_key(&error.to_string(), key),
+                    "subtitle key check failed"
+                );
+                map_key_check_error(&error)
+            }
+        }
+    }
+
     fn search(
         &self,
         api_key: Option<&str>,
@@ -148,13 +203,13 @@ impl SubtitleProvider for SubdlProvider {
         if query.season.is_some() {
             url.push_str("&type=tv");
         }
+        // SubDL authenticates via the `api_key` query parameter (per API
+        // docs); the `api-key` header is not honored. Scrubbed below.
+        url = with_api_key(&url, key);
         let body = ureq::get(&url)
             .header("User-Agent", "Mozilla/5.0")
-            .header("api-key", key)
             .call()
-            .map_err(|error| {
-                SubtitleError::extract_failed(Some(&format!("subtitle search request: {error}")))
-            })?
+            .map_err(|error| map_search_request_error(&error, key))?
             .into_body()
             .read_to_string()
             .map_err(|error| {
@@ -189,6 +244,60 @@ impl SubtitleProvider for SubdlProvider {
             )));
         }
         Ok(bytes)
+    }
+}
+
+/// Append SubDL authentication. Verified live: the `api_key` query parameter
+/// returns 200 where the `api-key`/`x-api-key` headers return 403.
+fn with_api_key(base_url: &str, key: &str) -> String {
+    format!("{base_url}&api_key={}", url_encode(key))
+}
+
+/// Scrub key material from request-derived error text: the key now travels
+/// in the query string, so raw ureq errors (which echo the URL) must never
+/// reach details or logs verbatim.
+fn redact_key(text: &str, key: &str) -> String {
+    let redacted = text.replace(key, "[key]");
+    redacted.replace(&url_encode(key), "[key]")
+}
+
+/// Map a SubDL request failure to fixed business copy. Pure so the mapping
+/// is covered without network: 401 means the key itself is rejected; 403
+/// means the service refused the request (network/region throttling — the
+/// key is not necessarily at fault, verified live when SubDL 403'd
+/// everything including its own homepage); 429 means slow down.
+fn map_search_request_error(error: &ureq::Error, key: &str) -> SubtitleError {
+    match error {
+        ureq::Error::StatusCode(401) => SubtitleError::provider_key_invalid(Some(&redact_key(
+            &format!("subtitle search request: {error}"),
+            key,
+        ))),
+        ureq::Error::StatusCode(403) => SubtitleError::provider_forbidden(Some(&redact_key(
+            &format!("subtitle search request: {error}"),
+            key,
+        ))),
+        _ => SubtitleError::extract_failed(Some(&redact_key(
+            &format!("subtitle search request: {error}"),
+            key,
+        ))),
+    }
+}
+
+/// Map a key-probe failure to fixed business copy. Pure so the mapping is
+/// covered without network: 401 means the key itself is rejected; 403 means
+/// the service refused the request (network/region throttling — the key is
+/// not necessarily at fault, verified live when SubDL 403'd everything
+/// including its own homepage); 429 means slow down.
+fn map_key_check_error(error: &ureq::Error) -> ProviderKeyValidation {
+    match error {
+        ureq::Error::StatusCode(401) => {
+            ProviderKeyValidation::invalid("SubDL Key 无效或已过期，请重新填写")
+        }
+        ureq::Error::StatusCode(403) => {
+            ProviderKeyValidation::invalid("SubDL 拒绝访问，请检查网络或稍后重试")
+        }
+        ureq::Error::StatusCode(429) => ProviderKeyValidation::invalid("请求过于频繁，请稍后再试"),
+        _ => ProviderKeyValidation::invalid("验证失败，请检查网络后重试"),
     }
 }
 
@@ -679,6 +788,30 @@ impl ProviderService {
         Ok(self.status())
     }
 
+    /// Check a typed key without persisting it. Providers without key
+    /// support report not-configured instead of inventing a verdict.
+    pub fn validate_key(
+        &self,
+        provider: &str,
+        key: &str,
+    ) -> Result<ProviderKeyValidation, SubtitleError> {
+        let Some(found) = self
+            .providers()
+            .into_iter()
+            .find(|item| item.id() == provider)
+        else {
+            return Err(SubtitleError::extract_failed(Some(
+                "unknown subtitle provider",
+            )));
+        };
+        if !found.needs_key() {
+            return Err(SubtitleError::provider_not_configured(Some(
+                "subtitle provider needs no key",
+            )));
+        }
+        Ok(found.validate_key(key))
+    }
+
     /// Search all providers (fan-out ready: one today) and order by preference.
     /// Marks already-cached candidates. No downloads happen here.
     pub fn search(
@@ -767,6 +900,72 @@ impl Default for ProviderService {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn search_request_errors_blame_key_only_on_401() {
+        // Offline: ureq status errors construct without network.
+        let error = map_search_request_error(&ureq::Error::StatusCode(401), "k");
+        assert_eq!(error.message, "SubDL Key 无效或已过期，请重新填写");
+        let error = map_search_request_error(&ureq::Error::StatusCode(403), "k");
+        assert_eq!(error.message, "在线字幕访问被拒绝，请检查网络或稍后重试");
+        let error = map_search_request_error(&ureq::Error::StatusCode(500), "k");
+        assert_eq!(error.message, "无法提取字幕");
+    }
+
+    #[test]
+    fn api_key_travels_as_query_parameter() {
+        assert_eq!(
+            with_api_key(
+                "https://api.subdl.com/api/v1/subtitles?unpack=1",
+                "subdl_abc-123_XYZ"
+            ),
+            "https://api.subdl.com/api/v1/subtitles?unpack=1&api_key=subdl_abc-123_XYZ"
+        );
+    }
+
+    #[test]
+    fn key_material_never_reaches_error_text() {
+        let secret = "subdl_live_key_abc123";
+        let scrubbed = redact_key(
+            &format!("subtitle search request: status code 403 url=https://api.subdl.com/x?api_key={secret}"),
+            secret,
+        );
+        assert!(!scrubbed.contains(secret));
+        assert!(scrubbed.contains("[key]"));
+    }
+
+    #[test]
+    fn key_check_maps_rejection_to_actionable_copy() {
+        // Offline: ureq status errors construct without network.
+        let validation = map_key_check_error(&ureq::Error::StatusCode(401));
+        assert!(!validation.verified);
+        assert_eq!(validation.message, "SubDL Key 无效或已过期，请重新填写");
+        let validation = map_key_check_error(&ureq::Error::StatusCode(403));
+        assert!(!validation.verified);
+        assert_eq!(validation.message, "SubDL 拒绝访问，请检查网络或稍后重试");
+        let validation = map_key_check_error(&ureq::Error::StatusCode(429));
+        assert!(!validation.verified);
+        assert_eq!(validation.message, "请求过于频繁，请稍后再试");
+        let validation = map_key_check_error(&ureq::Error::StatusCode(500));
+        assert!(!validation.verified);
+        assert_eq!(validation.message, "验证失败，请检查网络后重试");
+    }
+
+    #[test]
+    fn key_check_rejects_empty_input_without_network() {
+        let service = ProviderService::new();
+        let validation = service
+            .validate_key("subdl", "   ")
+            .expect("empty key is a verdict, not an error");
+        assert!(!validation.verified);
+        assert_eq!(validation.message, "请先填写 Key");
+    }
+
+    #[test]
+    fn key_check_rejects_unknown_provider() {
+        let service = ProviderService::new();
+        assert!(service.validate_key("nope", "key").is_err());
+    }
 
     /// Shape captured from the live SubDL probe (key redacted, values intact).
     fn probe_fixture() -> serde_json::Value {

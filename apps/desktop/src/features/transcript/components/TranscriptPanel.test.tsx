@@ -380,6 +380,8 @@ describe("TranscriptPanel downloaded subtitles", () => {
     vi.mocked(invoke).mockImplementation((cmd: string) => {
       if (cmd === "subtitle_provider_status")
         return Promise.resolve([{ id: "subdl", needsKey: true, hasKey: true }]);
+      if (cmd === "subtitle_validate_provider_key")
+        return Promise.resolve({ verified: true, message: "SubDL Key 有效" });
       if (cmd === "subtitle_search_online") return Promise.resolve(CANDIDATES);
       if (cmd === "subtitle_download_candidate")
         return Promise.resolve({
@@ -473,7 +475,33 @@ describe("TranscriptPanel downloaded subtitles", () => {
     expect(screen.queryByText("文稿加载失败")).not.toBeInTheDocument();
   });
 
-  it("downloads on explicit click and views without applying to the player", async () => {
+  it("checks the typed key without saving it", async () => {
+    mockDownloadFlow();
+    usePlayerStore.setState({
+      currentFile: "C:\\v\\a.mp4",
+      status: "Paused",
+      currentTimeMs: 500,
+    });
+    useTrackStore.setState({ subtitleChoiceId: null });
+    renderPanel();
+    await waitFor(() => {
+      expect(screen.getByText("搜索字幕")).toBeInTheDocument();
+    });
+    fireEvent.change(screen.getByLabelText("SubDL API key"), {
+      target: { value: "test-key" },
+    });
+    fireEvent.click(screen.getByText("检测"));
+    await waitFor(() => {
+      expect(screen.getByText("SubDL Key 有效，可保存使用")).toBeInTheDocument();
+    });
+    const validateCall = vi
+      .mocked(invoke)
+      .mock.calls.find(([cmd]) => cmd === "subtitle_validate_provider_key");
+    expect(validateCall?.[1]).toMatchObject({ provider: "subdl", key: "test-key" });
+    expect(invokeCommands()).not.toContain("subtitle_set_provider_key");
+  });
+
+  it("downloads on explicit click and applies to the player surface", async () => {
     mockDownloadFlow();
     usePlayerStore.setState({
       currentFile: "C:\\v\\a.mp4",
@@ -495,6 +523,7 @@ describe("TranscriptPanel downloaded subtitles", () => {
     });
     const commands = invokeCommands();
     expect(commands).toContain("subtitle_download_candidate");
-    expect(commands).not.toContain("player_set_subtitle");
+    expect(commands).toContain("player_set_subtitle");
+    expect(commands).not.toContain("player_seek");
   });
 });

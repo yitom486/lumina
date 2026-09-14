@@ -197,6 +197,31 @@ pub async fn subtitle_set_provider_key(
     })?
 }
 
+/// Check a typed provider key without persisting it, so a bad key never
+/// overwrites a working one. Failures arrive as a validation verdict, not
+/// an error, mirroring the metadata credential checks.
+#[tauri::command]
+pub async fn subtitle_validate_provider_key(
+    app: AppHandle,
+    provider: String,
+    key: String,
+) -> Result<crate::ytdl::provider::ProviderKeyValidation, SubtitleError> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app
+            .try_state::<AppState>()
+            .ok_or_else(|| SubtitleError::internal(Some("app state unavailable")))?;
+        state.provider().validate_key(&provider, &key)
+    })
+    .await
+    .map_err(|error| {
+        SubtitleError::new(
+            SubtitleErrorCode::InternalError,
+            "验证字幕来源密钥异常结束",
+            Some(error.to_string()),
+        )
+    })?
+}
+
 #[tauri::command]
 pub async fn subtitle_search_online(
     app: AppHandle,

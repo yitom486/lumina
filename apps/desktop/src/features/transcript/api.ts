@@ -59,6 +59,18 @@ export function setSubtitleProviderKey(
   return invoke("subtitle_set_provider_key", { provider, key });
 }
 
+export type SubtitleKeyValidation = {
+  verified: boolean;
+  message: string;
+};
+
+export function validateSubtitleProviderKey(
+  provider: string,
+  key: string,
+): Promise<SubtitleKeyValidation> {
+  return invoke("subtitle_validate_provider_key", { provider, key });
+}
+
 export function searchOnlineSubtitles(
   path: string,
   query: SubtitleQuery,

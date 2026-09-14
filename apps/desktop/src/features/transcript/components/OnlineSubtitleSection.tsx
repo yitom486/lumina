@@ -9,6 +9,7 @@ import {
   getSubtitleProviderStatus,
   searchOnlineSubtitles,
   setSubtitleProviderKey,
+  validateSubtitleProviderKey,
   type SubtitleCandidate,
 } from "../api";
 
@@ -81,6 +82,7 @@ export function OnlineSubtitleSection({
 }: Props) {
   const [keyInput, setKeyInput] = useState("");
   const [keyBusy, setKeyBusy] = useState(false);
+  const [checkBusy, setCheckBusy] = useState(false);
   const [keyMessage, setKeyMessage] = useState<string | null>(null);
   const [title, setTitle] = useState(() => fileStem(mediaPath));
   const [season, setSeason] = useState("");
@@ -134,6 +136,24 @@ export function OnlineSubtitleSection({
     }
   }
 
+  async function handleCheckKey() {
+    if (checkBusy || keyInput.trim() === "") return;
+    setCheckBusy(true);
+    setKeyMessage(null);
+    try {
+      const result = await validateSubtitleProviderKey("subdl", keyInput);
+      setKeyMessage(result.verified ? "SubDL Key 有效，可保存使用" : result.message);
+    } catch (err) {
+      setKeyMessage(
+        typeof err === "object" && err && "message" in err
+          ? String((err as { message: string }).message)
+          : String(err),
+      );
+    } finally {
+      setCheckBusy(false);
+    }
+  }
+
   async function handleSearch() {
     if (searchBusy || downloadBusy) return;
     setSearchBusy(true);
@@ -181,7 +201,7 @@ export function OnlineSubtitleSection({
     }
   }
 
-  const busy = disabled || searchBusy || downloadBusy || keyBusy;
+  const busy = disabled || searchBusy || downloadBusy || keyBusy || checkBusy;
 
   return (
     <div className="flex flex-col gap-2 rounded-md border border-border/70 bg-muted/20 p-2">
@@ -202,6 +222,15 @@ export function OnlineSubtitleSection({
             onChange={(e) => setKeyInput(e.target.value)}
           />
         </label>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          disabled={busy || keyInput.trim() === ""}
+          onClick={() => void handleCheckKey()}
+        >
+          {checkBusy ? "检测中…" : "检测"}
+        </Button>
         <Button
           type="button"
           variant="outline"
