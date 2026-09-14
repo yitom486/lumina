@@ -71,7 +71,16 @@ beforeEach(() => {
         { tmdbId: 135897, mediaType: "tv", title: "那年，我们的夏天", year: 2021 },
       ]);
     if (cmd === "library_apply_tmdb_match")
-      return Promise.resolve({ root: "D:\\movie", groupKey: "g", tmdbId: 1, mediaType: "tv", writtenFiles: [] });
+      return Promise.resolve({ root: "D:\\movie", groupKey: "g", tmdbId: 1, mediaType: "tv", writtenFiles: ["series.json"] });
+    if (cmd === "library_wikipedia_preview")
+      return Promise.resolve({
+        needsUserPick: false,
+        conflict: false,
+        searchCandidates: [],
+        recommended: { pageLang: "en", pageTitle: "Our Beloved Summer", pageUrl: "https://en.wikipedia.org/wiki/x", source: "wikidata" },
+      });
+    if (cmd === "library_wikipedia_apply")
+      return Promise.resolve({ root: "D:\\movie", groupKey: "g", writtenFile: "wiki.json" });
     return Promise.resolve(null);
   });
   useLibrarySettingsStore.setState({
@@ -92,14 +101,14 @@ describe("MediaLibraryPanel pending groups", () => {
   it("prefills the title input with the known group title", async () => {
     renderPanel();
     const input = (await screen.findByPlaceholderText(
-      "输入作品名后查 TMDb",
+      "输入作品名后一键匹配",
     )) as HTMLInputElement;
     expect(input.value).toBe("Our Beloved Summer 2021");
   });
 
   it("searches TMDb manually and applies with chosen fields", async () => {
     renderPanel();
-    fireEvent.click(await screen.findByText("查 TMDb"));
+    fireEvent.click(await screen.findByText("手动选"));
     const confirm = await screen.findByText("确认拉取");
     fireEvent.click(screen.getByLabelText("演员阵容"));
     fireEvent.click(confirm);
@@ -127,6 +136,64 @@ describe("MediaLibraryPanel pending groups", () => {
     await waitFor(() => {
       expect(screen.getByText(/确认首选：那年，我们的夏天/)).toBeInTheDocument();
     });
+  });
+
+  it("one-click match applies a lone candidate and attaches wiki", async () => {
+    renderPanel();
+    fireEvent.click(await screen.findByText("一键匹配"));
+    await waitFor(() => {
+      expect(screen.getByText(/一键匹配成功/)).toBeInTheDocument();
+    });
+    expect(
+      vi.mocked(invoke).mock.calls.some(([cmd]) => cmd === "library_apply_tmdb_match"),
+    ).toBe(true);
+    expect(
+      vi.mocked(invoke).mock.calls.some(([cmd]) => cmd === "library_wikipedia_apply"),
+    ).toBe(true);
+  });
+
+  it("one-click match falls back to the manual list on ambiguity", async () => {
+    vi.mocked(invoke).mockImplementation((cmd: string) => {
+      if (cmd === "library_status")
+        return Promise.resolve({
+          running: true,
+          roots: ["D:\\movie"],
+          pollIntervalSecs: 30,
+          lastScanAtMs: null,
+          lastScanError: null,
+          indexedFiles: 16,
+          pendingGroups: 1,
+        });
+      if (cmd === "library_pending_groups") return Promise.resolve(PENDING);
+      if (cmd === "library_credential_status")
+        return Promise.resolve({ modelApiKeySaved: false, tmdbAccessTokenSaved: true });
+      if (cmd === "library_search_tmdb")
+        return Promise.resolve([
+          { tmdbId: 1, mediaType: "tv", title: "Show Alpha", year: 2020 },
+          { tmdbId: 2, mediaType: "tv", title: "Show Beta", year: 2021 },
+        ]);
+      return Promise.resolve(null);
+    });
+    renderPanel();
+    fireEvent.click(await screen.findByText("一键匹配"));
+    await waitFor(() => {
+      expect(screen.getAllByText("确认拉取")).toHaveLength(2);
+    });
+    expect(
+      vi.mocked(invoke).mock.calls.some(([cmd]) => cmd === "library_apply_tmdb_match"),
+    ).toBe(false);
+  });
+
+  it("manual confirm also attaches wiki with an honest notice", async () => {
+    renderPanel();
+    fireEvent.click(await screen.findByText("手动选"));
+    fireEvent.click(await screen.findByText("确认拉取"));
+    await waitFor(() => {
+      expect(screen.getByText(/含维基补充/)).toBeInTheDocument();
+    });
+    expect(
+      vi.mocked(invoke).mock.calls.some(([cmd]) => cmd === "library_wikipedia_apply"),
+    ).toBe(true);
   });
 
   it("confirms the top candidate with progress feedback", async () => {

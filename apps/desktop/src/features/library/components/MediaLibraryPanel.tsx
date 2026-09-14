@@ -37,6 +37,7 @@ import {
   validateTmdbCredentials,
 } from "../api";
 import { useLibrarySettingsStore } from "../settingsStore";
+import { pickSingleCandidate } from "../autoMatch";
 import {
   buildAgentModelOptions,
   buildAgentReasoningOptions,
@@ -532,6 +533,32 @@ export function MediaLibraryPanel() {
               setError(null);
               return searchTmdbDirect({ root: pending.root, groupKey: pending.group.key, title, privacyAcknowledged, tmdb: config.tmdb });
             }}
+            onOneClickMatch={async (title) => {
+              setError(null);
+              const found = await searchTmdbDirect({ root: pending.root, groupKey: pending.group.key, title, privacyAcknowledged, tmdb: config.tmdb });
+              const pick = pickSingleCandidate(found, title);
+              if (!pick) return { kind: "needPick", candidates: found } as OneClickOutcome;
+              return { kind: "picked", candidate: pick } as OneClickOutcome;
+            }}
+            onAttachWiki={async () => {
+              try {
+                const wikiPreview = await previewWikipediaEnrichment({ root: pending.root, groupKey: pending.group.key, tmdb: config.tmdb });
+                if (!wikiPreview.needsUserPick && wikiPreview.recommended && !wikiPreview.conflict) {
+                  await applyWikipediaPage({
+                    root: pending.root,
+                    groupKey: pending.group.key,
+                    candidate: wikiPreview.recommended,
+                    matchMethod: matchMethodForCandidate(wikiPreview.recommended, false),
+                    candidatesConsidered: wikiCandidatesConsidered(wikiPreview),
+                  });
+                  await queryClient.refetchQueries({ queryKey: ["library-wiki-status", primaryRoot] });
+                  return { attached: true, footnote: null } as WikiAttachOutcome;
+                }
+                return { attached: false, footnote: "维基需手动选（去已匹配分组继续）" } as WikiAttachOutcome;
+              } catch (err) {
+                return { attached: false, footnote: `维基附带失败：${errorMessage(err)}` } as WikiAttachOutcome;
+              }
+            }}
             onPreview={async () => {
               setError(null);
               const preview = await previewMediaMatch({ root: pending.root, groupKey: pending.group.key, config });
@@ -839,15 +866,26 @@ function MatchedGroupCard({
 
 const FULL_TMDB_FIELDS: TmdbFieldSelection = { basic: true, cast: true, episodes: true };
 
-function PendingGroupCard({ pending, title, preview, disabled, directDisabled, onTitle, onSaveTitle, onSearchTitle, onPreview, onApply, onError }: {
+/** One-click match orchestration result. Thrown errors (search/apply) stay
+ * red panel errors; wiki outcomes always resolve (never throw) so every
+ * confirm path renders one honest notice — including partial success. */
+type OneClickOutcome =
+  | { kind: "picked"; candidate: TmdbCandidate }
+  | { kind: "needPick"; candidates: TmdbCandidate[] };
+
+type WikiAttachOutcome = { attached: boolean; footnote: string | null };
+
+function PendingGroupCard({ pending, title, preview, disabled, directDisabled, onTitle, onSaveTitle, onSearchTitle, onOneClickMatch, onAttachWiki, onPreview, onApply, onError }: {
   pending: PendingMediaGroup; title: string; preview?: ResolverPreview; disabled: boolean;
   directDisabled: boolean;
   onTitle: (value: string) => void; onSaveTitle: (value: string) => Promise<void>;
   onSearchTitle: (value: string) => Promise<TmdbCandidate[]>;
+  onOneClickMatch: (value: string) => Promise<OneClickOutcome>;
+  onAttachWiki: () => Promise<WikiAttachOutcome>;
   onPreview: () => Promise<void>; onApply: (id: number, type: "movie" | "tv", fields: TmdbFieldSelection) => Promise<MetadataWriteResult>;
   onError: (error: unknown) => void;
 }) {
-  const [busy, setBusy] = useState<"preview" | "apply" | "save" | "search" | null>(null);
+  const [busy, setBusy] = useState<"preview" | "apply" | "save" | "search" | "auto" | null>(null);
   const [applyingId, setApplyingId] = useState<number | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [direct, setDirect] = useState<TmdbCandidate[] | null>(null);
@@ -857,7 +895,7 @@ function PendingGroupCard({ pending, title, preview, disabled, directDisabled, o
   const first = preview?.candidates[0] ?? null;
 
   const run = async (
-    action: "preview" | "apply" | "save" | "search",
+    action: "preview" | "apply" | "save" | "search" | "auto",
     fn: () => Promise<void>,
     applyingCandidateId?: number,
   ) => {
@@ -874,18 +912,34 @@ function PendingGroupCard({ pending, title, preview, disabled, directDisabled, o
     }
   };
 
-  const confirmCandidate = (candidate: TmdbCandidate, fields: TmdbFieldSelection) =>
-    run("apply", async () => {
-      const result = await onApply(candidate.tmdbId, candidate.mediaType, fields);
-      setDirect(null);
-      setNotice(`已写入 ${result.writtenFiles.length} 个文件`);
-    }, candidate.tmdbId);
+  const doConfirm = async (candidate: TmdbCandidate, fields: TmdbFieldSelection, head: string) => {
+    const result = await onApply(candidate.tmdbId, candidate.mediaType, fields);
+    const wiki = await onAttachWiki();
+    setDirect(null);
+    const filesText = `写入 ${result.writtenFiles.length} 个文件`;
+    setNotice(wiki.attached ? `${head}：${candidate.title}，${filesText}（含维基补充）` : `${head}：${candidate.title}，${filesText}；${wiki.footnote}`);
+  };
+
+  const confirmCandidate = (candidate: TmdbCandidate, fields: TmdbFieldSelection, head: string) =>
+    run("apply", () => doConfirm(candidate, fields, head), candidate.tmdbId);
 
   return <div className="space-y-2 rounded-md border border-border p-2">
     <p className="font-medium">{pending.group.displayName}</p>
     <p className="text-muted-foreground">{pending.group.files.length} 个文件 · {pending.group.kind === "series" ? "剧集候选" : "电影候选"}</p>
-    <div className="flex gap-1"><input className="h-7 min-w-0 flex-1 rounded border border-border bg-background px-2" value={title} placeholder="输入作品名后查 TMDb" disabled={isBusy} onChange={(e) => onTitle(e.target.value)} /><Button size="sm" disabled={!title.trim() || directDisabled || isBusy} onClick={() => { setDirect(null); void run("search", async () => { setDirect(await onSearchTitle(title)); }); }}>{busy === "search" ? "查询中…" : "查 TMDb"}</Button></div>
-    <div className="flex items-center gap-2"><Button size="sm" variant="outline" disabled={disabled || isBusy} onClick={() => void run("preview", onPreview)}>{busy === "preview" ? "识别中…" : "智能识别"}</Button><button type="button" className="text-muted-foreground underline" disabled={!title.trim() || isBusy} onClick={() => void run("save", async () => { await onSaveTitle(title); setNotice("标题已保存（未联网）"); })}>{busy === "save" ? "保存中…" : "仅存标题不上网"}</button></div>
+    <div className="flex gap-1"><input className="h-7 min-w-0 flex-1 rounded border border-border bg-background px-2" value={title} placeholder="输入作品名后一键匹配" disabled={isBusy} onChange={(e) => onTitle(e.target.value)} /><Button size="sm" disabled={!title.trim() || directDisabled || isBusy} onClick={() => {
+      setDirect(null);
+      void run("auto", async () => {
+        const outcome = await onOneClickMatch(title);
+        if (outcome.kind === "needPick") {
+          setDirect(outcome.candidates);
+          if (outcome.candidates.length > 0) setNotice("搜到多个相似结果，请手动确认一个");
+          return;
+        }
+        setApplyingId(outcome.candidate.tmdbId);
+        await doConfirm(outcome.candidate, FULL_TMDB_FIELDS, "一键匹配成功");
+      });
+    }}>{busy === "auto" ? "匹配中…" : "一键匹配"}</Button></div>
+    <div className="flex items-center gap-2"><Button size="sm" variant="outline" disabled={!title.trim() || directDisabled || isBusy} onClick={() => { setDirect(null); void run("search", async () => { setDirect(await onSearchTitle(title)); }); }}>{busy === "search" ? "查询中…" : "手动选"}</Button><Button size="sm" variant="outline" disabled={disabled || isBusy} onClick={() => void run("preview", onPreview)}>{busy === "preview" ? "识别中…" : "智能识别"}</Button><button type="button" className="text-muted-foreground underline" disabled={!title.trim() || isBusy} onClick={() => void run("save", async () => { await onSaveTitle(title); setNotice("标题已保存（未联网）"); })}>{busy === "save" ? "保存中…" : "仅存标题不上网"}</button></div>
     {direct ? <div className="space-y-1 rounded bg-muted/40 p-2">
       <p className="text-muted-foreground">只把你输入的标题发给 TMDb；勾选要拉取的字段后确认。</p>
       <div className="flex flex-wrap gap-2 text-muted-foreground">
@@ -894,11 +948,11 @@ function PendingGroupCard({ pending, title, preview, disabled, directDisabled, o
         <label className="flex items-center gap-1"><input type="checkbox" checked={withEpisodes} disabled={isBusy} onChange={(e) => setWithEpisodes(e.target.checked)} />分集信息</label>
       </div>
       {direct.length === 0 ? <p className="text-muted-foreground">TMDb 没有返回候选，换个标题再试。</p> : null}
-      {direct.map((candidate) => <div key={`${candidate.mediaType}:${candidate.tmdbId}`} className="flex items-center justify-between gap-2"><span className="min-w-0 truncate">[{candidate.mediaType === "tv" ? "剧集" : "电影"}] {candidate.title}{candidate.year ? ` (${candidate.year})` : ""}</span><Button size="sm" variant="outline" disabled={directDisabled || isBusy} onClick={() => void confirmCandidate(candidate, { basic: true, cast: withCast, episodes: withEpisodes })}>{busy === "apply" && applyingId === candidate.tmdbId ? "写入中…" : "确认拉取"}</Button></div>)}
+      {direct.map((candidate) => <div key={`${candidate.mediaType}:${candidate.tmdbId}`} className="flex items-center justify-between gap-2"><span className="min-w-0 truncate">[{candidate.mediaType === "tv" ? "剧集" : "电影"}] {candidate.title}{candidate.year ? ` (${candidate.year})` : ""}</span><Button size="sm" variant="outline" disabled={directDisabled || isBusy} onClick={() => void confirmCandidate(candidate, { basic: true, cast: withCast, episodes: withEpisodes }, "已确认")}>{busy === "apply" && applyingId === candidate.tmdbId ? "写入中…" : "确认拉取"}</Button></div>)}
     </div> : null}
     {preview ? <div className="space-y-1 rounded bg-muted/40 p-2"><p>识别：{preview.intent.title} · {preview.intent.mediaType}</p>
-      {first ? <Button size="sm" disabled={disabled || isBusy} onClick={() => void confirmCandidate(first, FULL_TMDB_FIELDS)}>{busy === "apply" && applyingId === first.tmdbId ? "确认中…" : `确认首选：${first.title}${first.year ? ` (${first.year})` : ""}`}</Button> : null}
-      {preview.candidates.map((candidate) => <div key={candidate.tmdbId} className="flex items-center justify-between gap-2"><span className="min-w-0 truncate">{candidate.title}{candidate.year ? ` (${candidate.year})` : ""}</span><Button size="sm" variant="outline" disabled={disabled || isBusy} onClick={() => void confirmCandidate(candidate, FULL_TMDB_FIELDS)}>{busy === "apply" && applyingId === candidate.tmdbId ? "确认中…" : "确认"}</Button></div>)}
+      {first ? <Button size="sm" disabled={disabled || isBusy} onClick={() => void confirmCandidate(first, FULL_TMDB_FIELDS, "已确认")}>{busy === "apply" && applyingId === first.tmdbId ? "确认中…" : `确认首选：${first.title}${first.year ? ` (${first.year})` : ""}`}</Button> : null}
+      {preview.candidates.map((candidate) => <div key={candidate.tmdbId} className="flex items-center justify-between gap-2"><span className="min-w-0 truncate">{candidate.title}{candidate.year ? ` (${candidate.year})` : ""}</span><Button size="sm" variant="outline" disabled={disabled || isBusy} onClick={() => void confirmCandidate(candidate, FULL_TMDB_FIELDS, "已确认")}>{busy === "apply" && applyingId === candidate.tmdbId ? "确认中…" : "确认"}</Button></div>)}
     </div> : null}
     {notice ? <p className="text-xs text-emerald-600 dark:text-emerald-400">{notice}</p> : null}
   </div>;
