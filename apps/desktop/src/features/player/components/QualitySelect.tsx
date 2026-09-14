@@ -1,18 +1,8 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 
-import { Button } from "@lumina/ui/button";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuLabel,
-  DropdownMenuRadioGroup,
-  DropdownMenuRadioItem,
-  DropdownMenuTrigger,
-} from "@lumina/ui/dropdown-menu";
-
 import { listPlaybackFormats } from "../api";
 import { usePlayerStore } from "../store";
-import { dropdownSelectionItemClass } from "./menuItemStyles";
+import { SelectionCombobox } from "./SelectionCombobox";
 
 export function QualitySelect() {
   const sourceKind = usePlayerStore((s) => s.sourceKind);
@@ -38,42 +28,25 @@ export function QualitySelect() {
     data.formats[0];
 
   return (
-    <DropdownMenu>
-      <DropdownMenuTrigger asChild>
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          className="min-w-16 tabular-nums"
-          disabled={busy}
-        >
-          {current?.label ?? "清晰度"}
-        </Button>
-      </DropdownMenuTrigger>
-      <DropdownMenuContent align="start" side="bottom" className="z-[100]">
-        <DropdownMenuLabel>清晰度</DropdownMenuLabel>
-        <DropdownMenuRadioGroup
-          value={playbackFormatId ?? data.currentFormatId ?? ""}
-          onValueChange={(formatId) => {
-            void (async () => {
-              await setPlaybackFormat(formatId);
-              await queryClient.invalidateQueries({
-                queryKey: ["playback-formats"],
-              });
-            })();
-          }}
-        >
-          {data.formats.map((format) => (
-            <DropdownMenuRadioItem
-              key={format.formatId}
-              value={format.formatId}
-              className={dropdownSelectionItemClass}
-            >
-              {format.label}
-            </DropdownMenuRadioItem>
-          ))}
-        </DropdownMenuRadioGroup>
-      </DropdownMenuContent>
-    </DropdownMenu>
+    <SelectionCombobox
+      value={playbackFormatId ?? data.currentFormatId ?? ""}
+      options={data.formats.map((format) => ({
+        value: format.formatId,
+        label: format.label,
+      }))}
+      placeholder="清晰度"
+      ariaLabel="选择清晰度"
+      triggerLabel={current?.label ?? "清晰度"}
+      disabled={busy}
+      className="min-w-16 tabular-nums"
+      onValueChange={(formatId) => {
+        void (async () => {
+          await setPlaybackFormat(formatId);
+          await queryClient.invalidateQueries({
+            queryKey: ["playback-formats"],
+          });
+        })();
+      }}
+    />
   );
 }

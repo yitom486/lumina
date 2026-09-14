@@ -3,17 +3,6 @@ import { Captions, Languages } from "lucide-react";
 
 import { Button } from "@lumina/ui/button";
 import {
-  DropdownMenu,
-  DropdownMenuCheckboxItem,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuRadioGroup,
-  DropdownMenuRadioItem,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from "@lumina/ui/dropdown-menu";
-import {
   Tooltip,
   TooltipContent,
   TooltipTrigger,
@@ -21,7 +10,7 @@ import {
 import { cn } from "@lumina/ui/utils";
 
 import { audioTrackLabel, useTrackControls } from "../hooks/useTrackControls";
-import { dropdownSelectionItemClass } from "./menuItemStyles";
+import { SelectionCombobox } from "./SelectionCombobox";
 
 type Props = {
   variant?: "sidebar" | "bar";
@@ -149,86 +138,51 @@ export function TrackControlButtons({
           </>
         ) : (
           <>
-            <DropdownMenu onOpenChange={notifyPin}>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <DropdownMenuTrigger asChild>{audioButton}</DropdownMenuTrigger>
-                </TooltipTrigger>
-                <TooltipContent>音轨</TooltipContent>
-              </Tooltip>
-              <DropdownMenuContent
-                align="start"
-                side="bottom"
-                className="z-[100] min-w-[14rem]"
-              >
-                <DropdownMenuLabel>音轨</DropdownMenuLabel>
-                <DropdownMenuSeparator />
-                {audioTracks.length === 0 ? (
-                  <DropdownMenuItem disabled>没有音轨</DropdownMenuItem>
-                ) : null}
-                <DropdownMenuRadioGroup
-                  value={
-                    audioStreamIndex == null ? "" : String(audioStreamIndex)
-                  }
-                  onValueChange={(value) => {
-                    const index = Number(value);
-                    if (Number.isFinite(index)) setAudioStreamIndex(index);
-                  }}
-                >
-                  {audioTracks.map((track) => (
-                    <DropdownMenuRadioItem
-                      key={track.index}
-                      value={String(track.index)}
-                      className={dropdownSelectionItemClass}
-                    >
-                      {audioTrackLabel(track)}
-                    </DropdownMenuRadioItem>
-                  ))}
-                </DropdownMenuRadioGroup>
-              </DropdownMenuContent>
-            </DropdownMenu>
-
-            <DropdownMenu onOpenChange={notifyPin}>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <DropdownMenuTrigger asChild>{subtitleButton}</DropdownMenuTrigger>
-                </TooltipTrigger>
-                <TooltipContent>字幕</TooltipContent>
-              </Tooltip>
-              <DropdownMenuContent
-                align="start"
-                side="bottom"
-                className="z-[100] min-w-[16rem]"
-              >
-                <DropdownMenuLabel>字幕</DropdownMenuLabel>
-                <DropdownMenuSeparator />
-                <DropdownMenuCheckboxItem
-                  checked={subtitleVisible}
-                  className={dropdownSelectionItemClass}
-                  onCheckedChange={() => {
-                    // 只关画面 overlay：选中轨（文稿/AI 数据源）原样保留。
-                    setSubtitleVisible(!subtitleVisible);
-                  }}
-                >
-                  显示字幕
-                </DropdownMenuCheckboxItem>
-                <DropdownMenuSeparator />
-                <DropdownMenuRadioGroup
-                  value={subtitleChoiceId ?? ""}
-                  onValueChange={setSubtitleChoiceId}
-                >
-                  {choices.map((choice) => (
-                    <DropdownMenuRadioItem
-                      key={choice.id}
-                      value={choice.id}
-                      className={dropdownSelectionItemClass}
-                    >
-                      {choice.label}
-                    </DropdownMenuRadioItem>
-                  ))}
-                </DropdownMenuRadioGroup>
-              </DropdownMenuContent>
-            </DropdownMenu>
+            <SelectionCombobox
+              value={audioStreamIndex == null ? null : String(audioStreamIndex)}
+              options={audioTracks.map((track) => ({
+                value: String(track.index),
+                label: audioTrackLabel(track),
+                keywords: `${track.language ?? ""} ${track.codecName ?? ""}`,
+              }))}
+              placeholder="音轨"
+              ariaLabel="选择音轨"
+              triggerLabel={
+                selectedAudio
+                  ? (selectedAudio.language ?? selectedAudio.codecName ?? "音轨")
+                  : "音轨"
+              }
+              leadingIcon={<Languages className="size-3.5 shrink-0" />}
+              disabled={audioTracks.length === 0}
+              className={cn(btnClass, compact && "max-w-[6rem]")}
+              onValueChange={(value) => setAudioStreamIndex(Number(value))}
+              onOpenChange={notifyPin}
+            />
+            <SelectionCombobox
+              value={subtitleChoiceId}
+              options={choices.map((choice) => ({
+                value: choice.id,
+                label: choice.label,
+                keywords: `${choice.language ?? ""} ${choice.codecName ?? ""}`,
+              }))}
+              placeholder="字幕"
+              ariaLabel="选择字幕"
+              triggerLabel={
+                selectedSub
+                  ? `${selectedSub.label.replace(/^内嵌 · |^外挂 · |^下载 · /, "")}${subtitleVisible ? "" : " · 已隐藏"}`
+                  : "字幕"
+              }
+              leadingIcon={<Captions className="size-3.5 shrink-0" />}
+              disabled={choices.length === 0}
+              className={cn(btnClass, compact && "max-w-[6.5rem]")}
+              onValueChange={setSubtitleChoiceId}
+              onOpenChange={notifyPin}
+              toggle={{
+                label: "显示字幕",
+                checked: subtitleVisible,
+                onChange: () => setSubtitleVisible(!subtitleVisible),
+              }}
+            />
           </>
         )}
       </div>

@@ -93,15 +93,13 @@ describe("TrackControlButtons subtitle menu", () => {
       timeout: 8000,
     });
     await user.click(trigger);
-    const toggle = await screen.findByText("显示字幕", undefined, {
-      timeout: 8000,
-    });
+    const toggle = await screen.findByRole("button", { name: "显示字幕" });
     expect(toggle).toBeInTheDocument();
-    expect(toggle.parentElement).toHaveClass("z-[100]");
-    const track = screen.getByRole("menuitemradio", {
+    expect(screen.getByRole("menu")).toHaveClass("z-[100]");
+    const track = screen.getByRole("menuitem", {
       name: "下载 · subdl · en",
     });
-    expect(track).toHaveClass("grid", "pl-2");
+    expect(track).toHaveAttribute("aria-current", "true");
     await user.click(toggle);
     await waitFor(() => {
       expect(useTrackStore.getState().subtitleVisible).toBe(false);
@@ -156,13 +154,11 @@ describe("RateSelect menu", () => {
     const user = userEvent.setup();
     render(<RateSelect />);
 
-    await user.click(screen.getByRole("button", { name: "0.5x" }));
+    await user.click(screen.getByRole("combobox", { name: "选择播放速度" }));
 
-    const label = await screen.findByText("播放速度");
-    expect(label).toBeInTheDocument();
-    expect(label.parentElement).toHaveClass("z-[100]");
-    const oneRate = screen.getByRole("menuitemradio", { name: "1x" });
+    expect(await screen.findByPlaceholderText("搜索倍速")).toBeInTheDocument();
+    const oneRate = screen.getByRole("menuitem", { name: "1x" });
     expect(oneRate).toBeInTheDocument();
-    expect(oneRate).toHaveClass("grid", "pl-2");
+    expect(oneRate).not.toHaveAttribute("aria-current");
   });
 });
