@@ -170,7 +170,7 @@ fn tool_json(name: &str) -> Option<Value> {
     } else if name == contract::TOOL_EPISODE_TRANSCRIPT {
         json!({
             "name": contract::TOOL_EPISODE_TRANSCRIPT,
-            "description": "Return subtitle lines for another episode in the same series group. Requires season and episode. Defaults to the frozen prompt anchor when season/episode match the anchor file, otherwise episode start (0). Optional centerMs/atSec overrides. Uses the anchor subtitle track unless subtitleChoiceId is provided. Window defaults to 60 seconds before and after (each side up to 300 seconds).",
+            "description": "Return subtitle lines for another episode in the same series group. Requires season and episode. Files named EPxx without a season resolve as season 1, so S01E01 matches EP01. Defaults to the frozen prompt anchor when season/episode match the anchor file, otherwise episode start (0). Optional centerMs/atSec overrides. Uses the anchor subtitle track unless subtitleChoiceId is provided. Window defaults to 60 seconds before and after (each side up to 300 seconds).",
             "inputSchema": {
                 "type": "object",
                 "properties": {

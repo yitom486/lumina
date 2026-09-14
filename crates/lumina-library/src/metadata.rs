@@ -316,13 +316,16 @@ pub fn resolve_episode_media_file<'a>(
     if season == 0 || episode == 0 {
         return Err(LibraryError::invalid_input("season 与 episode 须大于 0"));
     }
+    // EPxx 文件名不带季时索引存 season=None（建索引永不猜）。查询侧执行与
+    // 地址栏一致的收口：只要要的是 S01，就把无季文件当 S01 匹配；S02+ 不猜，
+    // 避免把未知季的文件张冠李戴（2026-09-14：EP01 问 S01E01 报分组找不到）。
     index
         .files
         .iter()
         .find(|file| {
             file.group_key == group_key
-                && file.season == Some(season)
                 && file.episode == Some(episode)
+                && (file.season == Some(season) || (season == 1 && file.season.is_none()))
         })
         .ok_or_else(|| LibraryError::group_not_found(Some(&format!("S{season:02}E{episode:02}"))))
 }
@@ -1248,5 +1251,31 @@ mod tests {
         // Zero season/episode is invalid input (frontend citations guarantee positives).
         let zero = resolve_episode_media_file(&index, "Show", 0, 1).expect_err("zero season");
         assert_eq!(zero.code, crate::error::LibraryErrorCode::InvalidInput);
+    }
+
+    #[test]
+    fn resolve_episode_media_file_defaults_seasonless_to_s01() {
+        use crate::model::IndexedMediaFile;
+
+        // EP01.HD1080P... (no season segment): indexer stores season=None.
+        let index = LibraryIndex {
+            schema_version: 1,
+            root: "library".into(),
+            updated_at_ms: 0,
+            files: vec![IndexedMediaFile {
+                relative_path: "Show/Show.EP01.mkv".into(),
+                file_name: "Show.EP01.mkv".into(),
+                size_bytes: 1,
+                modified_at_ms: 0,
+                group_key: "Show".into(),
+                season: None,
+                episode: Some(1),
+            }],
+            groups: Vec::new(),
+        };
+        let file = resolve_episode_media_file(&index, "Show", 1, 1).expect("S01 default");
+        assert_eq!(file.relative_path, "Show/Show.EP01.mkv");
+        // S02+ never guesses an unknown season.
+        assert!(resolve_episode_media_file(&index, "Show", 2, 1).is_err());
     }
 }

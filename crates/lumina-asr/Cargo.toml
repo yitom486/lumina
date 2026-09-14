@@ -5,8 +5,8 @@ description = "Optional on-demand ASR integration for Lumina"
 edition = "2021"
 
 [dependencies]
-lumina-media = { path = "../lumina-media" }
-lumina-subtitle = { path = "../lumina-subtitle" }
+lumina-media.workspace = true
+lumina-subtitle.workspace = true
 serde = { version = "1", features = ["derive"] }
 tracing = "0.1"
 ureq = { version = "3.1", features = ["json"] }

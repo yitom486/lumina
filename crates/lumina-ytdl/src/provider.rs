@@ -719,6 +719,187 @@ pub fn load_cached_choice(media_path: &str, choice_id: &str) -> Result<Transcrip
     })
 }
 
+// --- translation checkpoints (resume across runs) ---------------------------
+// One finished batch per file under
+// `<cache>/checkpoint/<target>/<source-key>-<model>/`, guarded by `meta.json`.
+// A later run with identical (media, source, target, model, batch size,
+// content) replays finished batches without model calls; anything else
+// wipes and restarts. See `lumina_core::checkpoint` for the contract.
+
+/// Schema version for checkpoint dirs; a mismatch wipes and restarts.
+const CHECKPOINT_SCHEMA: u32 = 1;
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct CheckpointMeta {
+    schema: u32,
+    media_path: String,
+    source_choice_id: String,
+    target_lang: String,
+    model_key: String,
+    batch_size: usize,
+    cue_count: usize,
+    content_hash: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct StoredBatch {
+    texts: Vec<String>,
+    reported: Vec<(String, String)>,
+}
+
+/// Opaque file suffix for a source choice inside a checkpoint dir name.
+/// `cache:` ids collapse to `provider-lang`; anything else is sanitized.
+fn checkpoint_source_key(choice_id: &str) -> String {
+    match parse_cache_choice(choice_id) {
+        Some((provider, lang)) => format!("{provider}-{lang}"),
+        None => safe_component(choice_id),
+    }
+}
+
+fn checkpoint_batch_name(index: usize) -> String {
+    format!("batch-{index:05}.json")
+}
+
+/// Build (or re-open) the checkpoint for one workshop job. Infallible by
+/// design: any problem surfaces as an empty store and the job runs fully.
+pub fn translation_checkpoint(
+    media_path: &str,
+    source_choice_id: &str,
+    target_lang: &str,
+    model_key: &str,
+    batch_size: usize,
+    cues: &[lumina_subtitle::model::Cue],
+) -> TranslationCheckpoint {
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
+    let mut hasher = DefaultHasher::new();
+    for cue in cues {
+        cue.index.hash(&mut hasher);
+        cue.start_ms.hash(&mut hasher);
+        cue.end_ms.hash(&mut hasher);
+        cue.text.hash(&mut hasher);
+    }
+    let model_key = if model_key.trim().is_empty() {
+        "default".to_string()
+    } else {
+        model_key.to_string()
+    };
+    let dir = media_cache_dir(media_path)
+        .join("checkpoint")
+        .join(safe_component(target_lang))
+        .join(format!(
+            "{}-{}",
+            checkpoint_source_key(source_choice_id),
+            safe_component(&model_key)
+        ));
+    TranslationCheckpoint {
+        dir,
+        expected: CheckpointMeta {
+            schema: CHECKPOINT_SCHEMA,
+            media_path: media_path.to_string(),
+            source_choice_id: source_choice_id.to_string(),
+            target_lang: target_lang.to_string(),
+            model_key,
+            batch_size,
+            cue_count: cues.len(),
+            content_hash: hasher.finish(),
+        },
+    }
+}
+
+pub struct TranslationCheckpoint {
+    dir: PathBuf,
+    expected: CheckpointMeta,
+}
+
+impl TranslationCheckpoint {
+    fn meta_matches(&self) -> bool {
+        let raw = fs::read_to_string(self.dir.join("meta.json")).unwrap_or_default();
+        serde_json::from_str::<CheckpointMeta>(&raw)
+            .map(|meta| {
+                meta.schema == self.expected.schema
+                    && meta.media_path == self.expected.media_path
+                    && meta.source_choice_id == self.expected.source_choice_id
+                    && meta.target_lang == self.expected.target_lang
+                    && meta.model_key == self.expected.model_key
+                    && meta.batch_size == self.expected.batch_size
+                    && meta.cue_count == self.expected.cue_count
+                    && meta.content_hash == self.expected.content_hash
+            })
+            .unwrap_or(false)
+    }
+
+    /// Persist the identity file; a foreign/stale dir is wiped first so a
+    /// later run never replays another job's batches.
+    fn ensure_meta(&self) {
+        if self.meta_matches() {
+            return;
+        }
+        let _ = fs::remove_dir_all(&self.dir);
+        if fs::create_dir_all(&self.dir).is_ok() {
+            if let Ok(body) = serde_json::to_string(&self.expected) {
+                let _ = fs::write(self.dir.join("meta.json"), body);
+            }
+        }
+    }
+}
+
+impl lumina_core::BatchCheckpoint for TranslationCheckpoint {
+    fn load_completed(&self) -> BTreeMap<usize, lumina_core::CheckpointBatch> {
+        if !self.meta_matches() {
+            return BTreeMap::new();
+        }
+        let mut out = BTreeMap::new();
+        let entries = fs::read_dir(&self.dir)
+            .map(|entries| entries.flatten().collect::<Vec<_>>())
+            .unwrap_or_default();
+        for entry in entries {
+            let name = entry.file_name();
+            let name = name.to_string_lossy();
+            let Some(index) = name
+                .strip_prefix("batch-")
+                .and_then(|rest| rest.strip_suffix(".json"))
+                .and_then(|number| number.parse::<usize>().ok())
+            else {
+                continue;
+            };
+            let Ok(raw) = fs::read_to_string(entry.path()) else {
+                continue;
+            };
+            let Ok(stored) = serde_json::from_str::<StoredBatch>(&raw) else {
+                continue;
+            };
+            out.insert(
+                index,
+                lumina_core::CheckpointBatch {
+                    texts: stored.texts,
+                    reported: stored.reported,
+                },
+            );
+        }
+        out
+    }
+
+    fn save_batch(&self, index: usize, batch: &lumina_core::CheckpointBatch) -> Result<(), String> {
+        self.ensure_meta();
+        let stored = StoredBatch {
+            texts: batch.texts.clone(),
+            reported: batch.reported.clone(),
+        };
+        let body = serde_json::to_string(&stored)
+            .map_err(|error| format!("encode checkpoint: {error}"))?;
+        fs::write(self.dir.join(checkpoint_batch_name(index)), body)
+            .map_err(|error| format!("write checkpoint: {error}"))?;
+        Ok(())
+    }
+
+    fn clear(&self) -> Result<(), String> {
+        fs::remove_dir_all(&self.dir)
+            .map(|_| ())
+            .map_err(|error| format!("clear checkpoint: {error}"))
+    }
+}
+
 // --- provider key store (backend file, mirrors cookie settings) -----------
 
 fn provider_keys_path() -> PathBuf {
@@ -1094,6 +1275,32 @@ mod tests {
         );
         assert!(parse_cache_choice("online:en").is_none());
         assert!(parse_cache_choice("cache:subdl:").is_none());
+    }
+
+    #[test]
+    fn checkpoint_keys_are_stable_and_ascii() {
+        // Hermetic: key derivation never touches install_root (fixed), so it
+        // is safe to assert here; file IO stays covered by review + live runs.
+        assert_eq!(checkpoint_source_key("cache:subdl:en"), "subdl-en");
+        assert_eq!(
+            checkpoint_source_key("sidecar:D:\\movie\\a b.srt"),
+            "sidecar_D__movie_a_b_srt"
+        );
+        assert_eq!(checkpoint_batch_name(7), "batch-00007.json");
+        let meta = CheckpointMeta {
+            schema: CHECKPOINT_SCHEMA,
+            media_path: "D:\\v\\a.mp4".into(),
+            source_choice_id: "cache:subdl:en".into(),
+            target_lang: "zh".into(),
+            model_key: "gpt|Medium".into(),
+            batch_size: 40,
+            cue_count: 1319,
+            content_hash: 42,
+        };
+        let body = serde_json::to_string(&meta).expect("meta serializes");
+        let back: CheckpointMeta = serde_json::from_str(&body).expect("meta parses");
+        assert_eq!(back.content_hash, 42);
+        assert_eq!(back.batch_size, 40);
     }
 
     #[test]

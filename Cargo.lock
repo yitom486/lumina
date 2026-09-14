@@ -2255,6 +2255,7 @@ dependencies = [
  "lumina-subtitle",
  "serde",
  "serde_json",
+ "tracing",
 ]
 
 [[package]]

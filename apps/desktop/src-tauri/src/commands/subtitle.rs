@@ -4,6 +4,8 @@ use serde::Serialize;
 use tauri::ipc::Channel;
 use tauri::{AppHandle, Manager};
 
+use lumina_core::BatchCheckpoint;
+
 use crate::acp::AgentProfilesHint;
 use crate::state::AppState;
 use crate::subtitle::model::Cue;
@@ -57,6 +59,38 @@ fn indeterminate_progress(message: String) -> SubtitleTranslateEvent {
         message,
         done: None,
         total: None,
+    }
+}
+
+/// Checkpoint store for one workshop job: finished batches persist to the
+/// process cache so a later run resumes instead of restarting. Cleared after
+/// a fully successful job; failures keep it for resume.
+fn workshop_checkpoint(
+    path: &str,
+    choice_id: &str,
+    target: &str,
+    model_id: Option<&str>,
+    reasoning_effort: Option<&str>,
+    cues: &[Cue],
+) -> crate::ytdl::provider::TranslationCheckpoint {
+    let model_key = format!(
+        "{}|{}",
+        model_id.unwrap_or("default"),
+        reasoning_effort.unwrap_or("default")
+    );
+    crate::ytdl::provider::translation_checkpoint(
+        path,
+        choice_id,
+        target,
+        &model_key,
+        translate::TRANSLATE_BATCH_SIZE,
+        cues,
+    )
+}
+
+fn clear_checkpoint(store: &crate::ytdl::provider::TranslationCheckpoint) {
+    if let Err(error) = store.clear() {
+        tracing::warn!(%error, "checkpoint clear failed");
     }
 }
 
@@ -220,6 +254,14 @@ fn translate_cached_track(
         let _ = on_event.send(forward_progress(update));
     };
     let source = state.provider().load_cached(path, choice_id)?;
+    let checkpoint = workshop_checkpoint(
+        path,
+        choice_id,
+        &token,
+        model_id,
+        reasoning_effort,
+        &source.cues,
+    );
     let context = translation_context_for_media(state, path);
     let mut progress = progress;
     let translated = translate::translate_cues(
@@ -231,6 +273,7 @@ fn translate_cached_track(
         reasoning_effort,
         &invoker,
         &mut progress,
+        Some(&checkpoint),
     )?;
     if let Some(message) = backfill_glossary_names(
         state,
@@ -249,9 +292,15 @@ fn translate_cached_track(
     let _ = on_event.send(indeterminate_progress(format!(
         "正在保存缓存字幕（{token}）…"
     )));
-    state
-        .provider()
-        .store_translation(path, &provider, &source_lang, &token, &translated.cues)
+    let stored = state.provider().store_translation(
+        path,
+        &provider,
+        &source_lang,
+        &token,
+        &translated.cues,
+    )?;
+    clear_checkpoint(&checkpoint);
+    Ok(stored)
 }
 
 #[tauri::command]
@@ -400,6 +449,15 @@ fn finish_translate(
             });
         }
         Err(error) => {
+            // Error spec: UI shows the fixed message only; the full cause
+            // (code + details: cue index, batch, os error) belongs in the log.
+            // This was missing, so workshop failures died without a trace.
+            tracing::warn!(
+                code = ?error.code,
+                message = %error.message,
+                details = ?error.details,
+                "subtitle workshop task failed"
+            );
             let _ = on_event.send(SubtitleTranslateEvent::Failed {
                 code: format!("{:?}", error.code),
                 message: error.message.clone(),
@@ -489,6 +547,14 @@ pub async fn subtitle_proofread_track(
             .and_then(|state| translation_context_for_media(&state, &path));
         let source = SubtitleService::load_choice(&path, &choice_id)?;
         let proof_token = proofread_token(&source)?;
+        let checkpoint = workshop_checkpoint(
+            &path,
+            &choice_id,
+            &proof_token,
+            model_id.as_deref(),
+            reasoning_effort.as_deref(),
+            &source.cues,
+        );
         let mut progress = |update: translate::ProgressUpdate| {
             let _ = on_event.send(forward_progress(update));
         };
@@ -501,11 +567,15 @@ pub async fn subtitle_proofread_track(
             reasoning_effort.as_deref(),
             &invoker,
             &mut progress,
+            Some(&checkpoint),
         )?;
         let _ = on_event.send(indeterminate_progress(format!(
             "正在保存校对字幕（{proof_token}）…"
         )));
         let result = write::export_sidecar_srt(std::path::Path::new(&path), &proof_token, &cues);
+        if result.is_ok() {
+            clear_checkpoint(&checkpoint);
+        }
         finish_translate(&on_event, &result);
         result
     })
@@ -546,6 +616,14 @@ fn proofread_cached_track(
         .ok_or_else(|| SubtitleError::extract_failed(Some("invalid cached subtitle choice")))?;
     let source = state.provider().load_cached(path, choice_id)?;
     let token = proofread_token(&source)?;
+    let checkpoint = workshop_checkpoint(
+        path,
+        choice_id,
+        &token,
+        model_id,
+        reasoning_effort,
+        &source.cues,
+    );
     let context = translation_context_for_media(state, path);
     let invoker = crate::acp::adapter::AcpAgentInvoker::new(profiles);
     let mut progress = |update: translate::ProgressUpdate| {
@@ -560,13 +638,17 @@ fn proofread_cached_track(
         reasoning_effort,
         &invoker,
         &mut progress,
+        Some(&checkpoint),
     )?;
     let _ = on_event.send(indeterminate_progress(format!(
         "正在保存缓存字幕（{token}）…"
     )));
-    state
-        .provider()
-        .store_translation(path, &provider, &source_lang, &token, &cues)
+    let stored =
+        state
+            .provider()
+            .store_translation(path, &provider, &source_lang, &token, &cues)?;
+    clear_checkpoint(&checkpoint);
+    Ok(stored)
 }
 
 #[tauri::command]
@@ -618,6 +700,19 @@ pub async fn subtitle_translate_track(
         let context = app
             .try_state::<AppState>()
             .and_then(|state| translation_context_for_media(&state, &path));
+        // Checkpoint factory: the wrapper loads the source, then asks here
+        // for a store keyed by the loaded cues (fingerprint inside).
+        let checkpoint_factory =
+            |source: &Transcript, token: &str, model_key: &str| -> Box<dyn BatchCheckpoint> {
+                Box::new(crate::ytdl::provider::translation_checkpoint(
+                    &path,
+                    &choice_id,
+                    token,
+                    model_key,
+                    translate::TRANSLATE_BATCH_SIZE,
+                    &source.cues,
+                ))
+            };
         let translated = translate::translate_and_export_track(
             &path,
             &choice_id,
@@ -630,6 +725,7 @@ pub async fn subtitle_translate_track(
             |update| {
                 let _ = on_event.send(forward_progress(update));
             },
+            Some(&checkpoint_factory),
         )?;
         if let Some(state) = app.try_state::<AppState>() {
             if let Some(message) = backfill_glossary_names(

@@ -5,6 +5,6 @@ description = "Subtitle discovery, extraction, parsing, and export for Lumina"
 edition = "2021"
 
 [dependencies]
-lumina-media = { path = "../lumina-media" }
+lumina-media.workspace = true
 serde = { version = "1", features = ["derive"] }
 tracing = "0.1"

@@ -14,3 +14,16 @@ members = [
     "crates/lumina-asr",
 ]
 resolver = "2"
+
+[workspace.dependencies]
+lumina-core = { path = "crates/lumina-core" }
+lumina-acp = { path = "crates/lumina-acp" }
+lumina-ai = { path = "crates/lumina-ai" }
+lumina-library = { path = "crates/lumina-library" }
+lumina-notes = { path = "crates/lumina-notes" }
+lumina-player = { path = "crates/lumina-player" }
+lumina-ytdl = { path = "crates/lumina-ytdl" }
+lumina-mcp = { path = "crates/lumina-mcp" }
+lumina-media = { path = "crates/lumina-media" }
+lumina-subtitle = { path = "crates/lumina-subtitle" }
+lumina-asr = { path = "crates/lumina-asr" }

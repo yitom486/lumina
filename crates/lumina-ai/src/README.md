@@ -82,6 +82,7 @@ let result = translate_and_export_track(
     |update| {
         println!("当前进度: {}", update.message);
     },
+    None, // 检查点工厂（断点续翻），不需要传 None
 );
 ```
 

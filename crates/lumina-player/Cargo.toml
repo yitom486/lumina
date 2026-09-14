@@ -5,7 +5,7 @@ description = "PlayerService, libmpv playback, and playback state machine"
 edition = "2021"
 
 [dependencies]
-lumina-core = { path = "../lumina-core" }
+lumina-core.workspace = true
 serde = { version = "1", features = ["derive"] }
 tracing = "0.1"
 libmpv2 = "6"
