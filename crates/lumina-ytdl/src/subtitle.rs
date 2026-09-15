@@ -41,6 +41,15 @@ pub fn load_choice(
     resolved: &YtdlResolveResult,
     choice_id: &str,
 ) -> Result<Transcript, SubtitleError> {
+    load_choice_in_root(page_url, resolved, choice_id, &crate::paths::install_root())
+}
+
+fn load_choice_in_root(
+    page_url: &str,
+    resolved: &YtdlResolveResult,
+    choice_id: &str,
+    cache_root: &Path,
+) -> Result<Transcript, SubtitleError> {
     let language = choice_id
         .strip_prefix(ONLINE_PREFIX)
         .ok_or_else(|| SubtitleError::extract_failed(Some("invalid online subtitle choice")))?;
@@ -49,7 +58,7 @@ pub fn load_choice(
         .iter()
         .find(|track| track.language == language)
         .ok_or_else(|| SubtitleError::extract_failed(Some("online subtitle choice not found")))?;
-    let cached = download_or_cached(page_url, &resolved.media_id, track)?;
+    let cached = download_or_cached(cache_root, page_url, &resolved.media_id, track)?;
     let (content, cached_path) = read_external_subtitle(&cached)?;
     let cues = parse_subtitle_text(&content)?;
     // Never expose the absolute disk cache path to UI/ACP/MCP: the page URL
@@ -72,11 +81,12 @@ fn choice_id(language: &str) -> String {
 }
 
 fn download_or_cached(
+    cache_root: &Path,
     page_url: &str,
     media_id: &str,
     track: &YtdlSubtitleTrack,
 ) -> Result<PathBuf, SubtitleError> {
-    let dir = crate::paths::install_root()
+    let dir = cache_root
         .join("subtitles")
         .join(safe_component(media_id))
         .join(safe_component(&track.language));
@@ -307,11 +317,13 @@ mod tests {
         // before any signed-URL or yt-dlp download (no network in unit tests).
         let page_url = "https://www.youtube.com/watch?v=abc";
         let resolved = fixture_resolved();
-        let dir = crate::paths::install_root()
+        let cache_root =
+            std::env::temp_dir().join(format!("lumina-ytdl-subtitle-test-{}", std::process::id()));
+        let dir = cache_root
             .join("subtitles")
             .join("youtube_abc")
             .join("zh-Hans");
-        let _ = fs::create_dir_all(&dir);
+        fs::create_dir_all(&dir).expect("create cached subtitle fixture directory");
         // Clean any stale fixture from previous runs.
         if let Ok(entries) = fs::read_dir(&dir) {
             for entry in entries.flatten() {
@@ -323,7 +335,7 @@ mod tests {
             "WEBVTT\n\n00:00:01.000 --> 00:00:02.000\n你好\n",
         )
         .expect("seed cached subtitle");
-        let transcript = load_choice(page_url, &resolved, "online:zh-Hans")
+        let transcript = load_choice_in_root(page_url, &resolved, "online:zh-Hans", &cache_root)
             .expect("cached subtitle should parse");
         assert_eq!(transcript.choice_id, "online:zh-Hans");
         assert_eq!(transcript.language.as_deref(), Some("zh-Hans"));
@@ -336,11 +348,7 @@ mod tests {
         let text = json.to_string().to_lowercase();
         assert!(!text.contains("signed.example"), "no signed URL: {text}");
         assert!(!text.contains("cookie"), "no cookie: {text}");
-        let _ = fs::remove_dir_all(
-            crate::paths::install_root()
-                .join("subtitles")
-                .join("youtube_abc"),
-        );
+        let _ = fs::remove_dir_all(cache_root);
     }
 
     #[test]

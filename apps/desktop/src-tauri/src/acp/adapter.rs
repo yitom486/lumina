@@ -8,6 +8,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use lumina_acp::{AcpError, SessionEnvironment, VideoPromptContext};
+use lumina_core::{AgentConversation, AgentTaskError, IsolatedAgentTask};
 
 use crate::library::MediaLibraryService;
 use crate::mcp::{
@@ -121,10 +122,10 @@ pub fn reset_prompt_snapshot_state(snapshots: &Mutex<PromptSnapshotState>) {
 /// ACP-backed [`lumina_core::AgentInvoker`] for subtitle workshop tasks:
 /// short-lived isolated calls, no chat history, no MCP tools.
 ///
-/// With a pool attached (workshop jobs), prompts route to
-/// [`lumina_acp::WorkshopPool::submit`], which owns session lifecycle and
-/// transport retry. Without one (library resolver), each call runs the
-/// legacy one-shot isolated path. The adapter itself owns no pool lifecycle:
+/// With a pool attached (workshop jobs), conversations route to a slot-pinned
+/// [`lumina_acp::WorkshopPool`] lease. Without one (library resolver), each
+/// call runs the legacy one-shot isolated path. The adapter itself owns no
+/// pool lifecycle:
 /// creation and shutdown live with the caller (commands layer).
 pub struct AcpAgentInvoker {
     profiles: lumina_acp::AgentProfilesHint,
@@ -151,10 +152,7 @@ impl AcpAgentInvoker {
 }
 
 impl lumina_core::AgentInvoker for AcpAgentInvoker {
-    fn invoke_isolated(
-        &self,
-        task: lumina_core::IsolatedAgentTask,
-    ) -> Result<String, lumina_core::AgentTaskError> {
+    fn invoke_isolated(&self, task: IsolatedAgentTask) -> Result<String, AgentTaskError> {
         if let Some(pool) = self.pool.as_ref() {
             return pool
                 .submit(task.prompt, task.task_label, task.retry_task_label)
@@ -178,11 +176,31 @@ impl lumina_core::AgentInvoker for AcpAgentInvoker {
         )
         .map_err(map_acp_error)
     }
+
+    fn open_conversation<'a>(
+        &'a self,
+        task_label: Option<String>,
+    ) -> Result<Box<dyn AgentConversation + 'a>, AgentTaskError> {
+        let Some(pool) = self.pool.as_ref() else {
+            let _ = task_label;
+            return Ok(Box::new(AdapterOneShotConversation { invoker: self }));
+        };
+        pool.open_conversation(task_label).map_err(map_acp_error)
+    }
+}
+
+struct AdapterOneShotConversation<'a> {
+    invoker: &'a AcpAgentInvoker,
+}
+
+impl AgentConversation for AdapterOneShotConversation<'_> {
+    fn prompt(&mut self, task: IsolatedAgentTask) -> Result<String, AgentTaskError> {
+        lumina_core::AgentInvoker::invoke_isolated(self.invoker, task)
+    }
 }
 
 /// Shared ACP→port error mapping for both pool and legacy paths.
-fn map_acp_error(error: lumina_acp::AcpError) -> lumina_core::AgentTaskError {
-    use lumina_core::AgentTaskError;
+fn map_acp_error(error: lumina_acp::AcpError) -> AgentTaskError {
     if error.code == lumina_acp::AcpErrorCode::NotConfigured {
         AgentTaskError::NotConfigured {
             details: error.details,

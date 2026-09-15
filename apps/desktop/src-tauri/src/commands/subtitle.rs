@@ -1,8 +1,10 @@
 //! Subtitle / transcript Tauri commands.
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use tauri::ipc::Channel;
 use tauri::{AppHandle, Manager};
+
+use std::path::{Path, PathBuf};
 
 use lumina_core::BatchCheckpoint;
 
@@ -105,9 +107,8 @@ fn workshop_job_id() -> String {
 }
 
 /// Build the per-job workshop pool (P2): fixed slots on reused ACP processes.
-/// Slots rotate sessions every batch, the pool owns transport retry, and the
-/// caller shuts the pool down explicitly after the job succeeds. `Drop` on
-/// the pool is the backstop for error unwinds.
+/// Session reuse and lease ownership belong to `lumina-acp`; this command only
+/// creates one pool for the job and shuts it down after the caller finishes.
 fn workshop_pool(
     profiles: &AgentProfilesHint,
     profile_id: &str,
@@ -220,9 +221,10 @@ pub async fn subtitle_export_sidecar(
 /// result in the process cache (never beside the media file).
 #[allow(clippy::too_many_arguments)]
 /// Assemble translation context from the library (best-effort: translation
-/// never fails for missing metadata). Synopsis grounds tone; glossary pairs
-/// join TMDb cast (Chinese actor, English character) with the zh wiki cast
-/// on exact actor matches — conservative by design, no fuzzy joins.
+/// never fails for missing metadata). Series and episode plots ground tone;
+/// persisted glossary entries are loaded before the wiki-derived verified
+/// pairs. The app owns library composition, while `lumina-ai` owns prompt
+/// shaping and spelling-variant canonicalization.
 fn translation_context_for_media(
     state: &AppState,
     media_path: &str,
@@ -235,12 +237,14 @@ fn translation_context_for_media(
     let synopsis = merged
         .and_then(|merged| merged.synopsis.clone())
         .or_else(|| context.group.overview.clone());
+    let episode_overview = merged.and_then(|merged| merged.episode_overview.clone());
+    let wiki_episode_plot = merged.and_then(|merged| merged.wiki_episode_plot.clone());
     let wiki_cast = context
         .wiki
         .as_ref()
         .map(|wiki| wiki.zh_cast.clone())
         .unwrap_or_default();
-    let mut glossary = Vec::new();
+    let mut glossary = load_persisted_glossary(state, media_path);
     for member in &context.group.cast {
         let character = member.character.trim();
         if character.is_empty() || character == member.name.trim() {
@@ -252,11 +256,14 @@ fn translation_context_for_media(
         else {
             continue;
         };
-        glossary.push(translate::TranslationGlossaryEntry {
-            source: character.to_string(),
-            target: zh.name.clone(),
-            verified: true,
-        });
+        merge_glossary_entry(
+            &mut glossary,
+            translate::TranslationGlossaryEntry {
+                source: character.to_string(),
+                target: zh.name.clone(),
+                verified: true,
+            },
+        );
         if glossary.len() >= 30 {
             break;
         }
@@ -264,12 +271,151 @@ fn translation_context_for_media(
     if synopsis
         .as_deref()
         .is_some_and(|text| !text.trim().is_empty())
+        || episode_overview
+            .as_deref()
+            .is_some_and(|text| !text.trim().is_empty())
+        || wiki_episode_plot
+            .as_deref()
+            .is_some_and(|text| !text.trim().is_empty())
         || !glossary.is_empty()
     {
-        Some(translate::TranslationContext { synopsis, glossary })
+        Some(translate::TranslationContext {
+            synopsis,
+            episode_overview,
+            wiki_episode_plot,
+            glossary,
+        })
     } else {
         None
     }
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PersistedGlossary {
+    #[serde(default)]
+    verified: Vec<PersistedGlossaryName>,
+    #[serde(default)]
+    auto: Vec<PersistedGlossaryName>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PersistedGlossaryName {
+    source: String,
+    target: String,
+}
+
+fn load_persisted_glossary(
+    state: &AppState,
+    media_path: &str,
+) -> Vec<translate::TranslationGlossaryEntry> {
+    let Some(root) = state.library.library_root_for_media(media_path) else {
+        return Vec::new();
+    };
+    let index = match crate::library::load_library_index(&root) {
+        Ok(Some(index)) => index,
+        Ok(None) => return Vec::new(),
+        Err(error) => {
+            tracing::warn!(code = ?error.code, details = ?error.details, "subtitle glossary index load skipped");
+            return Vec::new();
+        }
+    };
+    let Some((_, group)) =
+        crate::library::resolve_media_in_index(&index, Path::new(media_path), &root)
+            .ok()
+            .flatten()
+    else {
+        return Vec::new();
+    };
+    let path = library_group_file(&root, &group.key, "glossary.json");
+    let text = match std::fs::read_to_string(&path) {
+        Ok(text) => text,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Vec::new(),
+        Err(error) => {
+            tracing::warn!(path = %path.display(), %error, "subtitle glossary read skipped");
+            return Vec::new();
+        }
+    };
+    let stored: PersistedGlossary = match serde_json::from_str(&text) {
+        Ok(stored) => stored,
+        Err(error) => {
+            tracing::warn!(path = %path.display(), %error, "subtitle glossary parse skipped");
+            return Vec::new();
+        }
+    };
+    let mut entries = Vec::new();
+    for entry in stored.verified {
+        merge_glossary_entry(
+            &mut entries,
+            translate::TranslationGlossaryEntry {
+                source: entry.source,
+                target: entry.target,
+                verified: true,
+            },
+        );
+    }
+    for entry in stored.auto {
+        merge_glossary_entry(
+            &mut entries,
+            translate::TranslationGlossaryEntry {
+                source: entry.source,
+                target: entry.target,
+                verified: false,
+            },
+        );
+    }
+    entries
+}
+
+fn merge_glossary_entry(
+    entries: &mut Vec<translate::TranslationGlossaryEntry>,
+    mut candidate: translate::TranslationGlossaryEntry,
+) {
+    candidate.source = translate::canonicalize_person_name(&candidate.source);
+    candidate.target = candidate.target.trim().to_string();
+    if candidate.source.trim().is_empty() || candidate.target.is_empty() {
+        return;
+    }
+    let key = candidate.source.to_lowercase();
+    if let Some(existing) = entries
+        .iter_mut()
+        .find(|entry| entry.source.to_lowercase() == key)
+    {
+        if candidate.verified && !existing.verified {
+            *existing = candidate;
+        }
+        return;
+    }
+    entries.push(candidate);
+}
+
+/// Compatibility copy of the library store's stable group filename rule.
+/// The library crate does not yet expose a read-side glossary port. Keep this
+/// isolated and replace it with `MediaLibraryService::load_subtitle_glossary`
+/// once that port exists; do not add another glossary persistence format.
+fn library_group_file(root: &Path, group_key: &str, file_name: &str) -> PathBuf {
+    let readable: String = group_key
+        .chars()
+        .map(|character| match character {
+            '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*' => '_',
+            control if control.is_control() => '_',
+            other => other,
+        })
+        .collect();
+    let readable = readable.trim_matches(['.', ' ']);
+    let readable = if readable.is_empty() {
+        "untitled"
+    } else {
+        readable
+    };
+    let hash = group_key.bytes().fold(0x811c9dc5_u32, |hash, byte| {
+        (hash ^ u32::from(byte)).wrapping_mul(0x01000193)
+    });
+    root.join(".lumina")
+        .join("groups")
+        .join(format!("{readable}-{hash:08x}"))
+        .join(file_name)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -289,7 +435,8 @@ fn translate_cached_track(
 ) -> Result<Transcript, SubtitleError> {
     let (provider, source_lang) = crate::ytdl::provider::parse_cache_choice(choice_id)
         .ok_or_else(|| SubtitleError::extract_failed(Some("invalid cached subtitle choice")))?;
-    let token = write::normalize_lang_token(target_lang)?;
+    let target_lang = translate::normalize_translation_language(target_lang)?;
+    let token = write::normalize_lang_token(&target_lang)?;
     let pool = workshop_pool(&profiles, profile_id, model_id, reasoning_effort, job_id);
     let invoker =
         crate::acp::adapter::AcpAgentInvoker::with_pool(profiles, std::sync::Arc::clone(&pool));
@@ -309,7 +456,7 @@ fn translate_cached_track(
     let mut progress = progress;
     let translated = translate::translate_cues(
         &source,
-        &token,
+        &target_lang,
         context.as_ref(),
         profile_id,
         model_id,

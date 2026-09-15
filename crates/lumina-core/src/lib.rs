@@ -11,7 +11,7 @@ pub mod checkpoint;
 pub mod media_source;
 pub mod tool_contract;
 
-pub use agent_invoker::{AgentInvoker, AgentTaskError, IsolatedAgentTask};
+pub use agent_invoker::{AgentConversation, AgentInvoker, AgentTaskError, IsolatedAgentTask};
 pub use checkpoint::{BatchCheckpoint, CheckpointBatch};
 
 pub use media_source::{MediaSource, MediaSourceError, MediaSourceErrorKind, MediaSourceKind};
