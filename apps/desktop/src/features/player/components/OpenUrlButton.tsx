@@ -3,11 +3,6 @@
 import { Link2 } from "lucide-react";
 
 import { Button } from "@lumina/ui/button";
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipTrigger,
-} from "@lumina/ui/tooltip";
 import { useChatUiStore } from "@lumina/chat-ui/chatUiStore";
 
 import { useUiStore } from "../uiStore";
@@ -30,19 +25,14 @@ export function OpenUrlButton() {
   };
 
   return (
-    <Tooltip>
-      <TooltipTrigger asChild>
-        <Button
-          type="button"
-          variant="secondary"
-          size="icon" className="size-8"
-          onClick={openOnlinePanel}
-          aria-label="打开在线视频"
-        >
-          <Link2 className="size-4" />
-        </Button>
-      </TooltipTrigger>
-      <TooltipContent>在线视频（侧栏打开，避免被画面挡住）</TooltipContent>
-    </Tooltip>
+    <Button
+      type="button"
+      variant="secondary"
+      size="icon" className="size-8"
+      onClick={openOnlinePanel}
+      aria-label="打开在线视频"
+    >
+      <Link2 className="size-4" />
+    </Button>
   );
 }

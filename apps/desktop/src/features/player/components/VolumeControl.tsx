@@ -3,11 +3,6 @@ import { Volume2, VolumeX } from "lucide-react";
 
 import { Button } from "@lumina/ui/button";
 import { PlayerSlider } from "./PlayerSlider";
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipTrigger,
-} from "@lumina/ui/tooltip";
 import { cn } from "@lumina/ui/utils";
 
 import { usePlayerStore } from "../store";
@@ -70,50 +65,40 @@ export function VolumeControl({
             aria-label="音量"
           />
         </div>
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon"
-              className="size-8 text-foreground hover:bg-white/10"
-              aria-label={muted ? "取消静音" : "静音"}
-              onClick={muteToggle}
-            >
-              {muted ? (
-                <VolumeX className="size-4" />
-              ) : (
-                <Volume2 className="size-4" />
-              )}
-            </Button>
-          </TooltipTrigger>
-          <TooltipContent>音量 · 悬停调节 (M 静音)</TooltipContent>
-        </Tooltip>
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon"
+          className="size-8 text-foreground hover:bg-white/10"
+          aria-label={muted ? "取消静音" : "静音"}
+          onClick={muteToggle}
+        >
+          {muted ? (
+            <VolumeX className="size-4" />
+          ) : (
+            <Volume2 className="size-4" />
+          )}
+        </Button>
       </div>
     );
   }
 
   return (
     <div className={cn("flex w-36 items-center gap-1", className)}>
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon"
-            className="size-8"
-            aria-label={muted ? "取消静音" : "静音"}
-            onClick={muteToggle}
-          >
-            {muted ? (
-              <VolumeX className="size-4" />
-            ) : (
-              <Volume2 className="size-4" />
-            )}
-          </Button>
-        </TooltipTrigger>
-        <TooltipContent>静音 (M)</TooltipContent>
-      </Tooltip>
+      <Button
+        type="button"
+        variant="ghost"
+        size="icon"
+        className="size-8"
+        aria-label={muted ? "取消静音" : "静音"}
+        onClick={muteToggle}
+      >
+        {muted ? (
+          <VolumeX className="size-4" />
+        ) : (
+          <Volume2 className="size-4" />
+        )}
+      </Button>
       <PlayerSlider
         className="flex-1"
         min={0}

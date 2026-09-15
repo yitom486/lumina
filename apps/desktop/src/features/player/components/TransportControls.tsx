@@ -8,11 +8,6 @@ import {
 } from "lucide-react";
 
 import { Button } from "@lumina/ui/button";
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipTrigger,
-} from "@lumina/ui/tooltip";
 
 import { usePlayerStore } from "../store";
 import { OpenUrlButton } from "./OpenUrlButton";
@@ -40,91 +35,66 @@ export function TransportControls() {
 
   return (
     <div className="flex items-center gap-1">
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <Button
-            type="button"
-            variant="secondary"
-            size="icon" className="size-8"
-            onClick={() => void openFile()}
-            disabled={busy}
-            aria-label="打开文件"
-          >
-            <FolderOpen className="size-4" />
-          </Button>
-        </TooltipTrigger>
-        <TooltipContent>打开视频（同目录加入播放列表）</TooltipContent>
-      </Tooltip>
+      <Button
+        type="button"
+        variant="secondary"
+        size="icon" className="size-8"
+        onClick={() => void openFile()}
+        disabled={busy}
+        aria-label="打开文件"
+      >
+        <FolderOpen className="size-4" />
+      </Button>
 
       <OpenUrlButton />
 
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon" className="size-8"
-            onClick={() => void playPrev()}
-            disabled={!canPrev}
-            aria-label="上一个"
-          >
-            <SkipBack className="size-4" />
-          </Button>
-        </TooltipTrigger>
-        <TooltipContent>上一个</TooltipContent>
-      </Tooltip>
+      <Button
+        type="button"
+        variant="ghost"
+        size="icon" className="size-8"
+        onClick={() => void playPrev()}
+        disabled={!canPrev}
+        aria-label="上一个"
+      >
+        <SkipBack className="size-4" />
+      </Button>
 
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <Button
-            type="button"
-            variant="default"
-            size="icon" className="size-8"
-            onClick={() => void togglePlayPause()}
-            disabled={!canToggle}
-            aria-label={playing ? "暂停" : "播放"}
-          >
-            {playing ? (
-              <Pause className="size-4" />
-            ) : (
-              <Play className="size-4" />
-            )}
-          </Button>
-        </TooltipTrigger>
-        <TooltipContent>{playing ? "暂停 (空格)" : "播放 (空格)"}</TooltipContent>
-      </Tooltip>
+      <Button
+        type="button"
+        variant="default"
+        size="icon" className="size-8"
+        onClick={() => void togglePlayPause()}
+        disabled={!canToggle}
+        aria-label={playing ? "暂停" : "播放"}
+      >
+        {playing ? (
+          <Pause className="size-4" />
+        ) : (
+          <Play className="size-4" />
+        )}
+      </Button>
 
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon" className="size-8"
-            onClick={() => void playNext()}
-            disabled={!canNext}
-            aria-label="下一个"
-          >
-            <SkipForward className="size-4" />
-          </Button>
-        </TooltipTrigger>
-        <TooltipContent>下一个</TooltipContent>
-      </Tooltip>
+      <Button
+        type="button"
+        variant="ghost"
+        size="icon" className="size-8"
+        onClick={() => void playNext()}
+        disabled={!canNext}
+        aria-label="下一个"
+      >
+        <SkipForward className="size-4" />
+      </Button>
 
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon" className="size-8"
-            onClick={() => void stop()}
-            disabled={busy || status === "Idle"}
-            aria-label="停止"
-          >
-            <Square className="size-3.5" />
-          </Button>
-        </TooltipTrigger>
-        <TooltipContent>停止</TooltipContent>
-      </Tooltip>
+      <Button
+        type="button"
+        variant="ghost"
+        size="icon" className="size-8"
+        onClick={() => void stop()}
+        disabled={busy || status === "Idle"}
+        aria-label="停止"
+      >
+        <Square className="size-3.5" />
+      </Button>
     </div>
   );
 }
