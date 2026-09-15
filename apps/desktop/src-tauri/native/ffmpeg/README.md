@@ -10,10 +10,10 @@ Windows x64 **essentials**（gyan.dev），给媒体探测与字幕抽出。不�
 
 ## 用途
 
-| 工具 | Phase | 用途 |
+| 工具 | 使用场景 | 用途 |
 |------|-------|------|
-| ffprobe | 2 | 容器/流元数据 JSON |
-| ffmpeg | 3 | 抽出文本字幕轨 → SRT/ASS |
+| ffprobe | 媒体探测 | 容器/流元数据 JSON |
+| ffmpeg | 字幕处理 | 抽出文本字幕轨 → SRT/ASS |
 
 ## 重装
 

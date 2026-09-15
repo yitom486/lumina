@@ -1,4 +1,4 @@
-﻿# lumina-subtitle
+# lumina-subtitle
 
 `lumina-subtitle` 是 Lumina 的字幕与交互文稿（Transcript）领域库。它负责视频内嵌字幕轨识别、外挂同名字幕扫描、基于 ffmpeg 的流提取、双向格式解析（SRT / WebVTT / ASS）以及结构化文稿的生成与导出。
 
@@ -96,17 +96,17 @@ write::write_srt_file(Path::new("D:/Movies/export.srt"), &cues)?;
 
 ## 4. 内部子模块全景
 
-`lumina-subtitle/src/` 包含以下 6 个源码模块：
+`lumina-subtitle/src/` 的主要实现模块如下；列表聚焦稳定的核心文件，内部辅助文件可随实现调整：
 
 | 源码文件 | 模块名称 | 核心职责与导出项 |
 | :--- | :--- | :--- |
-| [`lib.rs`](file:///d:/project/rust/tauri/lumina/crates/lumina-subtitle/src/lib.rs) | 根模块 | 重新导出公开接口；定义字幕领域依赖边界。 |
-| [`service.rs`](file:///d:/project/rust/tauri/lumina/crates/lumina-subtitle/src/service.rs) | `service` | • `SubtitleService`: 提供 `list_choices`（探测所有内嵌与外挂字幕）和 `load_transcript`（按选项 ID 加载解析）。 |
-| [`model.rs`](file:///d:/project/rust/tauri/lumina/crates/lumina-subtitle/src/model.rs) | `model` | • `Cue`: 单句字幕（起止毫秒与文本）。<br>• `Transcript`: 整份文稿容器。<br>• `SubtitleChoice`: 可供用户选择的字幕选项。<br>• `SubtitleSource`: `Embedded` / `Sidecar` / `Asr` / `Ytdl`。 |
-| [`parse.rs`](file:///d:/project/rust/tauri/lumina/crates/lumina-subtitle/src/parse.rs) | `parse` | • 解析 SRT、VTT 及通用字幕文本。<br>• 时间戳正则匹配与转换。<br>• HTML 标签与特效代码清洗。 |
-| [`extract.rs`](file:///d:/project/rust/tauri/lumina/crates/lumina-subtitle/src/extract.rs) | `extract` | • 调用 `ffmpeg -i ... -map 0:s:{idx}` 将内嵌文本字幕轨抽取为文本。<br>• 判断是否为位图编码（`is_bitmap_codec`，如 `hdmv_pgs_subtitle`）。 |
-| [`write.rs`](file:///d:/project/rust/tauri/lumina/crates/lumina-subtitle/src/write.rs) | `write` | 将内存中的 `Vec<Cue>` 格式化并安全原子落盘写入为标准 `.srt` 或 `.vtt` 文件。 |
-| [`error.rs`](file:///d:/project/rust/tauri/lumina/crates/lumina-subtitle/src/error.rs) | `error` | • `SubtitleError` 与 `SubtitleErrorCode`（`FileNotFound`, `ExtractFailed`, `ParseFailed` 等）。 |
+| [`lib.rs`](./lib.rs) | 根模块 | 重新导出公开接口；定义字幕领域依赖边界。 |
+| [`service.rs`](./service.rs) | `service` | • `SubtitleService`: 提供 `list_choices`（探测所有内嵌与外挂字幕）和 `load_transcript`（按选项 ID 加载解析）。 |
+| [`model.rs`](./model.rs) | `model` | • `Cue`: 单句字幕（起止毫秒与文本）。<br>• `Transcript`: 整份文稿容器。<br>• `SubtitleChoice`: 可供用户选择的字幕选项。<br>• `SubtitleSource`: `Embedded` / `Sidecar` / `Asr` / `Ytdl`。 |
+| [`parse.rs`](./parse.rs) | `parse` | • 解析 SRT、VTT 及通用字幕文本。<br>• 时间戳正则匹配与转换。<br>• HTML 标签与特效代码清洗。 |
+| [`extract.rs`](./extract.rs) | `extract` | • 调用 `ffmpeg -i ... -map 0:s:{idx}` 将内嵌文本字幕轨抽取为文本。<br>• 判断是否为位图编码（`is_bitmap_codec`，如 `hdmv_pgs_subtitle`）。 |
+| [`write.rs`](./write.rs) | `write` | 将内存中的 `Vec<Cue>` 格式化并安全原子落盘写入为标准 `.srt` 或 `.vtt` 文件。 |
+| [`error.rs`](./error.rs) | `error` | • `SubtitleError` 与 `SubtitleErrorCode`（`FileNotFound`, `ExtractFailed`, `ParseFailed` 等）。 |
 
 ---
 

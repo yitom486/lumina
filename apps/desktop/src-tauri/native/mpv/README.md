@@ -31,4 +31,4 @@ tar.exe -xf "$dir\mpv-dev.7z" -C "$PSScriptRoot"
 
 然后用 VS `dumpbin /exports` + `lib /def` 再生成 `mpv.lib`（`/name:libmpv-2.dll`）。
 
-M4 起由 `build.rs` 指向此目录，并把 DLL 拷到 exe 旁。在此之前请勿把 DLL 加到全局 PATH。
+构建脚本会从此目录查找链接库，并在需要时把运行时 DLL 拷贝到可执行文件旁边。请勿把 DLL 加到全局 PATH。

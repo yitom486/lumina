@@ -1,4 +1,4 @@
-﻿# lumina-ai
+# lumina-ai
 
 `lumina-ai` 是 Lumina 的短周期、数据隔离式 AI 任务领域库。它专门处理无需长会话上下文的无状态批量 AI 任务（当前核心为**智能字幕翻译与润色**），通过依赖倒置端口 `AgentInvoker` 完成模型交互，确保不污染用户的正常聊天（Chat）历史记录。
 
@@ -83,6 +83,7 @@ let result = translate_and_export_track(
         println!("当前进度: {}", update.message);
     },
     None, // 检查点工厂（断点续翻），不需要传 None
+    "demo-job", // 作业 ID（日志关联用，不进模型）
 );
 ```
 
@@ -94,8 +95,8 @@ let result = translate_and_export_track(
 
 | 源码文件 | 模块名称 | 核心职责与导出项 |
 | :--- | :--- | :--- |
-| [`lib.rs`](file:///d:/project/rust/tauri/lumina/crates/lumina-ai/src/lib.rs) | 根模块 | 重新导出公开接口；定义隔离调用原则。 |
-| [`translate.rs`](file:///d:/project/rust/tauri/lumina/crates/lumina-ai/src/translate.rs) | `translate` | • `translate_and_export_track`: 完整翻译端到端流水线（加载源字幕、批次切分、调用 AI、输出 `.srt`）。<br>• `translate_cues`: 纯内存字幕队列翻译（4 并发、序号对齐、人名 post-check＋单次重试）。<br>• `proofread_cues`: 同语言校对（不翻译不改轴）。<br>• 批处理 Prompt 构造与容错 JSON 反序列化解析。 |
+| [`lib.rs`](./lib.rs) | 根模块 | 重新导出公开接口；定义隔离调用原则。 |
+| [`translate.rs`](./translate.rs) | `translate` | • `translate_and_export_track`: 完整翻译端到端流水线（加载源字幕、批次切分、调用 AI、输出 `.srt`）。<br>• `translate_cues`: 纯内存字幕队列翻译（4 并发、序号对齐、人名 post-check＋单次重试）。<br>• `proofread_cues`: 同语言校对（不翻译不改轴）。<br>• 批处理 Prompt 构造与容错 JSON 反序列化解析。 |
 
 ---
 

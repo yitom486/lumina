@@ -1,4 +1,4 @@
-﻿# lumina-mcp
+# lumina-mcp
 
 `lumina-mcp` 是 Lumina 的 Model Context Protocol（MCP）服务器端领域实现库。它将 Lumina 的播放状态、字幕文稿、媒体库元数据、视频帧捕获和批注建议封装为标准的 MCP 规范工具集，通过 stdio 子命令暴露给外部 Agent，并内置了精细的基于场景的工具策略控制（Tool Policy）。
 
@@ -25,7 +25,7 @@
 ```
 
 - **职责**：
-  - MCP stdio 服务端运行（`server`）：响应 `initialize`、`tools/list` 与 `tools/call` 标准 JSON-RPC 2.0 请求。
+  - MCP stdio 服务端运行（`server`）：响应 `initialize`、`tools/list` 与 `tools/call` 标准 JSON-RPC 2.0 请求；只读工具经有界 worker 并行执行，写入工具保持独占。
   - 单一无锁只读快照机制（`snapshot`）：通过 `.lumina/agent-context.json` 快照解耦主进程与 MCP 子进程，避免跨进程死锁与状态竞态。
   - 提供 10 个标准的 Agent 工具（对应 `lumina-core::tool_contract` 中的规范）：
     1. `lumina_get_playback_context`：查询当前视频播放状态与时长。
@@ -97,16 +97,17 @@ let mcp_config = lumina_mcp_servers(snapshot_path);
 
 ## 4. 内部子模块全景
 
-`lumina-mcp/src/` 包含以下 5 个源码模块：
+`lumina-mcp/src/` 的主要实现模块如下；列表聚焦稳定的核心文件，内部辅助文件可随实现调整：
 
 | 源码文件 | 模块名称 | 核心职责与导出项 |
 | :--- | :--- | :--- |
-| [`lib.rs`](file:///d:/project/rust/tauri/lumina/crates/lumina-mcp/src/lib.rs) | 根模块 | • `run_if_invoked`: 进程入口劫持。<br>• `lumina_mcp_server_entry`: 构造 Agent 所需的 MCP 启动命令。 |
-| [`server.rs`](file:///d:/project/rust/tauri/lumina/crates/lumina-mcp/src/server.rs) | `server` | 遵循 MCP 规范的标准输入输出循环泵（Stdio Event Loop），处理请求路由与 JSON 响应封装。 |
-| [`policy.rs`](file:///d:/project/rust/tauri/lumina/crates/lumina-mcp/src/policy.rs) | `policy` | • `McpToolProfile`: `All` / `Chat` / `SubtitleWorkshop` / `MetadataResolver` / `NoTools`。<br>• `ToolPolicy`: 工具可见性与调用权限双重校验器。 |
-| [`tools.rs`](file:///d:/project/rust/tauri/lumina/crates/lumina-mcp/src/tools.rs) | `tools` | 10 个标准工具的具体分发执行函数（`handle_tool_call`），与下游各 crate 联动处理业务。 |
-| [`snapshot.rs`](file:///d:/project/rust/tauri/lumina/crates/lumina-mcp/src/snapshot.rs) | `snapshot` | • `LuminaMcpSnapshot`: 脱敏只读快照数据结构。<br>• 快照文件读写、版本控制（`SNAPSHOT_SCHEMA_VERSION`）与安全路径探测。 |
-| [`build.rs`](file:///d:/project/rust/tauri/lumina/crates/lumina-mcp/src/build.rs) | `build` | 汇总媒体、文稿、媒体库信息，组装构建 `LuminaMcpSnapshot` 的辅助构造器。 |
+| [`lib.rs`](./lib.rs) | 根模块 | • `run_if_invoked`: 进程入口劫持。<br>• `lumina_mcp_server_entry`: 构造 Agent 所需的 MCP 启动命令。 |
+| [`server.rs`](./server.rs) | `server` | 遵循 MCP 规范的标准输入输出循环泵（Stdio Event Loop），处理请求路由与 JSON 响应封装。 |
+| [`executor.rs`](./executor.rs) | `executor` | 固定 worker 数量的有界任务执行器；让独立工具并行运行，避免无限创建线程。 |
+| [`policy.rs`](./policy.rs) | `policy` | • `McpToolProfile`: `All` / `Chat` / `SubtitleWorkshop` / `MetadataResolver` / `NoTools`。<br>• `ToolPolicy`: 工具可见性与调用权限双重校验器。 |
+| [`tools.rs`](./tools.rs) | `tools` | 10 个标准工具的具体分发执行函数（`handle_tool_call`），与下游各 crate 联动处理业务。 |
+| [`snapshot.rs`](./snapshot.rs) | `snapshot` | • `LuminaMcpSnapshot`: 脱敏只读快照数据结构。<br>• 快照文件读写、版本控制（`SNAPSHOT_SCHEMA_VERSION`）与安全路径探测。 |
+| [`build.rs`](./build.rs) | `build` | 汇总媒体、文稿、媒体库信息，组装构建 `LuminaMcpSnapshot` 的辅助构造器。 |
 
 ---
 
@@ -129,7 +130,7 @@ sequenceDiagram
     Mcp->>Snap: 读取可用能力标记
     Mcp-->>Agent: 返回过滤后的工具清单
 
-    Agent->>Mcp: tools/call (lumina_get_transcript_window, { seconds: 30 })
+    Agent->>Mcp: tools/call (lumina_get_transcript_window, { radiusSec: 30 })
     Mcp->>Mcp: ToolPolicy 进行二次拦截
     Mcp->>Snap: 从只读快照中切片提取字幕
     Mcp-->>Agent: 返回该时间窗口的台词内容

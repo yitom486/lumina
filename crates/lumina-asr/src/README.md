@@ -1,4 +1,4 @@
-﻿# lumina-asr
+# lumina-asr
 
 `lumina-asr` 是 Lumina 的可选本地离线自动语音识别（Automatic Speech Recognition）领域库。它基于 `whisper.cpp` 引擎生态构建，提供完全在用户本地运行的模型下载管理、音频提取切片、转写调度及结构化字幕生成功能。
 
@@ -92,19 +92,19 @@ println!("成功生成字幕，共 {} 句", transcript.cues.len());
 
 ## 4. 内部子模块全景
 
-`lumina-asr/src/` 包含以下 8 个源码模块：
+`lumina-asr/src/` 的主要实现模块如下；列表聚焦稳定的核心文件，内部辅助文件可随实现调整：
 
 | 源码文件 | 模块名称 | 核心职责与导出项 |
 | :--- | :--- | :--- |
-| [`lib.rs`](file:///d:/project/rust/tauri/lumina/crates/lumina-asr/src/lib.rs) | 根模块 | 重新导出公开接口；定义按需调用边界约束。 |
-| [`service.rs`](file:///d:/project/rust/tauri/lumina/crates/lumina-asr/src/service.rs) | `service` | • `AsrService`: 对外核心服务门面，管理并发锁与流水线调度。 |
-| [`transcriber.rs`](file:///d:/project/rust/tauri/lumina/crates/lumina-asr/src/transcriber.rs) | `transcriber` | • `Transcriber`: 转写引擎抽象 Trait。<br>• `WhisperCliTranscriber`: 默认实现的 whisper-cli 驱动。 |
-| [`whisper_cli.rs`](file:///d:/project/rust/tauri/lumina/crates/lumina-asr/src/whisper_cli.rs) | `whisper_cli` | 拼接 CLI 参数、启动 whisper 子进程、实时捕获进度并解析其输出的 SRT。 |
-| [`extract.rs`](file:///d:/project/rust/tauri/lumina/crates/lumina-asr/src/extract.rs) | `extract` | 调用 ffmpeg 将音轨精确抽离切片为临时 `16kHz Mono 16-bit PCM WAV` 文件。 |
-| [`download.rs`](file:///d:/project/rust/tauri/lumina/crates/lumina-asr/src/download.rs) | `download` | • 官方模型目录元数据（Tiny, Base, Small, Medium 等）。<br>• 基于 HTTP 的模型流式下载、断点续传与 SHA-256 完整性校验。 |
-| [`paths.rs`](file:///d:/project/rust/tauri/lumina/crates/lumina-asr/src/paths.rs) | `paths` | 解析本机 whisper 运行时、各型号 bin 权重文件存放目录及临时工作区。 |
-| [`model.rs`](file:///d:/project/rust/tauri/lumina/crates/lumina-asr/src/model.rs) | `model` | • `AsrStatus`, `AsrModelInfo`, `AsrCatalogModel`。<br>• `AsrEvent`（转写进度）与 `AsrInstallEvent`（下载安装进度）。<br>• `AsrRange`: `All` / `Chapter(usize)` / `Window { from_ms, to_ms }`。 |
-| [`error.rs`](file:///d:/project/rust/tauri/lumina/crates/lumina-asr/src/error.rs) | `error` | • `AsrError` 与 `AsrErrorCode`（`NotConfigured`, `Busy`, `ModelNotFound`, `ExtractFailed`, `TranscribeFailed`）。 |
+| [`lib.rs`](./lib.rs) | 根模块 | 重新导出公开接口；定义按需调用边界约束。 |
+| [`service.rs`](./service.rs) | `service` | • `AsrService`: 对外核心服务门面，管理并发锁与流水线调度。 |
+| [`transcriber.rs`](./transcriber.rs) | `transcriber` | • `Transcriber`: 转写引擎抽象 Trait。<br>• `WhisperCliTranscriber`: 默认实现的 whisper-cli 驱动。 |
+| [`whisper_cli.rs`](./whisper_cli.rs) | `whisper_cli` | 拼接 CLI 参数、启动 whisper 子进程、实时捕获进度并解析其输出的 SRT。 |
+| [`extract.rs`](./extract.rs) | `extract` | 调用 ffmpeg 将音轨精确抽离切片为临时 `16kHz Mono 16-bit PCM WAV` 文件。 |
+| [`download.rs`](./download.rs) | `download` | • 官方模型目录元数据（Tiny, Base, Small, Medium 等）。<br>• 基于 HTTP 的模型流式下载、断点续传与 SHA-256 完整性校验。 |
+| [`paths.rs`](./paths.rs) | `paths` | 解析本机 whisper 运行时、各型号 bin 权重文件存放目录及临时工作区。 |
+| [`model.rs`](./model.rs) | `model` | • `AsrStatus`, `AsrModelInfo`, `AsrCatalogModel`。<br>• `AsrEvent`（转写进度）与 `AsrInstallEvent`（下载安装进度）。<br>• `AsrRange`: `All` / `Chapter(usize)` / `Window { from_ms, to_ms }`。 |
+| [`error.rs`](./error.rs) | `error` | • `AsrError` 与 `AsrErrorCode`（`NotConfigured`, `Busy`, `ModelNotFound`, `ExtractFailed`, `TranscribeFailed`）。 |
 
 ---
 

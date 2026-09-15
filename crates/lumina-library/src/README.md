@@ -1,4 +1,4 @@
-﻿# lumina-library
+# lumina-library
 
 `lumina-library` 是 Lumina 的本地影视媒体库与元数据解析聚合领域库。它提供本地多媒体文件夹扫描、复杂的剧集/电影命名启发式识别、TMDB 在线影视元数据匹配、维基百科深度背景条目抽取，以及基于 `.lumina/` 的无侵入式元数据持久化管理。
 
@@ -90,23 +90,23 @@ println!("季度: {:?}, 集数: {:?}", parsed.season, parsed.episode); // Some(1
 
 ## 4. 内部子模块全景
 
-`lumina-library/src/` 包含以下 12 个源码模块：
+`lumina-library/src/` 的主要实现模块如下；列表聚焦稳定的核心文件，内部辅助文件可随实现调整：
 
 | 源码文件 | 模块名称 | 核心职责与导出项 |
 | :--- | :--- | :--- |
-| [`lib.rs`](file:///d:/project/rust/tauri/lumina/crates/lumina-library/src/lib.rs) | 根模块 | 重新导出公开接口；定义领域抽象。 |
-| [`service.rs`](file:///d:/project/rust/tauri/lumina/crates/lumina-library/src/service.rs) | `service` | • `MediaLibraryService`: 核心门面，管理定时扫描工作线程、运行时状态与异步取消。 |
-| [`scanner.rs`](file:///d:/project/rust/tauri/lumina/crates/lumina-library/src/scanner.rs) | `scanner` | 遍历文件夹目录树，过滤隐藏文件/非媒体文件，将扫描到的音视频聚合为 `MediaGroup`。 |
-| [`naming.rs`](file:///d:/project/rust/tauri/lumina/crates/lumina-library/src/naming.rs) | `naming` | 强大的文件名解析引擎，精准识别 SxxExx、清晰度、压制组、分卷信息与标准标题。 |
-| [`store.rs`](file:///d:/project/rust/tauri/lumina/crates/lumina-library/src/store.rs) | `store` | 管理 `.lumina/index.json` 及分集数据文件；提供变更比对、原子替换与容错加载。 |
-| [`resolver.rs`](file:///d:/project/rust/tauri/lumina/crates/lumina-library/src/resolver.rs) | `resolver` | • `RemoteResolver`: TMDB 客户端，负责根据标题搜索条目并拉取季度/单集全量元数据。 |
-| [`wikipedia.rs`](file:///d:/project/rust/tauri/lumina/crates/lumina-library/src/wikipedia.rs) | `wikipedia` | 请求 MediaWiki API 获取条目正文与分集信息，作为 TMDB 的深度背景补充。 |
-| [`wikitext.rs`](file:///d:/project/rust/tauri/lumina/crates/lumina-library/src/wikitext.rs) | `wikitext` | 维基语法专用清洗解析器，提取出纯净的人员登场列表与世界观梗概。 |
-| [`metadata.rs`](file:///d:/project/rust/tauri/lumina/crates/lumina-library/src/metadata.rs) | `metadata` | 聚合底层各来源元数据，构造统一的 `MediaMetadataContext` 与 `MergedMediaContext`。 |
-| [`paths.rs`](file:///d:/project/rust/tauri/lumina/crates/lumina-library/src/paths.rs) | `paths` | 路径计算工具，处理根目录与媒体文件相对路径转换，定位各级 `.lumina` 存放路径。 |
-| [`credentials.rs`](file:///d:/project/rust/tauri/lumina/crates/lumina-library/src/credentials.rs) | `credentials` | 操作系统安全 Keyring 桥接，负责 TMDB API Key 的安全存取与连通性验证。 |
-| [`model.rs`](file:///d:/project/rust/tauri/lumina/crates/lumina-library/src/model.rs) | `model` | • 完整的领域 DTO 集合：`LibraryIndex`, `MediaGroup`, `StoredMetadata`, `TmdbCandidate` 等。 |
-| [`error.rs`](file:///d:/project/rust/tauri/lumina/crates/lumina-library/src/error.rs) | `error` | • `LibraryError` 与 `LibraryErrorCode`（`StorageFailed`, `ScanFailed`, `ResolutionFailed` 等）。 |
+| [`lib.rs`](./lib.rs) | 根模块 | 重新导出公开接口；定义领域抽象。 |
+| [`service.rs`](./service.rs) | `service` | • `MediaLibraryService`: 核心门面，管理定时扫描工作线程、运行时状态与异步取消。 |
+| [`scanner.rs`](./scanner.rs) | `scanner` | 遍历文件夹目录树，过滤隐藏文件/非媒体文件，将扫描到的音视频聚合为 `MediaGroup`。 |
+| [`naming.rs`](./naming.rs) | `naming` | 强大的文件名解析引擎，精准识别 SxxExx、清晰度、压制组、分卷信息与标准标题。 |
+| [`store.rs`](./store.rs) | `store` | 管理 `.lumina/index.json` 及分集数据文件；提供变更比对、原子替换与容错加载。 |
+| [`resolver.rs`](./resolver.rs) | `resolver` | • `RemoteResolver`: TMDB 客户端，负责根据标题搜索条目并拉取季度/单集全量元数据。 |
+| [`wikipedia.rs`](./wikipedia.rs) | `wikipedia` | 请求 MediaWiki API 获取条目正文与分集信息，作为 TMDB 的深度背景补充。 |
+| [`wikitext/mod.rs`](./wikitext/mod.rs) | `wikitext` | 维基语法专用清洗解析器，提取出纯净的人员登场列表与世界观梗概。 |
+| [`metadata.rs`](./metadata.rs) | `metadata` | 聚合底层各来源元数据，构造统一的 `MediaMetadataContext` 与 `MergedMediaContext`。 |
+| [`paths.rs`](./paths.rs) | `paths` | 路径计算工具，处理根目录与媒体文件相对路径转换，定位各级 `.lumina` 存放路径。 |
+| [`credentials.rs`](./credentials.rs) | `credentials` | 操作系统安全 Keyring 桥接，负责 TMDB API Key 的安全存取与连通性验证。 |
+| [`model.rs`](./model.rs) | `model` | • 完整的领域 DTO 集合：`LibraryIndex`, `MediaGroup`, `StoredMetadata`, `TmdbCandidate` 等。 |
+| [`error.rs`](./error.rs) | `error` | • `LibraryError` 与 `LibraryErrorCode`（`StorageFailed`, `ScanFailed`, `ResolutionFailed` 等）。 |
 
 ---
 

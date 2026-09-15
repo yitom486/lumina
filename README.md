@@ -2,130 +2,106 @@
 
 > 当前版本 0.3.0 · Windows x64 / macOS arm64 / Linux x64
 
-Lumina 是一款桌面端 AI 观影阅读器：用原生 libmpv
-播放本地视频，并把字幕文稿、章节、笔记与可选的 AI
-对话放在同一个阅读工作流里。播放、字幕、笔记不依赖
-任何在线服务与 AI；AI 能力全部按需启动。
+Lumina 是一款桌面端 AI 视频阅读器。
 
-安装包发布在 [lumina-app](https://github.com/yitom486/lumina-app/releases)；
-版本变更见 [CHANGELOG.md](CHANGELOG.md)，路线图见 [ROADMAP.md](ROADMAP.md)。
+它把“播放视频”和“阅读视频内容”放在同一个工作流里：你可以观看本地或在线媒体，打开可检索的字幕文稿，按时间点记录笔记，再在需要时让 AI 基于当前画面、台词和章节回答问题。
 
-## 功能
+Lumina 的基础体验以本地为主：播放、字幕和笔记不依赖 AI；AI、在线媒体解析和语音转写都是可选能力，按需启用。
 
-### 原生播放
+安装包发布在 [lumina-app Releases](https://github.com/yitom486/lumina-app/releases)。版本变更见 [CHANGELOG.md](CHANGELOG.md)，产品路线见 [ROADMAP.md](ROADMAP.md)。
 
-- libmpv 经系统窗口句柄直接渲染，不使用 HTML `<video>` 或逐帧 canvas。
-- 打开 / 播放 / 暂停 / 停止 / 进度跳转 / 音量 / 倍速 / 播放列表 / 断点续播。
-- 同目录分集自动识别与切换；HEVC / AV1 走系统解码链路。
-- Linux 需 X11 会话（Wayland 暂不支持原生视频面）。
+## 主要能力
 
-### 文稿与阅读（P6）
+### 像阅读一样观看视频
 
-- 字幕文稿：内嵌 / 外挂 / 在线字幕统一成可检索文稿，支持逐句定位与跳转。
-- 可控跟读：跟随中 / 浏览中 / 关三态；手动滚动、选字不再被抢回；滚动永不 seek。
-- 可验证引用：回答里的 `[mm:ss]` / `[第N集 · mm:ss]`
-  全部来自工具实返，点引用跳播；不可验证的只显示文本。
-- 快捷问：文稿每句「问」（解释这一段）、章节行「总结本章」，提问锚点恒为所问时刻。
-- 系列阅读：媒体库内继续阅读（首个未完成）/ 下一集 / 手动完成；跨集引用默认防剧透。
-- 章节：容器章节优先；无章节时按字幕停顿机械分段（标注非语义，不编造主题）。
+- 播放、暂停、停止、跳转、调速、音量和音轨切换。
+- 支持本地视频，也支持按需打开在线视频。
+- 可识别同目录下的分集媒体，方便连续观看。
 
-### 笔记与批注
+### 字幕与文稿
 
-- 时间戳锚点笔记：列表浏览、点击跳转、一键导出 Markdown。
-- 台词引用：手动或自动附带前后台词，导出保留引用块。
-- 视频批注：AI 回答可内联确认存为批注；批注可附单帧截图（缩略图 + 点击 seek，
-  删批注自动清理图片文件）。
+- 将内嵌字幕、外挂字幕和在线字幕统一为可检索文稿。
+- 点击台词即可跳转到对应时间点；文稿也可以跟随播放或独立浏览。
+- 支持章节导航；没有正式章节时，可以使用基于字幕停顿的机械分段。
+- 字幕不可用时，可按需使用本地语音转写生成文稿。
 
-### AI 对话（ACP，可选）
+### 时间点笔记与批注
 
-- 不预连接：只有用户发起会话时才按需启动本机 Agent 进程。
-- 默认 Codex profile，可配 Claude / 自定义命令；换模型走 Responses 配置，
-  换 Agent 即换启动进程。
-- 对话能力（播放上下文、字幕窗口、截图、批注）全部经 MCP 工具受控调用；
-  Cookie 与签名 URL 永不进入 prompt 与日志。
-- 未配置时应用其余功能完全可用。
+- 在视频的具体时间点创建笔记，之后可以从笔记跳回原片。
+- 保存台词引用和关键画面，帮助保留笔记的上下文。
+- 将观看记录导出为 Markdown，继续在其他知识管理工具中整理。
 
-### 媒体库（实验性）
+### 可选的 AI 视频对话
 
-- 对自选目录建本地 `.lumina/` 索引，周期扫描发现新增；TMDb + 维基元数据补全。
-- 智能匹配：文件名解析 + TMDb 候选约束确认；可用已配 ACP Agent 或专用直连 API。
-- 模型 Key / TMDb Token 存当前用户 Credential Manager，不进项目、索引与日志，
-  界面不回显；环境变量仅作开发与 CI 备用。
+- 只有主动发起会话时才启动 AI Agent，不影响普通播放和阅读。
+- AI 可以在受控范围内读取播放状态、字幕窗口、章节、截图和已有批注。
+- 回答中的时间点引用可以跳回视频进行核对。
+- 默认支持 Codex profile，也可以配置其他 ACP Agent 或自定义命令。
 
-### 在线视频与 ASR（可选）
+### 媒体库与在线能力
 
-- 在线解析：按需调用 yt-dlp（官方 stable + SHA-256 校验 + 可恢复替换），
-  支持 cookies.txt / 浏览器 Cookie；失败按登录态分类给中文提示。
-- 本地转写：仅用户点击才调本地 whisper；未配置返回未配置，不影响播放。
+- 为自选目录建立本地媒体库，识别电影、剧集和分集关系。
+- 可选地使用 TMDB、Wikipedia 等在线信息补充作品资料。
+- 可选地使用 yt-dlp 解析在线视频，或使用本地 Whisper 进行语音转写。
 
-### 自动更新与日志
+这些能力都不会改变原始视频文件；网络服务、凭证和可选运行时只在相关功能被使用时才需要。
 
-- 内置 updater：从 lumina-app 的 `latest.json`
-  检查三平台签名包；标题栏可一键打开日志目录（daily rotation + panic hook）。
+## 适合怎样的使用方式
 
-## 安装（终端用户）
+Lumina 特别适合以下场景：
 
-1. 打开 [lumina-app Releases](https://github.com/yitom486/lumina-app/releases)，
-   下载对应系统的安装包：Windows x64 用 MSI / NSIS，macOS 用 DMG，
-   Linux x64 用 AppImage / deb。
-2. 安装后直接打开本地视频即可使用。
+- 看课程、访谈、纪录片时，需要边看边查台词和章节；
+- 学习外语时，对照字幕、定位句子并保存例句；
+- 观看长视频或系列内容时，希望持续积累带时间点的个人笔记；
+- 希望 AI 理解“正在看的这一段”，而不是把整部视频手动复制到聊天窗口。
 
-> 终端用户不需要安装 Bun、Node、pnpm、Rust 或 whisper
-> 就能播放、看文稿、记笔记。Bun 只在下面「从源码构建」时需要。
+## 安装与开始使用
 
-## 从源码构建（开发者）
+1. 打开 [lumina-app Releases](https://github.com/yitom486/lumina-app/releases)。
+2. 下载对应系统的安装包：Windows 使用 MSI / NSIS，macOS 使用 DMG，Linux 使用 AppImage / deb。
+3. 安装后打开 Lumina，选择本地视频即可开始播放和阅读。
 
-使用前必须先安装 **Bun 1.3.14**（仓库 `packageManager` 锁定版本，
-CI 与所有前端命令都经 Bun 运行）：
+终端用户不需要安装 Bun、Node、pnpm、Rust 或 Whisper，就可以播放视频、阅读字幕和记录笔记。可选的 AI、在线视频和语音转写能力会在使用时单独检查相应配置。
 
-```powershell
-# Windows（其他系统见 https://bun.sh/docs/installation）
-powershell -c "irm bun.sh/install.ps1 | iex"
-bun --version  # 应为 1.3.14
-```
+## 项目状态
 
-还需要：Rust stable + MSVC C++ Build Tools、WebView2 Runtime（Windows 11
-通常自带）、项目本地 libmpv 开发包（见
-[apps/desktop/src-tauri/native/mpv/README.md](apps/desktop/src-tauri/native/mpv/README.md)；
-`ffmpeg` / `whisper` / ACP Agent 都是可选能力，见各自 `apps/desktop/src-tauri/native/`
-目录下的 README）。
+Lumina 仍在持续开发中。播放、媒体探测、字幕文稿、按需 ASR、笔记和基础 ACP 对话已经形成主链路；媒体库、在线媒体和更完整的 AI Video Reader 体验仍在迭代。
+
+请以 [ROADMAP.md](ROADMAP.md) 了解阶段目标，以发布页和 [CHANGELOG.md](CHANGELOG.md) 了解具体版本变化。
+
+## 从源码运行
+
+这一部分面向开发者，不是终端用户的安装要求。仓库使用 Bun 管理前端工作区，Rust 用于桌面端后端。
+
+环境准备：
+
+- Bun 1.3.14；
+- Rust stable 与 Windows MSVC C++ Build Tools（Windows）；
+- 对应平台的 WebView 运行时；
+- 播放所需的本地原生依赖。具体维护说明见 [`apps/desktop/src-tauri/native/`](apps/desktop/src-tauri/native/) 下的 README。
 
 ```powershell
 bun install --frozen-lockfile
 bun run tauri dev
 ```
 
-若 Rust 未加入 `PATH`，当前 Windows 会话可临时加入：
+常用检查：
 
 ```powershell
-$env:Path = "$env:USERPROFILE\.cargo\bin;$env:Path"
+bun run lint:all
+bun run test
+bun run check:rust
 ```
 
-### 常用命令
+更详细的架构约束、错误处理规则和迁移计划请阅读 [AGENTS.md](AGENTS.md)、[project.md](project.md) 以及 [ROADMAP.md](ROADMAP.md)。各 Rust 领域 crate 的实现说明位于对应 `crates/*/src/README.md`。
 
-```powershell
-bun run lint:all   # tsc + oxlint
-bun run test       # 前端全量（vitest）
-bun run build      # 前端构建
+## 隐私与本地数据
 
-bun run check:rust # Rust 门：fmt + check + test + clippy(-D warnings)
+- 本地播放、字幕阅读和笔记可以离线使用。
+- 凭证不会写入项目文件、媒体库索引或 AI prompt。
+- 原始视频文件不会被 Lumina 重命名或改写。
+- 请勿提交个人视频、笔记、Cookie、模型密钥、`.env` 或本地 native 二进制。
 
-bun run tauri build --debug  # Windows debug 打包（MSI + NSIS）
-```
+## 参与项目
 
-Rust 另有 `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml --lib`。发版走
-`.github/workflows/release.yml`：推送 `v*` tag 自动跑质量门、三平台构建、
-签名并上传到 lumina-app（含合并版 `latest.json`）；也支持 Actions
-手动 `workflow_dispatch` 指定 tag 重跑。发版前请读
-[CHANGELOG.md](CHANGELOG.md) 并手工安装一次产物做播放冒烟。
-
-## 应用内关于
-
-标题栏右侧 ⓘ 按钮打开「关于」：显示当前版本号、一句话介绍，
-并可一键打开 lumina-app 发布页下载更新。
-
-## 参与与约束
-
-- 不要提交个人视频、笔记、`.env`、模型密钥、Cookie 与项目本地 native 二进制。
-- 给前端的错误只展示中文业务 `message`；业务代码禁 `unwrap()` / `expect()`；
-  日志用 `tracing`。细则见 [AGENTS.md](AGENTS.md)。
+欢迎通过 Issue 或 Pull Request 反馈问题和提出改进建议。提交代码前，请先阅读 [AGENTS.md](AGENTS.md) 中的架构边界、错误处理和测试要求。

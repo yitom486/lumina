@@ -1,4 +1,4 @@
-﻿# lumina-media
+# lumina-media
 
 `lumina-media` 是 Lumina 的本地多媒体探测与工具集成领域库。它通过系统级集成 `ffprobe` 与 `ffmpeg`，提供流媒体元数据分析、章节探测、视频帧抓取及相邻剧集发现等能力，**完全独立于 libmpv 播放引擎与桌面 UI**。
 
@@ -86,20 +86,20 @@ let siblings = list_sibling_videos(current);
 
 ## 4. 内部子模块全景
 
-`lumina-media/src/` 包含以下 9 个源码模块：
+`lumina-media/src/` 的主要实现模块如下；列表聚焦稳定的核心文件，内部辅助文件可随实现调整：
 
 | 源码文件 | 模块名称 | 核心职责与导出项 |
 | :--- | :--- | :--- |
-| [`lib.rs`](file:///d:/project/rust/tauri/lumina/crates/lumina-media/src/lib.rs) | 根模块 | 重新导出公开接口；定义领域抽象约束。 |
-| [`service.rs`](file:///d:/project/rust/tauri/lumina/crates/lumina-media/src/service.rs) | `service` | • `MediaInspector`: 主服务结构体。<br>• `ProbeCache`: 线程安全的 64 项 LRU 探测缓存管理器。 |
-| [`ffprobe.rs`](file:///d:/project/rust/tauri/lumina/crates/lumina-media/src/ffprobe.rs) | `ffprobe` | 调用本地 `ffprobe` 进程并解析其输出的 JSON；结构化转换为 `MediaInfo`。 |
-| [`frame_capture.rs`](file:///d:/project/rust/tauri/lumina/crates/lumina-media/src/frame_capture.rs) | `frame_capture` | 封装 `ffmpeg -ss ... -vframes 1` 命令，抓取指定时间戳的高质量单帧画面。 |
-| [`audio_marks.rs`](file:///d:/project/rust/tauri/lumina/crates/lumina-media/src/audio_marks.rs) | `audio_marks` | 使用 ffmpeg 提取音频波形能量、静音切分点（Silence Detect），供 AI 或时间轴分段使用。 |
-| [`siblings.rs`](file:///d:/project/rust/tauri/lumina/crates/lumina-media/src/siblings.rs) | `siblings` | `list_sibling_videos`: 基于扩展名过滤和自然排序算法发现同一目录下的相邻剧集。 |
-| [`tools.rs`](file:///d:/project/rust/tauri/lumina/crates/lumina-media/src/tools.rs) | `tools` | 探测本机环境及本地打包目录中的 `ffmpeg` 与 `ffprobe` 可执行文件位置与可用状态。 |
-| [`process.rs`](file:///d:/project/rust/tauri/lumina/crates/lumina-media/src/process.rs) | `process` | 跨平台子进程构建工具（Windows 隐藏窗口、超时保护、标准流捕获与截断）。 |
-| [`model.rs`](file:///d:/project/rust/tauri/lumina/crates/lumina-media/src/model.rs) | `model` | • `MediaInfo`: 媒体时长、码率、元标签。<br>• `MediaStream`: 视频、音频、字幕轨道信息。<br>• `MediaChapter`: 容器章节打点。<br>• `StreamKind`: Video/Audio/Subtitle/Unknown。 |
-| [`error.rs`](file:///d:/project/rust/tauri/lumina/crates/lumina-media/src/error.rs) | `error` | • `MediaError` 与 `MediaErrorCode`（`ToolNotFound`, `ProbeFailed`, `InvalidMedia` 等）。 |
+| [`lib.rs`](./lib.rs) | 根模块 | 重新导出公开接口；定义领域抽象约束。 |
+| [`service.rs`](./service.rs) | `service` | • `MediaInspector`: 主服务结构体。<br>• `ProbeCache`: 线程安全的 64 项 LRU 探测缓存管理器。 |
+| [`ffprobe.rs`](./ffprobe.rs) | `ffprobe` | 调用本地 `ffprobe` 进程并解析其输出的 JSON；结构化转换为 `MediaInfo`。 |
+| [`frame_capture.rs`](./frame_capture.rs) | `frame_capture` | 封装 `ffmpeg -ss ... -vframes 1` 命令，抓取指定时间戳的高质量单帧画面。 |
+| [`audio_marks.rs`](./audio_marks.rs) | `audio_marks` | 使用 ffmpeg 提取音频波形能量、静音切分点（Silence Detect），供 AI 或时间轴分段使用。 |
+| [`siblings.rs`](./siblings.rs) | `siblings` | `list_sibling_videos`: 基于扩展名过滤和自然排序算法发现同一目录下的相邻剧集。 |
+| [`tools.rs`](./tools.rs) | `tools` | 探测本机环境及本地打包目录中的 `ffmpeg` 与 `ffprobe` 可执行文件位置与可用状态。 |
+| [`process.rs`](./process.rs) | `process` | 跨平台子进程构建工具（Windows 隐藏窗口、超时保护、标准流捕获与截断）。 |
+| [`model.rs`](./model.rs) | `model` | • `MediaInfo`: 媒体时长、码率、元标签。<br>• `MediaStream`: 视频、音频、字幕轨道信息。<br>• `MediaChapter`: 容器章节打点。<br>• `StreamKind`: Video/Audio/Subtitle/Unknown。 |
+| [`error.rs`](./error.rs) | `error` | • `MediaError` 与 `MediaErrorCode`（`ToolNotFound`, `ProbeFailed`, `InvalidMedia` 等）。 |
 
 ---
 

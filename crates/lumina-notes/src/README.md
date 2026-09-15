@@ -1,4 +1,4 @@
-﻿# lumina-notes
+# lumina-notes
 
 `lumina-notes` 是 Lumina 的视频笔记与知识导出领域库。它提供基于时间戳锚点（Timestamp Anchor）的笔记记录、原文字幕金句引用（Quotes）、视频截图帧附件绑定、多级大纲对齐以及富文本 Markdown 导出能力，**完全无需依赖任何 AI 服务即可独立工作**。
 
@@ -92,18 +92,18 @@ println!("导出的 Markdown 内容:\n{}", markdown);
 
 ## 4. 内部子模块全景
 
-`lumina-notes/src/` 包含以下 7 个源码模块：
+`lumina-notes/src/` 的主要实现模块如下；列表聚焦稳定的核心文件，内部辅助文件可随实现调整：
 
 | 源码文件 | 模块名称 | 核心职责与导出项 |
 | :--- | :--- | :--- |
-| [`lib.rs`](file:///d:/project/rust/tauri/lumina/crates/lumina-notes/src/lib.rs) | 根模块 | 重新导出公开接口；定义领域抽象。 |
-| [`service.rs`](file:///d:/project/rust/tauri/lumina/crates/lumina-notes/src/service.rs) | `service` | • `NoteService`: 笔记领域核心门面，提供 CRUD、引证关联与 Markdown 格式化导出。 |
-| [`store.rs`](file:///d:/project/rust/tauri/lumina/crates/lumina-notes/src/store.rs) | `store` | 本地 JSON 持久化管理，负责线程安全加锁、读写缓存与文件原子替换。 |
-| [`headings.rs`](file:///d:/project/rust/tauri/lumina/crates/lumina-notes/src/headings.rs) | `headings` | • `resolve_export_headings`: 将散落的笔记按视频章节打点或元信息组织成多级目录。 |
-| [`quotes.rs`](file:///d:/project/rust/tauri/lumina/crates/lumina-notes/src/quotes.rs) | `quotes` | 针对给定时间戳，从 `lumina-subtitle` 对应轨道中智能匹配最符合上下文的字幕片段。 |
-| [`proposal.rs`](file:///d:/project/rust/tauri/lumina/crates/lumina-notes/src/proposal.rs) | `proposal` | • `VideoAnnotationProposal`: 规范 Agent/AI 给出的批注建议结构，支持一键接受转为正式笔记。 |
-| [`model.rs`](file:///d:/project/rust/tauri/lumina/crates/lumina-notes/src/model.rs) | `model` | • `Note`, `NoteCreate`, `NoteUpdate`。<br>• `NoteQuote`（台词引用）。<br>• `NoteFrame`（截图帧 Base64/文件数据）。 |
-| [`error.rs`](file:///d:/project/rust/tauri/lumina/crates/lumina-notes/src/error.rs) | `error` | • `NoteError` 与 `NoteErrorCode`（`StorageFailed`, `InvalidInput`, `NotFound` 等）。 |
+| [`lib.rs`](./lib.rs) | 根模块 | 重新导出公开接口；定义领域抽象。 |
+| [`service.rs`](./service.rs) | `service` | • `NoteService`: 笔记领域核心门面，提供 CRUD、引证关联与 Markdown 格式化导出。 |
+| [`store.rs`](./store.rs) | `store` | 本地 JSON 持久化管理，负责线程安全加锁、读写缓存与文件原子替换。 |
+| [`headings.rs`](./headings.rs) | `headings` | • `resolve_export_headings`: 将散落的笔记按视频章节打点或元信息组织成多级目录。 |
+| [`quotes.rs`](./quotes.rs) | `quotes` | 针对给定时间戳，从 `lumina-subtitle` 对应轨道中智能匹配最符合上下文的字幕片段。 |
+| [`proposal.rs`](./proposal.rs) | `proposal` | • `VideoAnnotationProposal`: 规范 Agent/AI 给出的批注建议结构，支持一键接受转为正式笔记。 |
+| [`model.rs`](./model.rs) | `model` | • `Note`, `NoteCreate`, `NoteUpdate`。<br>• `NoteQuote`（台词引用）。<br>• `NoteFrame`（截图帧 Base64/文件数据）。 |
+| [`error.rs`](./error.rs) | `error` | • `NoteError` 与 `NoteErrorCode`（`StorageFailed`, `InvalidInput`, `NotFound` 等）。 |
 
 ---
 

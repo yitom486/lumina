@@ -1,4 +1,4 @@
-﻿# lumina-ytdl
+# lumina-ytdl
 
 `lumina-ytdl` 是 Lumina 的在线流媒体解析与工具集成领域库。它封装了对 `yt-dlp` 的全生命周期管理，提供在线视频元数据解析、多分辨率清晰度优选、多浏览器 Cookie 安全注入、在线字幕自动抽取与可执行程序自动更新等能力。
 
@@ -92,22 +92,22 @@ if let Some(track) = tracks.first() {
 
 ## 4. 内部子模块全景
 
-`lumina-ytdl/src/` 包含以下 11 个源码模块：
+`lumina-ytdl/src/` 的主要实现模块如下；列表聚焦稳定的核心文件，内部辅助文件可随实现调整：
 
 | 源码文件 | 模块名称 | 核心职责与导出项 |
 | :--- | :--- | :--- |
-| [`lib.rs`](file:///d:/project/rust/tauri/lumina/crates/lumina-ytdl/src/lib.rs) | 根模块 | 重新导出公开接口；声明依赖边界。 |
-| [`service.rs`](file:///d:/project/rust/tauri/lumina/crates/lumina-ytdl/src/service.rs) | `service` | • `YtdlService`: 统一对外业务门面，包含解析缓存与互斥并发锁。 |
-| [`resolve.rs`](file:///d:/project/rust/tauri/lumina/crates/lumina-ytdl/src/resolve.rs) | `resolve` | 拼接命令行参数调用 `yt-dlp --dump-single-json`，反序列化原始视频与音轨数据。 |
-| [`playback.rs`](file:///d:/project/rust/tauri/lumina/crates/lumina-ytdl/src/playback.rs) | `playback` | 决策与合并音视频流（`bestvideo+bestaudio`），生成供 mpv 使用的 `YtdlPlayTarget`。 |
-| [`cookies.rs`](file:///d:/project/rust/tauri/lumina/crates/lumina-ytdl/src/cookies.rs) | `cookies` | 读取各浏览器 Profile、测试 Cookie 有效性、隔离生成供 yt-dlp 读取的临时脱敏凭证。 |
-| [`subtitle.rs`](file:///d:/project/rust/tauri/lumina/crates/lumina-ytdl/src/subtitle.rs) | `subtitle` | 下载远程字幕源（VTT / JSON3），转换为统一的 `lumina_subtitle::Transcript` 结构。 |
-| [`download.rs`](file:///d:/project/rust/tauri/lumina/crates/lumina-ytdl/src/download.rs) | `download` | 从 GitHub Releases 拉取最新稳定版 `yt-dlp.exe`，执行 SHA-256 校验和原子覆写。 |
-| [`runtime.rs`](file:///d:/project/rust/tauri/lumina/crates/lumina-ytdl/src/runtime.rs) | `runtime` | 检测系统安装的 JS 引擎（Node.js / Bun / Deno / QuickJS），提升 YouTube 解密稳定性。 |
-| [`provider.rs`](file:///d:/project/rust/tauri/lumina/crates/lumina-ytdl/src/provider.rs) | `provider` | `SubtitleProvider` 抽象策略接口，实现字幕语言代号标准化（如 `zh-Hans` -> `zh`）。 |
-| [`paths.rs`](file:///d:/project/rust/tauri/lumina/crates/lumina-ytdl/src/paths.rs) | `paths` | 解析 yt-dlp 本地存放路径、Cookie 缓存文件位置与系统环境变量。 |
-| [`model.rs`](file:///d:/project/rust/tauri/lumina/crates/lumina-ytdl/src/model.rs) | `model` | • `YtdlResolveResult`, `YtdlFormat`, `YtdlSubtitleTrack`, `YtdlStatus`, `YtdlInstallEvent`。 |
-| [`error.rs`](file:///d:/project/rust/tauri/lumina/crates/lumina-ytdl/src/error.rs) | `error` | • `YtdlError` 与 `YtdlErrorCode`（`BinaryNotFound`, `ResolveFailed`, `NetworkError` 等）。 |
+| [`lib.rs`](./lib.rs) | 根模块 | 重新导出公开接口；声明依赖边界。 |
+| [`service.rs`](./service.rs) | `service` | • `YtdlService`: 统一对外业务门面，包含解析缓存与互斥并发锁。 |
+| [`resolve.rs`](./resolve.rs) | `resolve` | 拼接命令行参数调用 `yt-dlp --dump-single-json`，反序列化原始视频与音轨数据。 |
+| [`playback.rs`](./playback.rs) | `playback` | 决策与合并音视频流（`bestvideo+bestaudio`），生成供 mpv 使用的 `YtdlPlayTarget`。 |
+| [`cookies.rs`](./cookies.rs) | `cookies` | 读取各浏览器 Profile、测试 Cookie 有效性、隔离生成供 yt-dlp 读取的临时脱敏凭证。 |
+| [`subtitle.rs`](./subtitle.rs) | `subtitle` | 下载远程字幕源（VTT / JSON3），转换为统一的 `lumina_subtitle::Transcript` 结构。 |
+| [`download.rs`](./download.rs) | `download` | 从 GitHub Releases 拉取最新稳定版 `yt-dlp.exe`，执行 SHA-256 校验和原子覆写。 |
+| [`runtime.rs`](./runtime.rs) | `runtime` | 检测系统安装的 JS 引擎（Node.js / Bun / Deno / QuickJS），提升 YouTube 解密稳定性。 |
+| [`provider.rs`](./provider.rs) | `provider` | `SubtitleProvider` 抽象策略接口，实现字幕语言代号标准化（如 `zh-Hans` -> `zh`）。 |
+| [`paths.rs`](./paths.rs) | `paths` | 解析 yt-dlp 本地存放路径、Cookie 缓存文件位置与系统环境变量。 |
+| [`model.rs`](./model.rs) | `model` | • `YtdlResolveResult`, `YtdlFormat`, `YtdlSubtitleTrack`, `YtdlStatus`, `YtdlInstallEvent`。 |
+| [`error.rs`](./error.rs) | `error` | • `YtdlError` 与 `YtdlErrorCode`（`BinaryNotFound`, `ResolveFailed`, `NetworkError` 等）。 |
 
 ---
 

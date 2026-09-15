@@ -1,4 +1,4 @@
-﻿# lumina-core
+# lumina-core
 
 `lumina-core` 是 Lumina 项目最底层的领域共享抽象核心库。它定义了跨多个 crate 共享的稳定值对象（Value Objects）与端口特征（Traits/Ports），并且**完全不依赖任何其他 lumina 业务 crate**。
 
@@ -88,14 +88,14 @@ impl AgentInvoker for MockInvoker {
 
 ## 4. 内部子模块全景
 
-`lumina-core/src/` 包含以下 3 个核心模块文件：
+`lumina-core/src/` 的主要实现模块如下；列表聚焦稳定的核心文件，内部辅助文件可随实现调整：
 
 | 源码文件 | 模块名称 | 核心职责与导出项 |
 | :--- | :--- | :--- |
-| [`lib.rs`](file:///d:/project/rust/tauri/lumina/crates/lumina-core/src/lib.rs) | 根模块 | 重新导出公开接口；定义宏观架构约束。 |
-| [`media_source.rs`](file:///d:/project/rust/tauri/lumina/crates/lumina-core/src/media_source.rs) | `media_source` | • `MediaSource`: 本地路径与远程 URL 统一枚举。<br>• `MediaSourceKind`: 精简的类型分类指示器。<br>• `MediaSourceError`: 标准错误对象，内含固定中文报错信息。<br>• 路径规范化、文件后缀探测与 `stable_id` 算法。 |
-| [`agent_invoker.rs`](file:///d:/project/rust/tauri/lumina/crates/lumina-core/src/agent_invoker.rs) | `agent_invoker` | • `AgentInvoker`: 同步/异步无状态 AI 执行特征（Trait）。<br>• `IsolatedAgentTask`: 独立任务请求（Prompt、Model、Reasoning Effort）。<br>• `AgentTaskError`: 区分未配置（`NotConfigured`）与执行失败（`Failed`）。 |
-| [`tool_contract.rs`](file:///d:/project/rust/tauri/lumina/crates/lumina-core/src/tool_contract.rs) | `tool_contract` | • 10 个系统 Agent 工具名称常量（如 `lumina_get_playback_context`）。<br>• `ALL_TOOLS`、`TOOL_COUNT` 与 `is_known_tool()` 白名单校验。<br>• 各工具参数输入验证、边界 Clamp 及结构化错误类型。 |
+| [`lib.rs`](./lib.rs) | 根模块 | 重新导出公开接口；定义宏观架构约束。 |
+| [`media_source.rs`](./media_source.rs) | `media_source` | • `MediaSource`: 本地路径与远程 URL 统一枚举。<br>• `MediaSourceKind`: 精简的类型分类指示器。<br>• `MediaSourceError`: 标准错误对象，内含固定中文报错信息。<br>• 路径规范化、文件后缀探测与 `stable_id` 算法。 |
+| [`agent_invoker.rs`](./agent_invoker.rs) | `agent_invoker` | • `AgentInvoker`: 无状态 AI 执行端口（Trait）。<br>• `IsolatedAgentTask`: 独立任务请求（Prompt、Model、Reasoning Effort）。<br>• `AgentTaskError`: 区分未配置、执行失败和无有效输出（`NotConfigured` / `Failed` / `NoOutput`）。 |
+| [`tool_contract.rs`](./tool_contract.rs) | `tool_contract` | • 10 个系统 Agent 工具名称常量（如 `lumina_get_playback_context`）。<br>• `ALL_TOOLS`、`TOOL_COUNT` 与 `is_known_tool()` 白名单校验。<br>• 各工具参数输入验证、边界 Clamp 及结构化错误类型。 |
 
 ---
 

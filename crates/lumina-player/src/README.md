@@ -1,4 +1,4 @@
-﻿# lumina-player
+# lumina-player
 
 `lumina-player` 是 Lumina 的原生多媒体播放核心领域库。它通过 `libmpv`（基于 `libmpv2` 绑定）直接驱动操作系统的原生窗口句柄（Native Surface）进行硬件加速视频渲染，同时维护着高内聚的播放状态机与快照流。
 
@@ -89,16 +89,16 @@ println!("音量: {}%", snapshot.volume);
 
 ## 4. 内部子模块全景
 
-`lumina-player/src/` 包含以下 5 个核心源码模块：
+`lumina-player/src/` 的主要实现模块如下；列表聚焦稳定的核心文件，内部辅助文件可随实现调整：
 
 | 源码文件 | 模块名称 | 核心职责与导出项 |
 | :--- | :--- | :--- |
-| [`lib.rs`](file:///d:/project/rust/tauri/lumina/crates/lumina-player/src/lib.rs) | 根模块 | 重新导出公开接口；声明依赖边界。 |
-| [`service.rs`](file:///d:/project/rust/tauri/lumina/crates/lumina-player/src/service.rs) | `service` | • `PlayerService`: 核心服务聚合，提供所有播放控制命令与快照管理。 |
-| [`mpv.rs`](file:///d:/project/rust/tauri/lumina/crates/lumina-player/src/mpv.rs) | `mpv` | • `LibMpvPlayer`: 底层 `libmpv2::Mpv` 实例的拥有者。<br>• 配置 mpv 参数（vo, hwdec, wid, ytdl-format, 网络优化参数等）。<br>• 属性观察与底层 FFI 事件轮询泵。 |
-| [`model.rs`](file:///d:/project/rust/tauri/lumina/crates/lumina-player/src/model.rs) | `model` | • `PlayerSnapshot`: 聚合播放器全部状态的纯数据结构。<br>• `PlayerState`: `Idle` / `Loading` / `Playing` / `Paused` / `Error`。<br>• `PlayerEvent`: 向上层派发的状态变动事件。 |
-| [`source.rs`](file:///d:/project/rust/tauri/lumina/crates/lumina-player/src/source.rs) | `source` | 重新导出 `lumina_core::MediaSource` 与 `MediaSourceKind`，保持 API 语义整洁。 |
-| [`error.rs`](file:///d:/project/rust/tauri/lumina/crates/lumina-player/src/error.rs) | `error` | • `PlayerError` 与 `PlayerErrorCode`（`NotInitialized`, `LoadError`, `CommandFailed`, `PropertyFailed`, `UnsupportedMedia`）。 |
+| [`lib.rs`](./lib.rs) | 根模块 | 重新导出公开接口；声明依赖边界。 |
+| [`service.rs`](./service.rs) | `service` | • `PlayerService`: 核心服务聚合，提供所有播放控制命令与快照管理。 |
+| [`mpv/mod.rs`](./mpv/mod.rs) | `mpv` | • `LibMpvPlayer`: 底层 `libmpv2::Mpv` 实例的拥有者。<br>• 配置 mpv 参数（vo, hwdec, wid, ytdl-format, 网络优化参数等）。<br>• 属性观察与底层 FFI 事件轮询泵。 |
+| [`model.rs`](./model.rs) | `model` | • `PlayerSnapshot`: 聚合播放器全部状态的纯数据结构。<br>• `PlayerState`: `Idle` / `Loading` / `Playing` / `Paused` / `Error`。<br>• `PlayerEvent`: 向上层派发的状态变动事件。 |
+| [`source.rs`](./source.rs) | `source` | 重新导出 `lumina_core::MediaSource` 与 `MediaSourceKind`，保持 API 语义整洁。 |
+| [`error.rs`](./error.rs) | `error` | • `PlayerError` 与 `PlayerErrorCode`（`NotInitialized`, `LoadError`, `CommandFailed`, `PropertyFailed`, `UnsupportedMedia`）。 |
 
 ---
 
