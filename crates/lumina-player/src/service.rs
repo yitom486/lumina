@@ -416,6 +416,24 @@ impl PlayerService {
         Ok(self.snapshot())
     }
 
+    /// Demo-only OSC input: best-effort mouse forward to mpv. Missing
+    /// backend is a no-op; failures only emit `debug` (hover never logs).
+    pub fn forward_surface_mouse(
+        &self,
+        x: i32,
+        y: i32,
+        button: Option<i32>,
+        double_click: bool,
+        client_size: Option<(i32, i32)>,
+    ) {
+        let Some(backend) = self.backend.as_ref() else {
+            return;
+        };
+        if let Err(error) = backend.forward_mouse(x, y, button, double_click, client_size) {
+            tracing::debug!(%error, "forward surface mouse to mpv failed");
+        }
+    }
+
     /// Periodic poll from the event ticker (~100–250ms). Does not log position.
     pub fn poll_tick(&mut self) -> Vec<PlayerEvent> {
         let mut events = Vec::new();

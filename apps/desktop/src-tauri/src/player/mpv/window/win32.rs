@@ -15,8 +15,8 @@ use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, DestroyWindow, LoadCursorW, MoveWindow, RegisterClassW,
     SetWindowPos, ShowWindow, CS_DBLCLKS, CS_HREDRAW, CS_OWNDC, CS_VREDRAW, HWND_TOP, IDC_ARROW,
-    SWP_NOACTIVATE, SWP_SHOWWINDOW, SW_HIDE, WM_DESTROY, WM_LBUTTONDBLCLK, WM_LBUTTONUP, WNDCLASSW,
-    WS_CHILD, WS_CLIPSIBLINGS,
+    SWP_NOACTIVATE, SWP_SHOWWINDOW, SW_HIDE, WM_DESTROY, WM_LBUTTONDBLCLK, WM_LBUTTONDOWN,
+    WM_LBUTTONUP, WM_MOUSEMOVE, WNDCLASSW, WS_CHILD, WS_CLIPSIBLINGS,
 };
 
 use crate::player::error::{PlayerError, PlayerErrorCode};
@@ -41,6 +41,68 @@ fn emit_surface_event(event: PlayerEvent) {
         return;
     };
     state.emit(event);
+}
+
+/// Demo OSC: decode client-area mouse position from `LPARAM` (signed 16-bit pairs).
+fn surface_mouse_coords(lparam: LPARAM) -> (i32, i32) {
+    let bits = lparam.0 as u32;
+    let x = (bits & 0xFFFF) as u16 as i16 as i32;
+    let y = ((bits >> 16) & 0xFFFF) as u16 as i16 as i32;
+    (x, y)
+}
+
+/// Demo OSC: hover position (`mouse x y`). Failures stay at `debug` (hot path).
+fn forward_hover_to_mpv(x: i32, y: i32) {
+    let Some(app) = SURFACE_APP.get() else {
+        return;
+    };
+    let Some(state) = app.try_state::<AppState>() else {
+        return;
+    };
+    let result = state.with_player(|player| {
+        player.forward_surface_mouse(x, y, None, false, None);
+        Ok(())
+    });
+    if let Err(error) = result {
+        tracing::debug!(%error, "forward surface hover failed");
+    }
+}
+
+/// Demo OSC: standard lifecycle press (`keydown MBTN_LEFT`). Position comes
+/// from prior hover, so no coords are sent. Encoded as `Some(0)` for the
+/// two-file `forward_surface_mouse` shim (both map to `MBTN_LEFT`).
+fn forward_keydown_to_mpv() {
+    let Some(app) = SURFACE_APP.get() else {
+        return;
+    };
+    let Some(state) = app.try_state::<AppState>() else {
+        return;
+    };
+    let result = state.with_player(|player| {
+        player.forward_surface_mouse(0, 0, Some(0), false, None);
+        Ok(())
+    });
+    if let Err(error) = result {
+        tracing::debug!(%error, "forward surface keydown failed");
+    }
+}
+
+/// Demo OSC: standard lifecycle release (`keyup MBTN_LEFT`). Encoded as
+/// `Some(1)` for the shim; mpv still sees `MBTN_LEFT`.
+fn forward_keyup_to_mpv() {
+    let Some(app) = SURFACE_APP.get() else {
+        return;
+    };
+    let Some(state) = app.try_state::<AppState>() else {
+        return;
+    };
+    let result = state.with_player(|player| {
+        player.forward_surface_mouse(0, 0, Some(1), false, None);
+        Ok(())
+    });
+    if let Err(error) = result {
+        tracing::debug!(%error, "forward surface keyup failed");
+    }
 }
 
 pub struct VideoSurface {
@@ -231,11 +293,26 @@ unsafe extern "system" fn surface_wnd_proc(
     lparam: LPARAM,
 ) -> LRESULT {
     match msg {
+        WM_MOUSEMOVE => {
+            let (x, y) = surface_mouse_coords(lparam);
+            forward_hover_to_mpv(x, y);
+            return LRESULT(0);
+        }
+        WM_LBUTTONDOWN => {
+            forward_keydown_to_mpv();
+            return LRESULT(0);
+        }
         WM_LBUTTONDBLCLK => {
+            // demo-only(osc-leave-bar): double-click ownership is ours
+            // (frontend 300ms disambiguation → fullscreen).
             emit_surface_event(PlayerEvent::SurfaceDoubleClick);
             return LRESULT(0);
         }
         WM_LBUTTONUP => {
+            forward_keyup_to_mpv();
+            // demo-only(osc-leave-bar): click ownership back to us for
+            // single-click pause; OSC element clicks still arrive via the
+            // keydown/keyup pair above (mpv has no MBTN_LEFT* keybinds).
             emit_surface_event(PlayerEvent::SurfaceClick);
             return LRESULT(0);
         }

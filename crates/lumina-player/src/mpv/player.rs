@@ -41,6 +41,9 @@ impl LibMpvPlayer {
     }
 
     /// Embed into a native HWND via `wid` (Windows Phase 1 surface).
+    /// Demo OSC: enable mpv native On-Screen Controller as-is
+    /// (`bottombar` stock layout). HTML bar lives outside the surface;
+    /// OSC lives inside it, so they do not fight.
     pub fn initialize_with_wid(wid: i64) -> Result<Self, PlayerError> {
         tracing::info!(wid, "libmpv initializing with wid");
         let mpv = Mpv::with_initializer(|init| {
@@ -51,11 +54,20 @@ impl LibMpvPlayer {
             // Prefer hardware decode; mpv falls back to software if needed.
             init.set_option("hwdec", "auto")?;
             init.set_option("sub-visibility", "yes")?;
+            // Demo-only: show native OSC as-is (no skin). Layout is mpv
+            // default `bottombar`, set explicitly via script-opts.
+            init.set_option("osc", "yes")?;
+            init.set_option("script-opts", "osc-layout=bottombar")?;
             Ok(())
         })
         .map_err(map_init_error)?;
         enable_diagnostic_events(&mpv);
         log_version(&mpv);
+        // Demo-only note: single-click pause / double-click fullscreen are
+        // owned by our own SurfaceClick / SurfaceDoubleClick events (300ms
+        // frontend disambiguation). No mpv `MBTN_LEFT*` keybinds here, so OSC
+        // hot zones keep priority and the default zone stays silent.
+        // OSC element clicks still arrive via keydown/keyup forwarding.
         Ok(Self { mpv })
     }
 
@@ -221,6 +233,52 @@ impl LibMpvPlayer {
     pub fn set_rate(&self, rate: f64) -> Result<(), PlayerError> {
         self.mpv
             .set_property("speed", rate)
+            .map_err(map_playback_error)
+    }
+
+    /// Demo-only OSC input lifecycle (standard press pairing).
+    /// Hover (`None`) only updates position (`mouse x y`); press is
+    /// `keydown MBTN_LEFT` and release is `keyup MBTN_LEFT` so mpv/OSC sees a
+    /// paired down→up. `button` is a two-file shim discriminant (`None` =
+    /// hover, `Some(0)` = down, `Some(_)` = up; both map to `MBTN_LEFT` at
+    /// mpv level). `double_click`/`client_size` stay only for `PlayerService`
+    /// compatibility and are ignored (single/double-click ownership is our own
+    /// SurfaceClick/SurfaceDoubleClick; position comes from hover).
+    pub fn forward_mouse(
+        &self,
+        x: i32,
+        y: i32,
+        button: Option<i32>,
+        _double_click: bool,
+        _client_size: Option<(i32, i32)>,
+    ) -> Result<(), PlayerError> {
+        match button {
+            None => self.mouse_hover(x, y),
+            Some(0) => self.mouse_keydown(),
+            Some(_) => self.mouse_keyup(),
+        }
+    }
+
+    /// Demo-only: hover position (`mouse x y`, never a press).
+    pub fn mouse_hover(&self, x: i32, y: i32) -> Result<(), PlayerError> {
+        let x_text = x.to_string();
+        let y_text = y.to_string();
+        self.mpv
+            .command("mouse", &[x_text.as_str(), y_text.as_str()])
+            .map_err(map_playback_error)
+    }
+
+    /// Demo-only: standard lifecycle press (`keydown MBTN_LEFT`).
+    pub fn mouse_keydown(&self) -> Result<(), PlayerError> {
+        self.mpv
+            .command("keydown", &["MBTN_LEFT"])
+            .map_err(map_playback_error)
+    }
+
+    /// Demo-only: standard lifecycle release (`keyup MBTN_LEFT`).
+    pub fn mouse_keyup(&self) -> Result<(), PlayerError> {
+        self.mpv
+            .command("keyup", &["MBTN_LEFT"])
             .map_err(map_playback_error)
     }
 

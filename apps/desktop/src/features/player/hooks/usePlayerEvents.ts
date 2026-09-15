@@ -14,7 +14,8 @@ import { usePlayerStore } from "../store";
 import { useUiStore } from "../uiStore";
 import type { PlayerEvent } from "@lumina/contracts";
 
-const CLICK_DELAY_MS = 280;
+/** Demo (osc-leave-bar): SurfaceClick/SurfaceDoubleClick disambiguation window. */
+const CLICK_DELAY_MS = 300;
 
 export function usePlayerEvents(): void {
   const clickTimer = useRef<number | null>(null);

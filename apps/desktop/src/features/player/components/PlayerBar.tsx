@@ -1,14 +1,18 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import { FullscreenToggleButton } from "@/layouts/AppShell";
 import { cn } from "@lumina/ui/utils";
 
 import { usePlaybackChromeReveal } from "../hooks/usePlaybackChromeReveal";
+import { ensureSurfaceBounds } from "../surfaceBridge";
 import { useUiStore } from "../uiStore";
 import { SeekBar } from "./SeekBar";
 import { TrackControlButtons } from "./TrackControlButtons";
 import { TransportControls } from "./TransportControls";
 import { VolumeControl } from "./VolumeControl";
+
+/** Demo (osc-leave-bar): nominal HTML bar reserve height, tunable (px). */
+export const OSC_DEMO_BAR_HEIGHT_PX = 56;
 
 /**
  * HTML chrome under the video placeholder.
@@ -19,6 +23,24 @@ export function PlayerBar() {
   const { visible, pin, unpin, scheduleHide } = usePlaybackChromeReveal(fullscreen);
   const [menuPinned, setMenuPinned] = useState(false);
   const [volumeHover, setVolumeHover] = useState(false);
+
+  // Demo (osc-leave-bar): fullscreen only — bar show narrows the video face,
+  // bar hide expands it to full bleed, via the existing set_bounds chain
+  // (VideoSurface rect measurement). Windowed: no-op, never touch bounds.
+  useEffect(() => {
+    if (!fullscreen) return;
+    let cancelled = false;
+    const refresh = () => {
+      if (!cancelled) void ensureSurfaceBounds();
+    };
+    const raf = requestAnimationFrame(() => refresh());
+    const timers = [80, 250, 450].map((ms) => window.setTimeout(refresh, ms));
+    return () => {
+      cancelled = true;
+      cancelAnimationFrame(raf);
+      for (const id of timers) window.clearTimeout(id);
+    };
+  }, [fullscreen, visible]);
 
   const handleMenuOpenChange = (open: boolean) => {
     setMenuPinned(open);
