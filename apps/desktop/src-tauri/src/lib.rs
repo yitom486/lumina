@@ -82,7 +82,7 @@ use commands::subtitle::{
     subtitle_download_candidate, subtitle_export_sidecar, subtitle_list_choices,
     subtitle_load_choice, subtitle_proofread_track, subtitle_provider_status,
     subtitle_search_online, subtitle_set_provider_key, subtitle_translate_track,
-    subtitle_validate_provider_key,
+    subtitle_validate_provider_key, subtitle_workshop_status,
 };
 use commands::system::system_log_dir;
 use commands::ytdl::{
@@ -152,6 +152,7 @@ pub fn run() {
             subtitle_export_sidecar,
             subtitle_translate_track,
             subtitle_proofread_track,
+            subtitle_workshop_status,
             subtitle_provider_status,
             subtitle_set_provider_key,
             subtitle_search_online,

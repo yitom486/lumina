@@ -105,6 +105,28 @@ export type SubtitleTranslateEvent =
   | { type: "Finished"; payload: { transcript: Transcript } }
   | { type: "Failed"; payload: { code: string; message: string } };
 
+export type WorkshopJobPhase = "Running" | "Finished" | "Failed";
+
+export type WorkshopJobSnapshot = {
+  jobId: string;
+  mediaPath: string;
+  choiceId: string;
+  targetLang: string;
+  phase: WorkshopJobPhase;
+  done: number | null;
+  total: number | null;
+  message: string;
+  updatedAtMs: number;
+};
+
+export const WORKSHOP_PROGRESS_EVENT = "subtitle-workshop-progress";
+
+export function getWorkshopStatus(
+  mediaPath: string,
+): Promise<WorkshopJobSnapshot | null> {
+  return invoke("subtitle_workshop_status", { mediaPath });
+}
+
 export async function proofreadSubtitleTrack(
   options: {
     path: string;

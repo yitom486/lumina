@@ -2,14 +2,14 @@
 
 use serde::{Deserialize, Serialize};
 use tauri::ipc::Channel;
-use tauri::{AppHandle, Manager};
+use tauri::{AppHandle, Emitter, Manager};
 
 use std::path::{Path, PathBuf};
 
 use lumina_core::BatchCheckpoint;
 
 use crate::acp::AgentProfilesHint;
-use crate::state::AppState;
+use crate::state::{workshop_now_ms, AppState, WorkshopJobPhase, WorkshopJobSnapshot};
 use crate::subtitle::model::Cue;
 use crate::subtitle::translate;
 use crate::subtitle::write;
@@ -62,6 +62,84 @@ fn indeterminate_progress(message: String) -> SubtitleTranslateEvent {
         done: None,
         total: None,
     }
+}
+
+/// Global broadcast for panel remount resume (additive: Channel sends stay).
+pub const WORKSHOP_PROGRESS_EVENT: &str = "subtitle-workshop-progress";
+
+/// Marker target_lang for proofread jobs (no translation target).
+pub const WORKSHOP_PROOFREAD_TARGET: &str = "proofread";
+
+fn record_workshop_start(
+    app: &AppHandle,
+    job_id: &str,
+    media_path: &str,
+    choice_id: &str,
+    target_lang: &str,
+    message: &str,
+) {
+    let Some(state) = app.try_state::<AppState>() else {
+        return;
+    };
+    let snapshot = WorkshopJobSnapshot {
+        job_id: job_id.to_string(),
+        media_path: media_path.to_string(),
+        choice_id: choice_id.to_string(),
+        target_lang: target_lang.to_string(),
+        phase: WorkshopJobPhase::Running,
+        done: None,
+        total: None,
+        message: message.to_string(),
+        updated_at_ms: workshop_now_ms(),
+    };
+    state.record_workshop_snapshot(snapshot.clone());
+    if let Err(error) = app.emit(WORKSHOP_PROGRESS_EVENT, &snapshot) {
+        tracing::warn!(%error, "workshop progress emit failed");
+    }
+}
+
+fn record_workshop_progress(
+    app: &AppHandle,
+    job_id: &str,
+    done: Option<usize>,
+    total: Option<usize>,
+    message: &str,
+) {
+    let snapshot_opt = app
+        .try_state::<AppState>()
+        .and_then(|state| state.update_workshop_progress(job_id, done, total, message.to_string()));
+    if let Some(snapshot) = snapshot_opt {
+        if let Err(error) = app.emit(WORKSHOP_PROGRESS_EVENT, &snapshot) {
+            tracing::warn!(%error, "workshop progress emit failed");
+        }
+    }
+}
+
+fn record_workshop_finish(
+    app: &AppHandle,
+    job_id: &str,
+    result: &Result<Transcript, SubtitleError>,
+) {
+    let (phase, message) = match result {
+        Ok(_) => (WorkshopJobPhase::Finished, "已完成".to_string()),
+        Err(error) => (WorkshopJobPhase::Failed, error.message.clone()),
+    };
+    let snapshot_opt = app
+        .try_state::<AppState>()
+        .and_then(|state| state.finish_workshop_job(job_id, phase, message));
+    if let Some(snapshot) = snapshot_opt {
+        if let Err(error) = app.emit(WORKSHOP_PROGRESS_EVENT, &snapshot) {
+            tracing::warn!(%error, "workshop progress emit failed");
+        }
+    }
+}
+
+/// Latest workshop snapshot for one media path (panel remount resume).
+/// Returns `None` when no job ran for this media yet.
+#[tauri::command]
+pub fn subtitle_workshop_status(app: AppHandle, media_path: String) -> Option<WorkshopJobSnapshot> {
+    app.try_state::<AppState>()
+        .and_then(|state| state.workshop_status_for_media(&media_path))
 }
 
 /// Checkpoint store for one workshop job: finished batches persist to the
@@ -420,6 +498,7 @@ fn library_group_file(root: &Path, group_key: &str, file_name: &str) -> PathBuf 
 
 #[allow(clippy::too_many_arguments)]
 fn translate_cached_track(
+    app: &AppHandle,
     state: &AppState,
     path: &str,
     choice_id: &str,
@@ -441,7 +520,11 @@ fn translate_cached_track(
     let invoker =
         crate::acp::adapter::AcpAgentInvoker::with_pool(profiles, std::sync::Arc::clone(&pool));
     let progress = |update: translate::ProgressUpdate| {
+        let done = update.done;
+        let total = update.total;
+        let message = update.message.clone();
         let _ = on_event.send(forward_progress(update));
+        record_workshop_progress(app, job_id, done, total, &message);
     };
     let source = state.provider().load_cached(path, choice_id)?;
     let checkpoint = workshop_checkpoint(
@@ -479,11 +562,19 @@ fn translate_cached_track(
         backfill,
         review_mode,
     ) {
+        record_workshop_progress(app, job_id, None, None, &message);
         let _ = on_event.send(indeterminate_progress(message));
     }
     let _ = on_event.send(indeterminate_progress(format!(
         "正在保存缓存字幕（{token}）…"
     )));
+    record_workshop_progress(
+        app,
+        job_id,
+        None,
+        None,
+        &format!("正在保存缓存字幕（{token}）…"),
+    );
     let stored = state.provider().store_translation(
         path,
         &provider,
@@ -631,7 +722,9 @@ pub async fn subtitle_download_candidate(
 }
 
 fn finish_translate(
+    app: &AppHandle,
     on_event: &Channel<SubtitleTranslateEvent>,
+    job_id: &str,
     result: &Result<Transcript, SubtitleError>,
 ) {
     match result {
@@ -656,6 +749,7 @@ fn finish_translate(
             });
         }
     }
+    record_workshop_finish(app, job_id, result);
 }
 
 /// Record model-reported names into the group glossary. Best-effort: never
@@ -715,6 +809,14 @@ pub async fn subtitle_proofread_track(
         let strip = strip_sound_tags.unwrap_or(true);
         let job_id = workshop_job_id();
         tracing::info!(job_id = %job_id, path = %path, "subtitle workshop job started");
+        record_workshop_start(
+            &app,
+            &job_id,
+            &path,
+            &choice_id,
+            WORKSHOP_PROOFREAD_TARGET,
+            "准备校对字幕…",
+        );
         // Cached downloads proofread back into the process cache so the
         // user's media directory stays clean; local tracks keep sidecars.
         if crate::ytdl::provider::parse_cache_choice(&choice_id).is_some() {
@@ -722,6 +824,7 @@ pub async fn subtitle_proofread_track(
                 return Err(SubtitleError::internal(Some("app state unavailable")));
             };
             let result = proofread_cached_track(
+                &app,
                 state.inner(),
                 &path,
                 &choice_id,
@@ -733,7 +836,7 @@ pub async fn subtitle_proofread_track(
                 &on_event,
                 &job_id,
             );
-            finish_translate(&on_event, &result);
+            finish_translate(&app, &on_event, &job_id, &result);
             return result;
         }
         let pool = workshop_pool(
@@ -759,7 +862,11 @@ pub async fn subtitle_proofread_track(
             &source.cues,
         );
         let mut progress = |update: translate::ProgressUpdate| {
+            let done = update.done;
+            let total = update.total;
+            let message = update.message.clone();
             let _ = on_event.send(forward_progress(update));
+            record_workshop_progress(&app, &job_id, done, total, &message);
         };
         let cues = translate::proofread_cues(
             &source,
@@ -777,11 +884,18 @@ pub async fn subtitle_proofread_track(
         let _ = on_event.send(indeterminate_progress(format!(
             "正在保存校对字幕（{proof_token}）…"
         )));
+        record_workshop_progress(
+            &app,
+            &job_id,
+            None,
+            None,
+            &format!("正在保存校对字幕（{proof_token}）…"),
+        );
         let result = write::export_sidecar_srt(std::path::Path::new(&path), &proof_token, &cues);
         if result.is_ok() {
             clear_checkpoint(&checkpoint);
         }
-        finish_translate(&on_event, &result);
+        finish_translate(&app, &on_event, &job_id, &result);
         result
     })
     .await
@@ -807,6 +921,7 @@ fn proofread_token(source: &Transcript) -> Result<String, SubtitleError> {
 
 #[allow(clippy::too_many_arguments)]
 fn proofread_cached_track(
+    app: &AppHandle,
     state: &AppState,
     path: &str,
     choice_id: &str,
@@ -835,7 +950,11 @@ fn proofread_cached_track(
     let invoker =
         crate::acp::adapter::AcpAgentInvoker::with_pool(profiles, std::sync::Arc::clone(&pool));
     let mut progress = |update: translate::ProgressUpdate| {
+        let done = update.done;
+        let total = update.total;
+        let message = update.message.clone();
         let _ = on_event.send(forward_progress(update));
+        record_workshop_progress(app, job_id, done, total, &message);
     };
     let cues = translate::proofread_cues(
         &source,
@@ -853,6 +972,13 @@ fn proofread_cached_track(
     let _ = on_event.send(indeterminate_progress(format!(
         "正在保存缓存字幕（{token}）…"
     )));
+    record_workshop_progress(
+        app,
+        job_id,
+        None,
+        None,
+        &format!("正在保存缓存字幕（{token}）…"),
+    );
     let stored =
         state
             .provider()
@@ -886,6 +1012,14 @@ pub async fn subtitle_translate_track(
         let review_mode = glossary_review_mode.unwrap_or(false);
         let job_id = workshop_job_id();
         tracing::info!(job_id = %job_id, path = %path, "subtitle workshop job started");
+        record_workshop_start(
+            &app,
+            &job_id,
+            &path,
+            &choice_id,
+            &target_lang,
+            "准备翻译字幕…",
+        );
         // Cached downloads translate back into the process cache so the
         // user's media directory stays clean; local tracks keep sidecars.
         if crate::ytdl::provider::parse_cache_choice(&choice_id).is_some() {
@@ -893,6 +1027,7 @@ pub async fn subtitle_translate_track(
                 return Err(SubtitleError::internal(Some("app state unavailable")));
             };
             let result = translate_cached_track(
+                &app,
                 state.inner(),
                 &path,
                 &choice_id,
@@ -906,7 +1041,7 @@ pub async fn subtitle_translate_track(
                 &on_event,
                 &job_id,
             );
-            finish_translate(&on_event, &result);
+            finish_translate(&app, &on_event, &job_id, &result);
             return result;
         }
         let pool = workshop_pool(
@@ -944,7 +1079,11 @@ pub async fn subtitle_translate_track(
             reasoning_effort.as_deref(),
             &invoker,
             |update| {
+                let done = update.done;
+                let total = update.total;
+                let message = update.message.clone();
                 let _ = on_event.send(forward_progress(update));
+                record_workshop_progress(&app, &job_id, done, total, &message);
             },
             Some(&checkpoint_factory),
             &job_id,
@@ -963,11 +1102,12 @@ pub async fn subtitle_translate_track(
                 backfill,
                 review_mode,
             ) {
+                record_workshop_progress(&app, &job_id, None, None, &message);
                 let _ = on_event.send(indeterminate_progress(message));
             }
         }
         let result = Ok(translated.transcript);
-        finish_translate(&on_event, &result);
+        finish_translate(&app, &on_event, &job_id, &result);
         result
     })
     .await

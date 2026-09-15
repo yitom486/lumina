@@ -36,7 +36,11 @@ import {
   loadSubtitleChoice,
   proofreadSubtitleTrack,
   translateSubtitleTrack,
+  getWorkshopStatus,
+  WORKSHOP_PROGRESS_EVENT,
+  type WorkshopJobSnapshot,
 } from "../api";
+import { listen } from "@tauri-apps/api/event";
 import { subtitleChoicesKey, transcriptKey, ytdlResolveKey } from "@lumina/query-keys";
 import { OnlineSubtitleSection } from "./OnlineSubtitleSection";
 import { useSubtitleWorkshopModels } from "../useSubtitleWorkshopModels";
@@ -47,6 +51,17 @@ import { findChapterAt } from "../../../../../../packages/transcript-ui/src/chap
 // 翻译/校对任务超过此时长没有任何进度事件即判死：正常运行时每完成一批
 // （4 并发）必推一次进度，10 分钟静默只可能发生在后端进程已死的情况下。
 const TASK_STALL_MS = 10 * 60 * 1000;
+
+// 工坊账本恢复文案（固定业务中文，只展示 message，永不展示 details）。
+const WORKSHOP_FINISHED_TEXT = "已完成";
+const WORKSHOP_FAILED_TEXT = "字幕任务失败，请重试";
+
+function isProofreadSnapshot(snapshot: WorkshopJobSnapshot): boolean {
+  return (
+    snapshot.targetLang === "proofread" ||
+    snapshot.targetLang.endsWith("-proofread")
+  );
+}
 
 export function TranscriptPanel() {
   const queryClient = useQueryClient();
@@ -162,6 +177,12 @@ export function TranscriptPanel() {
     task: "translate" | "proofread";
     lastAt: number;
   } | null>(null);
+  // Channel 发起中的任务：后端会同时推 Channel + 全局广播，收到相同 job_id
+  // 的广播时跳过（防 double 显示），Channel 路径已覆盖显示。
+  const translateChannelActiveRef = useRef(false);
+  const proofreadChannelActiveRef = useRef(false);
+  const activeTranslateJobIdRef = useRef<string | null>(null);
+  const activeProofreadJobIdRef = useRef<string | null>(null);
 
   useEffect(() => {
     const timer = setInterval(() => {
@@ -198,6 +219,125 @@ export function TranscriptPanel() {
     setAsrScope("full");
     resetFollowForMedia();
   }, [path, resetFollowForMedia]);
+
+  // 工坊进度在切换页面后回来能继续显示：后端记账本 + 全局广播，面板卸载
+  // 不丢任务。挂载时先订阅全局事件再查账本（顺序不能反，否则有漏网卡死）。
+  useEffect(() => {
+    if (!mediaReady || !path) return;
+    let cancelled = false;
+    let unlisten: (() => void) | undefined;
+    const currentPath = path;
+
+    const applySnapshot = (snapshot: WorkshopJobSnapshot) => {
+      if (snapshot.mediaPath !== currentPath) return;
+      const proofread = isProofreadSnapshot(snapshot);
+      if (proofread) {
+        if (proofreadChannelActiveRef.current) {
+          if (!activeProofreadJobIdRef.current) {
+            activeProofreadJobIdRef.current = snapshot.jobId;
+          }
+          if (snapshot.jobId === activeProofreadJobIdRef.current) {
+            return;
+          }
+          return;
+        }
+        if (snapshot.phase === "Running") {
+          setProofreadBusy(true);
+          setProofreadError(null);
+          setProofreadProgress(snapshot.message);
+          setBatchCount(
+            snapshot.done != null && snapshot.total != null
+              ? { done: snapshot.done, total: snapshot.total }
+              : null,
+          );
+          taskHeartbeat.current = {
+            task: "proofread",
+            lastAt: Date.now(),
+          };
+        } else if (snapshot.phase === "Finished") {
+          if (taskHeartbeat.current?.task === "proofread") {
+            taskHeartbeat.current = null;
+          }
+          setProofreadBusy(false);
+          setProofreadError(null);
+          setProofreadProgress((prev) =>
+            prev?.startsWith("已写入") ? prev : WORKSHOP_FINISHED_TEXT,
+          );
+        } else {
+          if (taskHeartbeat.current?.task === "proofread") {
+            taskHeartbeat.current = null;
+          }
+          setProofreadBusy(false);
+          setProofreadProgress(null);
+          setProofreadError((prev) => prev ?? WORKSHOP_FAILED_TEXT);
+        }
+        return;
+      }
+      if (translateChannelActiveRef.current) {
+        if (!activeTranslateJobIdRef.current) {
+          activeTranslateJobIdRef.current = snapshot.jobId;
+        }
+        if (snapshot.jobId === activeTranslateJobIdRef.current) {
+          return;
+        }
+        return;
+      }
+      if (snapshot.phase === "Running") {
+        setTranslateBusy(true);
+        setTranslateError(null);
+        setTranslateProgress(snapshot.message);
+        setBatchCount(
+          snapshot.done != null && snapshot.total != null
+            ? { done: snapshot.done, total: snapshot.total }
+            : null,
+        );
+        taskHeartbeat.current = { task: "translate", lastAt: Date.now() };
+      } else if (snapshot.phase === "Finished") {
+        if (taskHeartbeat.current?.task === "translate") {
+          taskHeartbeat.current = null;
+        }
+        setTranslateBusy(false);
+        setTranslateError(null);
+        setTranslateProgress((prev) =>
+          prev?.startsWith("已写入") ? prev : WORKSHOP_FINISHED_TEXT,
+        );
+      } else {
+        if (taskHeartbeat.current?.task === "translate") {
+          taskHeartbeat.current = null;
+        }
+        setTranslateBusy(false);
+        setTranslateProgress(null);
+        setTranslateError((prev) => prev ?? WORKSHOP_FAILED_TEXT);
+      }
+    };
+
+    const setup = async () => {
+      try {
+        unlisten = await listen<WorkshopJobSnapshot>(
+          WORKSHOP_PROGRESS_EVENT,
+          (event) => {
+            if (cancelled) return;
+            applySnapshot(event.payload);
+          },
+        );
+      } catch {
+        unlisten = undefined;
+      }
+      if (cancelled) return;
+      try {
+        const snapshot = await getWorkshopStatus(currentPath);
+        if (cancelled || !snapshot) return;
+        applySnapshot(snapshot);
+      } catch {
+        // 账本缺席不阻塞面板（后端旧版本或任务从未发起）。
+      }
+    };
+    void setup();
+    return () => {
+      cancelled = true;
+      unlisten?.();
+    };
+  }, [path, mediaReady]);
 
   useEffect(() => {
     if (chapters.length === 0 && asrScope === "chapter") {
@@ -390,6 +530,8 @@ export function TranscriptPanel() {
       setProofreadError("请先选择可用的文本字幕轨");
       return;
     }
+    proofreadChannelActiveRef.current = true;
+    activeProofreadJobIdRef.current = null;
     setProofreadBusy(true);
     setProofreadError(null);
     setProofreadProgress("准备校对字幕…");
@@ -436,6 +578,7 @@ export function TranscriptPanel() {
       setProofreadError(message);
       setProofreadProgress(null);
     } finally {
+      proofreadChannelActiveRef.current = false;
       if (taskHeartbeat.current?.task === "proofread") {
         taskHeartbeat.current = null;
       }
@@ -449,6 +592,8 @@ export function TranscriptPanel() {
       setTranslateError("请先选择可用的文本字幕轨");
       return;
     }
+    translateChannelActiveRef.current = true;
+    activeTranslateJobIdRef.current = null;
     setTranslateBusy(true);
     setTranslateError(null);
     setTranslateProgress("准备翻译字幕…");
@@ -497,6 +642,7 @@ export function TranscriptPanel() {
       setTranslateError(message);
       setTranslateProgress(null);
     } finally {
+      translateChannelActiveRef.current = false;
       if (taskHeartbeat.current?.task === "translate") {
         taskHeartbeat.current = null;
       }

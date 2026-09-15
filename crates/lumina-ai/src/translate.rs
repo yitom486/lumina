@@ -559,15 +559,14 @@ pub fn translate_cues(
             &attempt,
         )?;
         let mut reported = out.reported_names;
-        let mut texts = align_with_one_retry(chunk, out.indexed, || {
-            attempt.bump_content();
+        let mut texts = align_with_one_retry(chunk, out.indexed, &attempt, |note| {
             let retry = translate_batch(
                 chunk,
                 &source_lang,
                 &target_lang,
                 batch_context_ref,
                 &batch_delta,
-                Some(ALIGN_RETRY_NOTE),
+                Some(note.as_str()),
                 profile_id,
                 model_id,
                 reasoning_effort,
@@ -593,7 +592,14 @@ pub fn translate_cues(
                     .collect::<Vec<_>>()
                     .join("; ")
             );
-            attempt.bump_content();
+            let content_attempt = attempt.bump_content();
+            let mismatched_cues: Vec<u32> = missed.iter().map(|mismatch| mismatch.index).collect();
+            tracing::warn!(
+                task_label = %attempt.label(1),
+                content_attempt = content_attempt,
+                mismatched_cues = ?mismatched_cues,
+                "translation glossary names missing, retrying once"
+            );
             let retry = translate_batch(
                 chunk,
                 &source_lang,
@@ -745,17 +751,102 @@ where
 /// return every index exactly once.
 const ALIGN_RETRY_NOTE: &str = "Return exactly one text per input cue, using each input index exactly once: no omissions, no duplicates, no extra entries.";
 
+/// Collect every missing and duplicated cue index for a failed batch.
+/// Pure helper for the retry note and logs: `align_batch_texts` keeps its
+/// first-failure `Err` shape, this only assembles the full list for the
+/// correction prompt. Numbers only, never subtitle text.
+fn alignment_issues(chunk: &[Cue], indexed: &[(u32, String)]) -> (Vec<u32>, Vec<u32>) {
+    let mut counts: std::collections::HashMap<u32, usize> =
+        std::collections::HashMap::with_capacity(indexed.len());
+    for (index, _) in indexed {
+        counts
+            .entry(*index)
+            .and_modify(|count| *count += 1)
+            .or_insert(1);
+    }
+    let mut duplicated: Vec<u32> = counts
+        .iter()
+        .filter_map(
+            |(index, count)| {
+                if *count > 1 {
+                    Some(*index)
+                } else {
+                    None
+                }
+            },
+        )
+        .collect();
+    duplicated.sort_unstable();
+    let mut missing = Vec::new();
+    for cue in chunk {
+        if !counts.contains_key(&cue.index) {
+            missing.push(cue.index);
+        }
+    }
+    (missing, duplicated)
+}
+
+fn format_index_list(indices: &[u32]) -> String {
+    indices
+        .iter()
+        .map(|index| index.to_string())
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+/// Named retry note: lists every missing/duplicated index plus the actual
+/// batch size (`chunk_len`, never hardcoded) so the model can fill exactly
+/// the dropped cues. Keeps the generic shape rule as suffix.
+fn align_retry_note(chunk_len: usize, missing: &[u32], duplicated: &[u32]) -> String {
+    let mut parts = Vec::new();
+    if !missing.is_empty() {
+        parts.push(format!(
+            "缺 cue {}（共缺 {} 条）",
+            format_index_list(missing),
+            missing.len()
+        ));
+    }
+    if !duplicated.is_empty() {
+        parts.push(format!(
+            "重复 cue {}（共重复 {} 条）",
+            format_index_list(duplicated),
+            duplicated.len()
+        ));
+    }
+    let detail = if parts.is_empty() {
+        "校验未通过".to_string()
+    } else {
+        parts.join("；")
+    };
+    format!(
+        "上一批回复未通过校验：{detail}。请补上缺失条目并返回全部 {chunk_len} 条 cue，只返回 JSON。{ALIGN_RETRY_NOTE}"
+    )
+}
+
 /// Align one batch, retrying once when the model drops or duplicates an
 /// index. The second answer stands, good or bad — no retry loops. Transport
 /// errors fail fast (not retried); only shape failures get a second chance.
 fn align_with_one_retry(
     chunk: &[Cue],
     first: Vec<(u32, String)>,
-    retry_once: impl FnOnce() -> Result<Vec<(u32, String)>, SubtitleError>,
+    attempt: &AttemptTracker,
+    retry_once: impl FnOnce(String) -> Result<Vec<(u32, String)>, SubtitleError>,
 ) -> Result<Vec<String>, SubtitleError> {
+    let (missing, duplicated) = alignment_issues(chunk, &first);
     match align_batch_texts(chunk, first) {
         Ok(texts) => Ok(texts),
-        Err(_) => align_batch_texts(chunk, retry_once()?),
+        Err(_) => {
+            let content_attempt = attempt.bump_content();
+            tracing::warn!(
+                task_label = %attempt.label(1),
+                content_attempt = content_attempt,
+                missing = ?missing,
+                duplicated = ?duplicated,
+                "subtitle batch align failed, retrying once with missing cues"
+            );
+            let note = align_retry_note(chunk.len(), &missing, &duplicated);
+            align_batch_texts(chunk, retry_once(note)?)
+        }
     }
 }
 
@@ -904,13 +995,12 @@ pub fn proofread_cues(
             &mut *conversation,
             &attempt,
         )?;
-        let texts = align_with_one_retry(chunk, out, || {
-            attempt.bump_content();
+        let texts = align_with_one_retry(chunk, out, &attempt, |note| {
             proofread_batch(
                 chunk,
                 &source_lang,
                 context,
-                Some(ALIGN_RETRY_NOTE),
+                Some(note.as_str()),
                 profile_id,
                 model_id,
                 reasoning_effort,
@@ -2138,25 +2228,39 @@ mod tests {
     #[test]
     fn align_retry_heals_dropped_index_once() {
         let chunk = indexed_cues(&[(1, "a"), (2, "b")]);
+        let attempt = AttemptTracker::new("test-job", 0);
         let mut calls = 0;
-        let texts = align_with_one_retry(chunk.as_slice(), vec![(1, "A".into())], || {
-            calls += 1;
-            Ok(vec![(1, "A".into()), (2, "B".into())])
-        })
-        .expect("retry heals");
+        let mut seen_note = String::new();
+        let texts =
+            align_with_one_retry(chunk.as_slice(), vec![(1, "A".into())], &attempt, |note| {
+                calls += 1;
+                seen_note = note;
+                Ok(vec![(1, "A".into()), (2, "B".into())])
+            })
+            .expect("retry heals");
         assert_eq!(texts, vec!["A", "B"]);
         assert_eq!(calls, 1);
+        assert!(
+            seen_note.contains('2'),
+            "retry note must name the missing cue"
+        );
+        assert!(
+            seen_note.contains("2 条 cue"),
+            "retry note must carry the actual batch size"
+        );
     }
 
     #[test]
     fn align_retry_second_answer_stands() {
         let chunk = indexed_cues(&[(1, "a"), (2, "b")]);
+        let attempt = AttemptTracker::new("test-job", 0);
         let mut calls = 0;
-        let err = align_with_one_retry(chunk.as_slice(), vec![(1, "A".into())], || {
-            calls += 1;
-            Ok(vec![(1, "A".into())])
-        })
-        .expect_err("still short");
+        let err =
+            align_with_one_retry(chunk.as_slice(), vec![(1, "A".into())], &attempt, |_note| {
+                calls += 1;
+                Ok(vec![(1, "A".into())])
+            })
+            .expect_err("still short");
         assert_eq!(calls, 1, "exactly one retry, no loops");
         assert_eq!(
             err.code,
