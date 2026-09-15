@@ -12,6 +12,7 @@ pub mod profile;
 pub mod protocol;
 pub mod service;
 pub mod settings;
+pub mod workshop;
 
 mod process;
 
@@ -26,3 +27,4 @@ pub use model::{
 pub use profile::{AgentKind, AgentProfile, AgentProfileStatus};
 pub use service::AcpService;
 pub use settings::{AcpClientSettings, PermissionMode, ThinkingLevel};
+pub use workshop::{PoolConfig, WorkshopPool, DEFAULT_POOL_SIZE};

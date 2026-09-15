@@ -1,18 +1,35 @@
 //! Minimal MCP stdio server exposing Lumina context tools.
 
-use std::io::{self, BufRead, Write};
+use std::io::{self, BufRead, BufWriter, Write};
+use std::sync::{Arc, Condvar, Mutex, RwLock};
 
 use serde_json::{json, Value};
 
+use super::executor::TaskExecutor;
 use super::policy::{tool_profile_from_env, McpToolProfile, ToolPolicy};
 use super::snapshot::{read_snapshot, resolve_snapshot_path, LuminaMcpSnapshot};
 use super::tools::handle_tool_call;
 
 const PROTOCOL_VERSION: &str = "2024-11-05";
+const TOOL_WORKER_COUNT: usize = 4;
+const HEAVY_TOOL_CONCURRENCY: usize = 2;
+
+type Output = Arc<Mutex<BufWriter<io::Stdout>>>;
+type ToolState = Arc<RwLock<()>>;
+
+// MCP InitializeResult.instructions is the stable, session-level place for
+// guidance that the host may append to the model's system context. Keep this
+// free of turn-specific values: playback state and library data live in the
+// snapshot and are fetched through tools when needed.
+const MCP_SERVER_INSTRUCTIONS: &str = "Lumina 提供与当前媒体相关的按需上下文工具；可用工具以 tools/list 返回的清单为准。\n\n工具调用原则：\n(1) 如果当前对话、此前工具结果或问题本身已经足够回答，直接作答，不要重复调用。\n(2) 只调用当前缺失的信息对应的工具，避免每轮并行全量拉取。\n(3) 台词原文和具体剧情点以工具返回为准，不要编造；基于已验证内容的解读、动机分析和前后联系可以直接展开。\n(4) 播放锚点、章节、笔记和字幕/截图工具共用本轮冻结的 anchor.positionMs；当前集剧情或对话优先使用 lumina_get_transcript_window，其他集台词使用 lumina_get_episode_transcript，画面细节再使用 lumina_capture_frames。\n(5) 分集列表使用 lumina_get_episode_index，剧集背景和当前集简介使用 lumina_get_library_context。\n(6) 写视频批注必须先调用 lumina_propose_video_annotation 生成提议，禁止直接写入笔记库；由用户在 Lumina 界面确认保存。\n(7) 引用视频内容使用工具实际返回的时间标记，例如 [03:12]；跨集引用使用 [第N集 · mm:ss]，不要编造时间。\n(8) 跨集引用默认只使用当前集及之前的集数；用户明确要求后续集数时才查询，并提示剧透。\n(9) 制作或翻译外挂字幕请使用 Lumina 文稿面板或 ASR 工作流，不要在本对话中尝试写入字幕轨。";
 
 pub fn run_stdio_server() -> Result<(), String> {
     let stdin = io::stdin();
-    let mut stdout = io::stdout();
+    let output: Output = Arc::new(Mutex::new(BufWriter::new(io::stdout())));
+    let state: ToolState = Arc::new(RwLock::new(()));
+    let heavy_limiter = Arc::new(HeavyToolLimiter::new(HEAVY_TOOL_CONCURRENCY));
+    let executor = TaskExecutor::new(TOOL_WORKER_COUNT);
+
     for line in stdin.lock().lines() {
         let line = line.map_err(|error| format!("stdin read: {error}"))?;
         if line.trim().is_empty() {
@@ -29,80 +46,70 @@ pub fn run_stdio_server() -> Result<(), String> {
             .and_then(Value::as_str)
             .unwrap_or_default();
         let params = request.get("params").cloned().unwrap_or(Value::Null);
-        let response = match method {
-            "initialize" => success(id, initialize_result(params)),
+        match method {
+            "initialize" => write_response(&output, success(id, initialize_result(params)))?,
             "tools/list" => {
                 let profile = tool_profile_from_env();
                 // Tool-free tasks never load the Chat snapshot file.
                 if profile == McpToolProfile::NoTools {
-                    success(id, json!({ "tools": [] }))
+                    write_response(&output, success(id, json!({ "tools": [] })))?;
                 } else {
-                    match load_snapshot() {
+                    let response = match load_snapshot() {
                         Ok(snapshot) => success(id, tools_list_result(profile, &snapshot)),
                         Err(message) => error(id, -32000, &message),
-                    }
+                    };
+                    write_response(&output, response)?;
                 }
             }
             "tools/call" => {
                 let profile = tool_profile_from_env();
-                // Tool-free tasks never load the Chat snapshot file.
-                if profile == McpToolProfile::NoTools {
-                    let denied = match params.get("name").and_then(Value::as_str) {
-                        Some(name) => match ToolPolicy::new(profile)
-                            .check(&LuminaMcpSnapshot::empty(), name)
-                        {
-                            Ok(()) => "该工具未对当前任务开放".to_string(),
-                            Err(message) => message,
-                        },
-                        None => "tools/call missing name".to_string(),
-                    };
-                    success(id, tool_error_result(&denied))
-                } else {
-                    match load_snapshot() {
-                        Ok(snapshot) => {
-                            match handle_tool_call_request(profile, &snapshot, &params) {
-                                Ok(result) => success(id, result),
-                                Err(message) => {
-                                    tracing::warn!(
-                                        tool = params.get("name").and_then(|value| value.as_str()).unwrap_or(""),
-                                        reason = %message,
-                                        "lumina MCP tools/call returned business error"
-                                    );
-                                    success(id, tool_error_result(&message))
-                                }
-                            }
-                        }
-                        Err(message) => {
-                            tracing::warn!(reason = %message, "lumina MCP snapshot unavailable");
-                            error(id, -32000, &message)
-                        }
+                let response_output = Arc::clone(&output);
+                let response_state = Arc::clone(&state);
+                let response_limiter = Arc::clone(&heavy_limiter);
+                let response_id = id.clone();
+                let submit = executor.submit(move || {
+                    let response = execute_tool_call(
+                        id,
+                        profile,
+                        params,
+                        &response_state,
+                        &response_limiter,
+                    );
+                    if let Err(message) = write_response(&response_output, response) {
+                        tracing::error!(reason = %message, "lumina MCP failed to write tool response");
                     }
+                });
+                if let Err(message) = submit {
+                    write_response(&output, error(response_id, -32000, &message))?;
                 }
+                continue;
             }
-            "ping" => success(id, json!({})),
+            "ping" => write_response(&output, success(id, json!({})))?,
             _ if id.is_null() => continue,
-            other => error(id, -32601, &format!("Method not found: {other}")),
+            other => write_response(
+                &output,
+                error(id, -32601, &format!("Method not found: {other}")),
+            )?,
         };
-        writeln!(
-            stdout,
-            "{}",
-            serde_json::to_string(&response).unwrap_or_default()
-        )
-        .map_err(|error| format!("stdout write: {error}"))?;
-        stdout
-            .flush()
-            .map_err(|error| format!("stdout flush: {error}"))?;
     }
     Ok(())
 }
 
 fn initialize_result(params: Value) -> Value {
     let _ = params;
-    json!({
+    initialize_result_for_profile(tool_profile_from_env())
+}
+
+fn initialize_result_for_profile(profile: McpToolProfile) -> Value {
+    let mut result = json!({
         "protocolVersion": PROTOCOL_VERSION,
         "capabilities": { "tools": {} },
         "serverInfo": { "name": "lumina", "version": env!("CARGO_PKG_VERSION") }
-    })
+    });
+    if profile != McpToolProfile::NoTools {
+        result["instructions"] = json!(MCP_SERVER_INSTRUCTIONS);
+    }
+    result
 }
 
 fn tools_list_result(profile: McpToolProfile, snapshot: &LuminaMcpSnapshot) -> Value {
@@ -308,6 +315,153 @@ fn handle_tool_call_request(
     handle_tool_call(snapshot, name, &args)
 }
 
+fn execute_tool_call(
+    id: Value,
+    profile: McpToolProfile,
+    params: Value,
+    state: &ToolState,
+    heavy_limiter: &Arc<HeavyToolLimiter>,
+) -> Value {
+    let name = params.get("name").and_then(Value::as_str).unwrap_or("");
+    let result = if is_read_only_tool(name) {
+        let _state_guard = match state.read() {
+            Ok(guard) => guard,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        if is_heavy_read_only_tool(name) {
+            let _heavy_permit = heavy_limiter.acquire();
+            dispatch_tool_call(profile, &params)
+        } else {
+            dispatch_tool_call(profile, &params)
+        }
+    } else {
+        // Writes and unknown tools take the exclusive path. Treating unknown
+        // names conservatively prevents a future side-effecting tool from
+        // accidentally bypassing the serialization boundary.
+        let _state_guard = match state.write() {
+            Ok(guard) => guard,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        dispatch_tool_call(profile, &params)
+    };
+
+    match result {
+        Ok(result) => success(id, result),
+        Err(message) => error(id, -32000, &message),
+    }
+}
+
+fn dispatch_tool_call(profile: McpToolProfile, params: &Value) -> Result<Value, String> {
+    if profile == McpToolProfile::NoTools {
+        let denied = match params.get("name").and_then(Value::as_str) {
+            Some(name) => match ToolPolicy::new(profile).check(&LuminaMcpSnapshot::empty(), name) {
+                Ok(()) => "该工具未对当前任务开放".to_string(),
+                Err(message) => message,
+            },
+            None => "tools/call missing name".to_string(),
+        };
+        return Ok(tool_error_result(&denied));
+    }
+
+    let snapshot = load_snapshot().map_err(|message| {
+        tracing::warn!(reason = %message, "lumina MCP snapshot unavailable");
+        message
+    })?;
+    match handle_tool_call_request(profile, &snapshot, params) {
+        Ok(result) => Ok(result),
+        Err(message) => {
+            tracing::warn!(
+                tool = params
+                    .get("name")
+                    .and_then(|value| value.as_str())
+                    .unwrap_or(""),
+                reason = %message,
+                "lumina MCP tools/call returned business error"
+            );
+            Ok(tool_error_result(&message))
+        }
+    }
+}
+
+fn is_read_only_tool(name: &str) -> bool {
+    use lumina_core::tool_contract as contract;
+    [
+        contract::TOOL_PLAYBACK_CONTEXT,
+        contract::TOOL_LIBRARY_CONTEXT,
+        contract::TOOL_EPISODE_INDEX,
+        contract::TOOL_TRANSCRIPT_WINDOW,
+        contract::TOOL_EPISODE_TRANSCRIPT,
+        contract::TOOL_AUDIO_MARKS,
+        contract::TOOL_SUBTITLE_CUES,
+        contract::TOOL_CAPTURE_FRAMES,
+    ]
+    .contains(&name)
+}
+
+fn is_heavy_read_only_tool(name: &str) -> bool {
+    use lumina_core::tool_contract as contract;
+    [contract::TOOL_AUDIO_MARKS, contract::TOOL_CAPTURE_FRAMES].contains(&name)
+}
+
+fn write_response(output: &Output, response: Value) -> Result<(), String> {
+    let mut stdout = match output.lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => poisoned.into_inner(),
+    };
+    let serialized = serde_json::to_string(&response)
+        .map_err(|error| format!("MCP response serialization failed: {error}"))?;
+    writeln!(stdout, "{serialized}").map_err(|error| format!("stdout write: {error}"))?;
+    stdout
+        .flush()
+        .map_err(|error| format!("stdout flush: {error}"))
+}
+
+struct HeavyToolLimiter {
+    available: Mutex<usize>,
+    wake: Condvar,
+}
+
+impl HeavyToolLimiter {
+    fn new(limit: usize) -> Self {
+        Self {
+            available: Mutex::new(limit.max(1)),
+            wake: Condvar::new(),
+        }
+    }
+
+    fn acquire(self: &Arc<Self>) -> HeavyToolPermit {
+        let mut available = match self.available.lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        while *available == 0 {
+            available = match self.wake.wait(available) {
+                Ok(guard) => guard,
+                Err(poisoned) => poisoned.into_inner(),
+            };
+        }
+        *available -= 1;
+        HeavyToolPermit {
+            limiter: Arc::clone(self),
+        }
+    }
+}
+
+struct HeavyToolPermit {
+    limiter: Arc<HeavyToolLimiter>,
+}
+
+impl Drop for HeavyToolPermit {
+    fn drop(&mut self) {
+        let mut available = match self.limiter.available.lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        *available += 1;
+        self.limiter.wake.notify_one();
+    }
+}
+
 fn tool_error_result(message: &str) -> Value {
     json!({
         "content": [{ "type": "text", "text": message }],
@@ -415,6 +569,38 @@ mod tests {
                 "contract tool must be reachable via policy: {name}"
             );
         }
+    }
+
+    #[test]
+    fn initialize_exposes_stable_instructions_only_for_tool_profiles() {
+        let result = initialize_result_for_profile(McpToolProfile::Chat);
+        let instructions = result
+            .get("instructions")
+            .and_then(Value::as_str)
+            .expect("tool profile should expose MCP instructions");
+        assert!(instructions.contains("tools/list"));
+        assert!(instructions.contains("lumina_get_transcript_window"));
+        assert!(instructions.contains("lumina_propose_video_annotation"));
+        assert!(!instructions.contains("mediaPath"));
+        assert!(!instructions.contains("turn 数"));
+
+        let restricted = initialize_result_for_profile(McpToolProfile::NoTools);
+        assert!(restricted.get("instructions").is_none());
+    }
+
+    #[test]
+    fn tool_concurrency_classification_keeps_mutations_exclusive() {
+        use lumina_core::tool_contract as contract;
+
+        assert!(is_read_only_tool(contract::TOOL_PLAYBACK_CONTEXT));
+        assert!(is_read_only_tool(contract::TOOL_SUBTITLE_CUES));
+        assert!(is_read_only_tool(contract::TOOL_CAPTURE_FRAMES));
+        assert!(is_heavy_read_only_tool(contract::TOOL_CAPTURE_FRAMES));
+        assert!(is_heavy_read_only_tool(contract::TOOL_AUDIO_MARKS));
+
+        assert!(!is_read_only_tool(contract::TOOL_WRITE_SUBTITLE_TRACK));
+        assert!(!is_read_only_tool(contract::TOOL_PROPOSE_ANNOTATION));
+        assert!(!is_read_only_tool("lumina_unknown_tool"));
     }
 
     #[test]

@@ -14,6 +14,7 @@ pub enum AcpErrorCode {
     WorkspaceUnavailable,
     SpawnFailed,
     ProtocolError,
+    NoOutput,
     Cancelled,
     InternalError,
 }
@@ -82,6 +83,14 @@ impl AcpError {
         )
     }
 
+    pub fn no_output(details: Option<&str>) -> Self {
+        Self::new(
+            AcpErrorCode::NoOutput,
+            "Agent 未返回可用内容，请重试",
+            details.map(str::to_string),
+        )
+    }
+
     /// User-facing validation (empty prompt, bad profile fields, …).
     pub fn bad_request(message: impl Into<String>) -> Self {
         Self::new(AcpErrorCode::ProtocolError, message, None)
@@ -143,5 +152,9 @@ mod tests {
         let auth = AcpError::codex_auth_required(Some("authenticate failed"));
         assert!(has_cjk(&auth.message));
         assert!(!auth.message.contains("authenticate"));
+        assert_eq!(
+            AcpError::no_output(None).message,
+            "Agent 未返回可用内容，请重试"
+        );
     }
 }

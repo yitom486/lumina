@@ -53,6 +53,17 @@ struct LiveSession {
     model_options: AcpSessionModelOptions,
 }
 
+/// P1: a LiveSession always owns a live agent tree. Any path that drops one
+/// without an explicit close (setup failure, abandoned take, early return)
+/// terminates the whole tree instead of leaking it. Never blocks (`false`):
+/// explicit close paths terminate deterministically first, and a repeated
+/// taskkill against the dead tree fails silently.
+impl Drop for LiveSession {
+    fn drop(&mut self) {
+        crate::process::terminate_tree(&mut self.child, false);
+    }
+}
+
 pub struct AcpService {
     busy: AtomicBool,
     cancel: AtomicBool,
@@ -78,6 +89,90 @@ impl AcpService {
             tool_access_enabled: AtomicBool::new(true),
             next_session_model_selection: Mutex::new(None),
         }
+    }
+
+    /// Workshop pool slot: tool access disabled from birth, with a preset
+    /// model selection applied on first use by the normal prompt flow.
+    pub(crate) fn new_isolated(model_selection: Option<AcpSessionModelSelection>) -> Self {
+        let service = Self::new();
+        service.tool_access_enabled.store(false, Ordering::SeqCst);
+        service.rearm_isolated_model_selection(model_selection);
+        service
+    }
+
+    /// Restore the slot's model selection into the one-shot cell (P2 pool).
+    /// The fresh-spawn path takes the cell on first use, so every submit
+    /// must re-arm it BEFORE prompting: otherwise a fresh spawn after a
+    /// rotation failure or a transport retry silently falls back to the
+    /// agent default model. The slot (not the service) owns the config, so
+    /// this never leaks across jobs.
+    pub(crate) fn rearm_isolated_model_selection(
+        &self,
+        model_selection: Option<AcpSessionModelSelection>,
+    ) {
+        if let Ok(mut selection) = self.next_session_model_selection.lock() {
+            *selection = model_selection;
+        }
+    }
+
+    /// Rotate the live session without killing the process (P2 pool support):
+    /// close the old session when the agent supports it, then open a fresh
+    /// one on the same child, reapplying the model selection. No live session
+    /// is a successful no-op (the next prompt spawns fresh).
+    ///
+    /// The old session is taken out of the slot FIRST, and only reinserted
+    /// after every step succeeds. Any failure therefore leaves the slot
+    /// empty by construction, so the next submit spawns fresh instead of
+    /// running on a closed or half-open session. No failure path may put a
+    /// dead session back.
+    pub(crate) fn rotate_isolated_session(
+        &self,
+        profile_id: &str,
+        model_selection: Option<&AcpSessionModelSelection>,
+        on_event: &mut dyn FnMut(AcpEvent),
+    ) -> Result<(), AcpError> {
+        let mut guard = self
+            .session
+            .lock()
+            .map_err(|_| AcpError::internal(Some("ACP session mutex poisoned")))?;
+        let Some(mut session) = guard.take() else {
+            return Ok(());
+        };
+        if !session.init.supports_session_close {
+            // No rotation primitive: the take above already dropped the whole
+            // process (see `Drop for LiveSession`); the next prompt spawns
+            // fresh instead of stacking sessions server-side.
+            return Ok(());
+        }
+        if let Err(error) = Self::close_agent_session(self, &mut session, on_event) {
+            tracing::warn!(%error, "session/close failed during rotation; slot left empty");
+            return Err(error);
+        }
+        let workspace = match resolve_session_cwd(None) {
+            Ok(workspace) => workspace,
+            Err(error) => {
+                tracing::warn!(%error, "workspace unavailable during rotation; slot left empty");
+                return Err(error);
+            }
+        };
+        let cwd = workspace.to_string_lossy().into_owned();
+        let new_id = match self.create_new_session(&mut session, &cwd, profile_id, false, on_event)
+        {
+            Ok(id) => id,
+            Err(error) => {
+                tracing::warn!(%error, "session/new failed during rotation; slot left empty");
+                return Err(error);
+            }
+        };
+        session.session_id = new_id;
+        if let Some(selection) = model_selection {
+            if let Err(error) = self.apply_model_selection(&mut session, selection, on_event) {
+                tracing::warn!(%error, "model selection failed during rotation; slot left empty");
+                return Err(error);
+            }
+        }
+        *guard = Some(session);
+        Ok(())
     }
 
     pub fn respond_permission(
@@ -390,10 +485,9 @@ impl AcpService {
                         session_close_params(&session.session_id),
                     );
                 }
-                let _ = session.child.kill();
-                if wait_for_child {
-                    let _ = session.child.wait();
-                }
+                // P1: kill the whole tree (wrapper-only kill orphaned the
+                // second Codex process). Graceful close above stays first.
+                crate::process::terminate_tree(&mut session.child, wait_for_child);
             }
         }
         if wait_for_child {
@@ -415,7 +509,41 @@ impl AcpService {
         saved_session: Option<SavedSessionHint>,
         client_settings: AcpClientSettings,
         profiles: AgentProfilesHint,
+        on_event: F,
+    ) -> Result<String, AcpError>
+    where
+        F: FnMut(AcpEvent),
+    {
+        self.prompt_with_label(
+            text,
+            cwd,
+            profile_id,
+            context,
+            history_context,
+            saved_session,
+            client_settings,
+            profiles,
+            on_event,
+            None,
+        )
+    }
+
+    /// Same flow with an optional attempt label for log correlation. The label
+    /// is metadata only (job/batch/attempts); it is logged, never parsed and
+    /// never sent to the model. `None` preserves the exact chat behavior.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn prompt_with_label<F>(
+        &self,
+        text: impl AsRef<str>,
+        cwd: Option<String>,
+        profile_id: Option<String>,
+        context: Option<VideoPromptContext>,
+        history_context: Option<String>,
+        saved_session: Option<SavedSessionHint>,
+        client_settings: AcpClientSettings,
+        profiles: AgentProfilesHint,
         mut on_event: F,
+        attempt_label: Option<&str>,
     ) -> Result<String, AcpError>
     where
         F: FnMut(AcpEvent),
@@ -425,6 +553,13 @@ impl AcpService {
             .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
             .is_err()
         {
+            // Best-effort pid peek: never block the failing path on the lock.
+            let pid = self
+                .session
+                .try_lock()
+                .ok()
+                .and_then(|guard| guard.as_ref().map(|session| session.child.id()));
+            Self::log_workshop_exit(attempt_label, pid, "busy", None, 0);
             return Err(AcpError::busy());
         }
         self.cancel.store(false, Ordering::SeqCst);
@@ -442,6 +577,7 @@ impl AcpService {
             saved_session.as_ref(),
             &prepared,
             &mut on_event,
+            attempt_label,
         );
 
         if outcome.is_err() {
@@ -470,6 +606,20 @@ impl AcpService {
         outcome.map(|(text, _)| text)
     }
 
+    /// Fixed client settings for isolated workshop prompts (tool-free, blind
+    /// to chat state). Shared by the one-shot path and the P2 pool runner so
+    /// the two never drift apart.
+    pub(crate) fn isolated_client_settings() -> AcpClientSettings {
+        AcpClientSettings {
+            permission_mode: PermissionMode::Ask,
+            thinking_level: crate::settings::ThinkingLevel::Hidden,
+            agent_mode: "subtitle-workshop".into(),
+            vision_capable: false,
+            model_id: None,
+            reasoning_effort: None,
+        }
+    }
+
     /// Run one prompt in a fresh ACP process/session using an existing profile,
     /// then close it. This is deliberately separate from the interactive chat
     /// service: no saved session, no chat context, and no Agent tool access.
@@ -478,29 +628,24 @@ impl AcpService {
         profile_id: String,
         profiles: AgentProfilesHint,
         model_selection: Option<AcpSessionModelSelection>,
+        task_label: Option<String>,
     ) -> Result<String, AcpError> {
         let service = Self::new();
         service.tool_access_enabled.store(false, Ordering::SeqCst);
         if let Ok(mut selection) = service.next_session_model_selection.lock() {
             *selection = model_selection;
         }
-        let outcome = service.prompt(
+        let outcome = service.prompt_with_label(
             text,
             None,
             Some(profile_id),
             None,
             None,
             None,
-            AcpClientSettings {
-                permission_mode: PermissionMode::Ask,
-                thinking_level: crate::settings::ThinkingLevel::Hidden,
-                agent_mode: "subtitle-workshop".into(),
-                vision_capable: false,
-                model_id: None,
-                reasoning_effort: None,
-            },
+            Self::isolated_client_settings(),
             profiles,
             |_| {},
+            task_label.as_deref(),
         );
         let _ = service.close_session();
         outcome
@@ -545,9 +690,11 @@ impl AcpService {
         saved_session: Option<&SavedSessionHint>,
         prepared: &PreparedProfiles,
         on_event: &mut dyn FnMut(AcpEvent),
+        attempt_label: Option<&str>,
     ) -> Result<(String, Option<String>), AcpError> {
         let prompt_text = prompt_text.trim();
         if prompt_text.is_empty() {
+            Self::log_workshop_exit(attempt_label, None, "empty-prompt", None, 0);
             return Err(AcpError::bad_request("提问内容不能为空"));
         }
 
@@ -555,10 +702,13 @@ impl AcpService {
 
         // Ensure live session (reuse when possible).
         {
-            let mut guard = self
-                .session
-                .lock()
-                .map_err(|_| AcpError::internal(Some("ACP session mutex poisoned")))?;
+            let mut guard = match self.session.lock() {
+                Ok(guard) => guard,
+                Err(_) => {
+                    Self::log_workshop_exit(attempt_label, None, "session-lock-failed", None, 0);
+                    return Err(AcpError::internal(Some("ACP session mutex poisoned")));
+                }
+            };
             if guard.is_none() {
                 // Snapshot IO goes through the app-provided environment (M5);
                 // missing snapshot still means vision-capable, as before.
@@ -570,35 +720,70 @@ impl AcpService {
                             .and_then(|env| env.snapshot_vision_capable(&workspace))
                     })
                     .unwrap_or(true);
-                let mut spawned = self.spawn_session(
+                let mut spawned = match self.spawn_session(
                     cwd,
                     saved_session,
                     prepared,
                     profile_override,
                     vision_capable,
                     on_event,
-                )?;
+                ) {
+                    Ok(spawned) => spawned,
+                    Err(error) => {
+                        Self::log_workshop_exit(attempt_label, None, "spawn-failed", None, 0);
+                        return Err(error);
+                    }
+                };
                 let selection = self
                     .next_session_model_selection
                     .lock()
                     .ok()
                     .and_then(|mut selection| selection.take());
                 if let Some(selection) = selection {
-                    self.apply_model_selection(&mut spawned, &selection, on_event)?;
+                    if let Err(error) =
+                        self.apply_model_selection(&mut spawned, &selection, on_event)
+                    {
+                        Self::log_workshop_exit(
+                            attempt_label,
+                            Some(spawned.child.id()),
+                            "model-selection-failed",
+                            None,
+                            0,
+                        );
+                        return Err(error);
+                    }
                 }
                 *guard = Some(spawned);
             }
         }
 
-        let mut guard = self
-            .session
-            .lock()
-            .map_err(|_| AcpError::internal(Some("ACP session mutex poisoned")))?;
-        let session = guard
-            .as_mut()
-            .ok_or_else(|| AcpError::internal(Some("ACP session missing after spawn")))?;
+        let mut guard = match self.session.lock() {
+            Ok(guard) => guard,
+            Err(_) => {
+                Self::log_workshop_exit(attempt_label, None, "session-lock-failed", None, 0);
+                return Err(AcpError::internal(Some("ACP session mutex poisoned")));
+            }
+        };
+        let session = match guard.as_mut() {
+            Some(session) => session,
+            None => {
+                Self::log_workshop_exit(attempt_label, None, "session-missing", None, 0);
+                return Err(AcpError::internal(Some("ACP session missing after spawn")));
+            }
+        };
+        // Copy: the EOF path takes the guard, so the kind must be owned here.
+        let profile_kind = session.profile_kind;
 
-        let _ = resolve_session_cwd(cwd)?;
+        if let Err(error) = resolve_session_cwd(cwd) {
+            Self::log_workshop_exit(
+                attempt_label,
+                Some(session.child.id()),
+                "cwd-failed",
+                None,
+                0,
+            );
+            return Err(error);
+        }
 
         on_event(AcpEvent::Progress {
             message: "正在发送问题…".into(),
@@ -606,7 +791,8 @@ impl AcpService {
 
         let prompt_id = session.next_id;
         session.next_id += 1;
-        Self::write_request(
+        let pid = session.child.id();
+        if let Err(error) = Self::write_request(
             &mut session.stdin,
             prompt_id,
             "session/prompt",
@@ -616,14 +802,16 @@ impl AcpService {
                 context,
                 history_context,
             ),
-        )?;
-
-        let empty_hint = match session.profile_kind {
-            AgentKind::Codex => {
-                "（会话结束，未解析到文本回复；请确认 Codex 已登录，且模型走 Responses API）"
-            }
-            _ => "（会话结束，未解析到文本回复；请确认该 ACP Agent 可用）",
-        };
+        ) {
+            Self::log_workshop_exit(attempt_label, Some(pid), "prompt-write-failed", None, 0);
+            return Err(error);
+        }
+        // Attempt start marker: present only for labeled (workshop) calls so
+        // chat traffic is untouched. Every attempt is traceable even if the
+        // outcome arms below never run (timeout/cancel take other exits).
+        if let Some(label) = attempt_label {
+            tracing::info!(task_label = %label, pid, "workshop prompt sent");
+        }
 
         let mut collector = AgentReplyCollector::default();
         let mut on_event_collect = |ev: AcpEvent| {
@@ -651,30 +839,66 @@ impl AcpService {
             }
 
             if Instant::now() > deadline {
-                let _ = session.child.kill();
-                let _ = guard.take();
+                if let Some(mut taken) = guard.take() {
+                    crate::process::terminate_tree(&mut taken.child, false);
+                }
+                Self::log_workshop_exit(
+                    attempt_label,
+                    Some(pid),
+                    "timeout",
+                    None,
+                    collector.chunk_count(),
+                );
                 return Err(AcpError::protocol(Some("ACP wait timed out")));
             }
 
             if let Some(at) = cancel_at {
                 if Instant::now().duration_since(at) > Duration::from_secs(CANCEL_KILL_SECS) {
-                    let _ = session.child.kill();
-                    let _ = guard.take();
+                    if let Some(mut taken) = guard.take() {
+                        crate::process::terminate_tree(&mut taken.child, false);
+                    }
+                    Self::log_workshop_exit(
+                        attempt_label,
+                        Some(pid),
+                        "cancel-timeout",
+                        None,
+                        collector.chunk_count(),
+                    );
                     return Err(AcpError::cancelled());
                 }
             }
 
-            match Self::read_one(
+            let inbound = match Self::read_one(
                 self,
                 session,
                 Duration::from_millis(250),
                 &self.cancel,
                 &self.host,
                 &mut on_event_collect,
-            )? {
+            ) {
+                Ok(inbound) => inbound,
+                Err(error) => {
+                    Self::log_workshop_exit(
+                        attempt_label,
+                        Some(pid),
+                        "read-error",
+                        None,
+                        collector.chunk_count(),
+                    );
+                    return Err(error);
+                }
+            };
+            match inbound {
                 ReadOne::Eof => {
                     let _ = guard.take();
                     if self.cancel.load(Ordering::SeqCst) {
+                        Self::log_workshop_exit(
+                            attempt_label,
+                            Some(pid),
+                            "cancelled",
+                            None,
+                            collector.chunk_count(),
+                        );
                         return Err(AcpError::cancelled());
                     }
                     break;
@@ -682,16 +906,45 @@ impl AcpService {
                 ReadOne::Response { id, value } if id == prompt_id => {
                     if let Some(msg) = is_error_response(&value) {
                         tracing::warn!(%msg, "ACP prompt error response");
+                        Self::log_workshop_exit(
+                            attempt_label,
+                            Some(pid),
+                            "agent-error",
+                            None,
+                            collector.chunk_count(),
+                        );
                         return Err(AcpError::protocol(Some(&msg)));
                     }
                     let stop = parse_stop_reason(&value);
                     if stop.as_deref() == Some("cancelled") || self.cancel.load(Ordering::SeqCst) {
+                        Self::log_workshop_exit(
+                            attempt_label,
+                            Some(pid),
+                            "cancelled",
+                            stop.as_deref(),
+                            collector.chunk_count(),
+                        );
                         return Err(AcpError::cancelled());
                     }
+                    let chunks = collector.chunk_count();
                     let final_text = collector.finish();
                     if final_text.trim().is_empty() {
-                        return Ok((empty_hint.into(), stop));
+                        Self::log_workshop_exit(
+                            attempt_label,
+                            Some(pid),
+                            "no-output",
+                            stop.as_deref(),
+                            chunks,
+                        );
+                        return self.empty_reply_outcome(profile_kind, stop);
                     }
+                    Self::log_workshop_exit(
+                        attempt_label,
+                        Some(pid),
+                        "ok",
+                        stop.as_deref(),
+                        chunks,
+                    );
                     return Ok((final_text, stop));
                 }
                 ReadOne::Response { .. } => continue,
@@ -700,12 +953,28 @@ impl AcpService {
 
         if self.cancel.load(Ordering::SeqCst) {
             let _ = guard.take();
+            Self::log_workshop_exit(
+                attempt_label,
+                Some(pid),
+                "cancelled",
+                None,
+                collector.chunk_count(),
+            );
             return Err(AcpError::cancelled());
         }
+        let chunks = collector.chunk_count();
         let final_text = collector.finish();
         if final_text.trim().is_empty() {
-            return Ok((empty_hint.into(), Some("end_turn".into())));
+            Self::log_workshop_exit(
+                attempt_label,
+                Some(pid),
+                "no-output",
+                Some("end_turn"),
+                chunks,
+            );
+            return self.empty_reply_outcome(profile_kind, Some("end_turn".into()));
         }
+        Self::log_workshop_exit(attempt_label, Some(pid), "ok", Some("end_turn"), chunks);
         Ok((final_text, Some("end_turn".into())))
     }
 
@@ -713,6 +982,61 @@ impl AcpService {
     /// no Chat snapshot/history reuse.
     fn isolated_task(&self) -> bool {
         !self.tool_access_enabled.load(Ordering::SeqCst)
+    }
+
+    /// P0b attempt telemetry: every workshop attempt exit logs the same
+    /// fields (label/pid/outcome/stop/chunks). Chat (label None) is untouched.
+    /// Pid-missing (pre-spawn) is logged explicitly, never silent. `outcome`
+    /// is a fixed tag per exit site; failure reasons travel in the returned
+    /// error as before.
+    fn log_workshop_exit(
+        attempt_label: Option<&str>,
+        pid: Option<u32>,
+        outcome: &str,
+        stop: Option<&str>,
+        chunks: u32,
+    ) {
+        let Some(label) = attempt_label else {
+            return;
+        };
+        match pid {
+            Some(pid) => tracing::info!(
+                task_label = %label,
+                pid,
+                outcome,
+                stop = ?stop,
+                chunks,
+                "workshop prompt exit"
+            ),
+            None => tracing::info!(
+                task_label = %label,
+                outcome,
+                stop = ?stop,
+                chunks,
+                "workshop prompt exit (no child yet)"
+            ),
+        }
+    }
+
+    /// Zero-output outcome split by caller kind. Chat keeps the human-readable
+    /// hint as a successful reply (existing UX); isolated tasks get a typed
+    /// `NoOutput` error so callers retry or fail loudly instead of parsing
+    /// hint prose as JSON. Unit-covered without a live agent process.
+    fn empty_reply_outcome(
+        &self,
+        profile_kind: AgentKind,
+        stop: Option<String>,
+    ) -> Result<(String, Option<String>), AcpError> {
+        if self.isolated_task() {
+            return Err(AcpError::no_output(stop.as_deref()));
+        }
+        let empty_hint = match profile_kind {
+            AgentKind::Codex => {
+                "（会话结束，未解析到文本回复；请确认 Codex 已登录，且模型走 Responses API）"
+            }
+            _ => "（会话结束，未解析到文本回复；请确认该 ACP Agent 可用）",
+        };
+        Ok((empty_hint.into(), stop))
     }
 
     fn spawn_session(
@@ -810,14 +1134,20 @@ impl AcpService {
             });
         }
 
-        let stdin = child
-            .stdin
-            .take()
-            .ok_or_else(|| AcpError::spawn_failed(Some("stdin pipe missing")))?;
-        let stdout = child
-            .stdout
-            .take()
-            .ok_or_else(|| AcpError::spawn_failed(Some("stdout pipe missing")))?;
+        let stdin = match child.stdin.take() {
+            Some(stdin) => stdin,
+            None => {
+                crate::process::terminate_tree(&mut child, false);
+                return Err(AcpError::spawn_failed(Some("stdin pipe missing")));
+            }
+        };
+        let stdout = match child.stdout.take() {
+            Some(stdout) => stdout,
+            None => {
+                crate::process::terminate_tree(&mut child, false);
+                return Err(AcpError::spawn_failed(Some("stdout pipe missing")));
+            }
+        };
         let reader = BufReader::new(stdout);
 
         let mut session = LiveSession {
@@ -890,7 +1220,7 @@ impl AcpService {
                 on_event,
             )?;
             if let Some(msg) = is_error_response(&auth_resp) {
-                let _ = session.child.kill();
+                crate::process::terminate_tree(&mut session.child, false);
                 if profile.kind == AgentKind::Codex {
                     return Err(AcpError::codex_auth_required(Some(&format!(
                         "authenticate failed: {msg}"
@@ -1016,10 +1346,12 @@ impl AcpService {
             &self.host,
             on_event,
         )?;
-        let session_id = parse_session_id(&session_resp).ok_or_else(|| {
-            let _ = session.child.kill();
-            AcpError::protocol(Some(&format!("missing sessionId: {session_resp}")))
-        })?;
+        let Some(session_id) = parse_session_id(&session_resp) else {
+            crate::process::terminate_tree(&mut session.child, false);
+            return Err(AcpError::protocol(Some(&format!(
+                "missing sessionId: {session_resp}"
+            ))));
+        };
         session.model_options = parse_session_model_options(&session_resp);
         on_event(AcpEvent::SessionSaved {
             session_id: session_id.clone(),
@@ -1377,7 +1709,9 @@ impl AcpService {
             let value: Value = match serde_json::from_str(trimmed) {
                 Ok(value) => value,
                 Err(error) => {
-                    tracing::debug!(line = trimmed, %error, "ACP skipping non-JSON stdout line");
+                    // Truncated sample only: stdout may carry model text.
+                    let sample: String = trimmed.chars().take(200).collect();
+                    tracing::debug!(line = %sample, %error, "ACP skipping non-JSON stdout line");
                     continue;
                 }
             };
@@ -1426,5 +1760,125 @@ mod tests {
         assert_eq!(PROMPT_DEADLINE_SECS, 600);
         assert_eq!(CANCEL_KILL_SECS, 8);
         assert!(initialize_timeout() >= Duration::from_secs(60));
+    }
+
+    /// Fabricate a slot session around a process that already exited: stdin
+    /// writes fail fast (broken pipe), so rotation IO fails deterministically
+    /// without any agent or network.
+    fn dead_slot_session(supports_session_close: bool) -> LiveSession {
+        let mut child = std::process::Command::new("cmd")
+            .args(["/c", "exit", "0"])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("spawn cmd");
+        let stdin = child.stdin.take().expect("stdin");
+        let stdout = child.stdout.take().expect("stdout");
+        child.wait().expect("reap");
+        LiveSession {
+            child,
+            stdin,
+            reader: BufReader::new(stdout),
+            session_id: "test-session".to_string(),
+            next_id: 1,
+            init: InitializeResult {
+                supports_session_close,
+                ..InitializeResult::default()
+            },
+            profile_kind: AgentKind::Codex,
+            model_options: AcpSessionModelOptions::default(),
+        }
+    }
+
+    fn slot_occupied(service: &AcpService) -> bool {
+        service.session.lock().expect("lock").is_some()
+    }
+
+    #[test]
+    fn rotation_close_failure_leaves_slot_empty() {
+        // session/close write hits a dead pipe → Err. The slot must be empty
+        // afterwards so the next submit spawns fresh instead of reusing the
+        // closed session. Take-upfront structure makes this hold for every
+        // failure path, not just this one.
+        let service = AcpService::new_isolated(None);
+        service
+            .session
+            .lock()
+            .expect("lock")
+            .replace(dead_slot_session(true));
+        assert!(slot_occupied(&service));
+        let _ = service
+            .rotate_isolated_session("p", None, &mut |_| {})
+            .expect_err("close must fail");
+        assert!(
+            !slot_occupied(&service),
+            "failed rotation must leave the slot empty"
+        );
+    }
+
+    #[test]
+    fn rotation_without_close_primitive_drops_process() {
+        let service = AcpService::new_isolated(None);
+        service
+            .session
+            .lock()
+            .expect("lock")
+            .replace(dead_slot_session(false));
+        service
+            .rotate_isolated_session("p", None, &mut |_| {})
+            .expect("no-op ok");
+        assert!(!slot_occupied(&service));
+    }
+
+    #[test]
+    fn rearm_restores_consumed_model_selection() {
+        let selection = AcpSessionModelSelection {
+            model_id: "test-model".to_string(),
+            reasoning_effort: Some("low".to_string()),
+        };
+        let service = AcpService::new_isolated(Some(selection.clone()));
+        // The fresh-spawn path takes the one-shot cell: simulate the first
+        // prompt's consume, then re-arm like every pool run does.
+        let taken = service
+            .next_session_model_selection
+            .lock()
+            .expect("lock")
+            .take();
+        assert_eq!(
+            taken.map(|selected| selected.model_id),
+            Some("test-model".to_string())
+        );
+        service.rearm_isolated_model_selection(Some(selection));
+        let restored = service
+            .next_session_model_selection
+            .lock()
+            .expect("lock")
+            .clone()
+            .expect("rearmed");
+        assert_eq!(restored.model_id, "test-model");
+        assert_eq!(restored.reasoning_effort.as_deref(), Some("low"));
+    }
+
+    #[test]
+    fn empty_reply_outcome_splits_chat_and_isolated() {
+        use std::sync::atomic::Ordering;
+
+        // Chat (tools enabled): keeps the human-readable hint as success.
+        let chat = AcpService::new();
+        let (text, stop) = chat
+            .empty_reply_outcome(crate::profile::AgentKind::Codex, None)
+            .expect("chat keeps hint");
+        assert!(text.contains("Codex"));
+        assert_eq!(stop, None);
+
+        // Isolated task: typed error carrying the stop reason, never prose.
+        let isolated = AcpService::new();
+        isolated.tool_access_enabled.store(false, Ordering::SeqCst);
+        let err = isolated
+            .empty_reply_outcome(crate::profile::AgentKind::Codex, Some("end_turn".into()))
+            .expect_err("isolated errors");
+        assert_eq!(err.code, crate::AcpErrorCode::NoOutput);
+        assert_eq!(err.details.as_deref(), Some("end_turn"));
     }
 }

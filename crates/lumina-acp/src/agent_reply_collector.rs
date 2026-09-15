@@ -5,11 +5,19 @@
 pub struct AgentReplyCollector {
     segments: Vec<String>,
     current: String,
+    chunks: u32,
 }
 
 impl AgentReplyCollector {
     pub fn push_agent_chunk(&mut self, text: &str) {
+        self.chunks += 1;
         self.current.push_str(text);
+    }
+
+    /// How many `agent_message_chunk` updates arrived (empty ones included).
+    /// P0b telemetry: distinguishes "silent session" from "no events at all".
+    pub fn chunk_count(&self) -> u32 {
+        self.chunks
     }
 
     pub fn on_tool_call(&mut self) {
@@ -48,5 +56,19 @@ mod tests {
         let mut collector = AgentReplyCollector::default();
         collector.push_agent_chunk("只有一段回复");
         assert_eq!(collector.finish(), "只有一段回复");
+    }
+
+    #[test]
+    fn chunk_count_tracks_updates_including_empty() {
+        let mut collector = AgentReplyCollector::default();
+        assert_eq!(collector.chunk_count(), 0);
+        collector.push_agent_chunk("");
+        collector.push_agent_chunk("hi");
+        assert_eq!(collector.chunk_count(), 2);
+        // Empty-only traffic still finishes empty (typed NoOutput upstream).
+        let mut silent = AgentReplyCollector::default();
+        silent.push_agent_chunk("   ");
+        assert_eq!(silent.chunk_count(), 1);
+        assert!(silent.finish().trim().is_empty());
     }
 }

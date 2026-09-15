@@ -32,6 +32,7 @@ const ERROR_FALLBACK: Record<string, string> = {
   ParseFailed: "无法解析字幕",
   UnsupportedSubtitle: "不支持该字幕格式",
   NoSubtitleTrack: "该媒体没有可用字幕轨",
+  NoAgentOutput: "字幕任务未返回有效结果，请重试",
   // Asr
   NotConfigured: "未配置可选组件（ASR/ACP）",
   Busy: "已有任务在运行",

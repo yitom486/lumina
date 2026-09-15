@@ -47,6 +47,9 @@ describe("formatPlayerError", () => {
     );
     expect(formatPlayerError({ code: "ProtocolError" })).toBe("与 Agent 通信失败");
     expect(formatPlayerError({ code: "ToolNotFound" })).toBe("字幕工具未就绪");
+    expect(formatPlayerError({ code: "NoAgentOutput" })).toBe(
+      "字幕任务未返回有效结果，请重试",
+    );
   });
 
   it("never surfaces details even when present", () => {

@@ -120,13 +120,33 @@ pub fn reset_prompt_snapshot_state(snapshots: &Mutex<PromptSnapshotState>) {
 
 /// ACP-backed [`lumina_core::AgentInvoker`] for subtitle workshop tasks:
 /// short-lived isolated calls, no chat history, no MCP tools.
+///
+/// With a pool attached (workshop jobs), prompts route to
+/// [`lumina_acp::WorkshopPool::submit`], which owns session lifecycle and
+/// transport retry. Without one (library resolver), each call runs the
+/// legacy one-shot isolated path. The adapter itself owns no pool lifecycle:
+/// creation and shutdown live with the caller (commands layer).
 pub struct AcpAgentInvoker {
     profiles: lumina_acp::AgentProfilesHint,
+    pool: Option<Arc<lumina_acp::WorkshopPool>>,
 }
 
 impl AcpAgentInvoker {
     pub fn new(profiles: lumina_acp::AgentProfilesHint) -> Self {
-        Self { profiles }
+        Self {
+            profiles,
+            pool: None,
+        }
+    }
+
+    pub fn with_pool(
+        profiles: lumina_acp::AgentProfilesHint,
+        pool: Arc<lumina_acp::WorkshopPool>,
+    ) -> Self {
+        Self {
+            profiles,
+            pool: Some(pool),
+        }
     }
 }
 
@@ -135,7 +155,11 @@ impl lumina_core::AgentInvoker for AcpAgentInvoker {
         &self,
         task: lumina_core::IsolatedAgentTask,
     ) -> Result<String, lumina_core::AgentTaskError> {
-        use lumina_core::AgentTaskError;
+        if let Some(pool) = self.pool.as_ref() {
+            return pool
+                .submit(task.prompt, task.task_label, task.retry_task_label)
+                .map_err(map_acp_error);
+        }
         let model_selection = task
             .model_id
             .filter(|id| !id.trim().is_empty())
@@ -150,17 +174,26 @@ impl lumina_core::AgentInvoker for AcpAgentInvoker {
             task.profile_id,
             self.profiles.clone(),
             model_selection,
+            task.task_label,
         )
-        .map_err(|error| {
-            if error.code == lumina_acp::AcpErrorCode::NotConfigured {
-                AgentTaskError::NotConfigured {
-                    details: error.details,
-                }
-            } else {
-                AgentTaskError::Failed {
-                    details: error.details,
-                }
-            }
-        })
+        .map_err(map_acp_error)
+    }
+}
+
+/// Shared ACP→port error mapping for both pool and legacy paths.
+fn map_acp_error(error: lumina_acp::AcpError) -> lumina_core::AgentTaskError {
+    use lumina_core::AgentTaskError;
+    if error.code == lumina_acp::AcpErrorCode::NotConfigured {
+        AgentTaskError::NotConfigured {
+            details: error.details,
+        }
+    } else if error.code == lumina_acp::AcpErrorCode::NoOutput {
+        AgentTaskError::NoOutput {
+            details: error.details,
+        }
+    } else {
+        AgentTaskError::Failed {
+            details: error.details,
+        }
     }
 }

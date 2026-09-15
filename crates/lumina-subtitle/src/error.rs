@@ -17,6 +17,7 @@ pub enum SubtitleErrorCode {
     NotConfigured,
     ExportFailed,
     TranslateNotConfigured,
+    NoAgentOutput,
     InternalError,
 }
 
@@ -131,6 +132,17 @@ impl SubtitleError {
         )
     }
 
+    /// The agent session ended without usable output (typed at the ACP layer,
+    /// never hint prose). Retrying may heal transients; persistent silence
+    /// fails loudly instead of parsing hint text as JSON.
+    pub fn no_agent_output(details: Option<&str>) -> Self {
+        Self::new(
+            SubtitleErrorCode::NoAgentOutput,
+            "字幕任务未返回有效结果，请重试",
+            details.map(str::to_string),
+        )
+    }
+
     pub fn internal(details: Option<&str>) -> Self {
         Self::new(
             SubtitleErrorCode::InternalError,
@@ -195,6 +207,10 @@ mod tests {
         assert!(has_cjk(&provider.message));
         assert!(!provider.message.contains("subdl"));
         assert_eq!(provider.code, SubtitleErrorCode::NotConfigured);
+        let no_output = SubtitleError::no_agent_output(Some("end_turn"));
+        assert_eq!(no_output.code, SubtitleErrorCode::NoAgentOutput);
+        assert_eq!(no_output.message, "字幕任务未返回有效结果，请重试");
+        assert!(has_cjk(&no_output.message));
     }
 
     #[test]

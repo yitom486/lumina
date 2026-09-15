@@ -4,6 +4,7 @@
 //! governed by [`policy::McpToolProfile`]/[`policy::ToolPolicy`].
 
 mod build;
+mod executor;
 mod policy;
 mod server;
 mod snapshot;

@@ -94,6 +94,46 @@ fn clear_checkpoint(store: &crate::ytdl::provider::TranslationCheckpoint) {
     }
 }
 
+/// Unique id per workshop invocation for log correlation across batches.
+/// Metadata only: appears in task labels and tracing fields, never in prompts.
+fn workshop_job_id() -> String {
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_nanos())
+        .unwrap_or(0);
+    format!("ws-{}-{}", std::process::id(), nanos)
+}
+
+/// Build the per-job workshop pool (P2): fixed slots on reused ACP processes.
+/// Slots rotate sessions every batch, the pool owns transport retry, and the
+/// caller shuts the pool down explicitly after the job succeeds. `Drop` on
+/// the pool is the backstop for error unwinds.
+fn workshop_pool(
+    profiles: &AgentProfilesHint,
+    profile_id: &str,
+    model_id: Option<&str>,
+    reasoning_effort: Option<&str>,
+    job_id: &str,
+) -> std::sync::Arc<lumina_acp::WorkshopPool> {
+    let model_selection = model_id.filter(|id| !id.trim().is_empty()).map(|model_id| {
+        lumina_acp::AcpSessionModelSelection {
+            model_id: model_id.to_string(),
+            reasoning_effort: reasoning_effort
+                .filter(|value| !value.trim().is_empty())
+                .map(str::to_string),
+        }
+    });
+    std::sync::Arc::new(lumina_acp::WorkshopPool::new(
+        lumina_acp::PoolConfig {
+            size: lumina_acp::DEFAULT_POOL_SIZE,
+            profile_id: profile_id.to_string(),
+            profiles: profiles.clone(),
+            model_selection,
+        },
+        job_id.to_string(),
+    ))
+}
+
 #[tauri::command]
 pub async fn subtitle_list_choices(
     app: AppHandle,
@@ -245,11 +285,14 @@ fn translate_cached_track(
     model_id: Option<&str>,
     reasoning_effort: Option<&str>,
     on_event: &Channel<SubtitleTranslateEvent>,
+    job_id: &str,
 ) -> Result<Transcript, SubtitleError> {
     let (provider, source_lang) = crate::ytdl::provider::parse_cache_choice(choice_id)
         .ok_or_else(|| SubtitleError::extract_failed(Some("invalid cached subtitle choice")))?;
     let token = write::normalize_lang_token(target_lang)?;
-    let invoker = crate::acp::adapter::AcpAgentInvoker::new(profiles);
+    let pool = workshop_pool(&profiles, profile_id, model_id, reasoning_effort, job_id);
+    let invoker =
+        crate::acp::adapter::AcpAgentInvoker::with_pool(profiles, std::sync::Arc::clone(&pool));
     let progress = |update: translate::ProgressUpdate| {
         let _ = on_event.send(forward_progress(update));
     };
@@ -274,7 +317,9 @@ fn translate_cached_track(
         &invoker,
         &mut progress,
         Some(&checkpoint),
+        job_id,
     )?;
+    pool.shutdown();
     if let Some(message) = backfill_glossary_names(
         state,
         path,
@@ -521,6 +566,8 @@ pub async fn subtitle_proofread_track(
             )));
         }
         let strip = strip_sound_tags.unwrap_or(true);
+        let job_id = workshop_job_id();
+        tracing::info!(job_id = %job_id, path = %path, "subtitle workshop job started");
         // Cached downloads proofread back into the process cache so the
         // user's media directory stays clean; local tracks keep sidecars.
         if crate::ytdl::provider::parse_cache_choice(&choice_id).is_some() {
@@ -537,11 +584,20 @@ pub async fn subtitle_proofread_track(
                 model_id.as_deref(),
                 reasoning_effort.as_deref(),
                 &on_event,
+                &job_id,
             );
             finish_translate(&on_event, &result);
             return result;
         }
-        let invoker = crate::acp::adapter::AcpAgentInvoker::new(profiles);
+        let pool = workshop_pool(
+            &profiles,
+            &profile_id,
+            model_id.as_deref(),
+            reasoning_effort.as_deref(),
+            &job_id,
+        );
+        let invoker =
+            crate::acp::adapter::AcpAgentInvoker::with_pool(profiles, std::sync::Arc::clone(&pool));
         let context = app
             .try_state::<AppState>()
             .and_then(|state| translation_context_for_media(&state, &path));
@@ -568,7 +624,9 @@ pub async fn subtitle_proofread_track(
             &invoker,
             &mut progress,
             Some(&checkpoint),
+            &job_id,
         )?;
+        pool.shutdown();
         let _ = on_event.send(indeterminate_progress(format!(
             "正在保存校对字幕（{proof_token}）…"
         )));
@@ -611,6 +669,7 @@ fn proofread_cached_track(
     model_id: Option<&str>,
     reasoning_effort: Option<&str>,
     on_event: &Channel<SubtitleTranslateEvent>,
+    job_id: &str,
 ) -> Result<Transcript, SubtitleError> {
     let (provider, source_lang) = crate::ytdl::provider::parse_cache_choice(choice_id)
         .ok_or_else(|| SubtitleError::extract_failed(Some("invalid cached subtitle choice")))?;
@@ -625,7 +684,9 @@ fn proofread_cached_track(
         &source.cues,
     );
     let context = translation_context_for_media(state, path);
-    let invoker = crate::acp::adapter::AcpAgentInvoker::new(profiles);
+    let pool = workshop_pool(&profiles, profile_id, model_id, reasoning_effort, job_id);
+    let invoker =
+        crate::acp::adapter::AcpAgentInvoker::with_pool(profiles, std::sync::Arc::clone(&pool));
     let mut progress = |update: translate::ProgressUpdate| {
         let _ = on_event.send(forward_progress(update));
     };
@@ -639,7 +700,9 @@ fn proofread_cached_track(
         &invoker,
         &mut progress,
         Some(&checkpoint),
+        job_id,
     )?;
+    pool.shutdown();
     let _ = on_event.send(indeterminate_progress(format!(
         "正在保存缓存字幕（{token}）…"
     )));
@@ -674,6 +737,8 @@ pub async fn subtitle_translate_track(
         }
         let backfill = glossary_backfill.unwrap_or(true);
         let review_mode = glossary_review_mode.unwrap_or(false);
+        let job_id = workshop_job_id();
+        tracing::info!(job_id = %job_id, path = %path, "subtitle workshop job started");
         // Cached downloads translate back into the process cache so the
         // user's media directory stays clean; local tracks keep sidecars.
         if crate::ytdl::provider::parse_cache_choice(&choice_id).is_some() {
@@ -692,11 +757,20 @@ pub async fn subtitle_translate_track(
                 model_id.as_deref(),
                 reasoning_effort.as_deref(),
                 &on_event,
+                &job_id,
             );
             finish_translate(&on_event, &result);
             return result;
         }
-        let invoker = crate::acp::adapter::AcpAgentInvoker::new(profiles);
+        let pool = workshop_pool(
+            &profiles,
+            &profile_id,
+            model_id.as_deref(),
+            reasoning_effort.as_deref(),
+            &job_id,
+        );
+        let invoker =
+            crate::acp::adapter::AcpAgentInvoker::with_pool(profiles, std::sync::Arc::clone(&pool));
         let context = app
             .try_state::<AppState>()
             .and_then(|state| translation_context_for_media(&state, &path));
@@ -726,7 +800,9 @@ pub async fn subtitle_translate_track(
                 let _ = on_event.send(forward_progress(update));
             },
             Some(&checkpoint_factory),
+            &job_id,
         )?;
+        pool.shutdown();
         if let Some(state) = app.try_state::<AppState>() {
             if let Some(message) = backfill_glossary_names(
                 &state,
