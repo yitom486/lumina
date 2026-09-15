@@ -173,25 +173,18 @@ pool.shutdown();
 
 ## 4. 内部子模块全景
 
-`lumina-acp/src/` 的主要实现模块如下；列表聚焦稳定的核心文件，内部辅助文件可随实现调整：
+`lumina-acp/src/` 按四层组织，依赖只许单向：`domain → agent → wire → runtime/jobs`
+（`error` 为全 crate 契约，置顶层）。`lib.rs` 是唯一公开门面，旧平铺路径
+（`service/protocol/profile/paths/...`）仅作兼容 re-export 保留，新代码一律走新层级：
 
-| 源码文件 | 模块名称 | 核心职责与导出项 |
+| 目录 | 模块 | 核心职责与导出项 |
 | :--- | :--- | :--- |
-| [`lib.rs`](./lib.rs) | 根模块 | 重新导出公开接口；定义协议约束。 |
-| [`service.rs`](./service.rs) | `service` | • `AcpService`: 统筹连接、`session/new|resume`、聊天 prompt、隔离任务、模型切换、取消和关闭。 |
-| [`workshop.rs`](./workshop.rs) | `workshop` | • `WorkshopPool` / `PoolConfig`: 作业级隔离 session 池；固定槽位、轮询分配、传输失败重试和统一关闭。 |
-| [`protocol.rs`](./protocol.rs) | `protocol` | ACP JSON-RPC 请求/响应形状：`initialize`、`session/new|resume`、`session/prompt`、权限响应和 session 配置。 |
-| [`profile.rs`](./profile.rs) | `profile` | • `AgentProfile`: 描述 Agent 启动配置（命令、参数、环境变量、Profile 类型）。 |
-| [`host.rs`](./host.rs) | `host` | • `AcpHost`: 处理 Agent 反向发起的系统级请求（如终端执行、权限放行审批）。 |
-| [`agent_reply_collector.rs`](./agent_reply_collector.rs) | `collector` | 流式事件收集器，平滑拼装散落的推理思考片段（Thinking）与正文回答（Text）。 |
-| [`context.rs`](./context.rs) | `context` | • `VideoPromptContext`: 构造每轮媒体 `resource_link`；不内联 snapshot JSON 或台词正文。 |
-| [`environment.rs`](./environment.rs) | `environment` | • `SessionEnvironment`: 由宿主注入 snapshot 路径、能力同步和 Chat/isolated MCP 配置。 |
-| [`settings.rs`](./settings.rs) | `settings` | • `AcpClientSettings`, `PermissionMode`, `ThinkingLevel`；可选模型和 reasoning 选择。 |
-| [`discover.rs`](./discover.rs) | `discover` | 查找 ACP/Codex 命令、安装目录和配置目录；模型发现请求由 `service` 发起。 |
-| [`paths.rs`](./paths.rs) | `paths` | 解析工作区目录 `cwd`，对在线 URL 媒体做安全 workspace 回退。 |
-| [`process.rs`](./process.rs) | `process` | 跨平台启动和终止 Agent 子进程；该模块为 crate 内部实现，不是公开 API。 |
-| [`model.rs`](./model.rs) | `model` | 领域 DTO：`AcpEvent`, `AcpStatus`, `PermissionOption`, `SavedSessionHint` 等。 |
-| [`error.rs`](./error.rs) | `error` | • `AcpError` 与 `AcpErrorCode`（`NotConfigured`, `Busy`, `WorkspaceUnavailable`, `SpawnFailed`, `NoOutput`, `Cancelled` 等）。 |
+| [`lib.rs`](./lib.rs) + [`error.rs`](./error.rs) | 根 / 契约 | 根 re-export（`AcpService/AcpError/WorkshopPool/...`）；`AcpError/AcpErrorCode` 固定业务 `message`。 |
+| `domain/` | 纯数据，无 IO | `model.rs`（`AcpEvent/AcpStatus/PermissionOption/...`）、`settings.rs`（`AcpClientSettings/PermissionMode/ThinkingLevel`）、`context.rs`（`VideoPromptContext` + `resource_link` 组装）、`environment.rs`（`SessionEnvironment` 宿主注入 port）。 |
+| `agent/` | 启动前：找谁、在哪跑 | `discover.rs`（PATH/native 查找）、`workspace.rs`（`resolve_session_cwd` + 在线 URL 回退）、`launch.rs`（`LaunchSpec/resolve_launch` + builtin Codex）、`profile.rs`（`AgentProfile/prepare/resolve_active`）、`status.rs`（`status_from_profiles/install_hint` 合并旧 `paths` + `profile` 文案）。 |
+| `wire/` | 线上格式，纯函数 | `codec.rs`（request/notification/envelope/`Inbound` 分类）、`session.rs`（initialize/auth/new/resume/prompt/close params + parse）、`updates.rs`（agent text/thought/tool/plan 提取）、`permission.rs`（权限 options/auto/selected）、`sanitize.rs`（路径脱敏/截断/底层错误改写）。 |
+| `runtime/` | 活着的进程 | `service.rs`（瘦门面：connect/new_chat/prompt/close/cancel/status）、`lifecycle.rs`（`LiveSession` + spawn/new/resume/rotate）、`io.rs`（stdio 读写 + 按 id 等待）、`inbound.rs`（update/permission 分发）、`host/{mod,fs,terminal}.rs`（`AcpHost`：`fs/*` 与 `terminal/*` 已拆开）、`process.rs`（crate 内 spawn/kill，无控制台闪烁）。 |
+| `jobs/` | 一次性任务 | `isolated.rs`（`prompt_isolated/discover_isolated` 新家）、`pool.rs`（`WorkshopPool/PoolConfig`，另有 `IsolatedSessionPool` 别名）、`rollout.rs`（本任务 Codex rollout 精确清扫）、`collector.rs`（`AgentReplyCollector`，拼装 thinking + 正文）。 |
 
 ---
 

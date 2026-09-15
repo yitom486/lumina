@@ -1,16 +1,9 @@
-//! Status aggregation for ACP (uses profiles + discovery).
+//! ACP session workspace (cwd resolution + legacy paths).
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
-use crate::discover::{codex_config_present, find_acp_adapter, find_bunx, find_codex};
+use crate::agent::discover::{find_acp_adapter, find_codex};
 use crate::error::AcpError;
-use crate::model::AcpStatus;
-use crate::model::AgentProfilesHint;
-use crate::process::command;
-use crate::profile::{install_hint, list_status, prepare_profiles, AgentKind, RESPONSES_ONLY_NOTE};
-
-#[cfg(test)]
-use crate::profile::default_profiles_hint;
 
 /// Resolve an absolute session `cwd` for ACP.
 ///
@@ -108,7 +101,8 @@ pub struct AcpPaths {
     pub codex: Option<std::path::PathBuf>,
 }
 
-/// Legacy helper / tests: resolve default Codex adapter only.
+/// Legacy helper: resolve default Codex adapter only; prefer profile launch resolution.
+#[deprecated(note = "legacy helper for default Codex adapter only; use profile launch resolution")]
 pub fn resolve_acp_paths() -> Result<AcpPaths, AcpError> {
     let cli = find_acp_adapter().ok_or_else(|| {
         AcpError::not_configured(Some(
@@ -121,111 +115,9 @@ pub fn resolve_acp_paths() -> Result<AcpPaths, AcpError> {
     })
 }
 
-pub fn status_from_profiles(hint: &AgentProfilesHint) -> AcpStatus {
-    let adapter_found = find_acp_adapter().is_some();
-    let bunx_found = find_bunx().is_some();
-    let codex_found = find_codex().is_some();
-    let codex_config_found = codex_config_present();
-    let prepared = prepare_profiles(hint);
-    let (active_id, profiles) = list_status(&prepared);
-
-    let active = profiles.iter().find(|p| p.id == active_id);
-    let available = active.map(|p| p.available).unwrap_or(false)
-        && !(active.map(|p| p.command.is_empty()).unwrap_or(true));
-
-    let cli_path = active
-        .and_then(|p| p.resolved_command.clone())
-        .or_else(|| find_acp_adapter().map(|p| p.to_string_lossy().to_string()));
-
-    let message = if available {
-        let name = active.map(|p| p.name.as_str()).unwrap_or("Agent");
-        let is_codex = active.map(|p| p.kind == AgentKind::Codex).unwrap_or(false);
-        let codex_home = codex_home_label();
-        if is_codex && codex_found && codex_config_found {
-            format!("{name} 已检测到本机配置，发起提问时将验证连接")
-        } else if is_codex && codex_found {
-            format!("{name} 已找到，但未检测到 {codex_home} 登录配置")
-        } else if is_codex && bunx_found {
-            format!("{name} 启动器已找到，首次提问将下载并验证 Agent")
-        } else {
-            format!("{name} 已就绪（仅在你发起会话时启动）")
-        }
-    } else if let Some(p) = active {
-        if p.kind == AgentKind::Custom && p.command.is_empty() {
-            "自定义 Agent 尚未填写启动命令".into()
-        } else {
-            format!("当前 Agent「{}」不可用：找不到 {}", p.name, p.command)
-        }
-    } else {
-        AcpError::not_configured(None).message
-    };
-
-    AcpStatus {
-        available,
-        adapter_found,
-        codex_found,
-        codex_config_found,
-        active_profile_id: active_id,
-        profiles,
-        cli_path,
-        codex_path: find_codex().map(|p| p.to_string_lossy().to_string()),
-        message,
-        hint: install_hint(adapter_found, codex_found, bunx_found, codex_config_found),
-        responses_only_note: RESPONSES_ONLY_NOTE.into(),
-        session_active: false,
-        busy: false,
-        session_model_options: None,
-    }
-}
-
-fn codex_home_label() -> &'static str {
-    if cfg!(windows) {
-        "%USERPROFILE%\\.codex"
-    } else {
-        "~/.codex"
-    }
-}
-
-pub fn probe_cli_version(cli: &Path) -> Option<String> {
-    let output = command(cli).arg("--version").output().ok()?;
-    if !output.status.success() {
-        return None;
-    }
-    let text = String::from_utf8_lossy(&output.stdout);
-    let line = text.lines().next()?.trim();
-    if line.is_empty() {
-        None
-    } else {
-        Some(line.to_string())
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn status_message_is_chinese_when_missing() {
-        let hint = default_profiles_hint();
-        let status = status_from_profiles(&hint);
-        assert!(
-            status
-                .message
-                .chars()
-                .any(|c| ('\u{4e00}'..='\u{9fff}').contains(&c)),
-            "{}",
-            status.message
-        );
-        assert!(
-            status
-                .hint
-                .chars()
-                .any(|c| ('\u{4e00}'..='\u{9fff}').contains(&c)),
-            "{}",
-            status.hint
-        );
-        assert!(status.responses_only_note.contains("Responses"));
-    }
 
     #[test]
     fn resolve_cwd_uses_writable_app_workspace_when_hint_missing() {

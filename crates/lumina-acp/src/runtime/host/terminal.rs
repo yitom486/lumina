@@ -1,7 +1,5 @@
-//! Local filesystem + terminal host for ACP Agent→Client requests.
+//! Terminal half of `AcpHost`: managed child processes + output cache.
 
-use std::collections::HashMap;
-use std::fs;
 use std::io::Read;
 use std::path::PathBuf;
 use std::process::{Child, Stdio};
@@ -13,178 +11,24 @@ use std::time::Duration;
 use serde_json::{json, Value};
 
 use crate::error::AcpError;
-use crate::process::command;
-use crate::protocol::{error_response, success_response};
+use crate::runtime::process::command;
+
+use super::fs::require_str;
+use super::AcpHost;
 
 static TERMINAL_SEQ: AtomicU64 = AtomicU64::new(1);
 
-#[derive(Default)]
-pub struct AcpHost {
-    terminals: Mutex<HashMap<String, ManagedTerminal>>,
-    /// Absolute session workspace from `session/new` cwd.
-    workspace: Mutex<Option<PathBuf>>,
-}
-
-struct ManagedTerminal {
-    child: Child,
-    output: Arc<Mutex<String>>,
-    truncated: Arc<AtomicBool>,
-    exited: Arc<AtomicBool>,
-    exit_code: Arc<Mutex<Option<i32>>>,
-    signal: Arc<Mutex<Option<String>>>,
+pub(super) struct ManagedTerminal {
+    pub(super) child: Child,
+    pub(super) output: Arc<Mutex<String>>,
+    pub(super) truncated: Arc<AtomicBool>,
+    pub(super) exited: Arc<AtomicBool>,
+    pub(super) exit_code: Arc<Mutex<Option<i32>>>,
+    pub(super) signal: Arc<Mutex<Option<String>>>,
 }
 
 impl AcpHost {
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    pub fn set_workspace(&self, cwd: PathBuf) {
-        if let Ok(mut guard) = self.workspace.lock() {
-            *guard = Some(cwd);
-        }
-    }
-
-    pub fn clear_workspace(&self) {
-        if let Ok(mut guard) = self.workspace.lock() {
-            *guard = None;
-        }
-    }
-
-    pub fn handle_request(
-        &self,
-        method: &str,
-        id: Value,
-        params: &Value,
-        canceling: bool,
-    ) -> Value {
-        if canceling
-            && matches!(
-                method,
-                "fs/read_text_file"
-                    | "fs/write_text_file"
-                    | "terminal/create"
-                    | "terminal/output"
-                    | "terminal/wait_for_exit"
-            )
-        {
-            return error_response(id, -32800, "request cancelled");
-        }
-
-        match method {
-            "session/request_permission" => success_response(
-                id,
-                crate::protocol::permission_auto_result(params, canceling),
-            ),
-            "fs/read_text_file" => match self.read_text_file(params) {
-                Ok(result) => success_response(id, result),
-                Err(error) => error_response(id, -32000, &error.message),
-            },
-            "fs/write_text_file" => match self.write_text_file(params) {
-                Ok(()) => success_response(id, Value::Null),
-                Err(error) => error_response(id, -32000, &error.message),
-            },
-            "terminal/create" => match self.terminal_create(params) {
-                Ok(result) => success_response(id, result),
-                Err(error) => error_response(id, -32000, &error.message),
-            },
-            "terminal/output" => match self.terminal_output(params) {
-                Ok(result) => success_response(id, result),
-                Err(error) => error_response(id, -32000, &error.message),
-            },
-            "terminal/wait_for_exit" => match self.terminal_wait_for_exit(params) {
-                Ok(result) => success_response(id, result),
-                Err(error) => error_response(id, -32000, &error.message),
-            },
-            "terminal/kill" => match self.terminal_kill(params) {
-                Ok(result) => success_response(id, result),
-                Err(error) => error_response(id, -32000, &error.message),
-            },
-            "terminal/release" => match self.terminal_release(params) {
-                Ok(result) => success_response(id, result),
-                Err(error) => error_response(id, -32000, &error.message),
-            },
-            "elicitation/create" => {
-                success_response(id, json!({ "outcome": { "outcome": "cancelled" } }))
-            }
-            other => {
-                tracing::warn!(method = other, "unsupported Agent→Client ACP method");
-                error_response(id, -32601, &format!("Method not found: {other}"))
-            }
-        }
-    }
-
-    fn read_text_file(&self, params: &Value) -> Result<Value, AcpError> {
-        let path = self.resolve_path(params, "path")?;
-        let line = params
-            .get("line")
-            .and_then(Value::as_u64)
-            .unwrap_or(1)
-            .max(1) as usize;
-        let limit = params
-            .get("limit")
-            .and_then(Value::as_u64)
-            .map(|v| v as usize);
-
-        let raw = fs::read_to_string(&path).map_err(|error| {
-            tracing::warn!(path = %path.display(), %error, "ACP fs read failed");
-            AcpError::new(
-                crate::AcpErrorCode::ProtocolError,
-                "无法读取该文件",
-                Some(error.to_string()),
-            )
-        })?;
-
-        let content = if line <= 1 && limit.is_none() {
-            raw
-        } else {
-            let lines: Vec<&str> = raw.lines().collect();
-            let start = line.saturating_sub(1).min(lines.len());
-            let end = match limit {
-                Some(n) => (start + n).min(lines.len()),
-                None => lines.len(),
-            };
-            lines[start..end].join("\n")
-        };
-
-        tracing::info!(path = %path.display(), bytes = content.len(), "ACP fs/read_text_file");
-        Ok(json!({ "content": content }))
-    }
-
-    fn write_text_file(&self, params: &Value) -> Result<(), AcpError> {
-        let path = self.resolve_path(params, "path")?;
-        let content = params
-            .get("content")
-            .and_then(Value::as_str)
-            .ok_or_else(|| AcpError::bad_request("写入内容缺失"))?;
-
-        if let Some(parent) = path.parent() {
-            if !parent.as_os_str().is_empty() {
-                fs::create_dir_all(parent).map_err(|error| {
-                    tracing::warn!(path = %parent.display(), %error, "ACP fs mkdir failed");
-                    AcpError::new(
-                        crate::AcpErrorCode::ProtocolError,
-                        "无法创建文件目录",
-                        Some(error.to_string()),
-                    )
-                })?;
-            }
-        }
-
-        fs::write(&path, content).map_err(|error| {
-            tracing::warn!(path = %path.display(), %error, "ACP fs write failed");
-            AcpError::new(
-                crate::AcpErrorCode::ProtocolError,
-                "无法写入该文件",
-                Some(error.to_string()),
-            )
-        })?;
-
-        tracing::info!(path = %path.display(), bytes = content.len(), "ACP fs/write_text_file");
-        Ok(())
-    }
-
-    fn terminal_create(&self, params: &Value) -> Result<Value, AcpError> {
+    pub(super) fn terminal_create(&self, params: &Value) -> Result<Value, AcpError> {
         let program = params
             .get("command")
             .and_then(Value::as_str)
@@ -271,7 +115,7 @@ impl AcpHost {
         Ok(json!({ "terminalId": terminal_id }))
     }
 
-    fn terminal_output(&self, params: &Value) -> Result<Value, AcpError> {
+    pub(super) fn terminal_output(&self, params: &Value) -> Result<Value, AcpError> {
         let id = require_str(params, "terminalId")?;
         let mut map = self
             .terminals
@@ -314,7 +158,7 @@ impl AcpHost {
         }))
     }
 
-    fn terminal_wait_for_exit(&self, params: &Value) -> Result<Value, AcpError> {
+    pub(super) fn terminal_wait_for_exit(&self, params: &Value) -> Result<Value, AcpError> {
         let id = require_str(params, "terminalId")?;
         let deadline = std::time::Instant::now() + Duration::from_secs(600);
         loop {
@@ -350,7 +194,7 @@ impl AcpHost {
         }
     }
 
-    fn terminal_kill(&self, params: &Value) -> Result<Value, AcpError> {
+    pub(super) fn terminal_kill(&self, params: &Value) -> Result<Value, AcpError> {
         let id = require_str(params, "terminalId")?;
         let mut map = self
             .terminals
@@ -365,7 +209,7 @@ impl AcpHost {
         Ok(json!({}))
     }
 
-    fn terminal_release(&self, params: &Value) -> Result<Value, AcpError> {
+    pub(super) fn terminal_release(&self, params: &Value) -> Result<Value, AcpError> {
         let id = require_str(params, "terminalId")?;
         let mut map = self
             .terminals
@@ -378,53 +222,6 @@ impl AcpHost {
         }
         Ok(json!({}))
     }
-
-    pub fn release_all_for_shutdown(&self) {
-        if let Ok(mut map) = self.terminals.lock() {
-            for (id, mut term) in map.drain() {
-                let _ = term.child.kill();
-                tracing::debug!(terminal_id = %id, "killed ACP terminal on app shutdown");
-            }
-        }
-        self.clear_workspace();
-    }
-
-    pub fn release_all(&self) {
-        if let Ok(mut map) = self.terminals.lock() {
-            for (id, mut term) in map.drain() {
-                let _ = term.child.kill();
-                let _ = term.child.wait();
-                tracing::debug!(terminal_id = %id, "released ACP terminal on session end");
-            }
-        }
-        self.clear_workspace();
-    }
-
-    fn workspace_cwd(&self) -> Result<PathBuf, AcpError> {
-        self.workspace
-            .lock()
-            .map_err(|_| AcpError::internal(Some("workspace lock poisoned")))?
-            .clone()
-            .ok_or_else(|| AcpError::protocol(Some("session workspace cwd missing")))
-    }
-
-    /// Absolute paths preferred; relative paths resolve against session workspace.
-    fn resolve_path(&self, params: &Value, key: &str) -> Result<PathBuf, AcpError> {
-        let raw = require_str(params, key)?;
-        let path = PathBuf::from(raw);
-        if path.is_absolute() {
-            return Ok(path);
-        }
-        let base = self.workspace_cwd()?;
-        Ok(base.join(path))
-    }
-}
-
-fn require_str<'a>(params: &'a Value, key: &str) -> Result<&'a str, AcpError> {
-    params
-        .get(key)
-        .and_then(Value::as_str)
-        .ok_or_else(|| AcpError::bad_request(format!("缺少参数 {key}")))
 }
 
 fn spawn_pipe_reader<R: Read + Send + 'static>(
@@ -492,70 +289,6 @@ fn refresh_exit_status(term: &mut ManagedTerminal) {
 mod tests {
     use super::*;
     use serde_json::json;
-    use std::time::{SystemTime, UNIX_EPOCH};
-
-    fn temp_path(name: &str) -> PathBuf {
-        let nanos = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map(|d| d.as_nanos())
-            .unwrap_or(0);
-        std::env::temp_dir().join(format!("lumina-acp-{nanos}-{name}"))
-    }
-
-    #[test]
-    fn read_write_roundtrip() {
-        let host = AcpHost::new();
-        let path = temp_path("sample.txt");
-        fs::write(&path, "a\nb\nc").expect("seed");
-
-        let read = host
-            .read_text_file(&json!({
-                "path": path.to_string_lossy(),
-                "line": 2,
-                "limit": 1
-            }))
-            .expect("read");
-        assert_eq!(read.get("content").and_then(Value::as_str), Some("b"));
-
-        let path2 = temp_path("out.txt");
-        host.write_text_file(&json!({
-            "path": path2.to_string_lossy(),
-            "content": "hello"
-        }))
-        .expect("write");
-        assert_eq!(fs::read_to_string(&path2).expect("reread"), "hello");
-        let _ = fs::remove_file(&path);
-        let _ = fs::remove_file(&path2);
-    }
-
-    #[test]
-    fn relative_path_resolves_against_workspace() {
-        let host = AcpHost::new();
-        let dir = temp_path("ws");
-        fs::create_dir_all(&dir).expect("mkdir");
-        let file = dir.join("note.txt");
-        fs::write(&file, "workspace-rel").expect("seed");
-        host.set_workspace(dir.clone());
-
-        let read = host
-            .read_text_file(&json!({ "path": "note.txt" }))
-            .expect("read relative");
-        assert_eq!(
-            read.get("content").and_then(Value::as_str),
-            Some("workspace-rel")
-        );
-        let _ = fs::remove_file(&file);
-        let _ = fs::remove_dir_all(&dir);
-    }
-
-    #[test]
-    fn rejects_relative_without_workspace() {
-        let host = AcpHost::new();
-        let err = host
-            .read_text_file(&json!({ "path": "relative.txt" }))
-            .expect_err("relative");
-        assert_eq!(err.message, "与 Agent 通信失败");
-    }
 
     #[test]
     fn terminal_echo_and_wait() {

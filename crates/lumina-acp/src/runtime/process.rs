@@ -4,7 +4,7 @@
 //! (same pattern as `lumina-media::process`).
 
 use std::ffi::OsStr;
-use std::process::{Child, Command};
+use std::process::{Child, Command, Stdio};
 
 pub fn command<P: AsRef<OsStr>>(program: P) -> Command {
     #[cfg(windows)]
@@ -25,26 +25,27 @@ pub fn command<P: AsRef<OsStr>>(program: P) -> Command {
 /// supported process-tree primitive. Windows ACP adapters commonly spawn a
 /// second Codex process, so killing only the wrapper is insufficient.
 ///
-/// `wait=false` is strictly non-blocking: on Windows it fire-and-forget
-/// spawns taskkill (no `status()`/`wait()` anywhere on that path) so Drop
-/// handlers and destructors can call it safely. A failed spawn falls back
-/// to a plain kill with a warn, never silently.
+/// `wait=false` does not wait for or reap the target child. On Windows it
+/// waits only for the short `taskkill` command to acknowledge the tree kill:
+/// dropping that helper process immediately proved unreliable under the
+/// desktop sandbox and could leave the Agent tree alive. A failed command
+/// falls back to a plain kill with a warn, never silently.
 pub fn terminate_tree(child: &mut Child, wait: bool) {
     #[cfg(windows)]
     {
         let pid = child.id().to_string();
         let mut taskkill = command("taskkill");
-        taskkill.args(["/PID", &pid, "/T", "/F"]);
-        if wait {
-            let tree_killed = taskkill
-                .status()
-                .map(|status| status.success())
-                .unwrap_or(false);
-            if !tree_killed {
-                let _ = child.kill();
-            }
-        } else if taskkill.spawn().is_err() {
-            tracing::warn!(pid = %pid, "taskkill spawn failed, falling back to kill");
+        taskkill
+            .args(["/PID", &pid, "/T", "/F"])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+        let tree_killed = taskkill
+            .status()
+            .map(|status| status.success())
+            .unwrap_or(false);
+        if !tree_killed {
+            tracing::warn!(pid = %pid, "taskkill failed, falling back to kill");
             let _ = child.kill();
         }
     }
