@@ -14,13 +14,15 @@ use lumina_subtitle::{SubtitleChoice, Transcript};
 /// Relative path under session cwd; must stay aligned with [`lumina_agent_context_path`].
 pub const SNAPSHOT_RELATIVE_PATH: &str = ".lumina/agent-context.json";
 pub const CONTEXT_FILE_ENV: &str = "LUMINA_MCP_CONTEXT_FILE";
-pub const SNAPSHOT_SCHEMA_VERSION: u32 = 3;
+pub const SNAPSHOT_SCHEMA_VERSION: u32 = 5;
 pub const LIBRARY_WARM_EVERY: u32 = 5;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct PromptAnchor {
     pub media_path: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub media_title: Option<String>,
     pub library_root: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub group_key: Option<String>,
@@ -29,19 +31,25 @@ pub struct PromptAnchor {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub episode: Option<u32>,
     pub position_ms: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub duration_ms: Option<u64>,
     pub sent_at_ms: u128,
     pub subtitle_choice_id: Option<String>,
 }
 
+/// Current-episode plot kept on disk for MCP; also inlined into the prompt
+/// **once** when the media/episode changes.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
-pub struct PlaybackLite {
-    pub media_path: Option<String>,
-    pub media_title: Option<String>,
-    pub position_ms: Option<u64>,
-    pub duration_ms: Option<u64>,
-    pub chapter_title: Option<String>,
-    pub notes_excerpt: Option<String>,
+pub struct CurrentEpisodeLite {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub season: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub episode: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub overview: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -89,7 +97,9 @@ pub struct LuminaMcpSnapshot {
     #[serde(default = "default_schema_version")]
     pub schema_version: u32,
     pub anchor: Option<PromptAnchor>,
-    pub playback: Option<PlaybackLite>,
+    /// Per-episode title/overview for the anchored media (not the series wiki).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub current_episode: Option<CurrentEpisodeLite>,
     pub library: Option<SeriesLibraryCache>,
     pub session: Option<SessionPolicy>,
     pub capabilities: Option<AgentCapabilities>,
@@ -107,7 +117,7 @@ impl LuminaMcpSnapshot {
         Self {
             schema_version: SNAPSHOT_SCHEMA_VERSION,
             anchor: None,
-            playback: None,
+            current_episode: None,
             library: None,
             session: None,
             capabilities: None,
@@ -240,21 +250,15 @@ mod tests {
         let snapshot = LuminaMcpSnapshot {
             anchor: Some(PromptAnchor {
                 media_path: "https://www.youtube.com/watch?v=e2e".into(),
+                media_title: None,
                 library_root: None,
                 group_key: None,
                 season: None,
                 episode: None,
                 position_ms: 10_000,
+                duration_ms: None,
                 sent_at_ms: 1,
                 subtitle_choice_id: Some("online:en".into()),
-            }),
-            playback: Some(PlaybackLite {
-                media_path: Some("https://www.youtube.com/watch?v=e2e".into()),
-                media_title: Some("demo".into()),
-                position_ms: Some(10_000),
-                duration_ms: Some(60_000),
-                chapter_title: Some("Intro".into()),
-                notes_excerpt: None,
             }),
             online: Some(OnlineMediaSnapshot {
                 media_id: "youtube:e2e".into(),
@@ -334,21 +338,21 @@ mod tests {
             schema_version: SNAPSHOT_SCHEMA_VERSION,
             anchor: Some(PromptAnchor {
                 media_path: r"D:\videos\demo.mkv".into(),
+                media_title: None,
                 library_root: Some(r"D:\library".into()),
                 group_key: Some("Demo.Show".into()),
                 season: Some(1),
                 episode: Some(1),
                 position_ms: 12_000,
+                duration_ms: None,
                 sent_at_ms: 1,
                 subtitle_choice_id: Some("embedded:2".into()),
             }),
-            playback: Some(PlaybackLite {
-                media_path: Some(r"D:\videos\demo.mkv".into()),
-                media_title: Some("demo.mkv".into()),
-                position_ms: Some(12_000),
-                duration_ms: Some(60_000),
-                chapter_title: None,
-                notes_excerpt: None,
+            current_episode: Some(CurrentEpisodeLite {
+                season: Some(1),
+                episode: Some(1),
+                title: Some("开场".into()),
+                overview: Some("两人因纪录片重逢。".into()),
             }),
             library: Some(SeriesLibraryCache {
                 title: "示例".into(),

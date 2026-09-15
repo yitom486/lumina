@@ -143,7 +143,7 @@ mod tests {
         LuminaMcpSnapshot {
             schema_version: SNAPSHOT_SCHEMA_VERSION,
             anchor: None,
-            playback: None,
+            current_episode: None,
             library: None,
             session: None,
             capabilities: Some(AgentCapabilities {

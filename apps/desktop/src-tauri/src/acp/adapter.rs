@@ -75,22 +75,21 @@ pub fn build_prompt_snapshot(
     library: &MediaLibraryService,
     context: Option<&VideoPromptContext>,
     vision_capable: bool,
-) -> Result<LuminaMcpSnapshot, AcpError> {
+) -> Result<(LuminaMcpSnapshot, bool), AcpError> {
     let context = context.map(|context| crate::mcp::McpPromptContext {
         media_path: context.media_path.clone(),
         media_title: context.media_title.clone(),
         position_ms: context.position_ms,
         duration_ms: context.duration_ms,
-        chapter_title: context.chapter_title.clone(),
         subtitle_choice_id: context.subtitle_choice_id.clone(),
-        notes_excerpt: context.notes_excerpt.clone(),
     });
     let mut guard = snapshots
         .lock()
         .map_err(|_| AcpError::internal(Some("prompt snapshot mutex poisoned")))?;
-    guard
+    let built = guard
         .next_snapshot(context.as_ref(), library, vision_capable)
-        .map_err(|error| AcpError::internal(error.details.as_deref()))
+        .map_err(|error| AcpError::internal(error.details.as_deref()))?;
+    Ok((built.snapshot, built.media_changed))
 }
 
 /// Persist the chat prompt snapshot. Mirrors `write_prompt_snapshot`.

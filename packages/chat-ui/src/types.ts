@@ -78,6 +78,10 @@ export type VideoPromptContext = {
   chapterTitle?: string | null;
   subtitleChoiceId?: string | null;
   notesExcerpt?: string | null;
+  season?: number | null;
+  episode?: number | null;
+  episodeTitle?: string | null;
+  episodeOverview?: string | null;
 };
 
 export type PermissionMode = "auto" | "ask";

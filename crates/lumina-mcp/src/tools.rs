@@ -137,7 +137,7 @@ fn playback_context(snapshot: &LuminaMcpSnapshot) -> Result<Value, String> {
     });
     text_result(&json!({
         "anchor": snapshot.anchor,
-        "playback": snapshot.playback,
+        "currentEpisode": snapshot.current_episode,
         "session": snapshot.session,
         "libraryCached": snapshot.library.is_some(),
         "online": online,
@@ -693,9 +693,15 @@ fn resolve_group_key(
 
 fn snapshot_duration_ms(snapshot: &LuminaMcpSnapshot) -> Option<u64> {
     snapshot
-        .playback
+        .anchor
         .as_ref()
-        .and_then(|playback| playback.duration_ms)
+        .and_then(|anchor| anchor.duration_ms)
+        .or_else(|| {
+            snapshot
+                .online
+                .as_ref()
+                .and_then(|online| online.duration_ms)
+        })
 }
 
 /// Shared time center for transcript + capture tools. Defaults to `default_center_ms`
@@ -852,21 +858,15 @@ mod tests {
         let snapshot = LuminaMcpSnapshot {
             anchor: Some(PromptAnchor {
                 media_path: media.to_string_lossy().into_owned(),
+                media_title: None,
                 library_root: None,
                 group_key: None,
                 season: None,
                 episode: None,
                 position_ms: 10_000,
+                duration_ms: None,
                 sent_at_ms: 7,
                 subtitle_choice_id: None,
-            }),
-            playback: Some(crate::snapshot::PlaybackLite {
-                media_path: Some(media.to_string_lossy().into_owned()),
-                media_title: Some("chain-20s.mp4".into()),
-                position_ms: Some(10_000),
-                duration_ms: Some(20_000),
-                chapter_title: None,
-                notes_excerpt: None,
             }),
             capabilities: Some(AgentCapabilities {
                 vision_capable: true,
@@ -996,21 +996,15 @@ mod tests {
         let snapshot = LuminaMcpSnapshot {
             anchor: Some(PromptAnchor {
                 media_path: media.to_string_lossy().into_owned(),
+                media_title: None,
                 library_root: None,
                 group_key: None,
                 season: None,
                 episode: None,
                 position_ms: 2_000,
+                duration_ms: None,
                 sent_at_ms: 9,
                 subtitle_choice_id: None,
-            }),
-            playback: Some(crate::snapshot::PlaybackLite {
-                media_path: Some(media.to_string_lossy().into_owned()),
-                media_title: Some("cut.mp4".into()),
-                position_ms: Some(2_000),
-                duration_ms: Some(4_000),
-                chapter_title: None,
-                notes_excerpt: None,
             }),
             capabilities: Some(AgentCapabilities {
                 vision_capable: true,
@@ -1116,11 +1110,13 @@ mod tests {
     fn episode_transcript_default_center_matches_anchor_episode() {
         let anchor = PromptAnchor {
             media_path: "Show/S01E02.mkv".into(),
+            media_title: None,
             library_root: None,
             group_key: Some("Show".into()),
             season: Some(1),
             episode: Some(2),
             position_ms: 88_000,
+            duration_ms: None,
             sent_at_ms: 1,
             subtitle_choice_id: None,
         };
@@ -1175,21 +1171,15 @@ mod tests {
         LuminaMcpSnapshot {
             anchor: Some(PromptAnchor {
                 media_path: "https://www.youtube.com/watch?v=abc".into(),
+                media_title: None,
                 library_root: None,
                 group_key: None,
                 season: None,
                 episode: None,
                 position_ms: 10_000,
+                duration_ms: None,
                 sent_at_ms: 1,
                 subtitle_choice_id: Some("online:en".into()),
-            }),
-            playback: Some(crate::snapshot::PlaybackLite {
-                media_path: Some("https://www.youtube.com/watch?v=abc".into()),
-                media_title: Some("Demo".into()),
-                position_ms: Some(10_000),
-                duration_ms: Some(60_000),
-                chapter_title: None,
-                notes_excerpt: None,
             }),
             capabilities: Some(AgentCapabilities {
                 vision_capable: false,
@@ -1324,11 +1314,13 @@ mod tests {
             let snapshot = LuminaMcpSnapshot {
                 anchor: Some(PromptAnchor {
                     media_path: media.into(),
+                    media_title: None,
                     library_root: None,
                     group_key: None,
                     season: None,
                     episode: None,
                     position_ms: 1_500,
+                    duration_ms: None,
                     sent_at_ms: 1,
                     subtitle_choice_id: Some(stored.choice_id.clone()),
                 }),
@@ -1550,21 +1542,15 @@ mod tests {
         let snapshot = LuminaMcpSnapshot {
             anchor: Some(PromptAnchor {
                 media_path: media.to_string_lossy().into_owned(),
+                media_title: None,
                 library_root: None,
                 group_key: None,
                 season: None,
                 episode: None,
                 position_ms: 3_000,
+                duration_ms: None,
                 sent_at_ms: 11,
                 subtitle_choice_id: None,
-            }),
-            playback: Some(crate::snapshot::PlaybackLite {
-                media_path: Some(media.to_string_lossy().into_owned()),
-                media_title: Some("gap.m4a".into()),
-                position_ms: Some(3_000),
-                duration_ms: Some(6_000),
-                chapter_title: None,
-                notes_excerpt: None,
             }),
             capabilities: Some(AgentCapabilities {
                 vision_capable: false,

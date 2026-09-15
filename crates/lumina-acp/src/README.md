@@ -50,6 +50,8 @@ Code 或自定义 Agent）通信，负责会话生命周期、流式事件、权
   - `message` 是稳定的业务提示；底层 stderr、serde、路径和协议细节只进入 `details` 与日志。
   - 严防终端僵尸进程：设置明确的超时与取消保护（`CANCEL_KILL_SECS`），Agent 超时不响应取消则强制终止。
 
+源码按 `domain → agent → wire → runtime (+ jobs)` 分层；**各目录一句话职责与如何拼成一次会话**，见下方 **§4**。
+
 ---
 
 ## 2. 构建思路与设计原则
@@ -180,31 +182,119 @@ pool.shutdown();
 
 ---
 
-## 4. 内部子模块全景
+## 4. 源码目录：几块各管什么
 
-`lumina-acp/src/` 按职责组织。稳定业务 API 以根导出为推荐入口，新目录用于表达
-内部边界和新代码的组织方式。核心依赖方向是：
+读代码时先记住一句话目标，再按「谁依赖谁」往下钻。稳定对外 API 以
+[`lib.rs`](./lib.rs) 根导出为准（`AcpService`、`AcpError`、`WorkshopPool` 等）；
+旧平铺路径（`service` / `protocol` / `profile` / …）只是兼容 re-export。
+
+### 4.1 一张图：怎么组成「一次 ACP」
 
 ```text
-agent  → domain
-wire   → domain
-runtime → agent + wire + domain
-jobs   → runtime + agent + domain
+宿主 (Tauri / adapter)
+        │  profiles hint、cwd、SessionEnvironment、事件回调
+        ▼
+┌───────────────────────────────────────────────────────────┐
+│  runtime::AcpService          ← 对外总入口（活会话）         │
+│    ├─ agent/     选哪个 Agent、命令怎么起、cwd 在哪、状态文案  │
+│    ├─ wire/      JSON-RPC 怎么编/解（纯函数，不碰进程）        │
+│    ├─ domain/    事件/设置/上下文 DTO + 宿主注入 port         │
+│    └─ process/io/host …      stdio、权限、fs/terminal 回调   │
+└───────────────────────────────────────────────────────────┘
+        │  spawn + initialize → authenticate → session/new|resume
+        │  session/prompt ↔ session/update …
+        ▼
+  Agent 子进程 (codex-acp / Claude / custom)
+
+另线：jobs/（WorkshopPool、隔离 prompt）→ 复用 runtime，但不走聊天历史 / MCP
 ```
 
-`error` 是全 crate 的错误契约，置于顶层。旧平铺路径
-（`service/protocol/profile/paths/...`）保留为兼容 re-export；新代码优先使用新层级。
-其中 `runtime/service.rs` 到 `jobs/isolated.rs` 的少量反向调用只用于保留旧的
-`AcpService` 方法，是兼容桥，不属于新的业务依赖方向：
+**依赖方向（新代码必须遵守）：**
 
-| 目录 | 模块 | 核心职责与导出项 |
+```text
+domain   ← 无依赖（纯数据）
+agent    → domain
+wire     → domain
+runtime  → agent + wire + domain
+jobs     → runtime + agent + domain
+error    ← 全 crate 共用错误形状
+```
+
+唯一例外：`runtime/service` 里少数方法薄转发到 `jobs/isolated`，仅为保留旧
+`AcpService` API，不是新业务依赖方向。
+
+### 4.2 顶层模块一览（只记职责，不记每个文件）
+
+| 目录 | 一句话目的 | 不管什么 |
 | :--- | :--- | :--- |
-| [`lib.rs`](./lib.rs) + [`error.rs`](./error.rs) | 根 / 契约 | 稳定根导出与旧路径兼容层（`AcpService/AcpError/WorkshopPool/...`）；`AcpError/AcpErrorCode` 固定业务 `message`。 |
-| `domain/` | 纯数据，无 IO | `model.rs`（`AcpEvent/AcpStatus/AgentKind/AgentProfileStatus/PermissionOption/...`）、`settings.rs`（`AcpClientSettings/PermissionMode/ThinkingLevel`）、`context.rs`（`VideoPromptContext` 纯 DTO，不构造 ACP JSON）、`environment.rs`（`SessionEnvironment` 宿主注入 port）。 |
-| `agent/` | 启动前：找谁、在哪跑 | `discover.rs`（PATH/native 查找）、`workspace.rs`（`resolve_session_cwd` + 在线 URL 回退）、`launch.rs`（`LaunchSpec/resolve_launch` + builtin Codex + `pick_auth_method` 认证策略）、`profile.rs`（`AgentProfile/prepare/resolve_active`）、`status.rs`（`status_from_profiles/install_hint` 合并旧 `paths` + `profile` 文案）。 |
-| `wire/` | 线上格式，纯函数 | `codec.rs`（request/notification/envelope/`Inbound` 分类）、`session.rs`（initialize/auth/new/resume/**prompt**/close params + parse；`session_prompt_params` 在此构造 `resource_link`）、`updates.rs`（agent text/thought/tool/plan 提取）、`permission.rs`（权限 options/auto/selected）、`sanitize.rs`（路径脱敏/截断/底层错误改写）。 |
-| `runtime/` | 活着的进程 | `service.rs`（瘦门面：connect/new_chat/close/cancel/status + 旧 API 薄转发）、`prompt.rs`（`prompt` 循环：超时/取消/流式收集）、`lifecycle.rs`（`LiveSession` + spawn/new/resume/rotate）、`io.rs`（stdio 读写 + 按 id 等待）、`inbound.rs`（update/permission 分发）、`host/{mod,fs,terminal}.rs`（`AcpHost`：`fs/*` 与 `terminal/*` 已拆开）、`process.rs`（crate 内 spawn/kill，无控制台闪烁）。 |
-| `jobs/` | 一次性任务 | `isolated.rs`（`prompt_isolated_restricted/discover_isolated_models` 新家）、`pool.rs`（`WorkshopPool/PoolConfig`，另有 `IsolatedSessionPool` 别名）、`rollout.rs`（本任务 Codex rollout 精确清扫）、`collector.rs`（`AgentReplyCollector`，拼装 thinking + 正文）。 |
+| **`domain/`** | 跨边界的**稳定数据与宿主 port**：事件、状态、设置、视频上下文、`SessionEnvironment`。 | 不 spawn、不读写 stdio、不拼 ACP JSON 请求体。 |
+| **`agent/`** | **启动前准备**：选哪个 profile、本机有没有二进制、最终 `LaunchSpec`、会话 cwd、给 UI 的中文状态。 | 不维护 live session，不跑 prompt 循环。 |
+| **`wire/`** | **协议编解码**：请求/通知 JSON、session 参数、流式 update 解析、权限选项、路径脱敏。 | 不知道「哪个 Agent」、不持有子进程。 |
+| **`runtime/`** | **活着的 Client**：spawn、握手、prompt 循环、取消/关闭、stdio IO、Agent→Client 的 fs/terminal。 | 不实现「选 Codex 还是 Claude」的产品策略（那是 agent）。 |
+| **`jobs/`** | **短任务 / 作业池**：无历史无工具的隔离 prompt、字幕工作台 `WorkshopPool`、回复收集与 rollout 清理。 | 不是主聊天 UI 路径；聊天走 `runtime::AcpService::prompt`。 |
+| **`error.rs`** | 统一 `{ code, message, details? }`；`message` 给用户，细节进 `details`/日志。 | — |
+
+把一次「用户点发送」串起来：
+
+1. **`agent`**：从 profiles hint 解析激活档案 → `resolve_launch` → `resolve_session_cwd`
+2. **`runtime`**：按 `LaunchSpec` spawn → 用 **`wire`** 做 initialize / auth / session/new
+3. **`wire` + `runtime`**：发 `session/prompt`，收 `session/update`，映射成 **`domain::AcpEvent`**
+4. 需要本机文件/终端时：**`runtime/host`** 应答 Agent 的反向 RPC
+5. 字幕翻译等批处理：**`jobs::WorkshopPool`** 开隔离槽位，仍底层走同一套 runtime/wire
+
+### 4.3 各目录内部地图（粗览即可）
+
+#### `domain/` — 数据与宿主约定
+
+| 文件（约） | 作用 |
+| :--- | :--- |
+| `model.rs` | `AcpEvent`、`AcpStatus`、profile 相关 DTO、权限选项等 |
+| `settings.rs` | `AcpClientSettings`、`PermissionMode`、`ThinkingLevel` |
+| `context.rs` | `VideoPromptContext`（媒体锚点等，纯 DTO） |
+| `environment.rs` | `SessionEnvironment`：宿主注入 MCP / snapshot 路径等 |
+
+#### `agent/` — 「用谁、怎么起、在哪跑」
+
+| 文件（约） | 作用 |
+| :--- | :--- |
+| `profile.rs` | Codex / Claude / Custom 档案；merge 前端 hint；解析当前激活项 |
+| `discover.rs` | 在 PATH / `native/acp` / 开发树里找 bunx、codex-acp、codex |
+| `launch.rs` | profile → `LaunchSpec`（program/args/env）；builtin Codex 启动优先级；选 auth 策略 |
+| `workspace.rs` | 会话 `cwd`：本地目录优先，拒绝 http(s)，否则 AppData 工作区 |
+| `status.rs` | 探测结果 → 中文 `AcpStatus.message` / 安装 hint |
+
+#### `wire/` — 「线上长什么样」
+
+| 文件（约） | 作用 |
+| :--- | :--- |
+| `codec.rs` | JSON-RPC envelope、入站分类 |
+| `session.rs` | initialize / authenticate / new / resume / prompt / close 的 params 与解析 |
+| `updates.rs` | 从 session update 抽出 thought / message / tool / plan |
+| `permission.rs` | 权限请求选项与自动/选中策略辅助 |
+| `sanitize.rs` | 路径与底层错误脱敏，避免泄漏进 UI `message` |
+
+#### `runtime/` — 「会话活着时」
+
+| 文件（约） | 作用 |
+| :--- | :--- |
+| `service.rs` | 对外门面：`connect` / `prompt` / `new_chat` / `cancel` / `close` / `status`… |
+| `lifecycle.rs` | `LiveSession`：spawn、new/resume、旋转会话 |
+| `prompt.rs` | 单次 prompt：超时、取消、流式收集 |
+| `io.rs` | stdio 读写、按 request id 等待响应 |
+| `inbound.rs` | 分发 Agent 推送的 update / permission |
+| `host/` | 实现 Agent 回调的 `fs/*`、`terminal/*` |
+| `process.rs` | 子进程 spawn/kill（无多余控制台窗口） |
+
+#### `jobs/` — 「聊天以外的批处理」
+
+| 文件（约） | 作用 |
+| :--- | :--- |
+| `pool.rs` | `WorkshopPool` / `PoolConfig`：作业级隔离 session 槽位 |
+| `isolated.rs` | `prompt_isolated_restricted`、隔离模型发现 |
+| `collector.rs` | 把流式块拼成 thinking + 正文 |
+| `rollout.rs` | 隔离任务相关 Codex rollout 清理 |
+
+更细的握手顺序、超时表、每个 `AcpService` 方法说明见 [`acp.md`](./acp.md)。
 
 ---
 

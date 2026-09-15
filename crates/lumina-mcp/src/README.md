@@ -28,7 +28,7 @@
   - MCP stdio 服务端运行（`server`）：响应 `initialize`、`tools/list` 与 `tools/call` 标准 JSON-RPC 2.0 请求；只读工具经有界 worker 并行执行，写入工具保持独占。
   - 单一无锁只读快照机制（`snapshot`）：通过 `.lumina/agent-context.json` 快照解耦主进程与 MCP 子进程，避免跨进程死锁与状态竞态。
   - 提供 10 个标准的 Agent 工具（对应 `lumina-core::tool_contract` 中的规范）：
-    1. `lumina_get_playback_context`：查询当前视频播放状态与时长。
+    1. `lumina_get_playback_context`：查询快照锚点（进度/时长）与本集剧情 `currentEpisode`。
     2. `lumina_get_library_context`：查询当前媒体所属剧集/电影的元数据信息。
     3. `lumina_get_episode_index`：查询当前剧集所在季度的所有分集列表。
     4. `lumina_get_transcript_window`：按时间窗口滑动拉取当前播放点附近的字幕台词。

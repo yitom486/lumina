@@ -112,7 +112,7 @@ pub async fn acp_prompt(
     let settings = client_settings.unwrap_or_default();
     tauri::async_runtime::spawn_blocking(move || {
         let session_cwd = resolve_session_cwd(cwd.as_deref())?;
-        let mut snapshot = adapter::build_prompt_snapshot(
+        let (mut snapshot, media_changed) = adapter::build_prompt_snapshot(
             &snapshots,
             &library,
             context.as_ref(),
@@ -146,11 +146,12 @@ pub async fn acp_prompt(
                     });
                     if let Some(anchor) = snapshot.anchor.as_mut() {
                         anchor.subtitle_choice_id = selected;
-                    }
-                    if let Some(playback) = snapshot.playback.as_mut() {
-                        playback.media_title =
-                            resolved.title.clone().or(playback.media_title.take());
-                        playback.duration_ms = resolved.duration_ms.or(playback.duration_ms);
+                        if anchor.media_title.as_ref().is_none_or(|s| s.trim().is_empty()) {
+                            anchor.media_title = resolved.title.clone();
+                        }
+                        if anchor.duration_ms.is_none() {
+                            anchor.duration_ms = resolved.duration_ms;
+                        }
                     }
                     snapshot.online = Some(OnlineMediaSnapshot {
                         media_id: resolved.media_id,
@@ -172,11 +173,13 @@ pub async fn acp_prompt(
         if let Some(anchor) = snapshot.anchor.as_ref() {
             tracing::info!(
                 position_ms = anchor.position_ms,
+                media_changed,
                 turn = snapshot.session.as_ref().map(|session| session.turn),
                 "ACP 提问锚点已写入 snapshot"
             );
         }
         adapter::write_prompt_snapshot(&session_cwd, &snapshot)?;
+        let context = enrich_prompt_context(context, &snapshot, media_changed);
         acp.prompt(
             text,
             cwd,
@@ -195,6 +198,65 @@ pub async fn acp_prompt(
     })
     .await
     .map_err(|error| AcpError::internal(Some(&format!("acp prompt join: {error}"))))?
+}
+
+/// Per-turn: progress always. Episode plot only when media/episode switched.
+fn enrich_prompt_context(
+    context: Option<VideoPromptContext>,
+    snapshot: &lumina_mcp::LuminaMcpSnapshot,
+    media_changed: bool,
+) -> Option<VideoPromptContext> {
+    let mut ctx = context.unwrap_or_default();
+    ctx.chapter_title = None;
+    ctx.notes_excerpt = None;
+    ctx.episode_title = None;
+    ctx.episode_overview = None;
+
+    if let Some(anchor) = snapshot.anchor.as_ref() {
+        if ctx.media_path.as_ref().is_none_or(|s| s.trim().is_empty()) {
+            ctx.media_path = Some(anchor.media_path.clone());
+        }
+        if ctx.media_title.as_ref().is_none_or(|s| s.trim().is_empty()) {
+            ctx.media_title = anchor.media_title.clone();
+        }
+        if ctx.position_ms.is_none() {
+            ctx.position_ms = Some(anchor.position_ms);
+        }
+        if ctx.duration_ms.is_none() {
+            ctx.duration_ms = anchor.duration_ms;
+        }
+        if ctx
+            .subtitle_choice_id
+            .as_ref()
+            .is_none_or(|s| s.trim().is_empty())
+        {
+            ctx.subtitle_choice_id = anchor.subtitle_choice_id.clone();
+        }
+        if ctx.season.is_none() {
+            ctx.season = anchor.season;
+        }
+        if ctx.episode.is_none() {
+            ctx.episode = anchor.episode;
+        }
+    }
+    if let Some(episode) = snapshot.current_episode.as_ref() {
+        if ctx.season.is_none() {
+            ctx.season = episode.season;
+        }
+        if ctx.episode.is_none() {
+            ctx.episode = episode.episode;
+        }
+        // Conditional: pack episode plot into the prompt only on media switch.
+        if media_changed {
+            ctx.episode_title = episode.title.clone();
+            ctx.episode_overview = episode.overview.clone();
+        }
+    }
+    if ctx.is_empty() {
+        None
+    } else {
+        Some(ctx)
+    }
 }
 
 #[tauri::command]

@@ -1,9 +1,9 @@
 //! Dynamic video context for `session/prompt` (pure data only).
 //!
-//! Structured metadata is **not** inlined into the prompt. Lumina writes
-//! `.lumina/agent-context.json` and registers an MCP server so the Agent can
-//! fetch playback/library context on demand. Stable tool-use guidance is
-//! delivered once by the MCP server's `initialize.instructions` field.
+//! Progress (and episode plot **only on media switch**) are inlined into the
+//! prompt. Richer metadata lives in `.lumina/agent-context.json` for MCP
+//! on-demand fetch. Stable tool-use guidance is delivered once by the MCP
+//! server's `initialize.instructions` field.
 //!
 //! Wire construction (`session_prompt_params`) lives in
 //! `crate::wire::session`; this module keeps the [`VideoPromptContext`] DTO
@@ -26,6 +26,15 @@ pub struct VideoPromptContext {
     pub chapter_title: Option<String>,
     pub subtitle_choice_id: Option<String>,
     pub notes_excerpt: Option<String>,
+    /// Filled by the app from local episode metadata before ACP prompt.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub season: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub episode: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub episode_title: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub episode_overview: Option<String>,
 }
 
 impl VideoPromptContext {
@@ -47,6 +56,16 @@ impl VideoPromptContext {
                 .is_none_or(|s| s.trim().is_empty())
             && self
                 .notes_excerpt
+                .as_ref()
+                .is_none_or(|s| s.trim().is_empty())
+            && self.season.is_none()
+            && self.episode.is_none()
+            && self
+                .episode_title
+                .as_ref()
+                .is_none_or(|s| s.trim().is_empty())
+            && self
+                .episode_overview
                 .as_ref()
                 .is_none_or(|s| s.trim().is_empty())
     }

@@ -85,6 +85,13 @@ pub fn session_prompt_params(
                 "name": name,
             }));
         }
+
+        if let Some(playback) = format_playback_context_block(ctx) {
+            prompt.push(json!({
+                "type": "text",
+                "text": playback,
+            }));
+        }
     }
 
     if let Some(history) = history_context.filter(|s| !s.trim().is_empty()) {
@@ -103,6 +110,79 @@ pub fn session_prompt_params(
         "sessionId": session_id,
         "prompt": prompt,
     })
+}
+
+/// Compact per-turn block: progress / episode index always;
+/// episode title/overview only when enrich packed them on media switch.
+fn format_playback_context_block(ctx: &VideoPromptContext) -> Option<String> {
+    let mut lines = Vec::new();
+    if let Some(title) = ctx
+        .media_title
+        .as_deref()
+        .filter(|s| !s.trim().is_empty())
+        .or_else(|| {
+            ctx.media_path
+                .as_deref()
+                .filter(|p| !p.trim().is_empty())
+                .map(file_name)
+        })
+    {
+        lines.push(format!("媒体：{title}"));
+    }
+    match (ctx.position_ms, ctx.duration_ms) {
+        (Some(pos), Some(dur)) => lines.push(format!(
+            "进度：{} / {}（{pos}ms）",
+            format_clock_ms(pos),
+            format_clock_ms(dur)
+        )),
+        (Some(pos), None) => lines.push(format!("进度：{}（{pos}ms）", format_clock_ms(pos))),
+        (None, Some(dur)) => lines.push(format!("时长：{}（{dur}ms）", format_clock_ms(dur))),
+        (None, None) => {}
+    }
+    match (ctx.season, ctx.episode) {
+        (Some(season), Some(episode)) => lines.push(format!("集数：S{season:02}E{episode:02}")),
+        (None, Some(episode)) => lines.push(format!("集数：E{episode:02}")),
+        (Some(season), None) => lines.push(format!("季数：S{season:02}")),
+        (None, None) => {}
+    }
+    if let Some(choice) = ctx
+        .subtitle_choice_id
+        .as_deref()
+        .filter(|s| !s.trim().is_empty())
+    {
+        lines.push(format!("字幕轨道：{choice}"));
+    }
+    // Conditional: only present when enrich packed them on media switch.
+    if let Some(title) = ctx
+        .episode_title
+        .as_deref()
+        .filter(|s| !s.trim().is_empty())
+    {
+        lines.push(format!("本集标题：{title}"));
+    }
+    if let Some(overview) = ctx
+        .episode_overview
+        .as_deref()
+        .filter(|s| !s.trim().is_empty())
+    {
+        lines.push(format!("本集剧情：{overview}"));
+    }
+    if lines.is_empty() {
+        return None;
+    }
+    Some(format!("【当前播放】\n{}", lines.join("\n")))
+}
+
+fn format_clock_ms(ms: u64) -> String {
+    let total_sec = ms / 1000;
+    let hours = total_sec / 3600;
+    let minutes = (total_sec % 3600) / 60;
+    let seconds = total_sec % 60;
+    if hours > 0 {
+        format!("{hours}:{minutes:02}:{seconds:02}")
+    } else {
+        format!("{minutes:02}:{seconds:02}")
+    }
 }
 
 fn is_remote_url(path: &str) -> bool {
@@ -409,7 +489,7 @@ mod tests {
     }
 
     #[test]
-    fn prompt_uses_resource_links_not_inline_metadata() {
+    fn prompt_inlines_playback_progress_not_episode_plot_by_default() {
         let ctx = VideoPromptContext {
             media_path: Some(r"D:\videos\demo.mp4".into()),
             media_title: Some("demo.mp4".into()),
@@ -417,28 +497,52 @@ mod tests {
             duration_ms: Some(2_700_000),
             chapter_title: Some("开场".into()),
             subtitle_choice_id: Some("embedded:0".into()),
-            notes_excerpt: Some("也不应出现".into()),
+            notes_excerpt: Some("附近笔记一行".into()),
+            season: Some(1),
+            episode: Some(1),
+            episode_title: None,
+            episode_overview: None,
         };
         let params = session_prompt_params("sess_1", "这段讲了什么？", Some(&ctx), None);
         let prompt = params
             .get("prompt")
             .and_then(Value::as_array)
             .expect("prompt");
-        assert_eq!(prompt.len(), 2);
-        assert_eq!(
-            prompt[0].get("type").and_then(Value::as_str),
-            Some("resource_link")
-        );
-        let prompt_text = serde_json::to_string(&params).expect("serialize prompt");
-        assert!(!prompt_text.contains("MCP 工具"));
-        assert!(!prompt_text.contains("直接作答"));
-        assert!(!prompt_text.contains("lumina_get_transcript_window"));
-        assert!(!prompt_text.contains("lumina_propose_video_annotation"));
-        assert!(!prompt_text.contains("也不应出现"));
-        assert_eq!(
-            prompt[1].get("text").and_then(Value::as_str),
-            Some("这段讲了什么？")
-        );
+        assert_eq!(prompt.len(), 3);
+        let playback = prompt[1].get("text").and_then(Value::as_str).unwrap_or("");
+        assert!(playback.contains("【当前播放】"));
+        assert!(playback.contains("01:23"));
+        assert!(playback.contains("S01E01"));
+        assert!(!playback.contains("本集剧情"));
+        assert!(!playback.contains("附近笔记"));
+        assert!(!playback.contains("开场"));
+    }
+
+    #[test]
+    fn prompt_inlines_episode_plot_when_packed_for_media_switch() {
+        let ctx = VideoPromptContext {
+            media_path: Some(r"D:\videos\demo.mp4".into()),
+            media_title: Some("demo.mp4".into()),
+            position_ms: Some(83_000),
+            duration_ms: Some(2_700_000),
+            chapter_title: None,
+            subtitle_choice_id: None,
+            notes_excerpt: None,
+            season: Some(1),
+            episode: Some(2),
+            episode_title: Some("第二集".into()),
+            episode_overview: Some("换集剧情摘要".into()),
+        };
+        let params = session_prompt_params("sess_1", "讲了什么？", Some(&ctx), None);
+        let playback = params
+            .get("prompt")
+            .and_then(Value::as_array)
+            .and_then(|p| p.get(1))
+            .and_then(|b| b.get("text"))
+            .and_then(Value::as_str)
+            .unwrap_or("");
+        assert!(playback.contains("本集标题：第二集"));
+        assert!(playback.contains("本集剧情：换集剧情摘要"));
     }
 
     #[test]
@@ -493,6 +597,7 @@ mod tests {
             chapter_title: None,
             subtitle_choice_id: Some("online:en".into()),
             notes_excerpt: None,
+            ..Default::default()
         };
         let params = session_prompt_params("sess_1", "讲了什么？", Some(&ctx), None);
         let prompt = params
@@ -525,6 +630,7 @@ mod tests {
             chapter_title: None,
             subtitle_choice_id: None,
             notes_excerpt: None,
+            ..Default::default()
         };
         let params = session_prompt_params("sess_1", "hi", Some(&ctx), None);
         let uri = params

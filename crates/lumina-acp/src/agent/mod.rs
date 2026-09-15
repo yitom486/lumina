@@ -12,6 +12,8 @@ pub use profile::{
     AgentProfile, AgentProfileStatus, PreparedProfiles,
 };
 pub use status::{install_hint, status_from_profiles, RESPONSES_ONLY_NOTE};
+pub use workspace::resolve_session_cwd;
+// Deprecated Codex-only helpers: `#[deprecated]` on the items is what callers /
+// rustdoc see; `allow` here only silences the re-export site itself.
 #[allow(deprecated)]
-pub use workspace::resolve_acp_paths;
-pub use workspace::{resolve_session_cwd, AcpPaths};
+pub use workspace::{probe_cli_version, resolve_acp_paths, AcpPaths};

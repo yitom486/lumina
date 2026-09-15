@@ -131,7 +131,7 @@ fn tool_json(name: &str) -> Option<Value> {
     let tool = if name == contract::TOOL_PLAYBACK_CONTEXT {
         json!({
             "name": contract::TOOL_PLAYBACK_CONTEXT,
-            "description": "Return frozen playback anchor, progress, chapter title, and nearby notes for the current prompt turn.",
+            "description": "Return frozen playback anchor and currentEpisode from the snapshot file.",
             "inputSchema": {
                 "type": "object",
                 "properties": {},
@@ -608,7 +608,7 @@ mod tests {
         let snapshot = LuminaMcpSnapshot {
             schema_version: SNAPSHOT_SCHEMA_VERSION,
             anchor: None,
-            playback: None,
+            current_episode: None,
             library: None,
             session: None,
             capabilities: Some(AgentCapabilities {
@@ -643,7 +643,7 @@ mod tests {
         let snapshot = LuminaMcpSnapshot {
             schema_version: SNAPSHOT_SCHEMA_VERSION,
             anchor: None,
-            playback: None,
+            current_episode: None,
             library: None,
             session: None,
             capabilities: Some(AgentCapabilities {
@@ -672,7 +672,7 @@ mod tests {
         let snapshot = LuminaMcpSnapshot {
             schema_version: SNAPSHOT_SCHEMA_VERSION,
             anchor: None,
-            playback: None,
+            current_episode: None,
             library: None,
             session: None,
             capabilities: Some(AgentCapabilities {
@@ -699,7 +699,7 @@ mod tests {
         LuminaMcpSnapshot {
             schema_version: SNAPSHOT_SCHEMA_VERSION,
             anchor: None,
-            playback: None,
+            current_episode: None,
             library: None,
             session: None,
             capabilities: Some(AgentCapabilities {
