@@ -1,6 +1,7 @@
 //! LibMpvPlayer — the only module that talks to libmpv.
 
 use std::ffi::CString;
+use std::path::{Path, PathBuf};
 
 use libmpv2::events::Event;
 use libmpv2::Mpv;
@@ -41,11 +42,14 @@ impl LibMpvPlayer {
     }
 
     /// Embed into a native HWND via `wid` (Windows Phase 1 surface).
-    /// Demo OSC: enable mpv native On-Screen Controller as-is
-    /// (`bottombar` stock layout). HTML bar lives outside the surface;
-    /// OSC lives inside it, so they do not fight.
-    pub fn initialize_with_wid(wid: i64) -> Result<Self, PlayerError> {
+    /// Custom skin: stock OSC is off (`osc=no`, avoids a double layer) and
+    /// `native/osc/lumina-osc.lua` is loaded via `scripts=<absolute path>`.
+    /// `script_path` is resolved by the app (exe-dir/resource candidates);
+    /// when `None`, fall back to the executable's own directory (dev runs).
+    /// A missing skin only warns — playback still works without the skin.
+    pub fn initialize_with_wid(wid: i64, script_path: Option<&str>) -> Result<Self, PlayerError> {
         tracing::info!(wid, "libmpv initializing with wid");
+        let script = resolve_lumina_osc_script(script_path);
         let mpv = Mpv::with_initializer(|init| {
             init.set_option("wid", wid)?;
             init.set_option("idle", "yes")?;
@@ -54,20 +58,19 @@ impl LibMpvPlayer {
             // Prefer hardware decode; mpv falls back to software if needed.
             init.set_option("hwdec", "auto")?;
             init.set_option("sub-visibility", "yes")?;
-            // Demo-only: show native OSC as-is (no skin). Layout is mpv
-            // default `bottombar`, set explicitly via script-opts.
-            init.set_option("osc", "yes")?;
-            init.set_option("script-opts", "osc-layout=bottombar")?;
+            // Custom skin replaces the stock OSC (avoids a double layer).
+            init.set_option("osc", "no")?;
+            if let Some(path) = script.as_deref() {
+                init.set_option("scripts", path)?;
+            }
             Ok(())
         })
         .map_err(map_init_error)?;
         enable_diagnostic_events(&mpv);
         log_version(&mpv);
-        // Demo-only note: single-click pause / double-click fullscreen are
-        // owned by our own SurfaceClick / SurfaceDoubleClick events (300ms
-        // frontend disambiguation). No mpv `MBTN_LEFT*` keybinds here, so OSC
-        // hot zones keep priority and the default zone stays silent.
-        // OSC element clicks still arrive via keydown/keyup forwarding.
+        // Single/double-click arbitration and all native input forwarding are
+        // owned by the Win32 surface. The OSC receives explicit script
+        // messages, so the frontend never needs to know about mpv details.
         Ok(Self { mpv })
     }
 
@@ -236,49 +239,28 @@ impl LibMpvPlayer {
             .map_err(map_playback_error)
     }
 
-    /// Demo-only OSC input lifecycle (standard press pairing).
-    /// Hover (`None`) only updates position (`mouse x y`); press is
-    /// `keydown MBTN_LEFT` and release is `keyup MBTN_LEFT` so mpv/OSC sees a
-    /// paired down→up. `button` is a two-file shim discriminant (`None` =
-    /// hover, `Some(0)` = down, `Some(_)` = up; both map to `MBTN_LEFT` at
-    /// mpv level). `double_click`/`client_size` stay only for `PlayerService`
-    /// compatibility and are ignored (single/double-click ownership is our own
-    /// SurfaceClick/SurfaceDoubleClick; position comes from hover).
-    pub fn forward_mouse(
-        &self,
-        x: i32,
-        y: i32,
-        button: Option<i32>,
-        _double_click: bool,
-        _client_size: Option<(i32, i32)>,
-    ) -> Result<(), PlayerError> {
-        match button {
-            None => self.mouse_hover(x, y),
-            Some(0) => self.mouse_keydown(),
-            Some(_) => self.mouse_keyup(),
-        }
-    }
-
-    /// Demo-only: hover position (`mouse x y`, never a press).
-    pub fn mouse_hover(&self, x: i32, y: i32) -> Result<(), PlayerError> {
+    /// Send one explicit native-surface event to the custom OSC script.
+    /// The Win32 surface is the sole input owner; no mpv keymap is involved.
+    pub fn forward_surface_event(&self, phase: &str, x: i32, y: i32) -> Result<(), PlayerError> {
         let x_text = x.to_string();
         let y_text = y.to_string();
+        let args = surface_mouse_message_args(phase, &x_text, &y_text);
+        // Use the broadcast form deliberately. The OSC script is the only
+        // bundled script registering this private message name, while the
+        // targeted form can silently drop the event if mpv normalizes or
+        // disambiguates the script client name differently across builds.
         self.mpv
-            .command("mouse", &[x_text.as_str(), y_text.as_str()])
+            .command("script-message", &args)
             .map_err(map_playback_error)
     }
 
-    /// Demo-only: standard lifecycle press (`keydown MBTN_LEFT`).
-    pub fn mouse_keydown(&self) -> Result<(), PlayerError> {
+    /// Tell the custom OSC whether the app is in cinema fullscreen mode.
+    /// Windowed mode owns its controls in the HTML PlayerBar, so the native
+    /// OSC stays hidden there.
+    pub fn set_surface_mode(&self, fullscreen: bool) -> Result<(), PlayerError> {
+        let mode = if fullscreen { "fullscreen" } else { "windowed" };
         self.mpv
-            .command("keydown", &["MBTN_LEFT"])
-            .map_err(map_playback_error)
-    }
-
-    /// Demo-only: standard lifecycle release (`keyup MBTN_LEFT`).
-    pub fn mouse_keyup(&self) -> Result<(), PlayerError> {
-        self.mpv
-            .command("keyup", &["MBTN_LEFT"])
+            .command("script-message", &[LUMINA_OSC_MODE_MESSAGE, mode])
             .map_err(map_playback_error)
     }
 
@@ -496,6 +478,67 @@ impl Drop for LibMpvPlayer {
     }
 }
 
+/// File name of the custom OSC Lua skin. The app build script stages the
+/// tracked source (`native/osc/lumina-osc.lua`) next to the executable, so
+/// only this name is needed to reassemble the absolute path at runtime.
+const LUMINA_OSC_SCRIPT_NAME: &str = "lumina-osc.lua";
+const LUMINA_OSC_SCRIPT_MESSAGE: &str = "lumina-surface-mouse";
+const LUMINA_OSC_MODE_MESSAGE: &str = "lumina-surface-mode";
+
+fn surface_mouse_message_args<'a>(phase: &'a str, x: &'a str, y: &'a str) -> [&'a str; 4] {
+    [LUMINA_OSC_SCRIPT_MESSAGE, phase, x, y]
+}
+
+/// Strip Windows verbatim (`\\?\`) prefix for mpv option parsing.
+/// `\\?\UNC\server\share\...` maps back to `\\server\share\...`;
+/// other inputs pass through unchanged. String-prefix only, no FS access.
+fn mpv_path_string(path: &Path) -> String {
+    let raw = path.to_string_lossy();
+    if let Some(rest) = raw.strip_prefix(r"\\?\UNC\") {
+        return format!(r"\\{rest}");
+    }
+    if let Some(rest) = raw.strip_prefix(r"\\?\") {
+        return rest.to_owned();
+    }
+    raw.into_owned()
+}
+
+/// Resolve the custom OSC script to an absolute path for `scripts=<abs path>`.
+/// `explicit` (assembled by the app from exe-dir/resource candidates) wins;
+/// otherwise fall back to the executable's own directory, which covers dev
+/// runs where the build script staged the skin next to the binary.
+/// Paths are used as-is (no canonicalization: Windows `\\?\` prefixes would
+/// only confuse mpv). Missing files only warn — never fail init.
+fn resolve_lumina_osc_script(explicit: Option<&str>) -> Option<String> {
+    if let Some(path) = explicit.map(str::trim).filter(|s| !s.is_empty()) {
+        let candidate = PathBuf::from(path);
+        if candidate.is_file() {
+            tracing::info!("custom OSC script resolved");
+            let mpv_path = mpv_path_string(&candidate);
+            tracing::debug!(mpv_path, "demo diagnosis: OSC script path for mpv");
+            return Some(mpv_path);
+        }
+        tracing::warn!("custom OSC script missing; continuing without skin");
+        return None;
+    }
+    exe_sibling_script().map(|path| {
+        let mpv_path = mpv_path_string(&path);
+        tracing::debug!(mpv_path, "demo diagnosis: OSC script path for mpv");
+        mpv_path
+    })
+}
+
+fn exe_sibling_script() -> Option<PathBuf> {
+    let exe = std::env::current_exe().ok()?;
+    let candidate = exe.parent()?.join(LUMINA_OSC_SCRIPT_NAME);
+    if candidate.is_file() {
+        tracing::info!("custom OSC script resolved");
+        return Some(candidate);
+    }
+    tracing::warn!("custom OSC script missing; continuing without skin");
+    None
+}
+
 fn set_sub_visibility(mpv: &Mpv, visible: bool) -> Result<(), PlayerError> {
     let value = if visible { "yes" } else { "no" };
     mpv.set_property("sub-visibility", value)
@@ -617,12 +660,34 @@ fn log_version(mpv: &Mpv) {
     }
 }
 
+fn mpv_error_string_text(code: libmpv2::MpvError) -> String {
+    unsafe {
+        let ptr = libmpv2_sys::mpv_error_string(code);
+        if ptr.is_null() {
+            return "unknown error".to_owned();
+        }
+        std::ffi::CStr::from_ptr(ptr).to_string_lossy().into_owned()
+    }
+}
+
+fn describe_init_error(error: &libmpv2::Error) -> String {
+    match error {
+        libmpv2::Error::Raw(code) => {
+            format!(
+                "{} (mpv_error_string({}): {})",
+                error,
+                code,
+                mpv_error_string_text(*code)
+            )
+        }
+        _ => error.to_string(),
+    }
+}
+
 fn map_init_error(error: libmpv2::Error) -> PlayerError {
-    PlayerError::new(
-        PlayerErrorCode::InitializationError,
-        "播放引擎初始化失败",
-        Some(error.to_string()),
-    )
+    let details = describe_init_error(&error);
+    tracing::error!(details = %details, "libmpv init failed");
+    PlayerError::initialization(Some(&details))
 }
 
 fn map_load_error(error: libmpv2::Error) -> PlayerError {
@@ -699,5 +764,28 @@ mod tests {
         let clean = super::sanitize_mpv_log(message);
         assert_eq!(clean, "Failed to open <url-redacted> (HTTP 403)");
         assert!(!clean.contains("secret"));
+    }
+
+    #[test]
+    fn mpv_path_string_strips_verbatim_prefix() {
+        use std::path::PathBuf;
+        assert_eq!(
+            super::mpv_path_string(&PathBuf::from(r"\\?\D:\project\lumina-osc.lua")),
+            r"D:\project\lumina-osc.lua"
+        );
+        assert_eq!(
+            super::mpv_path_string(&PathBuf::from(r"D:\project\lumina-osc.lua")),
+            r"D:\project\lumina-osc.lua"
+        );
+        assert_eq!(
+            super::mpv_path_string(&PathBuf::from(r"\\?\UNC\server\share\lumina-osc.lua")),
+            r"\\server\share\lumina-osc.lua"
+        );
+    }
+
+    #[test]
+    fn surface_mouse_protocol_uses_private_message_name() {
+        let args = super::surface_mouse_message_args("drag", "12", "34");
+        assert_eq!(args, ["lumina-surface-mouse", "drag", "12", "34"]);
     }
 }

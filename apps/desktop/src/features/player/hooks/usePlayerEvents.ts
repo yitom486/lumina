@@ -1,9 +1,11 @@
-/** Wire Tauri Channel → Zustand. Surface click/dblclick → play/fullscreen.
+/** Wire Tauri Channel → Zustand. Native surface arbitration is complete
+ * before these semantic events reach React: SurfaceClick → play,
+ * SurfaceDoubleClick → fullscreen.
  * On mount / HMR reload, pull authoritative snapshot from Rust so UI does not
  * show empty-state while mpv is still playing.
  */
 
-import { useEffect, useRef } from "react";
+import { useEffect } from "react";
 import { Channel } from "@tauri-apps/api/core";
 
 import { errorMessage } from "@/lib/format";
@@ -14,47 +16,24 @@ import { usePlayerStore } from "../store";
 import { useUiStore } from "../uiStore";
 import type { PlayerEvent } from "@lumina/contracts";
 
-/** Demo (osc-leave-bar): SurfaceClick/SurfaceDoubleClick disambiguation window. */
-const CLICK_DELAY_MS = 300;
-
 export function usePlayerEvents(): void {
-  const clickTimer = useRef<number | null>(null);
-  const suppressClickUntil = useRef(0);
-
   useEffect(() => {
-    const clearClickTimer = () => {
-      if (clickTimer.current != null) {
-        window.clearTimeout(clickTimer.current);
-        clickTimer.current = null;
-      }
-    };
-
     const onEvent = new Channel<PlayerEvent>();
     onEvent.onmessage = (event) => {
       if (event.type === "SurfaceDoubleClick") {
-        clearClickTimer();
-        // Swallow the trailing LBUTTONUP that follows a double-click.
-        suppressClickUntil.current = Date.now() + 400;
         void useUiStore.getState().toggleFullscreen();
         return;
       }
       if (event.type === "SurfaceClick") {
-        if (Date.now() < suppressClickUntil.current) {
-          return;
+        const store = usePlayerStore.getState();
+        if (
+          store.status === "Playing" ||
+          store.status === "Paused" ||
+          store.status === "Ready" ||
+          store.status === "Ended"
+        ) {
+          void store.togglePlayPause();
         }
-        clearClickTimer();
-        clickTimer.current = window.setTimeout(() => {
-          clickTimer.current = null;
-          const store = usePlayerStore.getState();
-          if (
-            store.status === "Playing" ||
-            store.status === "Paused" ||
-            store.status === "Ready" ||
-            store.status === "Ended"
-          ) {
-            void store.togglePlayPause();
-          }
-        }, CLICK_DELAY_MS);
         return;
       }
       usePlayerStore.getState().applyEvent(event);
@@ -113,7 +92,6 @@ export function usePlayerEvents(): void {
     return () => {
       cancelled = true;
       syncVersion += 1;
-      clearClickTimer();
       import.meta.hot?.off("vite:afterUpdate", onViteAfterUpdate);
     };
   }, []);
