@@ -9,14 +9,14 @@ use std::sync::OnceLock;
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 use tauri::{AppHandle, Manager, WebviewWindow};
 use windows::core::w;
-use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
+use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, RECT, WPARAM};
 use windows::Win32::Graphics::Gdi::HBRUSH;
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::WindowsAndMessaging::{
-    CreateWindowExW, DefWindowProcW, DestroyWindow, LoadCursorW, MoveWindow, RegisterClassW,
-    SetWindowPos, ShowWindow, CS_DBLCLKS, CS_HREDRAW, CS_OWNDC, CS_VREDRAW, HWND_TOP, IDC_ARROW,
-    SWP_NOACTIVATE, SWP_SHOWWINDOW, SW_HIDE, WM_DESTROY, WM_LBUTTONDBLCLK, WM_LBUTTONDOWN,
-    WM_LBUTTONUP, WM_MOUSEMOVE, WNDCLASSW, WS_CHILD, WS_CLIPSIBLINGS,
+    CreateWindowExW, DefWindowProcW, DestroyWindow, GetClientRect, LoadCursorW, MoveWindow,
+    RegisterClassW, SetWindowPos, ShowWindow, CS_DBLCLKS, CS_HREDRAW, CS_OWNDC, CS_VREDRAW,
+    HWND_TOP, IDC_ARROW, SWP_NOACTIVATE, SWP_SHOWWINDOW, SW_HIDE, WM_DESTROY, WM_LBUTTONDBLCLK,
+    WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEMOVE, WNDCLASSW, WS_CHILD, WS_CLIPSIBLINGS,
 };
 
 use crate::player::error::{PlayerError, PlayerErrorCode};
@@ -25,6 +25,10 @@ use crate::state::AppState;
 
 static CLASS_REGISTERED: OnceLock<()> = OnceLock::new();
 static SURFACE_APP: OnceLock<AppHandle> = OnceLock::new();
+
+/// Demo OSC bottombar 占位估计（px）：底部此高度内的点击归 mpv 所有。
+/// demo 够用，可调。
+const OSC_BOTTOM_ZONE_PX: i32 = 140;
 
 /// Call once from setup so the surface WndProc can emit player events.
 pub fn register_surface_app(app: AppHandle) {
@@ -41,6 +45,15 @@ fn emit_surface_event(event: PlayerEvent) {
         return;
     };
     state.emit(event);
+}
+
+/// Demo OSC: whether a `WM_LBUTTONUP` at client y should emit `SurfaceClick`.
+/// `height <= 0` fails open (emit), matching the `GetClientRect` failure fallback.
+fn should_emit_surface_click(y: i32, height: i32) -> bool {
+    if height <= 0 {
+        return true;
+    }
+    y < height - OSC_BOTTOM_ZONE_PX
 }
 
 /// Demo OSC: decode client-area mouse position from `LPARAM` (signed 16-bit pairs).
@@ -310,6 +323,16 @@ unsafe extern "system" fn surface_wnd_proc(
         }
         WM_LBUTTONUP => {
             forward_keyup_to_mpv();
+            let (_, y) = surface_mouse_coords(lparam);
+            let mut rect = RECT::default();
+            if unsafe { GetClientRect(hwnd, &mut rect).is_ok() } {
+                let height = rect.bottom - rect.top;
+                if !should_emit_surface_click(y, height) {
+                    // OSC 条内点击：mpv 拥有，只做上面的 keyup 转发，
+                    // 跳过 SurfaceClick（不再附带暂停）。
+                    return LRESULT(0);
+                }
+            }
             // demo-only(osc-leave-bar): click ownership back to us for
             // single-click pause; OSC element clicks still arrive via the
             // keydown/keyup pair above (mpv has no MBTN_LEFT* keybinds).
@@ -324,4 +347,35 @@ unsafe extern "system" fn surface_wnd_proc(
 
 fn native_error(message: &str, details: Option<String>) -> PlayerError {
     PlayerError::new(PlayerErrorCode::NativeWindowError, message, details)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::should_emit_surface_click;
+
+    #[test]
+    fn surface_click_bottom_zone_exemption() {
+        let height = 600;
+        let cases: [(i32, bool); 7] = [
+            (height - 1, false),
+            (height - 140, false),
+            (height - 141, true),
+            (height + 50, false),
+            (-10, true),
+            (0, true),
+            (100, true),
+        ];
+        for (y, expected) in cases {
+            assert_eq!(
+                should_emit_surface_click(y, height),
+                expected,
+                "y={y} height={height}"
+            );
+        }
+        assert!(should_emit_surface_click(0, 0), "height=0 fail-open");
+        assert!(
+            should_emit_surface_click(0, -100),
+            "negative height fail-open"
+        );
+    }
 }
