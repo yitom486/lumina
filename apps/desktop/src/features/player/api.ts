@@ -114,6 +114,10 @@ export function setSurfaceBounds(bounds: {
   return invoke("player_set_surface_bounds", bounds);
 }
 
+export function setSurfaceMode(fullscreen: boolean): Promise<void> {
+  return invoke("player_set_surface_mode", { fullscreen });
+}
+
 /** Sorted video paths in the same directory as `path`. */
 export function listSiblingVideos(path: string): Promise<string[]> {
   return invoke<string[]>("media_list_siblings", { path });

@@ -75,8 +75,8 @@ use commands::notes::{
 use commands::player::{
     player_get_state, player_list_playback_formats, player_open, player_pause, player_play,
     player_seek, player_set_audio, player_set_playback_format, player_set_rate,
-    player_set_subtitle, player_set_surface_bounds, player_set_volume, player_stop,
-    player_subscribe,
+    player_set_subtitle, player_set_surface_bounds, player_set_surface_mode, player_set_volume,
+    player_stop, player_subscribe,
 };
 use commands::subtitle::{
     subtitle_download_candidate, subtitle_export_sidecar, subtitle_list_choices,
@@ -143,6 +143,7 @@ pub fn run() {
             player_set_subtitle,
             player_set_audio,
             player_set_surface_bounds,
+            player_set_surface_mode,
             media_inspect,
             media_list_siblings,
             media_tool_status,
@@ -313,7 +314,15 @@ fn attach_native_surface(app: &mut tauri::App) -> Result<(), Box<dyn std::error:
 
     let state = app.state::<AppState>();
     state.set_surface(surface)?;
-    if let Err(error) = state.with_player(|player| player.attach_backend_with_wid(wid)) {
+    let script_path: Option<String> =
+        crate::player::mpv::native_library::lumina_osc_script(app.handle())
+            .map(|path| path.to_string_lossy().into_owned());
+    if script_path.is_none() {
+        tracing::warn!("custom OSC skin missing; continuing without skin");
+    }
+    if let Err(error) =
+        state.with_player(|player| player.attach_backend_with_wid(wid, script_path.as_deref()))
+    {
         tracing::error!(
             code = ?error.code,
             message = %error.message,

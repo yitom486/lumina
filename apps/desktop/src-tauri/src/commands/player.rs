@@ -358,3 +358,11 @@ pub fn player_set_surface_bounds(
     state
         .with_surface(|surface| surface.set_bounds(to_px(x), to_px(y), to_px(width), to_px(height)))
 }
+
+#[tauri::command]
+pub async fn player_set_surface_mode(app: AppHandle, fullscreen: bool) -> Result<(), PlayerError> {
+    on_worker(app, move |state| {
+        state.with_player(|player| player.set_surface_mode(fullscreen))
+    })
+    .await
+}

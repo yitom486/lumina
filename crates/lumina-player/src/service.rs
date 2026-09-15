@@ -32,7 +32,11 @@ impl PlayerService {
         }
     }
 
-    pub fn attach_backend_with_wid(&mut self, wid: i64) -> Result<(), PlayerError> {
+    pub fn attach_backend_with_wid(
+        &mut self,
+        wid: i64,
+        script_path: Option<&str>,
+    ) -> Result<(), PlayerError> {
         if self.shutdown {
             tracing::info!("skip libmpv init; app is shutting down");
             return Ok(());
@@ -41,7 +45,7 @@ impl PlayerService {
             return Ok(());
         }
 
-        match LibMpvPlayer::initialize_with_wid(wid) {
+        match LibMpvPlayer::initialize_with_wid(wid, script_path) {
             Ok(backend) => {
                 self.backend = Some(backend);
                 if matches!(self.snapshot.status, PlayerState::Error | PlayerState::Idle) {
@@ -299,6 +303,14 @@ impl PlayerService {
         ))
     }
 
+    pub fn toggle_play_pause(&mut self) -> Result<(PlayerSnapshot, Vec<PlayerEvent>), PlayerError> {
+        if self.snapshot.status == PlayerState::Playing {
+            self.pause()
+        } else {
+            self.play()
+        }
+    }
+
     pub fn pause(&mut self) -> Result<(PlayerSnapshot, Vec<PlayerEvent>), PlayerError> {
         self.require(&[PlayerState::Playing], "pause")?;
         tracing::info!("pause");
@@ -414,6 +426,24 @@ impl PlayerService {
             backend.set_rate(rate)?;
         }
         Ok(self.snapshot())
+    }
+
+    /// Best-effort native-surface event forward to the custom OSC script.
+    /// Missing backends are a no-op; failures only emit `debug`.
+    pub fn forward_surface_event(&self, phase: &str, x: i32, y: i32) {
+        let Some(backend) = self.backend.as_ref() else {
+            return;
+        };
+        if let Err(error) = backend.forward_surface_event(phase, x, y) {
+            tracing::debug!(%error, phase, "forward surface event to mpv failed");
+        }
+    }
+
+    pub fn set_surface_mode(&self, fullscreen: bool) -> Result<(), PlayerError> {
+        let Some(backend) = self.backend.as_ref() else {
+            return Ok(());
+        };
+        backend.set_surface_mode(fullscreen)
     }
 
     /// Periodic poll from the event ticker (~100–250ms). Does not log position.

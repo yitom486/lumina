@@ -1,7 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const isFullscreen = vi.fn();
-const setFullscreen = vi.fn();
+const { invoke, isFullscreen, setFullscreen } = vi.hoisted(() => ({
+  invoke: vi.fn().mockResolvedValue(undefined),
+  isFullscreen: vi.fn(),
+  setFullscreen: vi.fn(),
+}));
+
+vi.mock("@tauri-apps/api/core", () => ({ invoke }));
 
 vi.mock("@tauri-apps/api/window", () => ({
   getCurrentWindow: () => ({
@@ -23,6 +28,8 @@ beforeEach(() => {
   });
   isFullscreen.mockReset();
   setFullscreen.mockReset();
+  invoke.mockReset();
+  invoke.mockResolvedValue(undefined);
 });
 
 describe("useUiStore sidebar", () => {

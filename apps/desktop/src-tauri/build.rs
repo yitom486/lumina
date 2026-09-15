@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 fn main() {
     tauri_build::build();
     link_and_stage_libmpv();
+    stage_lumina_osc();
 }
 
 fn link_and_stage_libmpv() {
@@ -120,6 +121,37 @@ fn profile_dir() -> PathBuf {
         exe_dir.pop();
     }
     exe_dir
+}
+
+/// Stage the custom OSC Lua skin next to the executable (same routine as the
+/// libmpv DLL): source `native/osc/lumina-osc.lua` is tracked in git, staged
+/// copies (exe dir / runtime dir) are build artifacts for dev runs and the
+/// Tauri `mpv/` resource bundle. Only the `.lua` source is committed.
+fn stage_lumina_osc() {
+    let manifest_dir = match env::var("CARGO_MANIFEST_DIR") {
+        Ok(dir) => PathBuf::from(dir),
+        Err(_) => return,
+    };
+    let src = manifest_dir
+        .join("native")
+        .join("osc")
+        .join("lumina-osc.lua");
+    println!("cargo:rerun-if-changed={}", src.display());
+    if !src.is_file() {
+        println!("cargo:warning=lumina-osc.lua missing under native/osc; custom skin skipped");
+        return;
+    }
+
+    let exe_dir = profile_dir();
+    stage_file(&src, &exe_dir.join("lumina-osc.lua"));
+    stage_file(&src, &exe_dir.join("deps").join("lumina-osc.lua"));
+    // Reuse the existing `mpv/` resource bundle so installed builds carry the
+    // skin under `<resources>/mpv/lumina-osc.lua` (gitignored artifact).
+    let mpv_dir = manifest_dir.join("native").join("mpv");
+    let runtime_dest = mpv_dir.join("runtime").join("lumina-osc.lua");
+    if mpv_dir.is_dir() {
+        stage_file(&src, &runtime_dest);
+    }
 }
 
 fn find_file(dir: &Path, expected_name: &str) -> Option<PathBuf> {

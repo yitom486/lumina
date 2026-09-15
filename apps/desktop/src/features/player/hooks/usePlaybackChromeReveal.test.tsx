@@ -32,8 +32,9 @@ describe("usePlaybackChromeReveal", () => {
     });
     expect(result.current.visible).toBe(true);
 
+    // Demo (osc-leave-bar): 3s idle hides the bar.
     act(() => {
-      vi.advanceTimersByTime(2800);
+      vi.advanceTimersByTime(3000);
     });
     expect(result.current.visible).toBe(false);
   });

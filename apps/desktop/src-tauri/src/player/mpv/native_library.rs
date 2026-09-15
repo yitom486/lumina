@@ -31,6 +31,30 @@ mod win {
         Some(exe.parent()?.join(name))
     }
 
+    /// Absolute-path candidates for the custom OSC Lua skin, mirroring the
+    /// libmpv staging routine: beside the executable (dev runs, staged by
+    /// build.rs) or under the bundled `mpv/` resources (installed builds).
+    /// Only the `.lua` source is tracked; staged copies are artifacts.
+    pub fn lumina_osc_candidates(app: &AppHandle) -> Vec<PathBuf> {
+        let mut candidates = Vec::new();
+        if let Some(path) = exe_dir_candidate("lumina-osc.lua") {
+            candidates.push(path);
+        }
+        if let Ok(resource) = app.path().resource_dir() {
+            candidates.push(resource.join("mpv").join("lumina-osc.lua"));
+            candidates.push(resource.join("lumina-osc.lua"));
+        }
+        candidates
+    }
+
+    /// First existing skin path, if any. Missing skin is not an error —
+    /// playback continues without the custom OSC.
+    pub fn lumina_osc_script(app: &AppHandle) -> Option<PathBuf> {
+        lumina_osc_candidates(app)
+            .into_iter()
+            .find(|path| path.is_file())
+    }
+
     pub fn ensure_libmpv_loaded(app: &AppHandle) -> Result<(), PlayerError> {
         if libmpv_already_loaded() {
             return Ok(());
@@ -151,10 +175,36 @@ mod unix {
         // Linked against system libmpv at build time — assume loader can resolve it.
         Ok(())
     }
+
+    /// Absolute-path candidates for the custom OSC Lua skin (unix mirrors the
+    /// Windows routine: resource bundle first, then executable directory).
+    pub fn lumina_osc_candidates(app: &AppHandle) -> Vec<PathBuf> {
+        let mut candidates = Vec::new();
+        if let Ok(resource) = app.path().resource_dir() {
+            candidates.push(resource.join("mpv").join("lumina-osc.lua"));
+            candidates.push(resource.join("lumina-osc.lua"));
+        }
+        if let Ok(exe) = std::env::current_exe() {
+            if let Some(dir) = exe.parent() {
+                candidates.push(dir.join("lumina-osc.lua"));
+            }
+        }
+        candidates
+    }
+
+    /// First existing skin path, if any. Missing skin is not an error.
+    pub fn lumina_osc_script(app: &AppHandle) -> Option<PathBuf> {
+        lumina_osc_candidates(app)
+            .into_iter()
+            .find(|path| path.is_file())
+    }
 }
 
 #[cfg(windows)]
-pub use win::{ensure_libmpv_loaded, exe_dir_candidate, libmpv_candidates};
+pub use win::{
+    ensure_libmpv_loaded, exe_dir_candidate, libmpv_candidates, lumina_osc_candidates,
+    lumina_osc_script,
+};
 
 #[cfg(unix)]
-pub use unix::{ensure_libmpv_loaded, libmpv_candidates};
+pub use unix::{ensure_libmpv_loaded, libmpv_candidates, lumina_osc_candidates, lumina_osc_script};

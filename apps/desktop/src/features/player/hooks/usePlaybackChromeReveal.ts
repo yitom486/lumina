@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
-const BOTTOM_ZONE_PX = 88;
-const HIDE_DELAY_MS = 2800;
+/** Demo (osc-leave-bar): fullscreen-only bottom reveal thresholds (tunable). */
+export const OSC_DEMO_BOTTOM_ZONE_PX = 120;
+export const OSC_DEMO_HIDE_DELAY_MS = 3000;
 
 /** Fullscreen cinema: reveal bottom bar when the cursor nears the screen bottom. */
 export function usePlaybackChromeReveal(enabled: boolean) {
@@ -21,7 +22,7 @@ export function usePlaybackChromeReveal(enabled: boolean) {
     if (!enabled || pinned.current) return;
     hideTimer.current = setTimeout(() => {
       setVisible(false);
-    }, HIDE_DELAY_MS);
+    }, OSC_DEMO_HIDE_DELAY_MS);
   }, [clearHideTimer, enabled]);
 
   const reveal = useCallback(() => {
@@ -52,7 +53,7 @@ export function usePlaybackChromeReveal(enabled: boolean) {
     pinned.current = false;
 
     const onMove = (event: MouseEvent) => {
-      if (event.clientY >= window.innerHeight - BOTTOM_ZONE_PX) {
+      if (event.clientY >= window.innerHeight - OSC_DEMO_BOTTOM_ZONE_PX) {
         reveal();
       }
     };

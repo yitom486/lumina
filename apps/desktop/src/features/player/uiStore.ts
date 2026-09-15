@@ -3,6 +3,7 @@
 import { create } from "zustand";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 
+import * as api from "./api";
 import { ensureSurfaceBounds } from "./surfaceBridge";
 
 export type SidebarTab =
@@ -59,6 +60,11 @@ export const useUiStore = create<UiState>((set, get) => {
         const fullscreen = await getCurrentWindow().isFullscreen();
         if (version !== fullscreenSyncVersion) return;
         set({ fullscreen });
+        try {
+          await api.setSurfaceMode(fullscreen);
+        } catch (error) {
+          console.error("surface mode sync failed", error);
+        }
         refreshSurfaceBounds();
       } catch (error) {
         console.error("fullscreen state sync failed", error);

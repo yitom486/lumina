@@ -127,8 +127,8 @@ pub enum PlayerEvent {
     Error {
         error: PlayerError,
     },
-    /// Left-click on the native video surface (after click/dblclick discrimination on UI).
+    /// A single click on the default native video zone, after Win32 arbitration.
     SurfaceClick,
-    /// Double-click on the native video surface.
+    /// A double-click on the default native video zone, after Win32 arbitration.
     SurfaceDoubleClick,
 }
