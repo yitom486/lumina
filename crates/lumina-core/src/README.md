@@ -40,13 +40,13 @@
 
 ## 3. 对外使用指南
 
-### 添加依赖
+### 在 Cargo workspace 中添加依赖
 
 在其他 crate 的 `Cargo.toml` 中引用：
 
 ```toml
 [dependencies]
-lumina-core = { path = "../lumina-core" }
+lumina-core.workspace = true
 ```
 
 ### 代码使用示例

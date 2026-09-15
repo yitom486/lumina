@@ -47,11 +47,11 @@
 
 ## 3. 对外使用指南
 
-### 添加依赖
+### 在 Cargo workspace 中添加依赖
 
 ```toml
 [dependencies]
-lumina-notes = { path = "../lumina-notes" }
+lumina-notes.workspace = true
 ```
 
 ### 代码使用示例

@@ -16,7 +16,7 @@
                          (使用 AgentInvoker 端口)
                                  ▼
                  [apps/desktop 适配注入的 ACP 调用]
-                                 │ (单次短暂请求)
+                                 │ (作业级隔离 session pool)
                                  ▼
                           [ 大语言模型 ]
                                  │
@@ -27,7 +27,7 @@
 
 - **职责对比**：
   - `lumina-acp`：负责**长生命周期、有交互历史、带工具权限**的 Chat 侧边栏对话。
-  - `lumina-ai`：负责**短生命周期、数据级隔离、批处理吞吐**的专项任务。任务开始即调用，返回即销毁，绝不向 Chat 注入几十页的字幕原文。
+  - `lumina-ai`：负责**数据级隔离、批处理吞吐**的专项任务。每个字幕作业独立于 Chat 历史；宿主可以用作业级 session pool 复用隔离 Agent，作业结束后统一销毁，绝不向 Chat 注入几十页的字幕原文。
 - **核心功能**：
   - 分块批处理（Chunked Batching）：将成百上千条字幕拆分为 40 条左右的批次（`TRANSLATE_BATCH_SIZE = 40`），避免单次 Prompt 击穿上下文或产生幻觉。
   - 严格结构化约束：利用 JSON Schema 约束模型按序输出带序号的翻译文本，确保时间戳轴精准对齐。
@@ -38,7 +38,7 @@
 ## 2. 构建思路与设计原则
 
 1. **聊天会话零污染（Zero Chat History Pollution）**：
-   - 如果直接在主聊天窗口让 Agent 翻译一部电影的 1500 句台词，会导致后续对话的 Token 消耗激增、上下文被噪音淹没。`lumina-ai` 强制走 `AgentInvoker::invoke_isolated`，完全剥离主会话上下文。
+   - 如果直接在主聊天窗口让 Agent 翻译一部电影的 1500 句台词，会导致后续对话的 Token 消耗激增、上下文被噪音淹没。`lumina-ai` 强制走 `AgentInvoker::invoke_isolated`，完全剥离主会话上下文；底层可以通过 `WorkshopPool` 复用隔离 session，但不会复用 Chat session。
 2. **纯依赖注入与面向端口编程（Port-Driven）**：
    - 本 crate 仅依赖 `lumina-core` 和 `lumina-subtitle`，完全不直接依赖 `lumina-acp`、子进程或网络库。具体的 AI 模型调用由宿主通过动态分发 `&dyn AgentInvoker` 传入。
 
@@ -46,11 +46,11 @@
 
 ## 3. 对外使用指南
 
-### 添加依赖
+### 在 Cargo workspace 中添加依赖
 
 ```toml
 [dependencies]
-lumina-ai = { path = "../lumina-ai" }
+lumina-ai.workspace = true
 ```
 
 ### 代码使用示例

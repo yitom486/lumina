@@ -41,7 +41,7 @@ Code 或自定义 Agent）通信，负责会话生命周期、流式事件、权
   - 流式文本与思考过程解析（`agent_reply_collector`）：增量还原 Agent 的推理思考（Thinking / Reasoning 块）与最终回答。
   - 动态视频上下文打包（`context`）：每轮只传递媒体 `resource_link`；播放锚点、章节、笔记和媒体库状态写入 snapshot，由 MCP 工具按需读取。稳定工具说明由 MCP 初始化阶段提供，不重复注入每轮 prompt。
   - 会话环境抽象（`SessionEnvironment`）：`lumina-acp` 不直接依赖 Lumina 的 MCP、媒体库或快照实现，由宿主应用提供路径、能力和 MCP server 配置。
-  - 普通聊天与隔离任务分离：聊天可以使用历史和 Lumina MCP；翻译/元数据解析等短任务使用无历史、无工具的受限 session。
+  - 普通聊天与隔离任务分离：聊天可以使用历史和 Lumina MCP；翻译/元数据解析等短任务使用无历史、无工具的受限 session。字幕翻译/校对由宿主按作业创建 `WorkshopPool`，复用隔离 session 槽位，作业结束后统一关闭。
 - **硬约束**：
    - 未配置 Agent（如初次使用、无 API Key）时，必须返回 `NotConfigured`，播放/字幕/笔记功能**绝对不能因此受到任何影响**。
   - `message` 是稳定的业务提示；底层 stderr、serde、路径和协议细节只进入 `details` 与日志。
@@ -64,11 +64,11 @@ Code 或自定义 Agent）通信，负责会话生命周期、流式事件、权
 
 ## 3. 对外使用指南
 
-### 添加依赖
+### 在 Cargo workspace 中添加依赖
 
 ```toml
 [dependencies]
-lumina-acp = { path = "../lumina-acp" }
+lumina-acp.workspace = true
 ```
 
 ### 代码使用示例
@@ -151,6 +151,24 @@ let result = AcpService::prompt_isolated_restricted(
 Lumina MCP 工具。无有效文本返回时会得到 `AcpErrorCode::NoOutput`，而不是一段
 可被误解析为模型结果的提示文本。
 
+#### 4. 字幕工作台的 `WorkshopPool`
+
+字幕翻译和校对不是每个批次都重新启动一个 Agent。宿主应用会为一次工作创建
+一个作业级 `WorkshopPool`：默认 4 个槽位，每个槽位复用一个无工具、无聊天历史的
+隔离 session；传输层失败最多进行一次相同请求重试，作业完成或失败后显式关闭 pool。
+`submit` 是阻塞调用，应放在 `spawn_blocking` 等阻塞线程中执行。
+
+```rust
+use lumina_acp::{AgentProfilesHint, PoolConfig, WorkshopPool};
+
+let pool = WorkshopPool::new(
+    PoolConfig::new("codex", profiles),
+    "subtitle-job-123".into(),
+);
+let translated = pool.submit(prompt, Some("batch=1".into()), None)?;
+pool.shutdown();
+```
+
 ---
 
 ## 4. 内部子模块全景
@@ -161,6 +179,7 @@ Lumina MCP 工具。无有效文本返回时会得到 `AcpErrorCode::NoOutput`�
 | :--- | :--- | :--- |
 | [`lib.rs`](./lib.rs) | 根模块 | 重新导出公开接口；定义协议约束。 |
 | [`service.rs`](./service.rs) | `service` | • `AcpService`: 统筹连接、`session/new|resume`、聊天 prompt、隔离任务、模型切换、取消和关闭。 |
+| [`workshop.rs`](./workshop.rs) | `workshop` | • `WorkshopPool` / `PoolConfig`: 作业级隔离 session 池；固定槽位、轮询分配、传输失败重试和统一关闭。 |
 | [`protocol.rs`](./protocol.rs) | `protocol` | ACP JSON-RPC 请求/响应形状：`initialize`、`session/new|resume`、`session/prompt`、权限响应和 session 配置。 |
 | [`profile.rs`](./profile.rs) | `profile` | • `AgentProfile`: 描述 Agent 启动配置（命令、参数、环境变量、Profile 类型）。 |
 | [`host.rs`](./host.rs) | `host` | • `AcpHost`: 处理 Agent 反向发起的系统级请求（如终端执行、权限放行审批）。 |
@@ -221,8 +240,8 @@ Agent 根据 `tools/list` 自己调用。应用适配器负责写 snapshot，ACP
 ```text
 AgentInvoker
   → AcpAgentInvoker
-  → AcpService::prompt_isolated_restricted
-  → 新的 Agent 进程和 session
+  → job-scoped WorkshopPool
+  → 复用隔离 Agent 进程和 session 槽位
   → NoTools MCP profile / 无聊天历史 / 无视频上下文
   → 返回一次性文本或 NoOutput
   → 业务层映射为翻译、元数据解析等固定错误
