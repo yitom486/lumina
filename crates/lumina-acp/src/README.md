@@ -7,6 +7,9 @@ Code 或自定义 Agent）通信，负责会话生命周期、流式事件、权
 
 它是可选能力：没有配置 Agent 时，播放、字幕和笔记功能仍然可以独立运行。
 
+> 深入文档：进程启动顺序、握手与 prompt 原理、`AcpService` 全部方法含义、
+> 最小可用案例，见 [`acp.md`](./acp.md)（连接原理与方法手册）。
+
 ---
 
 ## 1. 模块定位与职责
@@ -159,32 +162,49 @@ Lumina MCP 工具。无有效文本返回时会得到 `AcpErrorCode::NoOutput`�
 `submit` 是阻塞调用，应放在 `spawn_blocking` 等阻塞线程中执行。
 
 ```rust
+use std::sync::Arc;
+
 use lumina_acp::{AgentProfilesHint, PoolConfig, WorkshopPool};
 
-let pool = WorkshopPool::new(
+let pool = Arc::new(WorkshopPool::new(
     PoolConfig::new("codex", profiles),
     "subtitle-job-123".into(),
-);
+));
 let translated = pool.submit(prompt, Some("batch=1".into()), None)?;
 pool.shutdown();
 ```
+
+`WorkshopPool::submit` 和 `open_conversation` 通过 `Arc` 接收 pool，目的是让多个
+并发任务安全地竞争和占用不同的槽位。实际宿主代码通常把 pool 放进作业状态中，
+在作业完成或失败时调用 `shutdown`；即使遗漏，`Drop` 也会执行兜底清理。
 
 ---
 
 ## 4. 内部子模块全景
 
-`lumina-acp/src/` 按四层组织，依赖只许单向：`domain → agent → wire → runtime/jobs`
-（`error` 为全 crate 契约，置顶层）。`lib.rs` 是唯一公开门面，旧平铺路径
-（`service/protocol/profile/paths/...`）仅作兼容 re-export 保留，新代码一律走新层级：
+`lumina-acp/src/` 按职责组织。稳定业务 API 以根导出为推荐入口，新目录用于表达
+内部边界和新代码的组织方式。核心依赖方向是：
+
+```text
+agent  → domain
+wire   → domain
+runtime → agent + wire + domain
+jobs   → runtime + agent + domain
+```
+
+`error` 是全 crate 的错误契约，置于顶层。旧平铺路径
+（`service/protocol/profile/paths/...`）保留为兼容 re-export；新代码优先使用新层级。
+其中 `runtime/service.rs` 到 `jobs/isolated.rs` 的少量反向调用只用于保留旧的
+`AcpService` 方法，是兼容桥，不属于新的业务依赖方向：
 
 | 目录 | 模块 | 核心职责与导出项 |
 | :--- | :--- | :--- |
-| [`lib.rs`](./lib.rs) + [`error.rs`](./error.rs) | 根 / 契约 | 根 re-export（`AcpService/AcpError/WorkshopPool/...`）；`AcpError/AcpErrorCode` 固定业务 `message`。 |
+| [`lib.rs`](./lib.rs) + [`error.rs`](./error.rs) | 根 / 契约 | 稳定根导出与旧路径兼容层（`AcpService/AcpError/WorkshopPool/...`）；`AcpError/AcpErrorCode` 固定业务 `message`。 |
 | `domain/` | 纯数据，无 IO | `model.rs`（`AcpEvent/AcpStatus/AgentKind/AgentProfileStatus/PermissionOption/...`）、`settings.rs`（`AcpClientSettings/PermissionMode/ThinkingLevel`）、`context.rs`（`VideoPromptContext` 纯 DTO，不构造 ACP JSON）、`environment.rs`（`SessionEnvironment` 宿主注入 port）。 |
 | `agent/` | 启动前：找谁、在哪跑 | `discover.rs`（PATH/native 查找）、`workspace.rs`（`resolve_session_cwd` + 在线 URL 回退）、`launch.rs`（`LaunchSpec/resolve_launch` + builtin Codex + `pick_auth_method` 认证策略）、`profile.rs`（`AgentProfile/prepare/resolve_active`）、`status.rs`（`status_from_profiles/install_hint` 合并旧 `paths` + `profile` 文案）。 |
 | `wire/` | 线上格式，纯函数 | `codec.rs`（request/notification/envelope/`Inbound` 分类）、`session.rs`（initialize/auth/new/resume/**prompt**/close params + parse；`session_prompt_params` 在此构造 `resource_link`）、`updates.rs`（agent text/thought/tool/plan 提取）、`permission.rs`（权限 options/auto/selected）、`sanitize.rs`（路径脱敏/截断/底层错误改写）。 |
-| `runtime/` | 活着的进程 | `service.rs`（瘦门面：connect/new_chat/close/cancel/status + 隔离任务薄转发）、`prompt.rs`（`prompt` 循环：超时/取消/流式收集）、`lifecycle.rs`（`LiveSession` + spawn/new/resume/rotate）、`io.rs`（stdio 读写 + 按 id 等待）、`inbound.rs`（update/permission 分发）、`host/{mod,fs,terminal}.rs`（`AcpHost`：`fs/*` 与 `terminal/*` 已拆开）、`process.rs`（crate 内 spawn/kill，无控制台闪烁）。 |
-| `jobs/` | 一次性任务 | `isolated.rs`（`prompt_isolated/discover_isolated` 新家）、`pool.rs`（`WorkshopPool/PoolConfig`，另有 `IsolatedSessionPool` 别名）、`rollout.rs`（本任务 Codex rollout 精确清扫）、`collector.rs`（`AgentReplyCollector`，拼装 thinking + 正文）。 |
+| `runtime/` | 活着的进程 | `service.rs`（瘦门面：connect/new_chat/close/cancel/status + 旧 API 薄转发）、`prompt.rs`（`prompt` 循环：超时/取消/流式收集）、`lifecycle.rs`（`LiveSession` + spawn/new/resume/rotate）、`io.rs`（stdio 读写 + 按 id 等待）、`inbound.rs`（update/permission 分发）、`host/{mod,fs,terminal}.rs`（`AcpHost`：`fs/*` 与 `terminal/*` 已拆开）、`process.rs`（crate 内 spawn/kill，无控制台闪烁）。 |
+| `jobs/` | 一次性任务 | `isolated.rs`（`prompt_isolated_restricted/discover_isolated_models` 新家）、`pool.rs`（`WorkshopPool/PoolConfig`，另有 `IsolatedSessionPool` 别名）、`rollout.rs`（本任务 Codex rollout 精确清扫）、`collector.rs`（`AgentReplyCollector`，拼装 thinking + 正文）。 |
 
 ---
 
@@ -248,3 +268,18 @@ AgentInvoker
 - `request_cancel`：请求取消当前 prompt；超时后由 ACP 层终止子进程。
 - `close_session`：结束 session 并清理 Agent 子进程。
 - `AcpError` 使用 `{ code, message, details? }`；UI 只展示稳定的 `message`。
+
+---
+
+## 6. 连接原理与方法手册
+
+[`acp.md`](./acp.md) 是本 crate 的深读文档，覆盖：
+
+- **连接原理**：stdio JSON-RPC 传输、Codex 进程四阶启动顺序与环境补齐、
+  `initialize → authenticate → session/new|resume` 握手、workspace 回退规则、
+  超时表、僵尸进程防护；
+- **方法含义**：`AcpService` 全部公开方法（`connect/prompt/new_chat/
+  set_session_model/respond_permission/request_cancel/close_session/…`）、
+  `WorkshopPool/PoolConfig`、`AcpEvent` 与 `AcpErrorCode` 速查；
+- **最小案例**：聊天（连接→提问→关闭）、一次性隔离任务、取消与权限回填、
+  宿主 `SessionEnvironment` 接线——复制即用。
