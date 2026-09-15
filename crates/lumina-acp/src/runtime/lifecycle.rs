@@ -8,7 +8,7 @@ use std::sync::atomic::Ordering;
 use std::thread;
 use std::time::Duration;
 
-use crate::agent::launch::resolve_launch;
+use crate::agent::launch::{pick_auth_method, resolve_launch};
 use crate::agent::profile::{resolve_active_profile, AgentKind, PreparedProfiles};
 use crate::agent::workspace::resolve_session_cwd;
 use crate::domain::environment::session_env;
@@ -23,8 +23,8 @@ use crate::runtime::service::AcpService;
 use crate::wire::codec::is_error_response;
 use crate::wire::session::{
     authenticate_params, initialize_params, initialize_params_restricted, parse_initialize_result,
-    parse_session_id, parse_session_model_options, pick_auth_method, session_close_params,
-    session_new_params, session_resume_params, InitializeResult,
+    parse_session_id, parse_session_model_options, session_close_params, session_new_params,
+    session_resume_params, InitializeResult,
 };
 
 pub(crate) struct LiveSession {

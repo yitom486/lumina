@@ -4,7 +4,30 @@ use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 
-use crate::agent::profile::{AgentKind, AgentProfileStatus};
+/// Pure agent-kind discriminant. Owned by `domain` so profile DTOs never
+/// pull in launch/discovery logic; `agent` re-exports it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "PascalCase")]
+pub enum AgentKind {
+    Codex,
+    Claude,
+    Custom,
+}
+
+/// Per-profile availability snapshot for the frontend. Pure DTO:
+/// resolution itself lives in `agent::profile`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentProfileStatus {
+    pub id: String,
+    pub name: String,
+    pub kind: AgentKind,
+    pub command: String,
+    pub args: Vec<String>,
+    pub env: HashMap<String, String>,
+    pub available: bool,
+    pub resolved_command: Option<String>,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

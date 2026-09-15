@@ -1,9 +1,11 @@
 //! ACP session lifecycle wire helpers (initialize/session/* + initialize parsing).
 //! Split from `wire/protocol.rs` without behavior change.
 
+use std::path::Path;
+
 use serde_json::{json, Value};
 
-use crate::agent::discover::codex_config_present;
+use crate::domain::context::VideoPromptContext;
 
 pub fn initialize_params() -> Value {
     initialize_params_with_tools(true)
@@ -51,10 +53,82 @@ pub fn session_new_params(cwd: &str, mcp_servers: Value) -> Value {
     })
 }
 
-/// Deprecated: only kept for the old `crate::wire::protocol::session_prompt_params` path.
-/// New code should call `crate::domain::context::session_prompt_params` directly.
-pub fn session_prompt_params(session_id: &str, text: &str) -> Value {
-    crate::domain::context::session_prompt_params(session_id, text, None, None)
+/// `session/prompt` params: media travels as a `resource_link` only.
+/// Structured playback data stays in the snapshot for MCP tools; stable tool
+/// guidance comes from MCP `initialize.instructions`, never from here.
+pub fn session_prompt_params(
+    session_id: &str,
+    text: &str,
+    context: Option<&VideoPromptContext>,
+    history_context: Option<&str>,
+) -> Value {
+    let mut prompt = Vec::new();
+
+    if let Some(ctx) = context.filter(|c| !c.is_empty()) {
+        if let Some(path) = ctx.media_path.as_deref().filter(|p| !p.trim().is_empty()) {
+            let name = ctx
+                .media_title
+                .as_deref()
+                .filter(|s| !s.trim().is_empty())
+                .unwrap_or_else(|| file_name(path));
+            // Online page URLs stay as-is (Agent fetches via MCP snapshot);
+            // only local paths become file:// URIs. Never put cookies,
+            // signed URLs, or cache paths here — snapshot is already sanitized.
+            let uri = if is_remote_url(path) {
+                path.to_string()
+            } else {
+                path_to_file_uri(path)
+            };
+            prompt.push(json!({
+                "type": "resource_link",
+                "uri": uri,
+                "name": name,
+            }));
+        }
+    }
+
+    if let Some(history) = history_context.filter(|s| !s.trim().is_empty()) {
+        prompt.push(json!({
+            "type": "text",
+            "text": format!("【此前对话摘要】\n{history}"),
+        }));
+    }
+
+    prompt.push(json!({
+        "type": "text",
+        "text": text,
+    }));
+
+    json!({
+        "sessionId": session_id,
+        "prompt": prompt,
+    })
+}
+
+fn is_remote_url(path: &str) -> bool {
+    let lower = path.trim_start().to_ascii_lowercase();
+    lower.starts_with("http://") || lower.starts_with("https://")
+}
+
+fn file_name(path: &str) -> &str {
+    if is_remote_url(path) {
+        return path;
+    }
+    Path::new(path)
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or(path)
+}
+
+pub fn path_to_file_uri(path: &str) -> String {
+    let normalized = path.replace('\\', "/");
+    if normalized.len() >= 2 && normalized.as_bytes()[1] == b':' {
+        format!("file:///{normalized}")
+    } else if normalized.starts_with('/') {
+        format!("file://{normalized}")
+    } else {
+        format!("file:///{normalized}")
+    }
 }
 
 pub fn session_resume_params(session_id: &str, cwd: &str, mcp_servers: Value) -> Value {
@@ -85,24 +159,11 @@ pub fn authenticate_params(method_id: &str) -> Value {
     json!({ "methodId": method_id })
 }
 
-/// Pick an auth method compatible with local Codex setup (ChatGPT login vs API key).
+/// Deprecated: auth policy now lives in `crate::agent::launch::pick_auth_method`.
+/// Wire stays pure (parse/construct only); config/env reads belong to `agent`.
+#[deprecated(note = "use crate::agent::launch::pick_auth_method instead")]
 pub fn pick_auth_method(init: &InitializeResult) -> Option<&AuthMethod> {
-    if init.auth_methods.is_empty() {
-        return None;
-    }
-    let order: &[&str] = if codex_config_present() {
-        &["chat-gpt", "chat-gpt-device-code", "gateway", "api-key"]
-    } else if std::env::var("OPENAI_API_KEY").is_ok() {
-        &["api-key", "chat-gpt", "chat-gpt-device-code", "gateway"]
-    } else {
-        &["chat-gpt", "chat-gpt-device-code", "api-key", "gateway"]
-    };
-    for id in order {
-        if let Some(method) = init.auth_methods.iter().find(|method| method.id == *id) {
-            return Some(method);
-        }
-    }
-    init.auth_methods.first()
+    crate::agent::launch::pick_auth_method(init)
 }
 
 fn capability_present(value: &Value, pointer: &str) -> bool {
@@ -264,6 +325,8 @@ pub fn parse_stop_reason(value: &Value) -> Option<String> {
 mod tests {
     use serde_json::json;
 
+    use crate::domain::context::VideoPromptContext;
+
     use super::super::updates::extract_agent_text;
     use super::*;
 
@@ -325,7 +388,7 @@ mod tests {
             ],
             ..InitializeResult::default()
         };
-        let picked = pick_auth_method(&init).expect("method");
+        let picked = crate::agent::launch::pick_auth_method(&init).expect("method");
         assert_eq!(picked.id, "chat-gpt");
     }
 
@@ -343,5 +406,134 @@ mod tests {
         assert_eq!(options.current_model_id.as_deref(), Some("mini"));
         assert_eq!(options.models[0].name, "Mini");
         assert_eq!(options.current_reasoning_effort.as_deref(), Some("low"));
+    }
+
+    #[test]
+    fn prompt_uses_resource_links_not_inline_metadata() {
+        let ctx = VideoPromptContext {
+            media_path: Some(r"D:\videos\demo.mp4".into()),
+            media_title: Some("demo.mp4".into()),
+            position_ms: Some(83_000),
+            duration_ms: Some(2_700_000),
+            chapter_title: Some("开场".into()),
+            subtitle_choice_id: Some("embedded:0".into()),
+            notes_excerpt: Some("也不应出现".into()),
+        };
+        let params = session_prompt_params("sess_1", "这段讲了什么？", Some(&ctx), None);
+        let prompt = params
+            .get("prompt")
+            .and_then(Value::as_array)
+            .expect("prompt");
+        assert_eq!(prompt.len(), 2);
+        assert_eq!(
+            prompt[0].get("type").and_then(Value::as_str),
+            Some("resource_link")
+        );
+        let prompt_text = serde_json::to_string(&params).expect("serialize prompt");
+        assert!(!prompt_text.contains("MCP 工具"));
+        assert!(!prompt_text.contains("直接作答"));
+        assert!(!prompt_text.contains("lumina_get_transcript_window"));
+        assert!(!prompt_text.contains("lumina_propose_video_annotation"));
+        assert!(!prompt_text.contains("也不应出现"));
+        assert_eq!(
+            prompt[1].get("text").and_then(Value::as_str),
+            Some("这段讲了什么？")
+        );
+    }
+
+    #[test]
+    fn prompt_without_context_is_user_text_only() {
+        let params = session_prompt_params("sess_1", "你好", None, None);
+        let prompt = params
+            .get("prompt")
+            .and_then(Value::as_array)
+            .expect("prompt");
+        assert_eq!(prompt.len(), 1);
+        assert_eq!(prompt[0].get("text").and_then(Value::as_str), Some("你好"));
+    }
+
+    #[test]
+    fn prompt_includes_history_context_before_user_text() {
+        let params = session_prompt_params(
+            "sess_1",
+            "继续问",
+            None,
+            Some("用户：你好\n\n助手：你好，有什么可以帮你？"),
+        );
+        let prompt = params
+            .get("prompt")
+            .and_then(Value::as_array)
+            .expect("prompt");
+        assert_eq!(prompt.len(), 2);
+        let history = prompt[0].get("text").and_then(Value::as_str).unwrap_or("");
+        assert!(history.contains("此前对话摘要"));
+        assert!(history.contains("用户：你好"));
+        assert_eq!(
+            prompt[1].get("text").and_then(Value::as_str),
+            Some("继续问")
+        );
+    }
+
+    #[test]
+    fn windows_path_to_file_uri() {
+        assert_eq!(
+            path_to_file_uri(r"D:\videos\a.mp4"),
+            "file:///D:/videos/a.mp4"
+        );
+    }
+
+    #[test]
+    fn online_page_url_stays_as_is_in_prompt() {
+        let page = "https://www.youtube.com/watch?v=abc";
+        let ctx = VideoPromptContext {
+            media_path: Some(page.into()),
+            media_title: Some("Demo".into()),
+            position_ms: Some(10_000),
+            duration_ms: Some(60_000),
+            chapter_title: None,
+            subtitle_choice_id: Some("online:en".into()),
+            notes_excerpt: None,
+        };
+        let params = session_prompt_params("sess_1", "讲了什么？", Some(&ctx), None);
+        let prompt = params
+            .get("prompt")
+            .and_then(Value::as_array)
+            .expect("prompt");
+        let link = &prompt[0];
+        assert_eq!(
+            link.get("type").and_then(Value::as_str),
+            Some("resource_link")
+        );
+        // Page URL preserved for MCP snapshot fetch; never rewritten to file://.
+        assert_eq!(link.get("uri").and_then(Value::as_str), Some(page));
+        assert_eq!(link.get("name").and_then(Value::as_str), Some("Demo"));
+        let text = serde_json::to_string(&params)
+            .expect("serialize")
+            .to_lowercase();
+        assert!(!text.contains("cookie"), "no cookie: {text}");
+        assert!(!text.contains("sig="), "no signature: {text}");
+        assert!(!text.contains("yt-dlp"), "no tool detail: {text}");
+    }
+
+    #[test]
+    fn local_path_still_uses_file_uri() {
+        let ctx = VideoPromptContext {
+            media_path: Some(r"D:\videos\demo.mp4".into()),
+            media_title: Some("demo.mp4".into()),
+            position_ms: Some(1_000),
+            duration_ms: None,
+            chapter_title: None,
+            subtitle_choice_id: None,
+            notes_excerpt: None,
+        };
+        let params = session_prompt_params("sess_1", "hi", Some(&ctx), None);
+        let uri = params
+            .get("prompt")
+            .and_then(Value::as_array)
+            .and_then(|p| p.first())
+            .and_then(|l| l.get("uri"))
+            .and_then(Value::as_str)
+            .expect("uri");
+        assert_eq!(uri, "file:///D:/videos/demo.mp4");
     }
 }

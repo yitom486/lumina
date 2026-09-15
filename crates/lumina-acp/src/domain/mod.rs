@@ -9,7 +9,7 @@ pub use context::VideoPromptContext;
 pub use environment::{set_default_environment, SessionEnvironment};
 pub use model::{
     AcpEvent, AcpModelDiscoveryResult, AcpSessionModelOptions, AcpSessionModelSelection,
-    AcpSessionOption, AcpStatus, AgentProfileInput, AgentProfilesHint, PermissionOption,
-    SavedSessionHint,
+    AcpSessionOption, AcpStatus, AgentKind, AgentProfileInput, AgentProfileStatus,
+    AgentProfilesHint, PermissionOption, SavedSessionHint,
 };
 pub use settings::{AcpClientSettings, PermissionMode, ThinkingLevel};

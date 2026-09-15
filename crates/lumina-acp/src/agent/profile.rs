@@ -5,18 +5,11 @@ use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 
+pub use crate::domain::model::{AgentKind, AgentProfileStatus};
 use crate::domain::model::{AgentProfileInput, AgentProfilesHint};
 use crate::error::AcpError;
 
 use super::launch::{resolve_launch, CODEX_ACP_PACKAGE};
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "PascalCase")]
-pub enum AgentKind {
-    Codex,
-    Claude,
-    Custom,
-}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -30,19 +23,6 @@ pub struct AgentProfile {
     pub args: Vec<String>,
     #[serde(default)]
     pub env: HashMap<String, String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct AgentProfileStatus {
-    pub id: String,
-    pub name: String,
-    pub kind: AgentKind,
-    pub command: String,
-    pub args: Vec<String>,
-    pub env: HashMap<String, String>,
-    pub available: bool,
-    pub resolved_command: Option<String>,
 }
 
 #[derive(Debug, Clone)]

@@ -180,10 +180,10 @@ pool.shutdown();
 | 目录 | 模块 | 核心职责与导出项 |
 | :--- | :--- | :--- |
 | [`lib.rs`](./lib.rs) + [`error.rs`](./error.rs) | 根 / 契约 | 根 re-export（`AcpService/AcpError/WorkshopPool/...`）；`AcpError/AcpErrorCode` 固定业务 `message`。 |
-| `domain/` | 纯数据，无 IO | `model.rs`（`AcpEvent/AcpStatus/PermissionOption/...`）、`settings.rs`（`AcpClientSettings/PermissionMode/ThinkingLevel`）、`context.rs`（`VideoPromptContext` + `resource_link` 组装）、`environment.rs`（`SessionEnvironment` 宿主注入 port）。 |
-| `agent/` | 启动前：找谁、在哪跑 | `discover.rs`（PATH/native 查找）、`workspace.rs`（`resolve_session_cwd` + 在线 URL 回退）、`launch.rs`（`LaunchSpec/resolve_launch` + builtin Codex）、`profile.rs`（`AgentProfile/prepare/resolve_active`）、`status.rs`（`status_from_profiles/install_hint` 合并旧 `paths` + `profile` 文案）。 |
-| `wire/` | 线上格式，纯函数 | `codec.rs`（request/notification/envelope/`Inbound` 分类）、`session.rs`（initialize/auth/new/resume/prompt/close params + parse）、`updates.rs`（agent text/thought/tool/plan 提取）、`permission.rs`（权限 options/auto/selected）、`sanitize.rs`（路径脱敏/截断/底层错误改写）。 |
-| `runtime/` | 活着的进程 | `service.rs`（瘦门面：connect/new_chat/prompt/close/cancel/status）、`lifecycle.rs`（`LiveSession` + spawn/new/resume/rotate）、`io.rs`（stdio 读写 + 按 id 等待）、`inbound.rs`（update/permission 分发）、`host/{mod,fs,terminal}.rs`（`AcpHost`：`fs/*` 与 `terminal/*` 已拆开）、`process.rs`（crate 内 spawn/kill，无控制台闪烁）。 |
+| `domain/` | 纯数据，无 IO | `model.rs`（`AcpEvent/AcpStatus/AgentKind/AgentProfileStatus/PermissionOption/...`）、`settings.rs`（`AcpClientSettings/PermissionMode/ThinkingLevel`）、`context.rs`（`VideoPromptContext` 纯 DTO，不构造 ACP JSON）、`environment.rs`（`SessionEnvironment` 宿主注入 port）。 |
+| `agent/` | 启动前：找谁、在哪跑 | `discover.rs`（PATH/native 查找）、`workspace.rs`（`resolve_session_cwd` + 在线 URL 回退）、`launch.rs`（`LaunchSpec/resolve_launch` + builtin Codex + `pick_auth_method` 认证策略）、`profile.rs`（`AgentProfile/prepare/resolve_active`）、`status.rs`（`status_from_profiles/install_hint` 合并旧 `paths` + `profile` 文案）。 |
+| `wire/` | 线上格式，纯函数 | `codec.rs`（request/notification/envelope/`Inbound` 分类）、`session.rs`（initialize/auth/new/resume/**prompt**/close params + parse；`session_prompt_params` 在此构造 `resource_link`）、`updates.rs`（agent text/thought/tool/plan 提取）、`permission.rs`（权限 options/auto/selected）、`sanitize.rs`（路径脱敏/截断/底层错误改写）。 |
+| `runtime/` | 活着的进程 | `service.rs`（瘦门面：connect/new_chat/close/cancel/status + 隔离任务薄转发）、`prompt.rs`（`prompt` 循环：超时/取消/流式收集）、`lifecycle.rs`（`LiveSession` + spawn/new/resume/rotate）、`io.rs`（stdio 读写 + 按 id 等待）、`inbound.rs`（update/permission 分发）、`host/{mod,fs,terminal}.rs`（`AcpHost`：`fs/*` 与 `terminal/*` 已拆开）、`process.rs`（crate 内 spawn/kill，无控制台闪烁）。 |
 | `jobs/` | 一次性任务 | `isolated.rs`（`prompt_isolated/discover_isolated` 新家）、`pool.rs`（`WorkshopPool/PoolConfig`，另有 `IsolatedSessionPool` 别名）、`rollout.rs`（本任务 Codex rollout 精确清扫）、`collector.rs`（`AgentReplyCollector`，拼装 thinking + 正文）。 |
 
 ---

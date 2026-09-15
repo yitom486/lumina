@@ -1,9 +1,10 @@
 //! ACP session workspace (cwd resolution + legacy paths).
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use crate::agent::discover::{find_acp_adapter, find_codex};
 use crate::error::AcpError;
+use crate::runtime::process::command;
 
 /// Resolve an absolute session `cwd` for ACP.
 ///
@@ -113,6 +114,22 @@ pub fn resolve_acp_paths() -> Result<AcpPaths, AcpError> {
         cli,
         codex: find_codex(),
     })
+}
+
+/// Legacy helper: probe `--version` of a resolved CLI; kept for API compat.
+#[deprecated(note = "legacy helper; version probing is no longer used by status")]
+pub fn probe_cli_version(cli: &Path) -> Option<String> {
+    let output = command(cli).arg("--version").output().ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let text = String::from_utf8_lossy(&output.stdout);
+    let line = text.lines().next()?.trim();
+    if line.is_empty() {
+        None
+    } else {
+        Some(line.to_string())
+    }
 }
 
 #[cfg(test)]

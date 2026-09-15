@@ -6,7 +6,7 @@ pub mod profile;
 pub mod status;
 pub mod workspace;
 
-pub use launch::{resolve_launch, LaunchSpec, CODEX_ACP_PACKAGE};
+pub use launch::{pick_auth_method, resolve_launch, LaunchSpec, CODEX_ACP_PACKAGE};
 pub use profile::{
     default_profiles_hint, list_status, prepare_profiles, resolve_active_profile, AgentKind,
     AgentProfile, AgentProfileStatus, PreparedProfiles,

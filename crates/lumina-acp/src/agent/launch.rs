@@ -4,10 +4,11 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use crate::agent::discover::{
-    codex_home_dir, find_acp_adapter, find_bun, find_bunx, find_codex, find_command,
-    find_dev_codex_acp_entry,
+    codex_config_present, codex_home_dir, find_acp_adapter, find_bun, find_bunx, find_codex,
+    find_command, find_dev_codex_acp_entry,
 };
 use crate::error::AcpError;
+use crate::wire::session::{AuthMethod, InitializeResult};
 
 use super::profile::{AgentKind, AgentProfile};
 
@@ -162,4 +163,26 @@ fn prepend_path_dir(env: &mut HashMap<String, String>, dir: &Path) {
     if let Ok(joined) = std::env::join_paths(merged) {
         env.insert(path_key.into(), joined.to_string_lossy().to_string());
     }
+}
+
+/// Pick an auth method compatible with the local setup (ChatGPT login vs API
+/// key). Auth *policy* (config/env reads) belongs to `agent`; `wire` only
+/// parses `InitializeResult` and constructs requests.
+pub fn pick_auth_method(init: &InitializeResult) -> Option<&AuthMethod> {
+    if init.auth_methods.is_empty() {
+        return None;
+    }
+    let order: &[&str] = if codex_config_present() {
+        &["chat-gpt", "chat-gpt-device-code", "gateway", "api-key"]
+    } else if std::env::var("OPENAI_API_KEY").is_ok() {
+        &["api-key", "chat-gpt", "chat-gpt-device-code", "gateway"]
+    } else {
+        &["chat-gpt", "chat-gpt-device-code", "api-key", "gateway"]
+    };
+    for id in order {
+        if let Some(method) = init.auth_methods.iter().find(|method| method.id == *id) {
+            return Some(method);
+        }
+    }
+    init.auth_methods.first()
 }
