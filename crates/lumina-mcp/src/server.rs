@@ -21,7 +21,11 @@ type ToolState = Arc<RwLock<()>>;
 // guidance that the host may append to the model's system context. Keep this
 // free of turn-specific values: playback state and library data live in the
 // snapshot and are fetched through tools when needed.
-const MCP_SERVER_INSTRUCTIONS: &str = "Lumina 提供与当前媒体相关的按需上下文工具；可用工具以 tools/list 返回的清单为准。\n\n工具调用原则：\n(1) 如果当前对话、此前工具结果或问题本身已经足够回答，直接作答，不要重复调用。\n(2) 只调用当前缺失的信息对应的工具，避免每轮并行全量拉取。\n(3) 台词原文和具体剧情点以工具返回为准，不要编造；基于已验证内容的解读、动机分析和前后联系可以直接展开。\n(4) 播放锚点、章节、笔记和字幕/截图工具共用本轮冻结的 anchor.positionMs；当前集剧情或对话优先使用 lumina_get_transcript_window，其他集台词使用 lumina_get_episode_transcript，画面细节再使用 lumina_capture_frames。\n(5) 分集列表使用 lumina_get_episode_index，剧集背景和当前集简介使用 lumina_get_library_context。\n(6) 写视频批注必须先调用 lumina_propose_video_annotation 生成提议，禁止直接写入笔记库；由用户在 Lumina 界面确认保存。\n(7) 引用视频内容使用工具实际返回的时间标记，例如 [03:12]；跨集引用使用 [第N集 · mm:ss]，不要编造时间。\n(8) 跨集引用默认只使用当前集及之前的集数；用户明确要求后续集数时才查询，并提示剧透。\n(9) 制作或翻译外挂字幕请使用 Lumina 文稿面板或 ASR 工作流，不要在本对话中尝试写入字幕轨。";
+//
+// The catalog below is eager: the model learns all tool identities here,
+// before/without waiting for tools/list. tools/list still owns the callable
+// subset and JSON schemas for this session.
+const MCP_SERVER_INSTRUCTIONS: &str = "Lumina 提供与当前媒体相关的按需上下文工具；完整目录共 10 个，初始化时即应拉取 tools/list，不要靠猜。实际可调用子集与参数 schema 以 tools/list 返回为准。\n\n目录：\n- lumina_get_playback_context：当前锚点与本集信息。\n- lumina_get_library_context：剧集背景与当前集简介。\n- lumina_get_episode_index：全部分集标题与简介。\n- lumina_get_transcript_window：当前文件锚点附近台词；可选 centerMs/atSec，beforeSec/afterSec/radiusSec 默认前后各60秒。\n- lumina_get_episode_transcript：同剧其他集台词；必填 season/episode。\n- lumina_get_audio_marks：静音区间与响度突增候选（非语义标签）。\n- lumina_get_subtitle_cues / lumina_write_subtitle_track：字幕工坊专用。\n- lumina_capture_frames：锚点附近截帧；仅识图会话可见。\n- lumina_propose_video_annotation：视频批注提议；由用户在界面确认。\n\n工具调用原则：\n(1) 如果当前对话、此前工具结果或问题本身已经足够回答，直接作答，不要重复调用。\n(2) 只调用当前缺失的信息对应的工具，避免每轮并行全量拉取。\n(3) 台词原文和具体剧情点以工具返回为准，禁止先走网络搜索或编造；基于已验证内容的解读、动机分析和前后联系可以直接展开。\n(4) 问本集讲了什么、剧情或对话，必须先调 lumina_get_library_context 或 lumina_get_transcript_window；问其他集必须先调 lumina_get_episode_transcript；问画面细节必须先调 lumina_capture_frames；播放锚点、章节、笔记和字幕/截图工具共用本轮冻结的锚点位置。\n(5) 分集列表使用 lumina_get_episode_index，剧集背景和当前集简介使用 lumina_get_library_context。\n(6) 写视频批注必须先调用 lumina_propose_video_annotation 生成提议，禁止直接写入笔记库；由用户在 Lumina 界面确认保存。\n(7) 引用视频内容使用工具实际返回的时间标记，例如 [03:12]；跨集引用使用 [第N集 · mm:ss]，不要编造时间。\n(8) 跨集引用默认只使用当前集及之前的集数；用户明确要求后续集数时才查询，并提示剧透。\n(9) 制作或翻译外挂字幕请使用 Lumina 文稿面板或 ASR 工作流，不要在本对话中尝试写入字幕轨。\n(10) 若目录中的工具不在 tools/list 中，视为本会话未开放：不要手写调用、不要猜测其返回；如用户追问画面细节而无截图工具，应明说本会话不支持画面分析并基于字幕作答。";
 
 pub fn run_stdio_server() -> Result<(), String> {
     let stdin = io::stdin();
@@ -579,8 +583,21 @@ mod tests {
             .and_then(Value::as_str)
             .expect("tool profile should expose MCP instructions");
         assert!(instructions.contains("tools/list"));
+        // Eager catalog: all identities known before tools/list.
+        for name in lumina_core::tool_contract::ALL_TOOLS {
+            assert!(
+                instructions.contains(name),
+                "instructions must pre-feed tool: {name}"
+            );
+        }
         assert!(instructions.contains("lumina_get_transcript_window"));
         assert!(instructions.contains("lumina_propose_video_annotation"));
+        assert!(instructions.contains("lumina_capture_frames"));
+        // Mandatory trigger rules: plot must hit tools first, no web-first.
+        assert!(instructions.contains("必须先调"));
+        assert!(instructions.contains("禁止先走网络搜索"));
+        // Gated-tool guidance: missing from list means unavailable, never guess.
+        assert!(instructions.contains("不在 tools/list 中"));
         assert!(!instructions.contains("mediaPath"));
         assert!(!instructions.contains("turn 数"));
 
