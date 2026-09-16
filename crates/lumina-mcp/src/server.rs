@@ -27,6 +27,18 @@ type ToolState = Arc<RwLock<()>>;
 // subset and JSON schemas for this session.
 const MCP_SERVER_INSTRUCTIONS: &str = "Lumina 提供与当前媒体相关的按需上下文工具；完整目录共 10 个，初始化时即应拉取 tools/list，不要靠猜。实际可调用子集与参数 schema 以 tools/list 返回为准。\n\n目录：\n- lumina_get_playback_context：当前锚点与本集信息。\n- lumina_get_library_context：剧集背景与当前集简介。\n- lumina_get_episode_index：全部分集标题与简介。\n- lumina_get_transcript_window：当前文件锚点附近台词；可选 centerMs/atSec，beforeSec/afterSec/radiusSec 默认前后各60秒。\n- lumina_get_episode_transcript：同剧其他集台词；必填 season/episode。\n- lumina_get_audio_marks：静音区间与响度突增候选（非语义标签）。\n- lumina_get_subtitle_cues / lumina_write_subtitle_track：字幕工坊专用。\n- lumina_capture_frames：锚点附近截帧；仅识图会话可见。\n- lumina_propose_video_annotation：视频批注提议；由用户在界面确认。\n\n工具调用原则：\n(1) 如果当前对话、此前工具结果或问题本身已经足够回答，直接作答，不要重复调用。\n(2) 只调用当前缺失的信息对应的工具，避免每轮并行全量拉取。\n(3) 台词原文和具体剧情点以工具返回为准，禁止先走网络搜索或编造；基于已验证内容的解读、动机分析和前后联系可以直接展开。\n(4) 问本集讲了什么、剧情或对话，必须先调 lumina_get_library_context 或 lumina_get_transcript_window；问其他集必须先调 lumina_get_episode_transcript；问画面细节必须先调 lumina_capture_frames；播放锚点、章节、笔记和字幕/截图工具共用本轮冻结的锚点位置。\n(5) 分集列表使用 lumina_get_episode_index，剧集背景和当前集简介使用 lumina_get_library_context。\n(6) 写视频批注必须先调用 lumina_propose_video_annotation 生成提议，禁止直接写入笔记库；由用户在 Lumina 界面确认保存。\n(7) 引用视频内容使用工具实际返回的时间标记，例如 [03:12]；跨集引用使用 [第N集 · mm:ss]，不要编造时间。\n(8) 跨集引用默认只使用当前集及之前的集数；用户明确要求后续集数时才查询，并提示剧透。\n(9) 制作或翻译外挂字幕请使用 Lumina 文稿面板或 ASR 工作流，不要在本对话中尝试写入字幕轨。\n(10) 若目录中的工具不在 tools/list 中，视为本会话未开放：不要手写调用、不要猜测其返回；如用户追问画面细节而无截图工具，应明说本会话不支持画面分析并基于字幕作答。";
 
+/// Timing probe for the serial-vs-parallel question. stderr only: stdout
+/// must stay pure JSON-RPC, and this process exits before the app's tracing
+/// subscriber exists, so `tracing!` would be a no-op here.
+fn log_timing(event: &str, id: &Value, tool: &str, elapsed_ms: Option<u128>) {
+    match elapsed_ms {
+        Some(elapsed_ms) => {
+            eprintln!("[lumina-mcp-timing] {event} id={id} tool={tool} elapsed_ms={elapsed_ms}")
+        }
+        None => eprintln!("[lumina-mcp-timing] {event} id={id} tool={tool}"),
+    }
+}
+
 pub fn run_stdio_server() -> Result<(), String> {
     let stdin = io::stdin();
     let output: Output = Arc::new(Mutex::new(BufWriter::new(io::stdout())));
@@ -66,6 +78,12 @@ pub fn run_stdio_server() -> Result<(), String> {
                 }
             }
             "tools/call" => {
+                log_timing(
+                    "tools/call received",
+                    &id,
+                    params.get("name").and_then(Value::as_str).unwrap_or(""),
+                    None,
+                );
                 let profile = tool_profile_from_env();
                 let response_output = Arc::clone(&output);
                 let response_state = Arc::clone(&state);
@@ -129,10 +147,33 @@ fn tools_list_result(profile: McpToolProfile, snapshot: &LuminaMcpSnapshot) -> V
 /// Tool JSON schemas keyed by the canonical directory in `lumina-core`.
 /// Returns `None` for unknown names (safe direction: omit, never invent).
 /// Schemas are byte-identical to the pre-contract payloads; only the keying
-/// moved from string literals to the shared contract.
+/// moved from string literals to the shared contract. `annotations` are
+/// attached afterwards by [`tool_read_only_hint`].
+///
+/// Concurrency signal for Codex App Server (v0.134+ partitions by
+/// `readOnlyHint` when the server flag is absent): the nine read tools may
+/// dispatch concurrently, the subtitle writer stays serial. `capture_frames`
+/// only leaves temp files discarded on return; `propose_video_annotation`
+/// never writes the notes store (the user confirms in UI first); both count
+/// as read-only here.
+fn tool_read_only_hint(name: &str) -> bool {
+    use lumina_core::tool_contract as contract;
+    matches!(
+        name,
+        contract::TOOL_PLAYBACK_CONTEXT
+            | contract::TOOL_LIBRARY_CONTEXT
+            | contract::TOOL_EPISODE_INDEX
+            | contract::TOOL_TRANSCRIPT_WINDOW
+            | contract::TOOL_EPISODE_TRANSCRIPT
+            | contract::TOOL_AUDIO_MARKS
+            | contract::TOOL_SUBTITLE_CUES
+            | contract::TOOL_CAPTURE_FRAMES
+            | contract::TOOL_PROPOSE_ANNOTATION
+    )
+}
 fn tool_json(name: &str) -> Option<Value> {
     use lumina_core::tool_contract as contract;
-    let tool = if name == contract::TOOL_PLAYBACK_CONTEXT {
+    let mut tool = if name == contract::TOOL_PLAYBACK_CONTEXT {
         json!({
             "name": contract::TOOL_PLAYBACK_CONTEXT,
             "description": "Return frozen playback anchor and currentEpisode from the snapshot file.",
@@ -297,6 +338,7 @@ fn tool_json(name: &str) -> Option<Value> {
     } else {
         return None;
     };
+    tool["annotations"] = json!({ "readOnlyHint": tool_read_only_hint(name) });
     Some(tool)
 }
 
@@ -327,6 +369,8 @@ fn execute_tool_call(
     heavy_limiter: &Arc<HeavyToolLimiter>,
 ) -> Value {
     let name = params.get("name").and_then(Value::as_str).unwrap_or("");
+    let started = std::time::Instant::now();
+    log_timing("tool started", &id, name, None);
     let result = if is_read_only_tool(name) {
         let _state_guard = match state.read() {
             Ok(guard) => guard,
@@ -349,6 +393,12 @@ fn execute_tool_call(
         dispatch_tool_call(profile, &params)
     };
 
+    log_timing(
+        "tool finished",
+        &id,
+        name,
+        Some(started.elapsed().as_millis()),
+    );
     match result {
         Ok(result) => success(id, result),
         Err(message) => error(id, -32000, &message),
@@ -507,6 +557,16 @@ mod tests {
             assert_eq!(tool.get("name").and_then(Value::as_str), Some(*name));
             assert!(tool.get("description").and_then(Value::as_str).is_some());
             assert!(tool.get("inputSchema").is_some());
+            // Concurrency signal: only the subtitle writer mutates disk.
+            let read_only = tool
+                .pointer("/annotations/readOnlyHint")
+                .and_then(Value::as_bool)
+                .expect("annotations.readOnlyHint must be present");
+            assert_eq!(
+                read_only,
+                *name != contract::TOOL_WRITE_SUBTITLE_TRACK,
+                "readOnlyHint wrong for {name}"
+            );
         }
         assert!(tool_json("lumina_do_anything").is_none());
         // Schema bounds mirror the canonical numeric contract.

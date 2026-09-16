@@ -124,7 +124,17 @@ pub(crate) fn emit_session_update(value: &Value, on_event: &mut dyn FnMut(AcpEve
         }
     }
     if let Some(tool) = extract_tool_call(value) {
+        // Timing probe for the serial-vs-parallel question: when the Agent
+        // announces each call and when each status lands. `detail` is
+        // deliberately not logged (payload bodies would spam the log).
         if tool.update_kind == "tool_call" {
+            tracing::info!(
+                tool_call_id = %tool.tool_call_id,
+                title = ?tool.title,
+                kind = ?tool.kind,
+                status = ?tool.status,
+                "ACP tool_call observed"
+            );
             on_event(AcpEvent::ToolCall {
                 tool_call_id: tool.tool_call_id,
                 title: tool.title,
@@ -133,6 +143,12 @@ pub(crate) fn emit_session_update(value: &Value, on_event: &mut dyn FnMut(AcpEve
                 detail: tool.detail,
             });
         } else {
+            tracing::info!(
+                tool_call_id = %tool.tool_call_id,
+                title = ?tool.title,
+                status = ?tool.status,
+                "ACP tool_call update observed"
+            );
             on_event(AcpEvent::ToolCallUpdate {
                 tool_call_id: tool.tool_call_id,
                 status: tool.status,
