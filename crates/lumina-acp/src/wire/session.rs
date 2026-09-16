@@ -6,7 +6,7 @@ use std::path::Path;
 use serde_json::{json, Value};
 
 use crate::domain::context::VideoPromptContext;
-use crate::domain::model::{AgentSessionInfo, SessionKind};
+use crate::domain::model::{AgentSessionInfo, ResumeOutcome, SessionKind};
 
 pub fn initialize_params() -> Value {
     initialize_params_with_tools(true)
@@ -215,6 +215,25 @@ pub fn session_resume_params(session_id: &str, cwd: &str, mcp_servers: Value) ->
         "cwd": cwd,
         "mcpServers": mcp_servers,
     })
+}
+
+/// Tell an occupied conversation apart from a lost one.
+///
+/// Codex enforces a single writer per conversation and refuses to reattach one
+/// that another process still holds, reporting `thread <id> already has an
+/// active writer`. The stored conversation is untouched in that case, so it
+/// must not be reported as lost. Matching agent wording is admittedly a weak
+/// signal, but it is the only one the protocol exposes, and anything
+/// unrecognised falls back to the conservative `Unavailable`.
+pub fn classify_resume_failure(details: Option<&str>) -> ResumeOutcome {
+    let occupied = details
+        .map(|value| value.to_ascii_lowercase().contains("active writer"))
+        .unwrap_or(false);
+    if occupied {
+        ResumeOutcome::Occupied
+    } else {
+        ResumeOutcome::Unavailable
+    }
 }
 
 pub fn session_list_params(cwd: Option<&str>, cursor: Option<&str>) -> Value {
@@ -512,6 +531,38 @@ mod tests {
         });
         let init = parse_initialize_result(&value);
         assert!(init.supports_session_close);
+    }
+
+    #[test]
+    fn occupied_resume_failure_is_not_reported_as_lost() {
+        // Shape taken from a real codex-acp refusal.
+        assert_eq!(
+            classify_resume_failure(Some(
+                "Internal error: thread 01a09b84-d8a8-7462-aade-7c4c1da433e2 \
+                 already has an active writer"
+            )),
+            ResumeOutcome::Occupied
+        );
+        assert_eq!(
+            classify_resume_failure(Some("Thread ABC Already Has An Active Writer")),
+            ResumeOutcome::Occupied
+        );
+    }
+
+    #[test]
+    fn unrecognized_resume_failure_falls_back_to_unavailable() {
+        for details in [
+            None,
+            Some("Internal error"),
+            Some("no rollout found for thread id abc"),
+            Some(""),
+        ] {
+            assert_eq!(
+                classify_resume_failure(details),
+                ResumeOutcome::Unavailable,
+                "details={details:?}"
+            );
+        }
     }
 
     #[test]

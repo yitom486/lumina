@@ -247,10 +247,13 @@ impl AcpService {
 
             let new_session_id = self.create_new_session(
                 session,
-                &cwd_string,
-                &profile.id,
-                client_settings.vision_capable,
-                SessionKind::Chat,
+                crate::runtime::lifecycle::NewSessionSpec {
+                    cwd: &cwd_string,
+                    profile_id: &profile.id,
+                    vision_capable: client_settings.vision_capable,
+                    kind: SessionKind::Chat,
+                    resume: None,
+                },
                 &mut on_event,
             )?;
             session.session_id = new_session_id;

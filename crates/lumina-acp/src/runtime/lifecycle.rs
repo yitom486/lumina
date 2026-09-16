@@ -1,4 +1,4 @@
-//! Live ACP session lifecycle: spawn, session/new|resume|close, rotation.
+﻿//! Live ACP session lifecycle: spawn, session/new|resume|close, rotation.
 //!
 //! Pure move from `runtime/service.rs` (no behavior change).
 
@@ -14,7 +14,7 @@ use crate::agent::workspace::resolve_session_cwd;
 use crate::domain::environment::session_env;
 use crate::domain::model::{
     AcpEvent, AcpSessionModelOptions, AcpSessionModelSelection, AgentSessionListResult,
-    SavedSessionHint, SessionKind,
+    ResumeOutcome, SavedSessionHint, SessionKind,
 };
 use crate::error::AcpError;
 use crate::runtime::host::AcpHost;
@@ -23,10 +23,23 @@ use crate::runtime::process::{command, AgentProcess};
 use crate::runtime::service::AcpService;
 use crate::wire::codec::is_error_response;
 use crate::wire::session::{
-    authenticate_params, initialize_params, initialize_params_restricted, parse_initialize_result,
-    parse_session_id, parse_session_list, parse_session_model_options, session_close_params,
-    session_list_params, session_new_params, session_resume_params, InitializeResult,
+    authenticate_params, classify_resume_failure, initialize_params, initialize_params_restricted,
+    parse_initialize_result, parse_session_id, parse_session_list, parse_session_model_options,
+    session_close_params, session_list_params, session_new_params, session_resume_params,
+    InitializeResult,
 };
+
+/// Everything that describes the session about to be created. Grouped because
+/// the argument list had grown past the point where call sites were readable.
+pub(crate) struct NewSessionSpec<'a> {
+    pub(crate) cwd: &'a str,
+    pub(crate) profile_id: &'a str,
+    pub(crate) vision_capable: bool,
+    pub(crate) kind: SessionKind,
+    /// Why we create instead of restore, so the UI can tell an occupied
+    /// conversation from a lost one. `None` when no restore was attempted.
+    pub(crate) resume: Option<ResumeOutcome>,
+}
 
 pub(crate) struct LiveSession {
     pub(crate) agent: AgentProcess,
@@ -119,10 +132,13 @@ impl AcpService {
         let cwd = workspace.to_string_lossy().into_owned();
         let new_id = match self.create_new_session(
             &mut session,
-            &cwd,
-            profile_id,
-            false,
-            SessionKind::Workshop,
+            NewSessionSpec {
+                cwd: &cwd,
+                profile_id,
+                vision_capable: false,
+                kind: SessionKind::Workshop,
+                resume: None,
+            },
             on_event,
         ) {
             Ok(id) => id,
@@ -518,17 +534,26 @@ impl AcpService {
                         session_id: saved.session_id.clone(),
                         profile_id: profile.id.clone(),
                         cwd: cwd.clone(),
+                        resume: Some(ResumeOutcome::Resumed),
                     });
                     saved.session_id
                 }
                 Err(error) => {
-                    tracing::warn!(%error, "session/resume failed; creating new session");
+                    let outcome = classify_resume_failure(error.details.as_deref());
+                    tracing::warn!(
+                        %error,
+                        ?outcome,
+                        "session/resume failed; creating new session"
+                    );
                     self.create_new_session(
                         &mut session,
-                        &cwd,
-                        &profile.id,
-                        vision_capable,
-                        session_kind,
+                        NewSessionSpec {
+                            cwd: &cwd,
+                            profile_id: &profile.id,
+                            vision_capable,
+                            kind: session_kind,
+                            resume: Some(outcome),
+                        },
                         on_event,
                     )?
                 }
@@ -536,10 +561,13 @@ impl AcpService {
         } else {
             self.create_new_session(
                 &mut session,
-                &cwd,
-                &profile.id,
-                vision_capable,
-                session_kind,
+                NewSessionSpec {
+                    cwd: &cwd,
+                    profile_id: &profile.id,
+                    vision_capable,
+                    kind: session_kind,
+                    resume: None,
+                },
                 on_event,
             )?
         };
@@ -552,12 +580,16 @@ impl AcpService {
     pub(crate) fn create_new_session(
         &self,
         session: &mut LiveSession,
-        cwd: &str,
-        profile_id: &str,
-        vision_capable: bool,
-        kind: SessionKind,
+        spec: NewSessionSpec<'_>,
         on_event: &mut dyn FnMut(AcpEvent),
     ) -> Result<String, AcpError> {
+        let NewSessionSpec {
+            cwd,
+            profile_id,
+            vision_capable,
+            kind,
+            resume,
+        } = spec;
         // Snapshot IO goes through the app-provided environment (M5).
         let env = session_env()?;
         let snapshot_path = env.snapshot_path(std::path::Path::new(cwd));
@@ -598,6 +630,7 @@ impl AcpService {
             session_id: session_id.clone(),
             profile_id: profile_id.to_string(),
             cwd: cwd.to_string(),
+            resume,
         });
         Ok(session_id)
     }

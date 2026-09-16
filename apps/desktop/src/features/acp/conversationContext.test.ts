@@ -10,6 +10,7 @@ import {
   isAgentConversationId,
   reconcileConversations,
   resumeHintForConversation,
+  resumeOutcomeNotice,
   shouldPersistConversationSelection,
   shouldRequestHistorySessionList,
 } from "@lumina/chat-ui/conversationContext";
@@ -187,6 +188,64 @@ describe("agentSessionListTrust", () => {
         busy: false,
       }),
     ).toEqual({ canMatch: true, canAssertMissing: true });
+  });
+});
+
+describe("resumeOutcomeNotice", () => {
+  it("never tells the user an occupied conversation is gone", () => {
+    const occupied = resumeOutcomeNotice({
+      outcome: "occupied",
+      sessionMatchedRequest: false,
+    });
+    expect(occupied).not.toContain("已不存在");
+    expect(occupied).toContain("正被其它程序使用");
+    // 占用是可逆的，必须给出下一步而不是让用户以为数据丢了。
+    expect(occupied).toContain("可重新恢复");
+  });
+
+  it("distinguishes resumed, occupied and unavailable", () => {
+    const notices = (["resumed", "occupied", "unavailable"] as const).map(
+      (outcome) =>
+        resumeOutcomeNotice({ outcome, sessionMatchedRequest: false }),
+    );
+    expect(new Set(notices).size).toBe(3);
+    expect(notices[0]).toBe("已恢复该对话的 AI 记忆");
+    expect(notices[2]).toBe("该对话的 AI 记忆已不存在，已作为新对话继续");
+  });
+
+  it("leaks no implementation detail into any notice", () => {
+    for (const outcome of [
+      "resumed",
+      "occupied",
+      "unavailable",
+      null,
+      undefined,
+    ] as const) {
+      const notice = resumeOutcomeNotice({
+        outcome,
+        sessionMatchedRequest: true,
+      });
+      expect(notice.length).toBeGreaterThan(0);
+      for (const banned of [
+        "thread",
+        "writer",
+        "session",
+        "codex",
+        "resume",
+        "JSON",
+      ]) {
+        expect(notice.toLowerCase()).not.toContain(banned.toLowerCase());
+      }
+    }
+  });
+
+  it("falls back to the id comparison when the backend sends no outcome", () => {
+    expect(
+      resumeOutcomeNotice({ outcome: null, sessionMatchedRequest: true }),
+    ).toBe("已恢复该对话的 AI 记忆");
+    expect(
+      resumeOutcomeNotice({ outcome: undefined, sessionMatchedRequest: false }),
+    ).toBe("该对话的 AI 记忆已不存在，已作为新对话继续");
   });
 });
 

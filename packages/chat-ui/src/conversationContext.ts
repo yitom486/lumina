@@ -1,5 +1,9 @@
 import type { SavedChatConversation } from "./chatHistoryStore";
-import type { AgentSessionInfo, SavedSessionHint } from "./types";
+import type {
+  AgentSessionInfo,
+  ResumeOutcome,
+  SavedSessionHint,
+} from "./types";
 
 /**
  * Build a resume hint only when the saved conversation belongs to the exact
@@ -122,6 +126,32 @@ export function agentSessionListTrust(input: {
 }
 
 /** Fetch the metadata once when the user opens history on a connected Agent. */
+/**
+ * 恢复 AI 记忆后给用户看的提示。
+ *
+ * 「被占用」和「已不存在」必须是两句话：占用方（通常是另一个正在运行的 AI
+ * 客户端）放手后那条对话还能恢复，统一说成「已不存在」等于谎报数据丢失。
+ *
+ * `outcome` 缺省时退回旧的 id 比对信号，这样后端还没带上结果也不会静默。
+ */
+export function resumeOutcomeNotice(input: {
+  outcome: ResumeOutcome | null | undefined;
+  sessionMatchedRequest: boolean;
+}): string {
+  switch (input.outcome) {
+    case "resumed":
+      return "已恢复该对话的 AI 记忆";
+    case "occupied":
+      return "该对话的 AI 记忆正被其它程序使用，已作为新对话继续；关闭其它 AI 客户端后可重新恢复";
+    case "unavailable":
+      return "该对话的 AI 记忆已不存在，已作为新对话继续";
+    default:
+      return input.sessionMatchedRequest
+        ? "已恢复该对话的 AI 记忆"
+        : "该对话的 AI 记忆已不存在，已作为新对话继续";
+  }
+}
+
 export function shouldRequestHistorySessionList(input: {
   historyOpen: boolean;
   connected: boolean;

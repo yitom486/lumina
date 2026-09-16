@@ -20,6 +20,12 @@ export type SavedSessionHint = {
   cwd: string;
 };
 
+/**
+ * 恢复 AI 记忆的结果。`occupied` 与 `unavailable` 必须分开：被占用的对话内容
+ * 完好，占用方放手后还能再恢复；unavailable 才是真的没了。
+ */
+export type ResumeOutcome = "resumed" | "occupied" | "unavailable";
+
 export type AgentSessionInfo = {
   sessionId: string;
   cwd: string;
@@ -161,6 +167,8 @@ export type AcpEvent =
       sessionId: string;
       profileId: string;
       cwd: string;
+      /** 缺省表示本次没有尝试恢复，即一条全新对话。 */
+      resume?: ResumeOutcome | null;
     }
   | { type: "finished"; text: string; stopReason?: string | null }
   | { type: "failed"; code: string; message: string };

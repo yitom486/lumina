@@ -54,6 +54,7 @@ import {
 import {
   agentSessionListTrust,
   canSwitchHistoryConversation,
+  resumeOutcomeNotice,
   historyConversationLoadMode,
   isAgentConversationId,
   reconcileConversations,
@@ -243,14 +244,13 @@ export function AcpPanel() {
   ) => {
     const expectedSessionId = resumeExpectedSessionIdRef.current;
     if (expectedSessionId) {
-      if (event.sessionId === expectedSessionId) {
-        if (resumeNoticePendingRef.current) {
-          pushSystem("已恢复该对话的 AI 记忆");
-        }
-      } else {
-        if (resumeNoticePendingRef.current) {
-          pushSystem("该对话的 AI 记忆已不存在，已作为新对话继续");
-        }
+      if (resumeNoticePendingRef.current) {
+        pushSystem(
+          resumeOutcomeNotice({
+            outcome: event.resume,
+            sessionMatchedRequest: event.sessionId === expectedSessionId,
+          }),
+        );
       }
       resumeExpectedSessionIdRef.current = null;
       resumeNoticePendingRef.current = false;

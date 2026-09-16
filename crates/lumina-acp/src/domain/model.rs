@@ -32,6 +32,20 @@ impl SessionKind {
     }
 }
 
+/// What happened to the Agent memory the user asked to restore.
+///
+/// `Occupied` and `Unavailable` must stay distinct: an occupied conversation
+/// is fully intact and becomes restorable again once whatever holds it lets
+/// go, whereas an unavailable one is gone for good. Collapsing them told the
+/// user their memory no longer existed when it actually did.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ResumeOutcome {
+    Resumed,
+    Occupied,
+    Unavailable,
+}
+
 /// Per-profile availability snapshot for the frontend. Pure DTO:
 /// resolution itself lives in `agent::profile`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -207,6 +221,8 @@ pub enum AcpEvent {
         session_id: String,
         profile_id: String,
         cwd: String,
+        /// `None` when no restore was attempted (a plain new conversation).
+        resume: Option<ResumeOutcome>,
     },
     #[serde(rename_all = "camelCase")]
     PermissionRequest {

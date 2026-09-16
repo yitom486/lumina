@@ -51,7 +51,14 @@ pub fn is_error_response(value: &Value) -> Option<String> {
         .get("message")
         .and_then(|m| m.as_str())
         .unwrap_or("ACP protocol error");
-    Some(message.to_string())
+    // Agents put the only actionable text in `data.details` while `message`
+    // stays a generic JSON-RPC label. Dropping it reduced real failures to a
+    // bare "Internal error" in logs, with no way to tell apart, say, an
+    // occupied conversation from a missing one.
+    match err.pointer("/data/details").and_then(Value::as_str) {
+        Some(details) if !details.trim().is_empty() => Some(format!("{message}: {details}")),
+        _ => Some(message.to_string()),
+    }
 }
 
 /// Classify an inbound ACP line.
@@ -146,5 +153,31 @@ mod tests {
             }
             other => panic!("unexpected {other:?}"),
         }
+    }
+
+    #[test]
+    fn error_response_keeps_data_details() {
+        let value = json!({
+            "error": {
+                "code": -32603,
+                "message": "Internal error",
+                "data": { "details": "thread abc already has an active writer" }
+            }
+        });
+        let reported = is_error_response(&value).expect("error");
+        assert!(reported.contains("Internal error"));
+        assert!(
+            reported.contains("already has an active writer"),
+            "details must survive; they are the only way to classify the failure: {reported}"
+        );
+    }
+
+    #[test]
+    fn error_response_without_usable_details_falls_back_to_message() {
+        for data in [json!({}), json!({ "details": "   " }), json!(null)] {
+            let value = json!({ "error": { "message": "Internal error", "data": data } });
+            assert_eq!(is_error_response(&value).as_deref(), Some("Internal error"));
+        }
+        assert_eq!(is_error_response(&json!({ "result": {} })), None);
     }
 }
