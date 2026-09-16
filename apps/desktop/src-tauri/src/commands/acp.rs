@@ -146,7 +146,11 @@ pub async fn acp_prompt(
                     });
                     if let Some(anchor) = snapshot.anchor.as_mut() {
                         anchor.subtitle_choice_id = selected;
-                        if anchor.media_title.as_ref().is_none_or(|s| s.trim().is_empty()) {
+                        if anchor
+                            .media_title
+                            .as_ref()
+                            .is_none_or(|s| s.trim().is_empty())
+                        {
                             anchor.media_title = resolved.title.clone();
                         }
                         if anchor.duration_ms.is_none() {

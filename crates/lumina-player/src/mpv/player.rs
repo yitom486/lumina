@@ -38,7 +38,12 @@ impl LibMpvPlayer {
         .map_err(map_init_error)?;
         enable_diagnostic_events(&mpv);
         log_version(&mpv);
-        Ok(Self { mpv })
+        let player = Self { mpv };
+        // Windowed default: lift subtitles above the HTML PlayerBar.
+        if let Err(error) = player.apply_subtitle_margin(false) {
+            tracing::warn!(%error, "apply windowed sub-margin-y failed");
+        }
+        Ok(player)
     }
 
     /// Embed into a native HWND via `wid` (Windows Phase 1 surface).
@@ -71,7 +76,12 @@ impl LibMpvPlayer {
         // Single/double-click arbitration and all native input forwarding are
         // owned by the Win32 surface. The OSC receives explicit script
         // messages, so the frontend never needs to know about mpv details.
-        Ok(Self { mpv })
+        let player = Self { mpv };
+        // Windowed default: lift subtitles above the HTML PlayerBar.
+        if let Err(error) = player.apply_subtitle_margin(false) {
+            tracing::warn!(%error, "apply windowed sub-margin-y failed");
+        }
+        Ok(player)
     }
 
     pub fn open(&self, path: &str) -> Result<(), PlayerError> {
@@ -256,12 +266,29 @@ impl LibMpvPlayer {
 
     /// Tell the custom OSC whether the app is in cinema fullscreen mode.
     /// Windowed mode owns its controls in the HTML PlayerBar, so the native
-    /// OSC stays hidden there.
+    /// OSC stays hidden there. Also lifts/restores `sub-margin-y` so windowed
+    /// subtitles clear the HTML bar while fullscreen restores cinema default.
     pub fn set_surface_mode(&self, fullscreen: bool) -> Result<(), PlayerError> {
         let mode = if fullscreen { "fullscreen" } else { "windowed" };
         self.mpv
             .command("script-message", &[LUMINA_OSC_MODE_MESSAGE, mode])
-            .map_err(map_playback_error)
+            .map_err(map_playback_error)?;
+        if let Err(error) = self.apply_subtitle_margin(fullscreen) {
+            tracing::warn!(%error, fullscreen, "apply sub-margin-y after mode change failed");
+        }
+        Ok(())
+    }
+
+    /// Lift subtitles above the windowed HTML bar, restore cinema default in
+    /// fullscreen. Best-effort is handled by callers; this returns the mpv
+    /// error so bounds/mode paths can warn without failing the command.
+    pub fn apply_subtitle_margin(&self, fullscreen: bool) -> Result<(), PlayerError> {
+        let margin = subtitle_margin_y(fullscreen);
+        self.mpv
+            .set_property("sub-margin-y", margin)
+            .map_err(map_playback_error)?;
+        tracing::info!(margin, fullscreen, "sub-margin-y applied");
+        Ok(())
     }
 
     pub fn duration_ms(&self) -> Result<u64, PlayerError> {
@@ -484,6 +511,22 @@ impl Drop for LibMpvPlayer {
 const LUMINA_OSC_SCRIPT_NAME: &str = "lumina-osc.lua";
 const LUMINA_OSC_SCRIPT_MESSAGE: &str = "lumina-surface-mouse";
 const LUMINA_OSC_MODE_MESSAGE: &str = "lumina-surface-mode";
+
+/// Windowed HTML PlayerBar reserve: lift subtitles above the bar so the last
+/// line is never covered. Keep in sync with `OSC_DEMO_BAR_HEIGHT_PX` (56px)
+/// plus the hint line in `PlayerBar.tsx`.
+pub const WINDOWED_SUB_MARGIN_Y: i64 = 64;
+/// Fullscreen cinema restores mpv default breathing room.
+pub const FULLSCREEN_SUB_MARGIN_Y: i64 = 22;
+
+/// Map surface mode to the mpv `sub-margin-y` value. Pure for unit tests.
+pub fn subtitle_margin_y(fullscreen: bool) -> i64 {
+    if fullscreen {
+        FULLSCREEN_SUB_MARGIN_Y
+    } else {
+        WINDOWED_SUB_MARGIN_Y
+    }
+}
 
 fn surface_mouse_message_args<'a>(phase: &'a str, x: &'a str, y: &'a str) -> [&'a str; 4] {
     [LUMINA_OSC_SCRIPT_MESSAGE, phase, x, y]
@@ -787,5 +830,43 @@ mod tests {
     fn surface_mouse_protocol_uses_private_message_name() {
         let args = super::surface_mouse_message_args("drag", "12", "34");
         assert_eq!(args, ["lumina-surface-mouse", "drag", "12", "34"]);
+    }
+
+    #[test]
+    fn subtitle_margin_mapping_lifts_windowed_and_restores_fullscreen() {
+        assert_eq!(
+            super::subtitle_margin_y(false),
+            super::WINDOWED_SUB_MARGIN_Y
+        );
+        assert_eq!(
+            super::subtitle_margin_y(true),
+            super::FULLSCREEN_SUB_MARGIN_Y
+        );
+        assert!(
+            super::subtitle_margin_y(false) > super::subtitle_margin_y(true),
+            "windowed must lift above the HTML bar"
+        );
+    }
+
+    #[test]
+    fn subtitle_margin_y_is_applied_to_mpv() {
+        let player = super::LibMpvPlayer::initialize().expect("libmpv should initialize");
+        player
+            .apply_subtitle_margin(false)
+            .expect("windowed margin should apply");
+        let windowed: i64 = player
+            .mpv
+            .get_property("sub-margin-y")
+            .expect("sub-margin-y should be readable");
+        assert_eq!(windowed, super::WINDOWED_SUB_MARGIN_Y);
+
+        player
+            .apply_subtitle_margin(true)
+            .expect("fullscreen margin should apply");
+        let fullscreen: i64 = player
+            .mpv
+            .get_property("sub-margin-y")
+            .expect("sub-margin-y should be readable");
+        assert_eq!(fullscreen, super::FULLSCREEN_SUB_MARGIN_Y);
     }
 }

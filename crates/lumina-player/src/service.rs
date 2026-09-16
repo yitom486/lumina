@@ -14,12 +14,34 @@ const RATE_MAX: f64 = 4.0;
 /// Remote yt-dlp hook can take several seconds before demux; after this, surface a soft error.
 const REMOTE_DEMUX_TIMEOUT: Duration = Duration::from_secs(12);
 
+/// Remembered subtitle choice for loadfile self-heal. `media_id` binds the
+/// choice to the file it was picked for so reopening a different file never
+/// re-applies a stale external track.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ActiveSubtitle {
+    source: String,
+    stream_index: Option<u32>,
+    external_path: Option<String>,
+    media_id: Option<String>,
+}
+
+/// Whether a remembered subtitle still belongs to the newly opened media.
+fn subtitle_owner_matches(owner: Option<&str>, current: Option<&str>) -> bool {
+    match (owner, current) {
+        (Some(owner), Some(current)) => owner == current,
+        (None, _) => true,
+        (Some(_), None) => false,
+    }
+}
+
 pub struct PlayerService {
     snapshot: PlayerSnapshot,
     backend: Option<LibMpvPlayer>,
     shutdown: bool,
     /// When set, remote open is waiting for mpv demux (duration/position).
     remote_demux_deadline: Option<Instant>,
+    active_subtitle: Option<ActiveSubtitle>,
+    surface_fullscreen: bool,
 }
 
 impl PlayerService {
@@ -29,6 +51,8 @@ impl PlayerService {
             backend: None,
             shutdown: false,
             remote_demux_deadline: None,
+            active_subtitle: None,
+            surface_fullscreen: false,
         }
     }
 
@@ -47,6 +71,10 @@ impl PlayerService {
 
         match LibMpvPlayer::initialize_with_wid(wid, script_path) {
             Ok(backend) => {
+                // New backend starts windowed; ensure subtitles clear the bar.
+                if let Err(error) = backend.apply_subtitle_margin(self.surface_fullscreen) {
+                    tracing::warn!(%error, "apply sub-margin-y after attach failed");
+                }
                 self.backend = Some(backend);
                 if matches!(self.snapshot.status, PlayerState::Error | PlayerState::Idle) {
                     self.snapshot.status = PlayerState::Idle;
@@ -236,7 +264,14 @@ impl PlayerService {
             }
             let _ = backend.set_volume(self.snapshot.volume);
             let _ = backend.set_rate(self.snapshot.rate);
+            // Options survive loadfile, but re-assert so windowed subtitles
+            // never sit under the HTML bar after a reopen.
+            if let Err(error) = backend.apply_subtitle_margin(self.surface_fullscreen) {
+                tracing::warn!(%error, "re-apply sub-margin-y after open failed");
+            }
         }
+
+        self.reapply_active_subtitle();
 
         let mut events = vec![
             PlayerEvent::FileLoaded {
@@ -439,11 +474,22 @@ impl PlayerService {
         }
     }
 
-    pub fn set_surface_mode(&self, fullscreen: bool) -> Result<(), PlayerError> {
+    pub fn set_surface_mode(&mut self, fullscreen: bool) -> Result<(), PlayerError> {
+        self.surface_fullscreen = fullscreen;
         let Some(backend) = self.backend.as_ref() else {
             return Ok(());
         };
         backend.set_surface_mode(fullscreen)
+    }
+
+    /// Re-assert `sub-margin-y` for the current mode. Called from the existing
+    /// surface bounds path so resizes never leave windowed subtitles under
+    /// the HTML bar. Missing backend is a no-op.
+    pub fn refresh_subtitle_margin(&self) -> Result<(), PlayerError> {
+        let Some(backend) = self.backend.as_ref() else {
+            return Ok(());
+        };
+        backend.apply_subtitle_margin(self.surface_fullscreen)
     }
 
     /// Periodic poll from the event ticker (~100–250ms). Does not log position.
@@ -567,7 +613,63 @@ impl PlayerService {
             }
         }
 
+        if source == "None" {
+            self.active_subtitle = None;
+        } else {
+            self.active_subtitle = Some(ActiveSubtitle {
+                source: source.to_string(),
+                stream_index,
+                external_path: external_path.map(str::to_string),
+                media_id: self.snapshot.media_id.clone(),
+            });
+        }
+        tracing::info!(source, "subtitle selection recorded");
+
         Ok(self.snapshot())
+    }
+
+    /// Re-apply the remembered subtitle after `loadfile` (which drops
+    /// `sub-add` tracks). Same backend path as `set_subtitle`, never a new
+    /// loader. Stale choices for a different media are dropped. Failures only
+    /// warn so reopen never fails because subtitles did.
+    fn reapply_active_subtitle(&mut self) {
+        let Some(selection) = self.active_subtitle.clone() else {
+            return;
+        };
+        if !subtitle_owner_matches(
+            selection.media_id.as_deref(),
+            self.snapshot.media_id.as_deref(),
+        ) {
+            tracing::info!("dropping stale subtitle selection for previous media");
+            self.active_subtitle = None;
+            return;
+        }
+        let Some(backend) = self.backend.as_ref() else {
+            return;
+        };
+        let result = match selection.source.as_str() {
+            "Embedded" => match selection.stream_index {
+                Some(index) => backend.set_embedded_subtitle(i64::from(index)),
+                None => Err(PlayerError::playback(Some(
+                    "embedded subtitle missing streamIndex",
+                ))),
+            },
+            "Sidecar" => match selection.external_path.as_deref() {
+                Some(path) => backend.set_external_subtitle(path),
+                None => Err(PlayerError::playback(Some(
+                    "sidecar subtitle missing file path",
+                ))),
+            },
+            _ => Ok(()),
+        };
+        match result {
+            Ok(()) => {
+                tracing::info!(source = %selection.source, "re-applied active subtitle after open");
+            }
+            Err(error) => {
+                tracing::warn!(%error, source = %selection.source, "re-apply active subtitle after open failed");
+            }
+        }
     }
 
     /// Select embedded audio by ffprobe stream index.
@@ -783,5 +885,51 @@ mod tests {
         let _ = PlayerEvent::StateChanged {
             status: PlayerState::Idle,
         };
+    }
+
+    #[test]
+    fn subtitle_owner_match_binds_reapply_to_same_media() {
+        assert!(super::subtitle_owner_matches(
+            Some("path:/a.mp4"),
+            Some("path:/a.mp4")
+        ));
+        assert!(!super::subtitle_owner_matches(
+            Some("path:/a.mp4"),
+            Some("path:/b.mp4")
+        ));
+        assert!(super::subtitle_owner_matches(None, Some("path:/b.mp4")));
+        assert!(!super::subtitle_owner_matches(Some("path:/a.mp4"), None));
+    }
+
+    #[test]
+    fn surface_mode_and_margin_refresh_are_noop_without_backend() {
+        let mut player = PlayerService::new();
+        assert!(player.refresh_subtitle_margin().is_ok());
+        player
+            .set_surface_mode(true)
+            .expect("mode without backend is noop");
+        assert!(player.surface_fullscreen);
+        assert!(player.refresh_subtitle_margin().is_ok());
+        player
+            .set_surface_mode(false)
+            .expect("mode without backend is noop");
+        assert!(!player.surface_fullscreen);
+    }
+
+    #[test]
+    fn stale_subtitle_is_dropped_when_media_changes() {
+        let mut player = PlayerService::new();
+        player.active_subtitle = Some(super::ActiveSubtitle {
+            source: "Sidecar".to_string(),
+            stream_index: None,
+            external_path: Some("/tmp/old.srt".to_string()),
+            media_id: Some("path:/a.mp4".to_string()),
+        });
+        player.snapshot.media_id = Some("path:/b.mp4".to_string());
+        player.reapply_active_subtitle();
+        assert!(
+            player.active_subtitle.is_none(),
+            "stale choice for another file must be dropped"
+        );
     }
 }

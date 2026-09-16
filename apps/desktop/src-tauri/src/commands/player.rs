@@ -355,8 +355,15 @@ pub fn player_set_surface_bounds(
     })?;
 
     let to_px = |value: f64| (value * scale).round() as i32;
-    state
-        .with_surface(|surface| surface.set_bounds(to_px(x), to_px(y), to_px(width), to_px(height)))
+    state.with_surface(|surface| {
+        surface.set_bounds(to_px(x), to_px(y), to_px(width), to_px(height))
+    })?;
+    // Windowed subtitles must clear the HTML bar after every resize/reflow.
+    // Best-effort: a margin failure never fails the bounds update itself.
+    if let Err(error) = state.with_player(|player| player.refresh_subtitle_margin()) {
+        tracing::warn!(%error, "refresh sub-margin-y after bounds failed");
+    }
+    Ok(())
 }
 
 #[tauri::command]

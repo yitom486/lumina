@@ -3,7 +3,7 @@
 -- mpv v0.41，自带 Lua 可直接用。只依赖 `mp.assdraw` + `mp` 标准 API，
 -- 无任何外部依赖（不读 mp.utils / mp.options / 第三方脚本）。
 -- 加载方式：libmpv 以 `osc=no` 启动并用 `script=<本文件绝对路径>` 加载；
--- select.lua 是 mpv 默认脚本，不用管，右键直接调它的原生列表。
+-- 右键 SUB/AUD 只走自家 `toggle_menu`，永不调原生 select.lua。
 --
 -- 元素（只要这些，不要上下集/上下章/全屏）：
 --   顶部：字幕/音轨下拉选择（含关闭选项）
@@ -334,7 +334,7 @@ render = function()
         end
         if #items == 1 then
             items[#items + 1] = {
-                label = kind == "sub" and "没有可用字幕" or "没有可用音轨",
+                label = kind == "sub" and "暂无字幕" or "暂无音轨",
                 id = nil,
                 disabled = true,
             }
@@ -691,12 +691,13 @@ local function handle_single_click()
 end
 
 local function handle_right_click()
+    -- 右键只走自家菜单：与左键同一数据源（track-list observer），永不弹原生菜单。
     if inside(ui.sub, mouse.x, mouse.y) then
-        pcall(mp.commandv, "script-binding", "select/select-sid")
+        toggle_menu("sub")
         return
     end
     if inside(ui.audio, mouse.x, mouse.y) then
-        pcall(mp.commandv, "script-binding", "select/select-aid")
+        toggle_menu("audio")
     end
 end
 

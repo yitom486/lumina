@@ -78,12 +78,8 @@ impl PromptSnapshotState {
                 Some((file.group_key.clone(), file.season, file.episode))
             })
         });
-        let media_context = media_path.and_then(|path| {
-            library
-                .context_for_media(path.to_string())
-                .ok()
-                .flatten()
-        });
+        let media_context =
+            media_path.and_then(|path| library.context_for_media(path.to_string()).ok().flatten());
         let series_cache = if warm {
             media_context.as_ref().map(series_cache_from_context)
         } else {
