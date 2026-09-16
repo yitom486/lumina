@@ -239,13 +239,6 @@ pub fn authenticate_params(method_id: &str) -> Value {
     json!({ "methodId": method_id })
 }
 
-/// Deprecated: auth policy now lives in `crate::agent::launch::pick_auth_method`.
-/// Wire stays pure (parse/construct only); config/env reads belong to `agent`.
-#[deprecated(note = "use crate::agent::launch::pick_auth_method instead")]
-pub fn pick_auth_method(init: &InitializeResult) -> Option<&AuthMethod> {
-    crate::agent::launch::pick_auth_method(init)
-}
-
 fn capability_present(value: &Value, pointer: &str) -> bool {
     match value.pointer(pointer) {
         None | Some(Value::Null) => false,

@@ -168,9 +168,6 @@ pub struct WorkshopPool {
     session_ids: Arc<Mutex<BTreeSet<String>>>,
 }
 
-/// New name for the workshop pool; old name retained for compatibility.
-pub type IsolatedSessionPool = WorkshopPool;
-
 impl WorkshopPool {
     pub fn new(config: PoolConfig, job_id: String) -> Self {
         let size = config.size.max(1);

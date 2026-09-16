@@ -4,7 +4,7 @@
 //! access lives here. The crate only sees the core invoker port plus an
 //! opaque profiles payload.
 
-use lumina_acp::{AcpService, AgentProfilesHint};
+use lumina_acp::AgentProfilesHint;
 
 use crate::acp::adapter::AcpAgentInvoker;
 use crate::library::{
@@ -79,7 +79,7 @@ pub fn discover_agent_models(
         active_profile_id: String::new(),
         profiles: Vec::new(),
     });
-    match AcpService::discover_isolated_models(profile_id, profiles) {
+    match lumina_acp::jobs::isolated::discover_isolated_models(profile_id, profiles) {
         Ok(result) => AgentModelDiscoveryResult {
             connected: result.connected,
             options: AgentModelOptions {

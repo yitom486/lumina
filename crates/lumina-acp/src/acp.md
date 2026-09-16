@@ -372,7 +372,7 @@ Codex 默认 profile 会尝试寻找：
 翻译、校对和媒体信息解析等短任务使用：
 
 ```rust
-let result = AcpService::prompt_isolated_restricted(
+let result = lumina_acp::jobs::isolated::prompt_isolated_restricted(
     task_prompt,
     "codex".into(),
     profiles,
@@ -408,8 +408,6 @@ pool.shutdown();
 - `SpawnFailed` 或 `ProtocolError` 最多在同一个槽位重试一次；
 - 作业结束时调用 `shutdown`，清理 Agent 和相关 rollout 文件；
 - `submit` 是阻塞调用，应放到 `spawn_blocking` 或其他阻塞线程中。
-
-`IsolatedSessionPool` 是 `WorkshopPool` 的兼容别名。
 
 ---
 

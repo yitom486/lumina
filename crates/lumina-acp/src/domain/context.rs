@@ -65,15 +65,6 @@ pub fn snapshot_display_path(cwd: &Path) -> PathBuf {
     cwd.join(SNAPSHOT_RELATIVE_PATH)
 }
 
-// Deprecated wire shims: kept so `crate::acp::context::*` (via
-// `pub use lumina_acp::*`) keeps resolving. New code must use
-// `crate::wire::session::*`.
-#[deprecated(note = "use crate::wire::session::session_prompt_params instead")]
-pub use crate::wire::session::session_prompt_params;
-
-#[deprecated(note = "use crate::wire::session::path_to_file_uri instead")]
-pub use crate::wire::session::path_to_file_uri;
-
 #[cfg(test)]
 fn format_time_ms(ms: u64) -> String {
     let total_sec = ms / 1000;

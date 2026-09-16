@@ -16,8 +16,8 @@ use crate::agent::status::status_from_profiles;
 use crate::agent::workspace::resolve_session_cwd;
 use crate::domain::environment::session_env;
 use crate::domain::model::{
-    AcpEvent, AcpModelDiscoveryResult, AcpSessionModelOptions, AcpSessionModelSelection, AcpStatus,
-    AgentProfilesHint, SavedSessionHint,
+    AcpEvent, AcpSessionModelOptions, AcpSessionModelSelection, AcpStatus, AgentProfilesHint,
+    SavedSessionHint,
 };
 use crate::domain::settings::{AcpClientSettings, PermissionMode};
 use crate::error::AcpError;
@@ -317,41 +317,6 @@ impl AcpService {
         }
 
         Ok(session.model_options.clone())
-    }
-
-    /// New home: `crate::jobs::isolated::prompt_isolated_restricted`.
-    /// Kept here as a thin forwarder so `AcpService::prompt_isolated_restricted`
-    /// paths do not break.
-    ///
-    /// NOTE (compat bridge): this creates the single intentional
-    /// `runtime → jobs` edge (`jobs::isolated` in turn uses
-    /// `runtime::service::AcpService`). All other layer edges stay one-way
-    /// (`domain → agent → wire → runtime/jobs`). New callers must use
-    /// `crate::jobs::isolated` directly; remove this forwarder when the old
-    /// `AcpService::` path is dropped.
-    pub fn prompt_isolated_restricted(
-        text: impl AsRef<str>,
-        profile_id: String,
-        profiles: AgentProfilesHint,
-        model_selection: Option<AcpSessionModelSelection>,
-        task_label: Option<String>,
-    ) -> Result<String, AcpError> {
-        crate::jobs::isolated::prompt_isolated_restricted(
-            text,
-            profile_id,
-            profiles,
-            model_selection,
-            task_label,
-        )
-    }
-
-    /// New home: `crate::jobs::isolated::discover_isolated_models`.
-    /// Kept here as a thin forwarder.
-    pub fn discover_isolated_models(
-        profile_id: String,
-        profiles: AgentProfilesHint,
-    ) -> Result<AcpModelDiscoveryResult, AcpError> {
-        crate::jobs::isolated::discover_isolated_models(profile_id, profiles)
     }
 
     pub(crate) fn apply_model_selection(

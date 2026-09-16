@@ -4,13 +4,13 @@ use tauri::ipc::Channel;
 use tauri::{AppHandle, Manager, State};
 
 use crate::acp::adapter;
-use crate::acp::paths::resolve_session_cwd;
-use crate::acp::settings::AcpClientSettings;
 use crate::acp::{
     AcpError, AcpEvent, AcpStatus, AgentProfilesHint, SavedSessionHint, VideoPromptContext,
 };
 use crate::mcp::OnlineMediaSnapshot;
 use crate::state::AppState;
+use lumina_acp::agent::workspace::resolve_session_cwd;
+use lumina_acp::AcpClientSettings;
 
 #[tauri::command]
 pub async fn acp_status(

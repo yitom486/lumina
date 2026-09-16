@@ -145,7 +145,7 @@ println!("最终答案：{answer}");
 翻译、元数据解析等短任务使用：
 
 ```rust
-let result = AcpService::prompt_isolated_restricted(
+let result = lumina_acp::jobs::isolated::prompt_isolated_restricted(
     task_prompt,
     "codex".into(),
     profiles,

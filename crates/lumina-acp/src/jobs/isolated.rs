@@ -1,8 +1,6 @@
 //! Isolated workshop tasks: tool-free, chat-state-blind client settings.
 //!
-//! Pure move from `runtime/service.rs` (no behavior change). `AcpService`
-//! keeps deprecated forwarding wrappers so `AcpService::prompt_isolated_restricted`
-//! paths do not break.
+//! Pure move from `runtime/service.rs` (no behavior change).
 
 use std::sync::atomic::Ordering;
 

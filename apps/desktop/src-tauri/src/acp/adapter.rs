@@ -104,7 +104,7 @@ pub fn write_prompt_snapshot(
 
 /// Record session capabilities. Mirrors `sync_mcp_capabilities`.
 pub fn sync_mcp_capabilities(cwd_hint: Option<&str>, vision_capable: bool) -> Result<(), AcpError> {
-    let workspace = crate::acp::paths::resolve_session_cwd(cwd_hint)?;
+    let workspace = lumina_acp::agent::workspace::resolve_session_cwd(cwd_hint)?;
     let path = snapshot_path_for_cwd(&workspace);
     sync_snapshot_capabilities(&path, vision_capable)
         .map_err(|details| AcpError::internal(Some(&details)))
@@ -166,7 +166,7 @@ impl lumina_core::AgentInvoker for AcpAgentInvoker {
                     .reasoning_effort
                     .filter(|value| !value.trim().is_empty()),
             });
-        lumina_acp::AcpService::prompt_isolated_restricted(
+        lumina_acp::jobs::isolated::prompt_isolated_restricted(
             task.prompt,
             task.profile_id,
             self.profiles.clone(),

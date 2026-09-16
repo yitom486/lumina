@@ -1,10 +1,8 @@
-//! ACP session workspace (cwd resolution + legacy paths).
+//! ACP session workspace (cwd resolution).
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
-use crate::agent::discover::{find_acp_adapter, find_codex};
 use crate::error::AcpError;
-use crate::runtime::process::command;
 
 /// Resolve an absolute session `cwd` for ACP.
 ///
@@ -93,49 +91,6 @@ fn normalize_abs(path: PathBuf) -> PathBuf {
     match path.canonicalize() {
         Ok(canonical) => canonical,
         Err(_) => path,
-    }
-}
-
-/// Legacy Codex-only path bundle. Prefer `resolve_launch` / profile status.
-#[deprecated(
-    note = "legacy Codex adapter paths only; use crate::agent::launch::resolve_launch instead"
-)]
-#[derive(Debug, Clone)]
-pub struct AcpPaths {
-    pub cli: std::path::PathBuf,
-    pub codex: Option<std::path::PathBuf>,
-}
-
-/// Legacy helper: resolve default Codex adapter only; prefer profile launch resolution.
-#[deprecated(
-    note = "legacy helper for default Codex adapter only; use crate::agent::launch::resolve_launch instead"
-)]
-#[allow(deprecated)]
-pub fn resolve_acp_paths() -> Result<AcpPaths, AcpError> {
-    let cli = find_acp_adapter().ok_or_else(|| {
-        AcpError::not_configured(Some(
-            "missing codex-acp on PATH or under apps/desktop/src-tauri/native/acp/",
-        ))
-    })?;
-    Ok(AcpPaths {
-        cli,
-        codex: find_codex(),
-    })
-}
-
-/// Legacy helper: probe `--version` of a resolved CLI; kept for API compat.
-#[deprecated(note = "legacy helper; version probing is no longer used by status")]
-pub fn probe_cli_version(cli: &Path) -> Option<String> {
-    let output = command(cli).arg("--version").output().ok()?;
-    if !output.status.success() {
-        return None;
-    }
-    let text = String::from_utf8_lossy(&output.stdout);
-    let line = text.lines().next()?.trim();
-    if line.is_empty() {
-        None
-    } else {
-        Some(line.to_string())
     }
 }
 
