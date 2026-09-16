@@ -48,24 +48,77 @@ export function historyConversationAction(input: {
 }
 
 export type AgentSessionStatus = "live" | "missing" | "unverified";
+export type ConversationOrigin = "local" | "agent";
+
+export type HistoryConversationPresentation = {
+  showAgentOnlyLabel: boolean;
+  showTurnCount: boolean;
+  showDelete: boolean;
+};
+
+export function historyConversationPresentation(
+  origin: ConversationOrigin,
+): HistoryConversationPresentation {
+  return origin === "agent"
+    ? { showAgentOnlyLabel: true, showTurnCount: false, showDelete: false }
+    : { showAgentOnlyLabel: false, showTurnCount: true, showDelete: true };
+}
+
+export type HistoryConversationLoadMode = "resume" | "readOnly";
+
+export function historyConversationLoadMode(input: {
+  origin: ConversationOrigin;
+  hasResumeHint: boolean;
+}): HistoryConversationLoadMode {
+  return input.origin === "agent" || input.hasResumeHint ? "resume" : "readOnly";
+}
+
+export function shouldPersistConversationSelection(
+  origin: ConversationOrigin,
+): boolean {
+  return origin === "local";
+}
 
 export type ReconciledChatConversation = SavedChatConversation & {
   agentStatus: AgentSessionStatus;
+  origin: ConversationOrigin;
 };
 
+const AGENT_CONVERSATION_ID_PREFIX = "agent:";
+
+/** Stable display id for an Agent session that has no local transcript. */
+export function agentConversationId(sessionId: string): string {
+  return `${AGENT_CONVERSATION_ID_PREFIX}${sessionId}`;
+}
+
+/** Identify synthetic Agent-only history entries without touching persistence. */
+export function isAgentConversationId(id: string): boolean {
+  return id.startsWith(AGENT_CONVERSATION_ID_PREFIX);
+}
+
 /**
- * Decide whether a list result is safe to use as an allowlist verification.
- * Missing data, a partial page walk, an unverified result, and a busy Agent
- * all deliberately degrade to the local-record view instead of marking ids
- * missing.
+ * 列表结果能支撑哪种断言。分两层，因为「没翻完」只影响反向判断：
+ * 已经出现在返回里的会话是确实存在的正向证据，与翻页是否穷尽无关；
+ * 而「没出现」只有在翻完之后才能解释成不存在。
+ *
+ * 曾经把这两者合成一个布尔，导致会话总量超过翻页上限时整份结果被否决，
+ * 历史面板什么都显示不出来。
  */
-export function canUseVerifiedAgentSessions(input: {
+export type AgentSessionListTrust = {
+  /** 命中可断言存在，可据此标 live 并合成 Agent-only 条目 */
+  canMatch: boolean;
+  /** 未命中可断言不存在，可据此标 missing */
+  canAssertMissing: boolean;
+};
+
+export function agentSessionListTrust(input: {
   hasData: boolean;
   verified: boolean;
   truncated: boolean;
   busy: boolean;
-}): boolean {
-  return input.hasData && input.verified && !input.truncated && !input.busy;
+}): AgentSessionListTrust {
+  const canMatch = input.hasData && input.verified && !input.busy;
+  return { canMatch, canAssertMissing: canMatch && !input.truncated };
 }
 
 /** Fetch the metadata once when the user opens history on a connected Agent. */
@@ -79,30 +132,30 @@ export function shouldRequestHistorySessionList(input: {
 }
 
 /**
- * Reconcile the local conversation allowlist with Agent metadata. Agent
- * sessions not present in `local` are intentionally discarded, so unrelated
- * Agent conversations never enter the history UI.
+ * Reconcile local records with Agent metadata. Only a verified result scoped
+ * to the exact queried cwd may add Agent-only entries; unverified data never
+ * invents history rows, and the Agent response is still bounded by that cwd.
  */
 export function reconcileConversations(
   local: SavedChatConversation[],
   agentSessions: AgentSessionInfo[] | null | undefined,
   options: {
-    verified: boolean;
+    trust: AgentSessionListTrust;
     queryScope?: { profileId: string; cwd: string | null };
   },
 ): ReconciledChatConversation[] {
-  const canVerify = options.verified && Array.isArray(agentSessions);
+  const canMatch = options.trust.canMatch && Array.isArray(agentSessions);
   const byId = new Map(
     (agentSessions ?? []).map((session) => [session.sessionId, session]),
   );
 
-  return local.map((conversation) => {
+  const reconciledLocal = local.map((conversation) => {
     const withinQueryScope =
       !options.queryScope ||
       (conversation.profileId === options.queryScope.profileId &&
         conversation.cwd === options.queryScope.cwd);
-    const canVerifyConversation = canVerify && withinQueryScope;
-    const agent = canVerifyConversation && conversation.agentSessionId
+    const matchable = canMatch && withinQueryScope;
+    const agent = matchable && conversation.agentSessionId
       ? byId.get(conversation.agentSessionId)
       : undefined;
     const agentTitle = agent?.title?.trim();
@@ -112,16 +165,54 @@ export function reconcileConversations(
     const updatedAtMs = Number.isFinite(parsedUpdatedAt)
       ? parsedUpdatedAt
       : conversation.updatedAtMs;
+    const agentStatus: AgentSessionStatus = agent
+      ? "live"
+      : matchable && options.trust.canAssertMissing
+        ? "missing"
+        : "unverified";
 
     return {
       ...conversation,
-      agentStatus: !canVerifyConversation
-        ? "unverified"
-        : agent
-          ? "live"
-          : "missing",
+      agentStatus,
+      origin: "local" as const,
       title: agentTitle || conversation.title,
       updatedAtMs,
     };
   });
+
+  if (!canMatch || !options.queryScope || !options.queryScope.cwd) {
+    return reconciledLocal;
+  }
+
+  const localSessionIds = new Set(
+    local
+      .map((conversation) => conversation.agentSessionId)
+      .filter((sessionId): sessionId is string => Boolean(sessionId)),
+  );
+  const agentOnly = (agentSessions ?? [])
+    .filter(
+      (session) =>
+        session.cwd === options.queryScope?.cwd &&
+        !localSessionIds.has(session.sessionId),
+    )
+    .map((session) => {
+      const parsedUpdatedAt = session.updatedAt
+        ? Date.parse(session.updatedAt)
+        : Number.NaN;
+      return {
+        id: agentConversationId(session.sessionId),
+        title: session.title?.trim() || "未命名对话",
+        cwd: options.queryScope!.cwd,
+        profileId: options.queryScope!.profileId,
+        agentSessionId: session.sessionId,
+        updatedAtMs: Number.isFinite(parsedUpdatedAt) ? parsedUpdatedAt : 0,
+        turns: [],
+        agentStatus: "live" as const,
+        origin: "agent" as const,
+      };
+    });
+
+  return [...reconciledLocal, ...agentOnly].sort(
+    (a, b) => b.updatedAtMs - a.updatedAtMs,
+  );
 }

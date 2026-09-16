@@ -82,4 +82,17 @@ describe("useChatHistoryStore", () => {
     );
     expect(all).toHaveLength(2);
   });
+
+  it("does not persist an Agent-only row while its local turns are empty", () => {
+    useChatHistoryStore.getState().upsertActiveConversation({
+      id: "agent:agent-only",
+      cwd: "D:\\movie",
+      profileId: "codex",
+      agentSessionId: "agent-only",
+      turns: [],
+    });
+
+    expect(useChatHistoryStore.getState().conversations).toEqual([]);
+    expect(useChatHistoryStore.getState().activeConversationId).toBeNull();
+  });
 });

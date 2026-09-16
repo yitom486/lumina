@@ -9,7 +9,7 @@ use crate::agent::profile::{prepare_profiles, AgentKind, PreparedProfiles};
 use crate::agent::workspace::resolve_session_cwd;
 use crate::domain::context::VideoPromptContext;
 use crate::domain::environment::session_env;
-use crate::domain::model::{AcpEvent, AgentProfilesHint, SavedSessionHint};
+use crate::domain::model::{AcpEvent, AgentProfilesHint, SavedSessionHint, SessionKind};
 use crate::domain::settings::AcpClientSettings;
 use crate::error::AcpError;
 use crate::jobs::collector::AgentReplyCollector;
@@ -42,6 +42,7 @@ impl AcpService {
             saved_session,
             client_settings,
             profiles,
+            SessionKind::Chat,
             on_event,
             None,
         )
@@ -60,6 +61,7 @@ impl AcpService {
         saved_session: Option<SavedSessionHint>,
         client_settings: AcpClientSettings,
         profiles: AgentProfilesHint,
+        session_kind: SessionKind,
         mut on_event: F,
         attempt_label: Option<&str>,
     ) -> Result<String, AcpError>
@@ -76,7 +78,7 @@ impl AcpService {
                 .session
                 .try_lock()
                 .ok()
-                .and_then(|guard| guard.as_ref().map(|session| session.child.id()));
+                .and_then(|guard| guard.as_ref().map(|session| session.agent.id()));
             Self::log_workshop_exit(attempt_label, pid, "busy", None, 0);
             return Err(AcpError::busy());
         }
@@ -93,6 +95,7 @@ impl AcpService {
             context.as_ref(),
             saved_session.as_ref(),
             &prepared,
+            session_kind,
             &mut on_event,
             attempt_label,
         );
@@ -133,6 +136,7 @@ impl AcpService {
         context: Option<&VideoPromptContext>,
         saved_session: Option<&SavedSessionHint>,
         prepared: &PreparedProfiles,
+        session_kind: SessionKind,
         on_event: &mut dyn FnMut(AcpEvent),
         attempt_label: Option<&str>,
     ) -> Result<(String, Option<String>), AcpError> {
@@ -170,6 +174,7 @@ impl AcpService {
                     prepared,
                     profile_override,
                     vision_capable,
+                    session_kind,
                     on_event,
                 ) {
                     Ok(spawned) => spawned,
@@ -189,7 +194,7 @@ impl AcpService {
                     {
                         Self::log_workshop_exit(
                             attempt_label,
-                            Some(spawned.child.id()),
+                            Some(spawned.agent.id()),
                             "model-selection-failed",
                             None,
                             0,
@@ -221,7 +226,7 @@ impl AcpService {
         if let Err(error) = resolve_session_cwd(cwd) {
             Self::log_workshop_exit(
                 attempt_label,
-                Some(session.child.id()),
+                Some(session.agent.id()),
                 "cwd-failed",
                 None,
                 0,
@@ -235,7 +240,7 @@ impl AcpService {
 
         let prompt_id = session.next_id;
         session.next_id += 1;
-        let pid = session.child.id();
+        let pid = session.agent.id();
         if let Err(error) = crate::runtime::io::write_request(
             &mut session.stdin,
             prompt_id,
@@ -280,7 +285,7 @@ impl AcpService {
 
             if Instant::now() > deadline {
                 if let Some(mut taken) = guard.take() {
-                    crate::runtime::process::terminate_tree(&mut taken.child, false);
+                    taken.agent.terminate(false);
                 }
                 Self::log_workshop_exit(
                     attempt_label,
@@ -297,7 +302,7 @@ impl AcpService {
                     > Duration::from_secs(crate::runtime::io::CANCEL_KILL_SECS)
                 {
                     if let Some(mut taken) = guard.take() {
-                        crate::runtime::process::terminate_tree(&mut taken.child, false);
+                        taken.agent.terminate(false);
                     }
                     Self::log_workshop_exit(
                         attempt_label,

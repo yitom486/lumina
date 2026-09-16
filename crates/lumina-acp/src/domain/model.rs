@@ -14,6 +14,24 @@ pub enum AgentKind {
     Custom,
 }
 
+/// Explicit Lumina-owned session purpose stored in ACP session metadata.
+/// This must be passed by each creation path; it is never inferred from
+/// tool access or other mutable service state.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SessionKind {
+    Chat,
+    Workshop,
+}
+
+impl SessionKind {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Chat => "chat",
+            Self::Workshop => "workshop",
+        }
+    }
+}
+
 /// Per-profile availability snapshot for the frontend. Pure DTO:
 /// resolution itself lives in `agent::profile`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -38,7 +56,8 @@ pub struct SavedSessionHint {
 }
 
 /// Metadata returned by an Agent's session listing. Message content is never
-/// part of this DTO; the local conversation id remains the allowlist boundary.
+/// part of this DTO. The kind is recorded for future filtering, but is not
+/// used as a filter in this batch because existing sessions are unmarked.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct AgentSessionInfo {
@@ -46,6 +65,7 @@ pub struct AgentSessionInfo {
     pub cwd: String,
     pub title: Option<String>,
     pub updated_at: Option<String>,
+    pub kind: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]

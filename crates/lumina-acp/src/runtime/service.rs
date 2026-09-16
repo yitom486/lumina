@@ -17,7 +17,7 @@ use crate::agent::workspace::resolve_session_cwd;
 use crate::domain::environment::session_env;
 use crate::domain::model::{
     AcpEvent, AcpSessionModelOptions, AcpSessionModelSelection, AcpStatus, AgentProfilesHint,
-    SavedSessionHint,
+    SavedSessionHint, SessionKind,
 };
 use crate::domain::settings::{AcpClientSettings, PermissionMode};
 use crate::error::AcpError;
@@ -168,6 +168,7 @@ impl AcpService {
             &prepared,
             profile_id.as_deref(),
             client_settings.vision_capable,
+            SessionKind::Chat,
             &mut on_event,
         ) {
             Ok(mut session) => {
@@ -249,6 +250,7 @@ impl AcpService {
                 &cwd_string,
                 &profile.id,
                 client_settings.vision_capable,
+                SessionKind::Chat,
                 &mut on_event,
             )?;
             session.session_id = new_session_id;
@@ -410,7 +412,7 @@ mod tests {
         let stdout = child.stdout.take().expect("stdout");
         child.wait().expect("reap");
         crate::runtime::lifecycle::LiveSession {
-            child,
+            agent: crate::runtime::process::AgentProcess::adopt(child),
             stdin,
             reader: BufReader::new(stdout),
             session_id: "test-session".to_string(),

@@ -5,6 +5,7 @@ import { Button, cn } from "@lumina/ui";
 import { formatConversationTime } from "../chatHistoryStore";
 import {
   historyConversationAction,
+  historyConversationPresentation,
   type ReconciledChatConversation,
 } from "../conversationContext";
 
@@ -74,6 +75,7 @@ export function ChatHistorySheet({
               agentStatus: item.agentStatus,
               switchBlocked: historySwitchBlocked,
             });
+            const presentation = historyConversationPresentation(item.origin);
             return (
               <li key={item.id}>
                 <div
@@ -97,10 +99,15 @@ export function ChatHistorySheet({
                     </p>
                     <p className="mt-0.5 text-[10px] text-muted-foreground">
                       {formatConversationTime(item.updatedAtMs)}
-                      {item.turns.length > 0
+                      {presentation.showTurnCount && item.turns.length > 0
                         ? ` · ${item.turns.length} 轮`
                         : null}
                     </p>
+                    {presentation.showAgentOnlyLabel ? (
+                      <p className="mt-1 text-[10px] leading-4 text-muted-foreground">
+                        仅 AI 记忆，无本地对话记录
+                      </p>
+                    ) : null}
                     {action === "missing" ? (
                       <p className="mt-1 text-[10px] leading-4 text-muted-foreground">
                         该对话的 AI 记忆已不存在，只能作为记录查看
@@ -112,15 +119,17 @@ export function ChatHistorySheet({
                       </p>
                     ) : null}
                   </button>
-                  <Button
-                    size="icon"
-                    variant="ghost"
-                    className="size-7 shrink-0 text-muted-foreground hover:text-destructive"
-                    aria-label="删除对话"
-                    onClick={() => onDelete(item.id)}
-                  >
-                    <Trash2 className="size-3.5" />
-                  </Button>
+                  {presentation.showDelete ? (
+                    <Button
+                      size="icon"
+                      variant="ghost"
+                      className="size-7 shrink-0 text-muted-foreground hover:text-destructive"
+                      aria-label="删除对话"
+                      onClick={() => onDelete(item.id)}
+                    >
+                      <Trash2 className="size-3.5" />
+                    </Button>
+                  ) : null}
                 </div>
               </li>
             );

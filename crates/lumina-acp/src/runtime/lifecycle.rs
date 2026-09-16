@@ -3,7 +3,7 @@
 //! Pure move from `runtime/service.rs` (no behavior change).
 
 use std::io::{BufRead, BufReader};
-use std::process::{Child, ChildStdin, Stdio};
+use std::process::{ChildStdin, Stdio};
 use std::sync::atomic::Ordering;
 use std::thread;
 use std::time::Duration;
@@ -14,12 +14,12 @@ use crate::agent::workspace::resolve_session_cwd;
 use crate::domain::environment::session_env;
 use crate::domain::model::{
     AcpEvent, AcpSessionModelOptions, AcpSessionModelSelection, AgentSessionListResult,
-    SavedSessionHint,
+    SavedSessionHint, SessionKind,
 };
 use crate::error::AcpError;
 use crate::runtime::host::AcpHost;
 use crate::runtime::io::{initialize_timeout, read_until_id_raw, write_request};
-use crate::runtime::process::{command, terminate_tree};
+use crate::runtime::process::{command, AgentProcess};
 use crate::runtime::service::AcpService;
 use crate::wire::codec::is_error_response;
 use crate::wire::session::{
@@ -29,7 +29,7 @@ use crate::wire::session::{
 };
 
 pub(crate) struct LiveSession {
-    pub(crate) child: Child,
+    pub(crate) agent: AgentProcess,
     pub(crate) stdin: ChildStdin,
     pub(crate) reader: BufReader<std::process::ChildStdout>,
     pub(crate) session_id: String,
@@ -43,10 +43,10 @@ pub(crate) struct LiveSession {
 /// without an explicit close (setup failure, abandoned take, early return)
 /// terminates the whole tree instead of leaking it. Never blocks (`false`):
 /// explicit close paths terminate deterministically first, and a repeated
-/// taskkill against the dead tree fails silently.
+/// termination of the dead tree is a no-op.
 impl Drop for LiveSession {
     fn drop(&mut self) {
-        terminate_tree(&mut self.child, false);
+        self.agent.terminate(false);
     }
 }
 
@@ -117,8 +117,14 @@ impl AcpService {
             }
         };
         let cwd = workspace.to_string_lossy().into_owned();
-        let new_id = match self.create_new_session(&mut session, &cwd, profile_id, false, on_event)
-        {
+        let new_id = match self.create_new_session(
+            &mut session,
+            &cwd,
+            profile_id,
+            false,
+            SessionKind::Workshop,
+            on_event,
+        ) {
             Ok(id) => id,
             Err(error) => {
                 tracing::warn!(%error, "session/new failed during rotation; slot left empty");
@@ -249,7 +255,7 @@ impl AcpService {
                 }
                 // P1: kill the whole tree (wrapper-only kill orphaned the
                 // second Codex process). Graceful close above stays first.
-                terminate_tree(&mut session.child, wait_for_child);
+                session.agent.terminate(wait_for_child);
             }
         }
         if wait_for_child {
@@ -259,6 +265,7 @@ impl AcpService {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn spawn_session(
         &self,
         cwd_hint: Option<&str>,
@@ -266,6 +273,7 @@ impl AcpService {
         prepared: &PreparedProfiles,
         profile_id: Option<&str>,
         vision_capable: bool,
+        session_kind: SessionKind,
         on_event: &mut dyn FnMut(AcpEvent),
     ) -> Result<LiveSession, AcpError> {
         let workspace = resolve_session_cwd(cwd_hint)?;
@@ -316,7 +324,7 @@ impl AcpService {
             cwd = %workspace.display(),
             "ACP launch prepared"
         );
-        let mut child = command.spawn().map_err(|error| {
+        let child = command.spawn().map_err(|error| {
             tracing::warn!(
                 stage = "spawn",
                 profile_id = %profile.id,
@@ -336,8 +344,12 @@ impl AcpService {
             )))
         })?;
 
+        // Take ownership of the whole subtree before the adapter has time to
+        // spawn its Codex layers, so no descendant can outlive this session.
+        let mut agent = AgentProcess::adopt(child);
+
         // Drain stderr so the pipe never blocks the agent.
-        if let Some(stderr) = child.stderr.take() {
+        if let Some(stderr) = agent.stderr() {
             thread::spawn(move || {
                 let mut buf = String::new();
                 let mut reader = BufReader::new(stderr);
@@ -354,24 +366,24 @@ impl AcpService {
             });
         }
 
-        let stdin = match child.stdin.take() {
+        let stdin = match agent.stdin() {
             Some(stdin) => stdin,
             None => {
-                terminate_tree(&mut child, false);
+                agent.terminate(false);
                 return Err(AcpError::spawn_failed(Some("stdin pipe missing")));
             }
         };
-        let stdout = match child.stdout.take() {
+        let stdout = match agent.stdout() {
             Some(stdout) => stdout,
             None => {
-                terminate_tree(&mut child, false);
+                agent.terminate(false);
                 return Err(AcpError::spawn_failed(Some("stdout pipe missing")));
             }
         };
         let reader = BufReader::new(stdout);
 
         let mut session = LiveSession {
-            child,
+            agent,
             stdin,
             reader,
             session_id: String::new(),
@@ -440,7 +452,7 @@ impl AcpService {
                 on_event,
             )?;
             if let Some(msg) = is_error_response(&auth_resp) {
-                terminate_tree(&mut session.child, false);
+                session.agent.terminate(false);
                 if profile.kind == AgentKind::Codex {
                     return Err(AcpError::codex_auth_required(Some(&format!(
                         "authenticate failed: {msg}"
@@ -516,12 +528,20 @@ impl AcpService {
                         &cwd,
                         &profile.id,
                         vision_capable,
+                        session_kind,
                         on_event,
                     )?
                 }
             }
         } else {
-            self.create_new_session(&mut session, &cwd, &profile.id, vision_capable, on_event)?
+            self.create_new_session(
+                &mut session,
+                &cwd,
+                &profile.id,
+                vision_capable,
+                session_kind,
+                on_event,
+            )?
         };
 
         session.session_id = session_id;
@@ -535,6 +555,7 @@ impl AcpService {
         cwd: &str,
         profile_id: &str,
         vision_capable: bool,
+        kind: SessionKind,
         on_event: &mut dyn FnMut(AcpEvent),
     ) -> Result<String, AcpError> {
         // Snapshot IO goes through the app-provided environment (M5).
@@ -555,7 +576,7 @@ impl AcpService {
             &mut session.stdin,
             new_id,
             "session/new",
-            session_new_params(cwd, mcp_servers),
+            session_new_params(cwd, mcp_servers, kind),
         )?;
         let session_resp = read_until_id_raw(
             self,
@@ -567,7 +588,7 @@ impl AcpService {
             on_event,
         )?;
         let Some(session_id) = parse_session_id(&session_resp) else {
-            terminate_tree(&mut session.child, false);
+            session.agent.terminate(false);
             return Err(AcpError::protocol(Some(&format!(
                 "missing sessionId: {session_resp}"
             ))));

@@ -5,7 +5,9 @@
 use std::sync::atomic::Ordering;
 
 use crate::agent::profile::prepare_profiles;
-use crate::domain::model::{AcpModelDiscoveryResult, AcpSessionModelSelection, AgentProfilesHint};
+use crate::domain::model::{
+    AcpModelDiscoveryResult, AcpSessionModelSelection, AgentProfilesHint, SessionKind,
+};
 use crate::domain::settings::{AcpClientSettings, PermissionMode, ThinkingLevel};
 use crate::error::AcpError;
 use crate::runtime::service::AcpService;
@@ -47,6 +49,7 @@ pub fn prompt_isolated_restricted(
         None,
         isolated_client_settings(),
         profiles,
+        SessionKind::Workshop,
         |_| {},
         task_label.as_deref(),
     );
@@ -63,8 +66,15 @@ pub fn discover_isolated_models(
     let service = AcpService::new();
     service.tool_access_enabled.store(false, Ordering::SeqCst);
     let prepared = prepare_profiles(&profiles);
-    let session =
-        service.spawn_session(None, None, &prepared, Some(&profile_id), true, &mut |_| {})?;
+    let session = service.spawn_session(
+        None,
+        None,
+        &prepared,
+        Some(&profile_id),
+        true,
+        SessionKind::Workshop,
+        &mut |_| {},
+    )?;
     let options = session.model_options.clone();
     if let Ok(mut guard) = service.session.lock() {
         *guard = Some(session);

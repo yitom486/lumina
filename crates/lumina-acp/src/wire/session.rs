@@ -6,7 +6,7 @@ use std::path::Path;
 use serde_json::{json, Value};
 
 use crate::domain::context::VideoPromptContext;
-use crate::domain::model::AgentSessionInfo;
+use crate::domain::model::{AgentSessionInfo, SessionKind};
 
 pub fn initialize_params() -> Value {
     initialize_params_with_tools(true)
@@ -47,10 +47,15 @@ fn initialize_params_with_tools(tool_access: bool) -> Value {
 }
 
 /// `cwd` MUST be an absolute path (ACP session-setup).
-pub fn session_new_params(cwd: &str, mcp_servers: Value) -> Value {
+pub fn session_new_params(cwd: &str, mcp_servers: Value, kind: SessionKind) -> Value {
     json!({
         "cwd": cwd,
         "mcpServers": mcp_servers,
+        "_meta": {
+            "lumina": {
+                "kind": kind.as_str(),
+            },
+        },
     })
 }
 
@@ -351,6 +356,14 @@ pub fn parse_session_list(value: &Value) -> (Vec<AgentSessionInfo>, Option<Strin
             else {
                 continue;
             };
+            // Existing Agent sessions predate this metadata and therefore
+            // remain visible; kind is recorded only for future filtering.
+            let kind = item
+                .get("_meta")
+                .and_then(|meta| meta.get("lumina"))
+                .and_then(|lumina| lumina.get("kind"))
+                .and_then(Value::as_str)
+                .map(str::to_string);
             sessions.push(AgentSessionInfo {
                 session_id: session_id.to_string(),
                 cwd: cwd.to_string(),
@@ -362,6 +375,7 @@ pub fn parse_session_list(value: &Value) -> (Vec<AgentSessionInfo>, Option<Strin
                     .get("updatedAt")
                     .and_then(Value::as_str)
                     .map(str::to_string),
+                kind,
             });
         }
     }
@@ -476,9 +490,14 @@ mod tests {
                     "value": "D:/videos/.lumina/agent-context.json",
                 }],
             }]),
+            SessionKind::Chat,
         );
         assert_eq!(params.get("cwd").and_then(Value::as_str), Some("D:/videos"));
         assert!(params.get("mcpServers").and_then(Value::as_array).is_some());
+        assert_eq!(
+            params.pointer("/_meta/lumina/kind").and_then(Value::as_str),
+            Some("chat")
+        );
     }
 
     #[test]
@@ -525,7 +544,7 @@ mod tests {
                         "cwd": "D:/movie",
                         "title": "看剧对话",
                         "updatedAt": "2026-09-16T10:00:00Z",
-                        "_meta": { "private": true },
+                        "_meta": { "lumina": { "kind": "chat" }, "private": true },
                         "additionalDirectories": ["D:/other"]
                     },
                     { "cwd": "D:/movie", "title": "缺 id" },
@@ -534,7 +553,8 @@ mod tests {
                         "sessionId": "s2",
                         "cwd": "D:/movie",
                         "title": null,
-                        "updatedAt": null
+                        "updatedAt": null,
+                        "_meta": { "lumina": { "kind": { "unexpected": true } } }
                     }
                 ],
                 "nextCursor": "cursor-2"
@@ -544,8 +564,10 @@ mod tests {
         assert_eq!(sessions.len(), 2);
         assert_eq!(sessions[0].session_id, "s1");
         assert_eq!(sessions[0].title.as_deref(), Some("看剧对话"));
+        assert_eq!(sessions[0].kind.as_deref(), Some("chat"));
         assert_eq!(sessions[1].session_id, "s2");
         assert_eq!(sessions[1].title, None);
+        assert_eq!(sessions[1].kind, None);
         assert_eq!(cursor.as_deref(), Some("cursor-2"));
     }
 

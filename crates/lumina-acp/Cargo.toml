@@ -9,3 +9,16 @@ lumina-core.workspace = true
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tracing = "0.1"
+
+# Agent 子树必须整体可杀：codex-acp 下面还有 shim / node / codex.exe 等若干层，
+# 中间层先退出后孙进程会变成孤儿，taskkill /T 按父 PID 找不到它们。
+# Job Object 是 Windows 上唯一可靠的整树终止原语。
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_System_JobObjects",
+    # CreateJobObjectW 的 SECURITY_ATTRIBUTES 形参在 Security 门后，
+    # JOBOBJECT_EXTENDED_LIMIT_INFORMATION 在 Threading 门后
+    "Win32_Security",
+    "Win32_System_Threading",
+] }

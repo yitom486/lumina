@@ -25,6 +25,7 @@ export type AgentSessionInfo = {
   cwd: string;
   title: string | null;
   updatedAt: string | null;
+  kind: string | null;
 };
 
 export type AgentSessionListResult = {

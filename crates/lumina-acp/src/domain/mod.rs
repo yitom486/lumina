@@ -11,6 +11,6 @@ pub use model::{
     AcpEvent, AcpModelDiscoveryResult, AcpSessionModelOptions, AcpSessionModelSelection,
     AcpSessionOption, AcpStatus, AgentKind, AgentProfileInput, AgentProfileStatus,
     AgentProfilesHint, AgentSessionInfo, AgentSessionListResult, PermissionOption,
-    SavedSessionHint,
+    SavedSessionHint, SessionKind,
 };
 pub use settings::{AcpClientSettings, PermissionMode, ThinkingLevel};

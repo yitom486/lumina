@@ -52,11 +52,14 @@ import {
   useChatHistoryStore,
 } from "@lumina/chat-ui/chatHistoryStore";
 import {
+  agentSessionListTrust,
   canSwitchHistoryConversation,
-  canUseVerifiedAgentSessions,
+  historyConversationLoadMode,
+  isAgentConversationId,
   reconcileConversations,
   resumeHintForConversation,
   shouldRequestHistorySessionList,
+  shouldPersistConversationSelection,
 } from "@lumina/chat-ui/conversationContext";
 import { useChatUiStore } from "@lumina/chat-ui/chatUiStore";
 import { buildAnchoredVideoPromptContext } from "../context";
@@ -370,7 +373,7 @@ export function AcpPanel() {
         agentSessionList.cwd === (sessionCwd ?? null);
       const result = listScopeMatches ? agentSessionList.result : null;
       return reconcileConversations(scopedHistory, result?.sessions, {
-        verified: canUseVerifiedAgentSessions({
+        trust: agentSessionListTrust({
           hasData: result !== null,
           verified: result?.verified ?? false,
           truncated: result?.truncated ?? false,
@@ -898,7 +901,7 @@ export function AcpPanel() {
       return;
     }
 
-    const item = conversations.find((conversation) => conversation.id === id);
+    const item = reconciledHistory.find((conversation) => conversation.id === id);
     if (!item) return;
     const resumeHint = resumeHintForConversation(item, {
       profileId: activeProfileId,
@@ -910,11 +913,19 @@ export function AcpPanel() {
       resumeHint !== null &&
       sessionActive &&
       currentSessionId === resumeHint.sessionId;
-    // 忙时切换已被入口处的 canSwitchHistoryConversation 拦下，
-    // 所以到这里只剩「有没有可 resume 的目标」一个条件。
-    const adoptResumeTarget = resumeHint !== null;
-    setConversationId(item.id);
-    setActiveConversationId(item.id);
+    const loadMode = historyConversationLoadMode({
+      origin: item.origin,
+      hasResumeHint: resumeHint !== null,
+    });
+    const adoptResumeTarget = loadMode === "resume" && resumeHint !== null;
+    // 合成 id 只是列表显示用的键，绝不能进持久化：一旦被存成本地记录的 id，
+    // deleteHistoryConversation 的合成 id 防御会让那条记录永远删不掉。
+    setConversationId(
+      item.origin === "agent" ? `chat-${Date.now()}` : item.id,
+    );
+    if (shouldPersistConversationSelection(item.origin)) {
+      setActiveConversationId(item.id);
+    }
     syncTurnIdSeq(idSeq, item.turns);
     seedHandledProposals(item.turns);
     syncPromptQueue([]);
@@ -938,10 +949,15 @@ export function AcpPanel() {
         pushSystem("正在恢复该对话的 AI 记忆…");
       }
     } else {
-      setReadOnlyConversation(true);
+      const readOnly = loadMode === "readOnly";
+      setReadOnlyConversation(readOnly);
       resumeExpectedSessionIdRef.current = null;
       resumeNoticePendingRef.current = false;
-      pushSystem("该对话只能作为记录查看");
+      pushSystem(
+        readOnly
+          ? "该对话只能作为记录查看"
+          : "该对话的 AI 记忆暂时无法恢复，已作为新对话继续",
+      );
     }
 
     if (adoptResumeTarget && !activeTargetMatches) {
@@ -960,6 +976,11 @@ export function AcpPanel() {
       }
       return;
     }
+  };
+
+  const deleteHistoryConversation = (id: string) => {
+    if (isAgentConversationId(id)) return;
+    deleteConversation(id);
   };
 
   const statusLine = statusQuery.isLoading
@@ -991,7 +1012,7 @@ export function AcpPanel() {
           }
           loading={statusQuery.isLoading}
           busy={composerBusy}
-          historyCount={scopedHistory.length}
+          historyCount={reconciledHistory.length}
           onNewChat={startNewChat}
           onOpenHistory={() => {
             setQuickNoteOpen(false);
@@ -1016,7 +1037,7 @@ export function AcpPanel() {
           onToggleScope={() => setHistoryIncludeAll((value) => !value)}
           onClose={() => handleHistoryOpenChange(false)}
           onSelect={loadConversation}
-          onDelete={deleteConversation}
+          onDelete={deleteHistoryConversation}
         />
       </ChatColumn>
 

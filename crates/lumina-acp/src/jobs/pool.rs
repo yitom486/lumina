@@ -10,7 +10,7 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use crate::domain::model::{AcpEvent, AcpSessionModelSelection, AgentProfilesHint};
+use crate::domain::model::{AcpEvent, AcpSessionModelSelection, AgentProfilesHint, SessionKind};
 use crate::error::{AcpError, AcpErrorCode};
 use crate::jobs::isolated::isolated_client_settings;
 use crate::runtime::service::AcpService;
@@ -81,6 +81,7 @@ impl SlotRunner for RealRunner {
             None,
             isolated_client_settings(),
             self.profiles.clone(),
+            SessionKind::Workshop,
             move |event| {
                 if let AcpEvent::SessionSaved { session_id, .. } = event {
                     if let Ok(mut ids) = session_ids.lock() {
