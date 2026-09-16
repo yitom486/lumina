@@ -5,6 +5,7 @@
 use std::io::{BufRead, BufReader};
 use std::process::{ChildStdin, Stdio};
 use std::sync::atomic::Ordering;
+use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -53,9 +54,15 @@ pub(crate) struct NewSessionSpec<'a> {
     pub(crate) resume: Option<ResumeOutcome>,
 }
 
+/// stdin has its own lock so `session/cancel` can be written while the
+/// prompt loop is blocked reading stdout. The prompt loop keeps holding the
+/// session mutex across `read_line`; cancel only clones this handle under a
+/// brief session lock and writes outside of it.
+pub(crate) type SharedStdin = Arc<Mutex<ChildStdin>>;
+
 pub(crate) struct LiveSession {
     pub(crate) agent: AgentProcess,
-    pub(crate) stdin: ChildStdin,
+    pub(crate) stdin: SharedStdin,
     pub(crate) reader: BufReader<std::process::ChildStdout>,
     pub(crate) session_id: String,
     pub(crate) next_id: u64,
@@ -178,7 +185,7 @@ impl AcpService {
         let request_id = session.next_id;
         session.next_id += 1;
         write_request(
-            &mut session.stdin,
+            &session.stdin,
             request_id,
             "session/close",
             session_close_params(&session.session_id),
@@ -234,7 +241,7 @@ impl AcpService {
             let request_id = session.next_id;
             session.next_id += 1;
             write_request(
-                &mut session.stdin,
+                &session.stdin,
                 request_id,
                 "session/list",
                 session_list_params(cwd, cursor.as_deref()),
@@ -292,6 +299,7 @@ impl AcpService {
     pub(crate) fn drop_live_session(&self, wait_for_child: bool) {
         if let Ok(mut guard) = self.session.lock() {
             if let Some(mut session) = guard.take() {
+                self.clear_cancel_writer();
                 if wait_for_child {
                     self.wind_down_session(session);
                 } else {
@@ -330,7 +338,7 @@ impl AcpService {
         let id = session.next_id;
         session.next_id += 1;
         let params = session_close_params(&session.session_id);
-        if write_request(&mut session.stdin, id, "session/close", params).is_err() {
+        if write_request(&session.stdin, id, "session/close", params).is_err() {
             session.agent.terminate(false);
             return;
         }
@@ -469,7 +477,7 @@ impl AcpService {
 
         let mut session = LiveSession {
             agent,
-            stdin,
+            stdin: Arc::new(Mutex::new(stdin)),
             reader,
             session_id: String::new(),
             next_id: 1,
@@ -484,7 +492,7 @@ impl AcpService {
         let init_id = session.next_id;
         session.next_id += 1;
         write_request(
-            &mut session.stdin,
+            &session.stdin,
             init_id,
             "initialize",
             if self.tool_access_enabled.load(Ordering::SeqCst) {
@@ -529,7 +537,7 @@ impl AcpService {
             let auth_id = session.next_id;
             session.next_id += 1;
             write_request(
-                &mut session.stdin,
+                &session.stdin,
                 auth_id,
                 "authenticate",
                 authenticate_params(&method.id),
@@ -586,7 +594,7 @@ impl AcpService {
             let resume_id = session.next_id;
             session.next_id += 1;
             write_request(
-                &mut session.stdin,
+                &session.stdin,
                 resume_id,
                 "session/resume",
                 session_resume_params(&saved.session_id, &cwd, mcp_servers),
@@ -687,7 +695,7 @@ impl AcpService {
             "registering Lumina MCP for ACP session"
         );
         write_request(
-            &mut session.stdin,
+            &session.stdin,
             new_id,
             "session/new",
             session_new_params(cwd, mcp_servers, kind),

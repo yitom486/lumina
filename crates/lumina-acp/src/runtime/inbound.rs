@@ -182,7 +182,7 @@ pub(crate) fn handle_inbound_side_effects(
         Inbound::AgentRequest { id, method, params } => {
             if !service.tool_access_enabled.load(Ordering::SeqCst) {
                 let response = error_response(id, -32_001, "Tool access is disabled");
-                write_raw(&mut session.stdin, &response)?;
+                write_raw(&session.stdin, &response)?;
                 return Ok(None);
             }
             let canceling = cancel.load(Ordering::SeqCst);
@@ -200,7 +200,7 @@ pub(crate) fn handle_inbound_side_effects(
                 }
                 host.handle_request(&method, id, &params, canceling)
             };
-            write_raw(&mut session.stdin, &response)?;
+            write_raw(&session.stdin, &response)?;
             Ok(None)
         }
         Inbound::Other(value) => {

@@ -29,6 +29,12 @@ pub struct AcpService {
     pub(crate) busy: AtomicBool,
     pub(crate) cancel: AtomicBool,
     pub(crate) session: Mutex<Option<crate::runtime::lifecycle::LiveSession>>,
+    /// Mirrored cancel target so `session/cancel` never waits on the session
+    /// mutex held by the prompt loop across blocking reads. Published when a
+    /// live session is installed, cleared when it is taken/dropped. Best
+    /// effort: a stale entry only fails a best-effort write; a missing entry
+    /// falls back to the session lock.
+    pub(crate) cancel_writer: Mutex<Option<(crate::runtime::lifecycle::SharedStdin, String)>>,
     pub(crate) host: AcpHost,
     pub(crate) permission_mode: Mutex<PermissionMode>,
     pub(crate) permission_replies: Mutex<Option<mpsc::Sender<Option<String>>>>,
@@ -43,6 +49,7 @@ impl AcpService {
             busy: AtomicBool::new(false),
             cancel: AtomicBool::new(false),
             session: Mutex::new(None),
+            cancel_writer: Mutex::new(None),
             host: AcpHost::new(),
             permission_mode: Mutex::new(PermissionMode::Auto),
             permission_replies: Mutex::new(None),
@@ -84,18 +91,54 @@ impl AcpService {
         self.busy.load(Ordering::SeqCst)
     }
 
-    /// Soft-cancel: set flag + send `session/cancel`. Kill is last-resort after timeout.
+    pub(crate) fn publish_cancel_writer(&self, session: &crate::runtime::lifecycle::LiveSession) {
+        if let Ok(mut hook) = self.cancel_writer.lock() {
+            *hook = Some((session.stdin.clone(), session.session_id.clone()));
+        }
+    }
+
+    pub(crate) fn clear_cancel_writer(&self) {
+        if let Ok(mut hook) = self.cancel_writer.lock() {
+            *hook = None;
+        }
+    }
+
+    /// Soft-cancel: set flag + send `session/cancel` with priority.
+    /// Fast path uses the mirrored writer without touching the session mutex,
+    /// so cancel is delivered even while the prompt loop holds that mutex
+    /// across a blocking `read_line`. Kill is last-resort after timeout (see
+    /// `CANCEL_KILL_SECS` in the prompt loop).
     pub fn request_cancel(&self) {
         self.cancel.store(true, Ordering::SeqCst);
-        if let Ok(mut guard) = self.session.lock() {
-            if let Some(session) = guard.as_mut() {
+        if let Ok(hook) = self.cancel_writer.lock() {
+            if let Some((stdin, session_id)) = hook.as_ref() {
+                let stdin = stdin.clone();
+                let session_id = session_id.clone();
+                drop(hook);
                 let _ = crate::runtime::io::write_notification(
-                    &mut session.stdin,
+                    &stdin,
                     "session/cancel",
-                    session_cancel_params(&session.session_id),
+                    session_cancel_params(&session_id),
                 );
+                return;
             }
         }
+        // Fallback for sessions installed before the mirror existed.
+        let (stdin, session_id) = match self.session.lock() {
+            Ok(guard) => match guard.as_ref() {
+                Some(session) => (session.stdin.clone(), session.session_id.clone()),
+                None => return,
+            },
+            Err(poisoned) => match poisoned.into_inner().as_ref() {
+                Some(session) => (session.stdin.clone(), session.session_id.clone()),
+                None => return,
+            },
+        };
+        let _ = crate::runtime::io::write_notification(
+            &stdin,
+            "session/cancel",
+            session_cancel_params(&session_id),
+        );
     }
 
     /// Close live session (`session/close` when supported) and kill process.
@@ -175,6 +218,7 @@ impl AcpService {
                 if let Some(selection) = client_settings.model_selection() {
                     self.apply_model_selection(&mut session, &selection, &mut on_event)?;
                 }
+                self.publish_cancel_writer(&session);
                 *guard = Some(session);
                 on_event(AcpEvent::Progress {
                     message: "Agent 已就绪".into(),
@@ -360,7 +404,7 @@ impl AcpService {
         let request_id = session.next_id;
         session.next_id += 1;
         crate::runtime::io::write_request(
-            &mut session.stdin,
+            &session.stdin,
             request_id,
             "session/set_config_option",
             crate::wire::session::session_set_config_option_params(
@@ -416,7 +460,7 @@ mod tests {
         child.wait().expect("reap");
         crate::runtime::lifecycle::LiveSession {
             agent: crate::runtime::process::AgentProcess::adopt(child),
-            stdin,
+            stdin: std::sync::Arc::new(std::sync::Mutex::new(stdin)),
             reader: BufReader::new(stdout),
             session_id: "test-session".to_string(),
             next_id: 1,
@@ -444,7 +488,7 @@ mod tests {
         let stdout = child.stdout.take().expect("stdout");
         crate::runtime::lifecycle::LiveSession {
             agent: crate::runtime::process::AgentProcess::adopt(child),
-            stdin,
+            stdin: std::sync::Arc::new(std::sync::Mutex::new(stdin)),
             reader: BufReader::new(stdout),
             session_id: "silent-session".to_string(),
             next_id: 1,
@@ -459,6 +503,35 @@ mod tests {
 
     fn slot_occupied(service: &AcpService) -> bool {
         service.session.lock().expect("lock").is_some()
+    }
+
+    /// Cancel must preempt a prompt blocked in `read_line`: the prompt loop
+    /// holds the session mutex across the blocking read, so `request_cancel`
+    /// may only use the mirrored writer there. Holding the session lock here
+    /// simulates that blocked prompt; on the old path this test deadlocks.
+    #[test]
+    fn request_cancel_does_not_wait_for_session_lock() {
+        let service = AcpService::new();
+        let session = silent_slot_session();
+        service.publish_cancel_writer(&session);
+        let mut guard = service.session.lock().expect("lock");
+        *guard = Some(session);
+        // `guard` stays held like the prompt loop across `read_line`.
+        let elapsed = std::thread::scope(|scope| {
+            let handle = scope.spawn(|| {
+                let started = std::time::Instant::now();
+                service.request_cancel();
+                started.elapsed()
+            });
+            handle.join().expect("cancel thread")
+        });
+        assert!(
+            elapsed < std::time::Duration::from_secs(5),
+            "cancel must not wait on the session lock: {elapsed:?}"
+        );
+        assert!(service.cancel.load(std::sync::atomic::Ordering::SeqCst));
+        drop(guard);
+        service.drop_live_session(false);
     }
 
     /// Closing gives the agent a grace period to persist the conversation, but

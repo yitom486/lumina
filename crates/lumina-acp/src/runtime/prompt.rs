@@ -100,7 +100,12 @@ impl AcpService {
             attempt_label,
         );
 
-        if outcome.is_err() {
+        // Graceful cancel keeps the connection: `session/cancel` aborts only
+        // the current turn, the process and `sessionId` stay alive for the
+        // next prompt. Only real failures drop the session. (The
+        // cancel-timeout path already took + terminated the session inside
+        // `run_prompt_inner`, so the drop below is a no-op there.)
+        if should_drop_live_session(&outcome) {
             self.drop_live_session(true);
         }
 
@@ -202,6 +207,7 @@ impl AcpService {
                         return Err(error);
                     }
                 }
+                self.publish_cancel_writer(&spawned);
                 *guard = Some(spawned);
             }
         }
@@ -242,7 +248,7 @@ impl AcpService {
         session.next_id += 1;
         let pid = session.agent.id();
         if let Err(error) = crate::runtime::io::write_request(
-            &mut session.stdin,
+            &session.stdin,
             prompt_id,
             "session/prompt",
             crate::wire::session::session_prompt_params(&session.session_id, prompt_text, context),
@@ -275,7 +281,7 @@ impl AcpService {
         loop {
             if self.cancel.load(Ordering::SeqCst) && !cancel_sent {
                 let _ = crate::runtime::io::write_notification(
-                    &mut session.stdin,
+                    &session.stdin,
                     "session/cancel",
                     session_cancel_params(&session.session_id),
                 );
@@ -285,6 +291,7 @@ impl AcpService {
 
             if Instant::now() > deadline {
                 if let Some(mut taken) = guard.take() {
+                    self.clear_cancel_writer();
                     taken.agent.terminate(false);
                 }
                 Self::log_workshop_exit(
@@ -302,6 +309,7 @@ impl AcpService {
                     > Duration::from_secs(crate::runtime::io::CANCEL_KILL_SECS)
                 {
                     if let Some(mut taken) = guard.take() {
+                        self.clear_cancel_writer();
                         taken.agent.terminate(false);
                     }
                     Self::log_workshop_exit(
@@ -338,6 +346,7 @@ impl AcpService {
             match inbound {
                 crate::runtime::io::ReadOne::Eof => {
                     let _ = guard.take();
+                    self.clear_cancel_writer();
                     if self.cancel.load(Ordering::SeqCst) {
                         Self::log_workshop_exit(
                             attempt_label,
@@ -400,6 +409,7 @@ impl AcpService {
 
         if self.cancel.load(Ordering::SeqCst) {
             let _ = guard.take();
+            self.clear_cancel_writer();
             Self::log_workshop_exit(
                 attempt_label,
                 Some(pid),
@@ -487,6 +497,15 @@ impl AcpService {
     }
 }
 
+/// Drop the live session on failure, except graceful cancel which keeps the
+/// connection (process + `sessionId`) for the next turn.
+fn should_drop_live_session(outcome: &Result<(String, Option<String>), AcpError>) -> bool {
+    match outcome {
+        Ok(_) => false,
+        Err(error) => error.code != crate::AcpErrorCode::Cancelled,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -523,5 +542,18 @@ mod tests {
             .expect_err("isolated errors");
         assert_eq!(err.code, crate::AcpErrorCode::NoOutput);
         assert_eq!(err.details.as_deref(), Some("end_turn"));
+    }
+
+    #[test]
+    fn graceful_cancel_keeps_session_while_failures_drop() {
+        assert!(!should_drop_live_session(&Ok((
+            "text".into(),
+            Some("end_turn".into())
+        ))));
+        assert!(!should_drop_live_session(&Err(AcpError::cancelled())));
+        assert!(should_drop_live_session(&Err(AcpError::protocol(Some(
+            "boom"
+        )))));
+        assert!(should_drop_live_session(&Err(AcpError::busy())));
     }
 }

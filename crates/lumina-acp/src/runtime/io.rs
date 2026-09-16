@@ -3,7 +3,6 @@
 //! Pure move from `runtime/service.rs` (no behavior change).
 
 use std::io::{BufRead, Write};
-use std::process::ChildStdin;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
@@ -13,7 +12,7 @@ use crate::domain::model::AcpEvent;
 use crate::error::AcpError;
 use crate::runtime::host::AcpHost;
 use crate::runtime::inbound::handle_inbound_side_effects;
-use crate::runtime::lifecycle::LiveSession;
+use crate::runtime::lifecycle::{LiveSession, SharedStdin};
 use crate::runtime::service::AcpService;
 use crate::wire::codec::{classify_inbound, encode_line, is_error_response, notification, request};
 
@@ -22,18 +21,25 @@ pub(crate) const PROMPT_DEADLINE_SECS: u64 = 600;
 /// Grace period for an agent to honor `session/cancel` before the process is killed.
 pub(crate) const CANCEL_KILL_SECS: u64 = 8;
 
+fn lock_stdin(stdin: &SharedStdin) -> std::sync::MutexGuard<'_, std::process::ChildStdin> {
+    stdin
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
 pub(crate) fn write_request(
-    stdin: &mut ChildStdin,
+    stdin: &SharedStdin,
     id: u64,
     method: &str,
     params: Value,
 ) -> Result<(), AcpError> {
     let line = encode_line(&request(id, method, params))?;
-    writeln!(stdin, "{line}").map_err(|error| {
+    let mut guard = lock_stdin(stdin);
+    writeln!(*guard, "{line}").map_err(|error| {
         tracing::warn!(%error, method, "ACP write failed");
         AcpError::protocol(Some(&format!("write ACP request: {error}")))
     })?;
-    stdin.flush().map_err(|error| {
+    guard.flush().map_err(|error| {
         tracing::warn!(%error, "ACP flush failed");
         AcpError::protocol(Some(&format!("flush ACP stdin: {error}")))
     })?;
@@ -41,26 +47,28 @@ pub(crate) fn write_request(
 }
 
 pub(crate) fn write_notification(
-    stdin: &mut ChildStdin,
+    stdin: &SharedStdin,
     method: &str,
     params: Value,
 ) -> Result<(), AcpError> {
     let line = encode_line(&notification(method, params))?;
-    writeln!(stdin, "{line}").map_err(|error| {
+    let mut guard = lock_stdin(stdin);
+    writeln!(*guard, "{line}").map_err(|error| {
         tracing::warn!(%error, method, "ACP notification write failed");
         AcpError::protocol(Some(&format!("write ACP notification: {error}")))
     })?;
-    stdin
+    guard
         .flush()
         .map_err(|error| AcpError::protocol(Some(&format!("flush ACP stdin: {error}"))))?;
     Ok(())
 }
 
-pub(crate) fn write_raw(stdin: &mut ChildStdin, value: &Value) -> Result<(), AcpError> {
+pub(crate) fn write_raw(stdin: &SharedStdin, value: &Value) -> Result<(), AcpError> {
     let line = encode_line(value)?;
-    writeln!(stdin, "{line}")
+    let mut guard = lock_stdin(stdin);
+    writeln!(*guard, "{line}")
         .map_err(|error| AcpError::protocol(Some(&format!("write ACP response: {error}"))))?;
-    stdin
+    guard
         .flush()
         .map_err(|error| AcpError::protocol(Some(&format!("flush ACP stdin: {error}"))))?;
     Ok(())
