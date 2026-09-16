@@ -6,7 +6,7 @@ use std::io::{BufRead, BufReader};
 use std::process::{ChildStdin, Stdio};
 use std::sync::atomic::Ordering;
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use crate::agent::launch::{pick_auth_method, resolve_launch};
 use crate::agent::profile::{resolve_active_profile, AgentKind, PreparedProfiles};
@@ -28,6 +28,15 @@ use crate::wire::session::{
     session_close_params, session_list_params, session_new_params, session_resume_params,
     InitializeResult,
 };
+
+/// How many `session/list` pages one history query may walk.
+///
+/// The agent paginates over all of its history by timestamp and filters by
+/// `cwd` per page, so it keeps handing out a cursor even when a page matched
+/// nothing. Every extra page is another round trip plus disk work on the agent
+/// side, so this caps the cost; hitting the cap only means we cannot claim a
+/// stored conversation is gone (see `AgentSessionListTrust`).
+const PAGE_BUDGET: usize = 5;
 
 /// Everything that describes the session about to be created. Grouped because
 /// the argument list had grown past the point where call sites were readable.
@@ -211,10 +220,14 @@ impl AcpService {
             return Ok(AgentSessionListResult::default());
         }
 
+        // Timed per page, not just in total: without the split, a slow history
+        // panel is indistinguishable from a slow agent startup in the log.
+        let started = Instant::now();
         let mut cursor: Option<String> = None;
         let mut sessions = Vec::new();
         let mut truncated = false;
-        for page in 0..5 {
+        let mut pages = 0usize;
+        for page in 0..PAGE_BUDGET {
             let request_id = session.next_id;
             session.next_id += 1;
             write_request(
@@ -223,6 +236,7 @@ impl AcpService {
                 "session/list",
                 session_list_params(cwd, cursor.as_deref()),
             )?;
+            let page_started = Instant::now();
             let response = read_until_id_raw(
                 self,
                 session,
@@ -238,16 +252,32 @@ impl AcpService {
                 ))));
             }
             let (mut page_sessions, next_cursor) = parse_session_list(&response);
+            pages += 1;
+            tracing::info!(
+                page,
+                matched = page_sessions.len(),
+                elapsed_ms = page_started.elapsed().as_millis(),
+                "ACP session/list page"
+            );
             sessions.append(&mut page_sessions);
             let Some(next_cursor) = next_cursor.filter(|value| !value.trim().is_empty()) else {
                 break;
             };
-            if page == 4 {
+            if page + 1 == PAGE_BUDGET {
                 truncated = true;
                 break;
             }
             cursor = Some(next_cursor);
         }
+
+        tracing::info!(
+            pages,
+            matched = sessions.len(),
+            truncated,
+            elapsed_ms = started.elapsed().as_millis(),
+            cwd = cwd.unwrap_or("<all>"),
+            "ACP session/list done"
+        );
 
         Ok(AgentSessionListResult {
             verified: true,
@@ -424,6 +454,9 @@ impl AcpService {
                 initialize_params_restricted()
             },
         )?;
+        // Agent cold start lands here, so it must be separable from whatever
+        // session work follows when reading a slow connect in the log.
+        let init_started = Instant::now();
         let init_resp = read_until_id_raw(
             self,
             &mut session,
@@ -433,6 +466,10 @@ impl AcpService {
             &self.host,
             on_event,
         )?;
+        tracing::info!(
+            elapsed_ms = init_started.elapsed().as_millis(),
+            "ACP initialize completed"
+        );
         let init = parse_initialize_result(&init_resp);
         if let Some(ver) = init.protocol_version {
             if ver != 1 {
@@ -515,6 +552,7 @@ impl AcpService {
                 "session/resume",
                 session_resume_params(&saved.session_id, &cwd, mcp_servers),
             )?;
+            let resume_started = Instant::now();
             let resume_resp = read_until_id_raw(
                 self,
                 &mut session,
@@ -527,6 +565,10 @@ impl AcpService {
             match resume_resp {
                 Ok(response) => {
                     session.model_options = parse_session_model_options(&response);
+                    tracing::info!(
+                        elapsed_ms = resume_started.elapsed().as_millis(),
+                        "session/resume succeeded"
+                    );
                     on_event(AcpEvent::Progress {
                         message: "已恢复上次会话".into(),
                     });
@@ -543,6 +585,7 @@ impl AcpService {
                     tracing::warn!(
                         %error,
                         ?outcome,
+                        elapsed_ms = resume_started.elapsed().as_millis(),
                         "session/resume failed; creating new session"
                     );
                     self.create_new_session(
@@ -610,6 +653,9 @@ impl AcpService {
             "session/new",
             session_new_params(cwd, mcp_servers, kind),
         )?;
+        // Covers the agent bringing the Lumina MCP server up and running
+        // `tools/list` against it, which is the slow part of a cold session.
+        let new_started = Instant::now();
         let session_resp = read_until_id_raw(
             self,
             session,
@@ -625,6 +671,10 @@ impl AcpService {
                 "missing sessionId: {session_resp}"
             ))));
         };
+        tracing::info!(
+            elapsed_ms = new_started.elapsed().as_millis(),
+            "session/new completed"
+        );
         session.model_options = parse_session_model_options(&session_resp);
         on_event(AcpEvent::SessionSaved {
             session_id: session_id.clone(),
