@@ -280,9 +280,11 @@ pub struct VideoPromptContext {
     pub media_title: Option<String>,
     pub position_ms: Option<u64>,
     pub duration_ms: Option<u64>,
-    pub chapter_title: Option<String>,
     pub subtitle_choice_id: Option<String>,
-    pub notes_excerpt: Option<String>,
+    pub season: Option<u32>,
+    pub episode: Option<u32>,
+    pub episode_title: Option<String>,
+    pub episode_overview: Option<String>,
 }
 ```
 
@@ -294,18 +296,21 @@ pub struct VideoPromptContext {
 - 在线页面 URL 保留为 URL；
 - `history_context` 作为可选的历史摘要；
 - 用户问题作为本轮最后一段文本；
-- 播放位置、章节、字幕和笔记等动态数据写入 snapshot，由 MCP 工具按需读取。
+- 播放进度、集数和字幕轨道作为轻量动态上下文每轮发送；
+- 当前集标题/剧情只在媒体或集数切换时发送；
+- 章节和笔记不进入每轮 ACP prompt，笔记也不默认暴露给 ACP/MCP。
 
 可以把它理解成三部分：
 
 ```text
-本轮 prompt = 媒体链接 + 历史摘要（可选）+ 用户问题
-snapshot    = 当前播放位置、章节、字幕、笔记等动态信息
-MCP         = Agent 需要时读取 snapshot 的工具
+本轮 prompt = 媒体链接 + 播放进度/集数/字幕 + 换集时的本集信息 + 历史摘要（可选）+ 用户问题
+snapshot    = 当前播放锚点、当前集信息、series 预热缓存与在线媒体信息
+MCP         = Agent 需要时读取可用 snapshot 数据的工具
 ```
 
-这样，频繁变化的播放位置不会反复塞进固定提示词中，有利于模型缓存；Agent 仍然
-可以通过 MCP 获取最新状态。
+章节和笔记的按需通道不是本 crate 的能力；在线章节可随在线媒体 snapshot 返回，
+本地 ffprobe 章节与用户笔记当前不默认进入 ACP/MCP。未来新增本地章节通道时，
+应在独立计划中确定统一载体。
 
 `lumina-acp` 不直接实现 snapshot 或 MCP。宿主应用通过 `SessionEnvironment` 提供
 这些能力：

@@ -18,8 +18,6 @@ import {
   seedProposalBindingsFromTurns,
   type ProposalBindings,
 } from "@/features/notes/annotationTurnState";
-import type { MediaInfo } from "@/features/media/types";
-import type { Note } from "@/features/notes/types";
 import { usePlayerStore } from "@/features/player";
 import { errorMessage } from "@/lib/format";
 
@@ -55,8 +53,6 @@ import {
 import { formatConversationHistoryContext } from "@lumina/chat-ui/conversationContext";
 import { useChatUiStore } from "@lumina/chat-ui/chatUiStore";
 import { buildAnchoredVideoPromptContext } from "../context";
-import { mediaInfoKey } from "@lumina/query-keys";
-import { notesKey } from "@lumina/query-keys";
 import { workspaceCwdFromMedia } from "@lumina/player-ui/cwd";
 import { profilesSignature } from "@lumina/chat-ui/profilesSignature";
 import {
@@ -595,20 +591,10 @@ export function AcpPanel() {
 
       try {
         const player = usePlayerStore.getState();
-        const mediaPath = player.currentFile;
-        const chapters = mediaPath
-          ? queryClient.getQueryData<MediaInfo>(mediaInfoKey(mediaPath))
-              ?.chapters
-          : undefined;
-        const notes = mediaPath
-          ? queryClient.getQueryData<Note[]>(notesKey(mediaPath))
-          : undefined;
         const frozenContext = buildAnchoredVideoPromptContext({
           base: videoContext,
           anchorPositionMs,
           durationMs: player.durationMs,
-          chapters,
-          notes,
         });
         return await acpPrompt(
           text,

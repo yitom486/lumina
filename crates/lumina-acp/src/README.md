@@ -109,9 +109,11 @@ let context = VideoPromptContext {
     media_title: Some("demo.mp4".into()),
     position_ms: Some(45_000),
     duration_ms: None,
-    chapter_title: None,
     subtitle_choice_id: Some("embedded:0".into()),
-    notes_excerpt: None,
+    season: None,
+    episode: None,
+    episode_title: None,
+    episode_overview: None,
 };
 
 let answer = acp.prompt(

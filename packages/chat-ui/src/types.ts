@@ -75,9 +75,7 @@ export type VideoPromptContext = {
   mediaTitle?: string | null;
   positionMs?: number | null;
   durationMs?: number | null;
-  chapterTitle?: string | null;
   subtitleChoiceId?: string | null;
-  notesExcerpt?: string | null;
   season?: number | null;
   episode?: number | null;
   episodeTitle?: string | null;

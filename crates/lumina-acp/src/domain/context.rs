@@ -23,9 +23,7 @@ pub struct VideoPromptContext {
     pub media_title: Option<String>,
     pub position_ms: Option<u64>,
     pub duration_ms: Option<u64>,
-    pub chapter_title: Option<String>,
     pub subtitle_choice_id: Option<String>,
-    pub notes_excerpt: Option<String>,
     /// Filled by the app from local episode metadata before ACP prompt.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub season: Option<u32>,
@@ -47,15 +45,7 @@ impl VideoPromptContext {
             && self.position_ms.is_none()
             && self.duration_ms.is_none()
             && self
-                .chapter_title
-                .as_ref()
-                .is_none_or(|s| s.trim().is_empty())
-            && self
                 .subtitle_choice_id
-                .as_ref()
-                .is_none_or(|s| s.trim().is_empty())
-            && self
-                .notes_excerpt
                 .as_ref()
                 .is_none_or(|s| s.trim().is_empty())
             && self.season.is_none()

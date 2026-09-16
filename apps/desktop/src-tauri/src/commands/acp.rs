@@ -211,8 +211,6 @@ fn enrich_prompt_context(
     media_changed: bool,
 ) -> Option<VideoPromptContext> {
     let mut ctx = context.unwrap_or_default();
-    ctx.chapter_title = None;
-    ctx.notes_excerpt = None;
     ctx.episode_title = None;
     ctx.episode_overview = None;
 

@@ -1,9 +1,7 @@
 import { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 
-import { useMediaInfoQuery } from "@/features/media";
-import { listNotes } from "@/features/notes/api";
-import { notesKey, ytdlResolveKey } from "@lumina/query-keys";
+import { ytdlResolveKey } from "@lumina/query-keys";
 import { usePlayerStore } from "@/features/player";
 import { useTrackStore } from "@/features/player/trackStore";
 import { getCachedYtdlResolve } from "@/features/ytdl";
@@ -25,19 +23,11 @@ export function useVideoPromptContext(): VideoPromptContext | undefined {
     status !== "Loading" &&
     status !== "Error";
 
-  const mediaQuery = useMediaInfoQuery();
   const onlineQuery = useQuery({
     queryKey: ytdlResolveKey(path),
     queryFn: () => getCachedYtdlResolve(path as string),
     enabled: mediaReady && /^https?:\/\//i.test(path ?? ""),
     staleTime: Infinity,
-  });
-
-  const notesQuery = useQuery({
-    queryKey: notesKey(path),
-    queryFn: () => listNotes(path as string),
-    enabled: mediaReady,
-    staleTime: 15_000,
   });
 
   return useMemo(
@@ -47,20 +37,15 @@ export function useVideoPromptContext(): VideoPromptContext | undefined {
         mediaTitle: onlineQuery.data?.title,
         positionMs,
         durationMs: durationMs || onlineQuery.data?.durationMs || undefined,
-        chapters: mediaQuery.data?.chapters ?? onlineQuery.data?.chapters,
         subtitleChoiceId,
-        notes: notesQuery.data,
       }),
     [
       path,
       onlineQuery.data?.title,
       onlineQuery.data?.durationMs,
-      onlineQuery.data?.chapters,
       positionMs,
       durationMs,
-      mediaQuery.data?.chapters,
       subtitleChoiceId,
-      notesQuery.data,
     ],
   );
 }

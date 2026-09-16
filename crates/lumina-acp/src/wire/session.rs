@@ -495,9 +495,7 @@ mod tests {
             media_title: Some("demo.mp4".into()),
             position_ms: Some(83_000),
             duration_ms: Some(2_700_000),
-            chapter_title: Some("开场".into()),
             subtitle_choice_id: Some("embedded:0".into()),
-            notes_excerpt: Some("附近笔记一行".into()),
             season: Some(1),
             episode: Some(1),
             episode_title: None,
@@ -514,8 +512,6 @@ mod tests {
         assert!(playback.contains("01:23"));
         assert!(playback.contains("S01E01"));
         assert!(!playback.contains("本集剧情"));
-        assert!(!playback.contains("附近笔记"));
-        assert!(!playback.contains("开场"));
     }
 
     #[test]
@@ -525,9 +521,7 @@ mod tests {
             media_title: Some("demo.mp4".into()),
             position_ms: Some(83_000),
             duration_ms: Some(2_700_000),
-            chapter_title: None,
             subtitle_choice_id: None,
-            notes_excerpt: None,
             season: Some(1),
             episode: Some(2),
             episode_title: Some("第二集".into()),
@@ -594,9 +588,7 @@ mod tests {
             media_title: Some("Demo".into()),
             position_ms: Some(10_000),
             duration_ms: Some(60_000),
-            chapter_title: None,
             subtitle_choice_id: Some("online:en".into()),
-            notes_excerpt: None,
             ..Default::default()
         };
         let params = session_prompt_params("sess_1", "讲了什么？", Some(&ctx), None);
@@ -627,9 +619,7 @@ mod tests {
             media_title: Some("demo.mp4".into()),
             position_ms: Some(1_000),
             duration_ms: None,
-            chapter_title: None,
             subtitle_choice_id: None,
-            notes_excerpt: None,
             ..Default::default()
         };
         let params = session_prompt_params("sess_1", "hi", Some(&ctx), None);
