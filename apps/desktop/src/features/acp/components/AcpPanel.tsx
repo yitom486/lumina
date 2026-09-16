@@ -51,7 +51,9 @@ import {
   useChatHistoryStore,
 } from "@lumina/chat-ui/chatHistoryStore";
 import {
+  canAdoptResumeTarget,
   formatConversationHistoryContext,
+  resumeHintForConversation,
   shouldInjectHistoryContext,
 } from "@lumina/chat-ui/conversationContext";
 import { useChatUiStore } from "@lumina/chat-ui/chatUiStore";
@@ -91,6 +93,7 @@ export function AcpPanel() {
   const thinkingLevel = useAcpSettingsStore((s) => s.thinkingLevel);
   const activeProfileId = useAcpProfilesStore((s) => s.activeProfileId);
   const profilesSig = useAcpProfilesStore((s) => profilesSignature(s.profiles));
+  const savedSession = useAcpSessionStore((s) => s.savedSession);
   const hasSavedSession = useAcpSessionStore((s) => s.savedSession !== null);
   const setSavedSession = useAcpSessionStore((s) => s.setSavedSession);
   const clearSavedSession = useAcpSessionStore((s) => s.clearSavedSession);
@@ -157,6 +160,8 @@ export function AcpPanel() {
   const injectedHistorySessionRef = useRef<string | null | undefined>(
     undefined,
   );
+  const resumeExpectedSessionIdRef = useRef<string | null>(null);
+  const resumeNoticePendingRef = useRef(false);
 
   const available = statusQuery.data?.available ?? false;
   const sessionActive = statusQuery.data?.sessionActive ?? false;
@@ -220,6 +225,37 @@ export function AcpPanel() {
     setNotices((prev) => pushNotice(prev, idSeq, content));
   };
 
+  const handleSessionSaved = (
+    event: Extract<AcpEvent, { type: "sessionSaved" }>,
+  ) => {
+    const expectedSessionId = resumeExpectedSessionIdRef.current;
+    if (expectedSessionId) {
+      if (event.sessionId === expectedSessionId) {
+        // The requested Agent history is still attached to this session, so
+        // the armed fallback summary remains suppressed by this id match.
+        injectedHistorySessionRef.current = event.sessionId;
+        if (resumeNoticePendingRef.current) {
+          pushSystem("已恢复该对话的 AI 记忆");
+        }
+      } else {
+        // Keep the requested id in the ledger. The new id will therefore
+        // cause shouldInjectHistoryContext to arm the fallback on the next
+        // prompt, including when resume failed inside acp_prompt.
+        setHistoryInjectionActive(true);
+        if (resumeNoticePendingRef.current) {
+          pushSystem("该对话的 AI 记忆暂不可用，已加载本地历史记录");
+        }
+      }
+      resumeExpectedSessionIdRef.current = null;
+      resumeNoticePendingRef.current = false;
+    }
+    setSavedSession({
+      sessionId: event.sessionId,
+      profileId: event.profileId,
+      cwd: event.cwd,
+    });
+  };
+
   useEffect(() => {
     if (busy) return;
     if (turns.every((turn) => !turn.userText.trim() && !turn.answer.trim())) {
@@ -229,6 +265,11 @@ export function AcpPanel() {
       id: conversationId,
       cwd: sessionCwd ?? null,
       profileId: activeProfileId,
+      agentSessionId:
+        savedSession?.profileId === activeProfileId &&
+        savedSession.cwd === (sessionCwd ?? null)
+          ? savedSession.sessionId
+          : null,
       turns,
     });
   }, [
@@ -236,6 +277,7 @@ export function AcpPanel() {
     busy,
     conversationId,
     sessionCwd,
+    savedSession,
     turns,
     upsertActiveConversation,
   ]);
@@ -243,6 +285,8 @@ export function AcpPanel() {
   const newChatMutation = useMutation({
     mutationFn: async (options?: { preserveTurns?: boolean }) => {
       const preserveTurns = options?.preserveTurns ?? false;
+      resumeExpectedSessionIdRef.current = null;
+      resumeNoticePendingRef.current = false;
       clearSavedSession();
       if (!preserveTurns) {
         setTurns([]);
@@ -271,11 +315,7 @@ export function AcpPanel() {
             setProgress(event.message);
           }
           if (event.type === "sessionSaved") {
-            setSavedSession({
-              sessionId: event.sessionId,
-              profileId: event.profileId,
-              cwd: event.cwd,
-            });
+            handleSessionSaved(event);
           }
         },
         {
@@ -356,11 +396,7 @@ export function AcpPanel() {
           setProgress(event.message);
         }
         if (event.type === "sessionSaved") {
-          setSavedSession({
-            sessionId: event.sessionId,
-            profileId: event.profileId,
-            cwd: event.cwd,
-          });
+          handleSessionSaved(event);
         }
       },
       {
@@ -512,11 +548,7 @@ export function AcpPanel() {
         }
         break;
       case "sessionSaved":
-        setSavedSession({
-          sessionId: event.sessionId,
-          profileId: event.profileId,
-          cwd: event.cwd,
-        });
+        handleSessionSaved(event);
         break;
       case "finished":
       case "failed":
@@ -604,6 +636,9 @@ export function AcpPanel() {
       )
         ? formatConversationHistoryContext(turns)
         : null;
+      if (historyInjectionActive && session.savedSession?.sessionId) {
+        resumeExpectedSessionIdRef.current = session.savedSession.sessionId;
+      }
 
       try {
         const player = usePlayerStore.getState();
@@ -771,6 +806,24 @@ export function AcpPanel() {
   const loadConversation = (id: string) => {
     const item = conversations.find((conversation) => conversation.id === id);
     if (!item) return;
+    const resumeHint = resumeHintForConversation(item, {
+      profileId: activeProfileId,
+      cwd: sessionCwd ?? null,
+    });
+    const currentSessionId = useAcpSessionStore.getState().savedSession
+      ?.sessionId;
+    const activeTargetMatches =
+      resumeHint !== null &&
+      sessionActive &&
+      currentSessionId === resumeHint.sessionId;
+    // 正忙时无法接管目标会话，此时必须退回摘要兜底（见 canAdoptResumeTarget）。
+    const adoptResumeTarget =
+      resumeHint !== null &&
+      canAdoptResumeTarget({
+        targetIsLiveSession: activeTargetMatches,
+        sessionActive,
+        transitionBlocked: busy || newChatMutation.isPending,
+      });
     setConversationId(item.id);
     setActiveConversationId(item.id);
     syncTurnIdSeq(idSeq, item.turns);
@@ -783,12 +836,49 @@ export function AcpPanel() {
     setPendingPermission(null);
     setHistoryOpen(false);
     setHistoryInjectionActive(true);
-    injectedHistorySessionRef.current = undefined;
-    pushSystem("已恢复历史对话，继续提问将带上此前上下文");
+
+    if (adoptResumeTarget && resumeHint) {
+      injectedHistorySessionRef.current = resumeHint.sessionId;
+      resumeExpectedSessionIdRef.current = resumeHint.sessionId;
+      resumeNoticePendingRef.current = true;
+      setSavedSession(resumeHint);
+      if (activeTargetMatches) {
+        resumeExpectedSessionIdRef.current = null;
+        resumeNoticePendingRef.current = false;
+        pushSystem("已恢复该对话的 AI 记忆");
+      } else {
+        pushSystem("正在恢复该对话的 AI 记忆…");
+      }
+    } else {
+      injectedHistorySessionRef.current = undefined;
+      resumeExpectedSessionIdRef.current = null;
+      resumeNoticePendingRef.current = false;
+      // 无 hint 时清掉会话指针；有 hint 但此刻接管不了则保持现状，
+      // 让当前会话继续服务，靠一次性摘要补上下文。
+      if (!resumeHint) clearSavedSession();
+      pushSystem("已恢复历史对话，继续提问将带上此前上下文");
+    }
+
+    if (adoptResumeTarget && !activeTargetMatches) {
+      if (sessionActive) {
+        setConnectionState("connecting");
+        setProgress("正在恢复该对话的 AI 记忆…");
+        void acpClose()
+          .then(() =>
+            queryClient.invalidateQueries({ queryKey: ["acp-status"] }),
+          )
+          .catch((error) => {
+            setConnectionState("error");
+            setProgress(null);
+            pushSystem(errorMessage(error));
+          });
+      }
+      return;
+    }
 
     if (
+      !adoptResumeTarget &&
       sessionActive &&
-      connectionState === "connected" &&
       !busy &&
       !newChatMutation.isPending
     ) {
@@ -809,7 +899,7 @@ export function AcpPanel() {
         : connectionState === "connecting"
           ? null
           : hasSavedSession
-            ? "已记住会话 ID，下次连接将尝试 resume"
+            ? "已记住该对话的 AI 记忆，下次连接将自动尝试恢复"
             : (statusQuery.data?.message ?? null);
 
   return (

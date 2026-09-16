@@ -8,6 +8,7 @@ export type SavedChatConversation = {
   title: string;
   cwd: string | null;
   profileId: string;
+  agentSessionId: string | null;
   updatedAtMs: number;
   turns: ChatTurn[];
 };
@@ -33,6 +34,7 @@ type ChatHistoryStore = {
     id: string;
     cwd: string | null;
     profileId: string;
+    agentSessionId: string | null;
     turns: ChatTurn[];
   }) => void;
   setActiveConversationId: (id: string | null) => void;
@@ -46,13 +48,20 @@ export const useChatHistoryStore = create<ChatHistoryStore>()(
     (set) => ({
       conversations: [],
       activeConversationId: null,
-      upsertActiveConversation: ({ id, cwd, profileId, turns }) => {
+      upsertActiveConversation: ({
+        id,
+        cwd,
+        profileId,
+        agentSessionId,
+        turns,
+      }) => {
         if (!hasConversationContent(turns)) return;
         const entry: SavedChatConversation = {
           id,
           title: conversationTitle(turns),
           cwd,
           profileId,
+          agentSessionId: agentSessionId ?? null,
           updatedAtMs: Date.now(),
           turns: turns.map((turn) => ({
             ...turn,
@@ -64,7 +73,12 @@ export const useChatHistoryStore = create<ChatHistoryStore>()(
           })),
         };
         set((state) => {
-          const rest = state.conversations.filter((item) => item.id !== id);
+          const rest = state.conversations
+            .filter((item) => item.id !== id)
+            .map((item) => ({
+              ...item,
+              agentSessionId: item.agentSessionId ?? null,
+            }));
           const conversations = [entry, ...rest].slice(0, MAX_CONVERSATIONS);
           return {
             conversations,
@@ -84,9 +98,26 @@ export const useChatHistoryStore = create<ChatHistoryStore>()(
     {
       name: "lumina-acp-chat-history",
       partialize: (state) => ({
-        conversations: state.conversations,
+        conversations: state.conversations.map((item) => ({
+          ...item,
+          agentSessionId: item.agentSessionId ?? null,
+        })),
         activeConversationId: state.activeConversationId,
       }),
+      merge: (persisted, current) => {
+        const saved = (persisted ?? {}) as Partial<ChatHistoryStore>;
+        return {
+          ...current,
+          conversations: Array.isArray(saved.conversations)
+            ? saved.conversations.map((item) => ({
+                ...item,
+                agentSessionId: item.agentSessionId ?? null,
+              }))
+            : current.conversations,
+          activeConversationId:
+            saved.activeConversationId ?? current.activeConversationId,
+        };
+      },
     },
   ),
 );

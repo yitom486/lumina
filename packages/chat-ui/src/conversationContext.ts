@@ -1,5 +1,6 @@
 import { composeAssistantAnswer } from "./assistantAnswer";
-import type { ChatTurn } from "./types";
+import type { SavedChatConversation } from "./chatHistoryStore";
+import type { ChatTurn, SavedSessionHint } from "./types";
 
 const MAX_CONTEXT_CHARS = 12_000;
 
@@ -22,6 +23,53 @@ export function shouldInjectHistoryContext(
   if (!state.armed) return false;
   if (state.injectedSessionId === undefined) return true;
   return state.injectedSessionId !== currentSessionId;
+}
+
+/**
+ * Build a resume hint only when the saved conversation belongs to the exact
+ * profile and workspace currently being connected to.
+ *
+ * `cwd: null` cannot produce a valid SavedSessionHint: the ACP lifecycle has
+ * already resolved a concrete workspace before comparing it for resume.
+ */
+export function resumeHintForConversation(
+  conversation: Pick<
+    SavedChatConversation,
+    "agentSessionId" | "profileId" | "cwd"
+  >,
+  scope: { profileId: string; cwd: string | null },
+): SavedSessionHint | null {
+  const sessionId = conversation.agentSessionId;
+  if (!sessionId || !conversation.cwd || !scope.cwd) return null;
+  if (conversation.profileId !== scope.profileId) return null;
+  if (conversation.cwd !== scope.cwd) return null;
+
+  return {
+    sessionId,
+    profileId: scope.profileId,
+    cwd: scope.cwd,
+  };
+}
+
+/**
+ * 能否立刻把会话切到目标对话。只有为 true 时才可以把「已注入」台账记成目标
+ * session id；否则必须退回摘要兜底。
+ *
+ * 正忙时既关不掉当前会话、也不会触发自动连接，而 Rust 侧的 prompt 在已有 live
+ * session 时会直接复用它并忽略 hint（`runtime/prompt.rs` 的 `guard.is_none()`
+ * 分支）。此时若把台账记成目标 id，下一轮就会既不注入摘要、又跑在另一条会话上。
+ */
+export function canAdoptResumeTarget(input: {
+  /** 目标会话就是当前活跃会话 */
+  targetIsLiveSession: boolean;
+  sessionActive: boolean;
+  /** 正在回答或正在新建会话 */
+  transitionBlocked: boolean;
+}): boolean {
+  if (input.targetIsLiveSession) return true;
+  // 没有活跃会话时，自动连接流程会带着 hint 接管。
+  if (!input.sessionActive) return true;
+  return !input.transitionBlocked;
 }
 
 /** Format prior turns for Agent prompt injection (not shown in UI). */

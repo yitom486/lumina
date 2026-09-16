@@ -31,6 +31,7 @@ describe("useChatHistoryStore", () => {
       id: "chat-1",
       cwd: "D:\\movie",
       profileId: "codex",
+      agentSessionId: null,
       turns: [makeTurn("这本书的写作顺序是什么？")],
     });
 
@@ -48,6 +49,7 @@ describe("useChatHistoryStore", () => {
           title: "A",
           cwd: "D:\\movie\\a",
           profileId: "codex",
+          agentSessionId: null,
           updatedAtMs: 2,
           turns: [makeTurn("a")],
         },
@@ -56,6 +58,7 @@ describe("useChatHistoryStore", () => {
           title: "B",
           cwd: "D:\\movie\\b",
           profileId: "codex",
+          agentSessionId: null,
           updatedAtMs: 1,
           turns: [makeTurn("b")],
         },

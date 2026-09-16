@@ -1,9 +1,12 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  canAdoptResumeTarget,
   formatConversationHistoryContext,
+  resumeHintForConversation,
   shouldInjectHistoryContext,
 } from "@lumina/chat-ui/conversationContext";
+import type { SavedChatConversation } from "@lumina/chat-ui/chatHistoryStore";
 import type { ChatTurn } from "./types";
 
 function turn(id: string, userText: string, answer: string): ChatTurn {
@@ -14,6 +17,16 @@ function turn(id: string, userText: string, answer: string): ChatTurn {
     status: "done",
     activities: [],
     showActivities: false,
+  };
+}
+
+function conversation(
+  agentSessionId: string | null | undefined = "agent-session-1",
+): Pick<SavedChatConversation, "agentSessionId" | "profileId" | "cwd"> {
+  return {
+    agentSessionId,
+    profileId: "codex",
+    cwd: "D:\\movie",
   };
 }
 
@@ -79,6 +92,134 @@ describe("shouldInjectHistoryContext", () => {
   it("treats a still-unknown session id as already injected", () => {
     expect(
       shouldInjectHistoryContext({ armed: true, injectedSessionId: null }, null),
+    ).toBe(false);
+  });
+});
+
+describe("resumeHintForConversation", () => {
+  it("returns a hint when profile and cwd match", () => {
+    expect(
+      resumeHintForConversation(conversation(), {
+        profileId: "codex",
+        cwd: "D:\\movie",
+      }),
+    ).toEqual({
+      sessionId: "agent-session-1",
+      profileId: "codex",
+      cwd: "D:\\movie",
+    });
+  });
+
+  it("rejects a different profile or cwd", () => {
+    expect(
+      resumeHintForConversation(conversation(), {
+        profileId: "claude",
+        cwd: "D:\\movie",
+      }),
+    ).toBeNull();
+    expect(
+      resumeHintForConversation(conversation(), {
+        profileId: "codex",
+        cwd: "D:\\other",
+      }),
+    ).toBeNull();
+  });
+
+  it("treats legacy undefined and empty session ids as unavailable", () => {
+    const legacyConversation = {
+      ...conversation(),
+      agentSessionId: undefined,
+    } as unknown as Pick<
+      SavedChatConversation,
+      "agentSessionId" | "profileId" | "cwd"
+    >;
+    expect(
+      resumeHintForConversation(legacyConversation, {
+        profileId: "codex",
+        cwd: "D:\\movie",
+      }),
+    ).toBeNull();
+    expect(
+      resumeHintForConversation(conversation(""), {
+        profileId: "codex",
+        cwd: "D:\\movie",
+      }),
+    ).toBeNull();
+  });
+
+  it("does not inject after a successful resume", () => {
+    const hint = resumeHintForConversation(conversation(), {
+      profileId: "codex",
+      cwd: "D:\\movie",
+    });
+    expect(hint).not.toBeNull();
+    expect(
+      shouldInjectHistoryContext(
+        { armed: true, injectedSessionId: hint?.sessionId },
+        hint?.sessionId ?? null,
+      ),
+    ).toBe(false);
+  });
+
+  it("injects once after resume falls back to a new session", () => {
+    const hint = resumeHintForConversation(conversation(), {
+      profileId: "codex",
+      cwd: "D:\\movie",
+    });
+    const fallbackSessionId = "agent-session-new";
+    expect(
+      shouldInjectHistoryContext(
+        { armed: true, injectedSessionId: hint?.sessionId },
+        fallbackSessionId,
+      ),
+    ).toBe(true);
+    expect(
+      shouldInjectHistoryContext(
+        { armed: true, injectedSessionId: fallbackSessionId },
+        fallbackSessionId,
+      ),
+    ).toBe(false);
+  });
+});
+
+describe("canAdoptResumeTarget", () => {
+  it("adopts when the target is already the live session", () => {
+    expect(
+      canAdoptResumeTarget({
+        targetIsLiveSession: true,
+        sessionActive: true,
+        transitionBlocked: true,
+      }),
+    ).toBe(true);
+  });
+
+  it("adopts when no session is active, letting auto-connect take over", () => {
+    expect(
+      canAdoptResumeTarget({
+        targetIsLiveSession: false,
+        sessionActive: false,
+        transitionBlocked: true,
+      }),
+    ).toBe(true);
+  });
+
+  it("adopts when the current session can be closed right away", () => {
+    expect(
+      canAdoptResumeTarget({
+        targetIsLiveSession: false,
+        sessionActive: true,
+        transitionBlocked: false,
+      }),
+    ).toBe(true);
+  });
+
+  it("refuses while a turn is running, so the summary fallback stays armed", () => {
+    expect(
+      canAdoptResumeTarget({
+        targetIsLiveSession: false,
+        sessionActive: true,
+        transitionBlocked: true,
+      }),
     ).toBe(false);
   });
 });
