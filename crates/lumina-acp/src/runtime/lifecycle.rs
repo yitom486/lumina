@@ -38,6 +38,9 @@ use crate::wire::session::{
 /// stored conversation is gone (see `AgentSessionListTrust`).
 const PAGE_BUDGET: usize = 5;
 
+/// How long a session close may hold up switching media or starting a new chat.
+const CLOSE_FLUSH_BUDGET: Duration = Duration::from_secs(3);
+
 /// Everything that describes the session about to be created. Grouped because
 /// the argument list had grown past the point where call sites were readable.
 pub(crate) struct NewSessionSpec<'a> {
@@ -289,25 +292,61 @@ impl AcpService {
     pub(crate) fn drop_live_session(&self, wait_for_child: bool) {
         if let Ok(mut guard) = self.session.lock() {
             if let Some(mut session) = guard.take() {
-                if wait_for_child && session.init.supports_session_close {
-                    let id = session.next_id;
-                    session.next_id += 1;
-                    let _ = write_request(
-                        &mut session.stdin,
-                        id,
-                        "session/close",
-                        session_close_params(&session.session_id),
-                    );
+                if wait_for_child {
+                    self.wind_down_session(session);
+                } else {
+                    // App exit: no grace period, the tree goes now. Killing the
+                    // whole job matters here (a wrapper-only kill orphaned the
+                    // second Codex process and bricked the conversation).
+                    session.agent.terminate(false);
                 }
-                // P1: kill the whole tree (wrapper-only kill orphaned the
-                // second Codex process). Graceful close above stays first.
-                session.agent.terminate(wait_for_child);
             }
         }
         if wait_for_child {
             self.host.release_all();
         } else {
             self.host.release_all_for_shutdown();
+        }
+    }
+
+    /// Let the Agent persist the conversation, then kill the subtree off-thread.
+    ///
+    /// Sending `session/close` and killing right after is not enough: Codex
+    /// writes the thread's rollout while winding the conversation down, and the
+    /// job object takes out `codex.exe` mid-flush, so the conversation is lost
+    /// and every later resume answers `no rollout found for thread id`.
+    ///
+    /// The wind-down cannot be awaited here. `read_one` blocks in `read_line`,
+    /// so waiting for the close response would hang media switching for as
+    /// long as the agent stays quiet. A fixed grace period on a detached
+    /// thread keeps the caller instant and still bounds the agent's lifetime,
+    /// the same trade already made for `session/cancel`.
+    fn wind_down_session(&self, mut session: LiveSession) {
+        if !session.init.supports_session_close {
+            session.agent.terminate(false);
+            return;
+        }
+
+        let id = session.next_id;
+        session.next_id += 1;
+        let params = session_close_params(&session.session_id);
+        if write_request(&mut session.stdin, id, "session/close", params).is_err() {
+            session.agent.terminate(false);
+            return;
+        }
+
+        let session_id = session.session_id.clone();
+        if let Err(error) = thread::Builder::new()
+            .name("acp-wind-down".into())
+            .spawn(move || {
+                thread::sleep(CLOSE_FLUSH_BUDGET);
+                session.agent.terminate(true);
+                tracing::info!(session_id, "Agent subtree terminated after close grace");
+            })
+        {
+            // The closure owned the session, so dropping it here already
+            // terminated the tree via `Drop for LiveSession`.
+            tracing::warn!(%error, "could not detach Agent wind-down; subtree dropped");
         }
     }
 

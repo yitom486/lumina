@@ -429,8 +429,58 @@ mod tests {
         }
     }
 
+    /// A slot session whose process stays alive and never answers: stdin
+    /// writes succeed, stdout never produces a response line.
+    fn silent_slot_session() -> crate::runtime::lifecycle::LiveSession {
+        use std::io::BufReader;
+        let mut child = crate::runtime::process::command("cmd")
+            .args(["/c", "ping", "-n", "30", "127.0.0.1"])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("spawn silent agent");
+        let stdin = child.stdin.take().expect("stdin");
+        let stdout = child.stdout.take().expect("stdout");
+        crate::runtime::lifecycle::LiveSession {
+            agent: crate::runtime::process::AgentProcess::adopt(child),
+            stdin,
+            reader: BufReader::new(stdout),
+            session_id: "silent-session".to_string(),
+            next_id: 1,
+            init: crate::wire::session::InitializeResult {
+                supports_session_close: true,
+                ..crate::wire::session::InitializeResult::default()
+            },
+            profile_kind: AgentKind::Codex,
+            model_options: AcpSessionModelOptions::default(),
+        }
+    }
+
     fn slot_occupied(service: &AcpService) -> bool {
         service.session.lock().expect("lock").is_some()
+    }
+
+    /// Closing gives the agent a grace period to persist the conversation, but
+    /// must never wait for it: `read_one` blocks in `read_line`, so an awaited
+    /// handshake would freeze media switching whenever the agent stays quiet.
+    #[test]
+    fn closing_a_silent_session_does_not_block_the_caller() {
+        let service = AcpService::new_isolated(None);
+        service
+            .session
+            .lock()
+            .expect("lock")
+            .replace(silent_slot_session());
+
+        let started = std::time::Instant::now();
+        service.drop_live_session(true);
+
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(1),
+            "close must not wait on the agent"
+        );
+        assert!(!slot_occupied(&service));
     }
 
     #[test]
