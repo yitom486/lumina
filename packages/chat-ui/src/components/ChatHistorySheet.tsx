@@ -2,10 +2,11 @@ import { History, Trash2 } from "lucide-react";
 
 import { Button, cn } from "@lumina/ui";
 
+import { formatConversationTime } from "../chatHistoryStore";
 import {
-  formatConversationTime,
-} from "../chatHistoryStore";
-import type { ReconciledChatConversation } from "../conversationContext";
+  historyConversationAction,
+  type ReconciledChatConversation,
+} from "../conversationContext";
 
 type Props = {
   open: boolean;
@@ -13,6 +14,7 @@ type Props = {
   activeId: string | null;
   scopeLabel: string;
   includeAll: boolean;
+  historySwitchBlocked: boolean;
   onToggleScope: () => void;
   onClose: () => void;
   onSelect: (id: string) => void;
@@ -26,6 +28,7 @@ export function ChatHistorySheet({
   activeId,
   scopeLabel,
   includeAll,
+  historySwitchBlocked,
   onToggleScope,
   onClose,
   onSelect,
@@ -66,51 +69,62 @@ export function ChatHistorySheet({
         </p>
       ) : (
         <ul className="max-h-56 overflow-y-auto pb-1">
-          {items.map((item) => (
-            <li key={item.id}>
-              <div
-                className={cn(
-                  "flex items-start gap-2 px-2 py-2 hover:bg-muted/60",
-                  item.id === activeId && "bg-muted/40",
-                )}
-              >
-                <button
-                  type="button"
+          {items.map((item) => {
+            const action = historyConversationAction({
+              agentStatus: item.agentStatus,
+              switchBlocked: historySwitchBlocked,
+            });
+            return (
+              <li key={item.id}>
+                <div
                   className={cn(
-                    "min-w-0 flex-1 text-left",
-                    item.agentStatus === "missing" &&
-                      "cursor-not-allowed opacity-70",
+                    "flex items-start gap-2 px-2 py-2 hover:bg-muted/60",
+                    item.id === activeId && "bg-muted/40",
                   )}
-                  disabled={item.agentStatus === "missing"}
-                  onClick={() => onSelect(item.id)}
                 >
-                  <p className="truncate text-[11px] font-medium text-foreground">
-                    {item.title}
-                  </p>
-                  <p className="mt-0.5 text-[10px] text-muted-foreground">
-                    {formatConversationTime(item.updatedAtMs)}
-                    {item.turns.length > 0
-                      ? ` · ${item.turns.length} 轮`
-                      : null}
-                  </p>
-                  {item.agentStatus === "missing" ? (
-                    <p className="mt-1 text-[10px] leading-4 text-muted-foreground">
-                      该对话的 AI 记忆已不存在，只能作为记录查看
+                  <button
+                    type="button"
+                    className={cn(
+                      "min-w-0 flex-1 text-left",
+                      action !== "available" &&
+                        "cursor-not-allowed opacity-70",
+                    )}
+                    disabled={action !== "available"}
+                    onClick={() => onSelect(item.id)}
+                  >
+                    <p className="truncate text-[11px] font-medium text-foreground">
+                      {item.title}
                     </p>
-                  ) : null}
-                </button>
-                <Button
-                  size="icon"
-                  variant="ghost"
-                  className="size-7 shrink-0 text-muted-foreground hover:text-destructive"
-                  aria-label="删除对话"
-                  onClick={() => onDelete(item.id)}
-                >
-                  <Trash2 className="size-3.5" />
-                </Button>
-              </div>
-            </li>
-          ))}
+                    <p className="mt-0.5 text-[10px] text-muted-foreground">
+                      {formatConversationTime(item.updatedAtMs)}
+                      {item.turns.length > 0
+                        ? ` · ${item.turns.length} 轮`
+                        : null}
+                    </p>
+                    {action === "missing" ? (
+                      <p className="mt-1 text-[10px] leading-4 text-muted-foreground">
+                        该对话的 AI 记忆已不存在，只能作为记录查看
+                      </p>
+                    ) : null}
+                    {action === "busy" ? (
+                      <p className="mt-1 text-[10px] leading-4 text-muted-foreground">
+                        正在回答，请稍后再切换对话
+                      </p>
+                    ) : null}
+                  </button>
+                  <Button
+                    size="icon"
+                    variant="ghost"
+                    className="size-7 shrink-0 text-muted-foreground hover:text-destructive"
+                    aria-label="删除对话"
+                    onClick={() => onDelete(item.id)}
+                  >
+                    <Trash2 className="size-3.5" />
+                  </Button>
+                </div>
+              </li>
+            );
+          })}
         </ul>
       )}
     </div>

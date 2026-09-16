@@ -75,7 +75,6 @@ export async function acpPrompt(
     cwd?: string;
     profileId?: string;
     context?: VideoPromptContext;
-    historyContext?: string | null;
     savedSession?: SavedSessionHint | null;
     clientSettings?: AcpClientSettings;
     profiles: AgentProfilesHint;
@@ -90,7 +89,6 @@ export async function acpPrompt(
     cwd: options?.cwd ?? null,
     profileId: options?.profileId ?? null,
     context: options?.context ?? null,
-    historyContext: options?.historyContext ?? null,
     savedSession: options?.savedSession ?? null,
     clientSettings: options?.clientSettings ?? null,
     profiles: options?.profiles,

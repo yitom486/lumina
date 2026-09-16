@@ -121,7 +121,6 @@ let answer = acp.prompt(
     Some(r"D:\videos\demo.mp4".into()),
     Some("codex".into()),
     Some(context),
-    None, // history_context；需要时传入稳定摘要
     None, // saved_session；需要恢复会话时传入
     AcpClientSettings::default(),
     profiles,

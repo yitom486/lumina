@@ -26,7 +26,6 @@ impl AcpService {
         cwd: Option<String>,
         profile_id: Option<String>,
         context: Option<VideoPromptContext>,
-        history_context: Option<String>,
         saved_session: Option<SavedSessionHint>,
         client_settings: AcpClientSettings,
         profiles: AgentProfilesHint,
@@ -40,7 +39,6 @@ impl AcpService {
             cwd,
             profile_id,
             context,
-            history_context,
             saved_session,
             client_settings,
             profiles,
@@ -59,7 +57,6 @@ impl AcpService {
         cwd: Option<String>,
         profile_id: Option<String>,
         context: Option<VideoPromptContext>,
-        history_context: Option<String>,
         saved_session: Option<SavedSessionHint>,
         client_settings: AcpClientSettings,
         profiles: AgentProfilesHint,
@@ -94,7 +91,6 @@ impl AcpService {
             cwd.as_deref(),
             profile_id.as_deref(),
             context.as_ref(),
-            history_context.as_deref(),
             saved_session.as_ref(),
             &prepared,
             &mut on_event,
@@ -135,7 +131,6 @@ impl AcpService {
         cwd: Option<&str>,
         profile_id: Option<&str>,
         context: Option<&VideoPromptContext>,
-        history_context: Option<&str>,
         saved_session: Option<&SavedSessionHint>,
         prepared: &PreparedProfiles,
         on_event: &mut dyn FnMut(AcpEvent),
@@ -245,12 +240,7 @@ impl AcpService {
             &mut session.stdin,
             prompt_id,
             "session/prompt",
-            crate::wire::session::session_prompt_params(
-                &session.session_id,
-                prompt_text,
-                context,
-                history_context,
-            ),
+            crate::wire::session::session_prompt_params(&session.session_id, prompt_text, context),
         ) {
             Self::log_workshop_exit(attempt_label, Some(pid), "prompt-write-failed", None, 0);
             return Err(error);

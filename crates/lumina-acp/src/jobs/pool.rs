@@ -79,7 +79,6 @@ impl SlotRunner for RealRunner {
             Some(self.profile_id.clone()),
             None,
             None,
-            None,
             isolated_client_settings(),
             self.profiles.clone(),
             move |event| {

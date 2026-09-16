@@ -61,7 +61,6 @@ pub fn session_prompt_params(
     session_id: &str,
     text: &str,
     context: Option<&VideoPromptContext>,
-    history_context: Option<&str>,
 ) -> Value {
     let mut prompt = Vec::new();
 
@@ -93,13 +92,6 @@ pub fn session_prompt_params(
                 "text": playback,
             }));
         }
-    }
-
-    if let Some(history) = history_context.filter(|s| !s.trim().is_empty()) {
-        prompt.push(json!({
-            "type": "text",
-            "text": format!("【此前对话摘要】\n{history}"),
-        }));
     }
 
     prompt.push(json!({
@@ -619,7 +611,7 @@ mod tests {
             episode_title: None,
             episode_overview: None,
         };
-        let params = session_prompt_params("sess_1", "这段讲了什么？", Some(&ctx), None);
+        let params = session_prompt_params("sess_1", "这段讲了什么？", Some(&ctx));
         let prompt = params
             .get("prompt")
             .and_then(Value::as_array)
@@ -645,7 +637,7 @@ mod tests {
             episode_title: Some("第二集".into()),
             episode_overview: Some("换集剧情摘要".into()),
         };
-        let params = session_prompt_params("sess_1", "讲了什么？", Some(&ctx), None);
+        let params = session_prompt_params("sess_1", "讲了什么？", Some(&ctx));
         let playback = params
             .get("prompt")
             .and_then(Value::as_array)
@@ -659,7 +651,7 @@ mod tests {
 
     #[test]
     fn prompt_without_context_is_user_text_only() {
-        let params = session_prompt_params("sess_1", "你好", None, None);
+        let params = session_prompt_params("sess_1", "你好", None);
         let prompt = params
             .get("prompt")
             .and_then(Value::as_array)
@@ -669,25 +661,12 @@ mod tests {
     }
 
     #[test]
-    fn prompt_includes_history_context_before_user_text() {
-        let params = session_prompt_params(
-            "sess_1",
-            "继续问",
-            None,
-            Some("用户：你好\n\n助手：你好，有什么可以帮你？"),
-        );
-        let prompt = params
-            .get("prompt")
-            .and_then(Value::as_array)
-            .expect("prompt");
-        assert_eq!(prompt.len(), 2);
-        let history = prompt[0].get("text").and_then(Value::as_str).unwrap_or("");
-        assert!(history.contains("此前对话摘要"));
-        assert!(history.contains("用户：你好"));
-        assert_eq!(
-            prompt[1].get("text").and_then(Value::as_str),
-            Some("继续问")
-        );
+    fn prompt_never_includes_history_summary() {
+        let params = session_prompt_params("sess_1", "继续问", None);
+        let serialized = serde_json::to_string(&params).expect("serialize");
+        let removed_summary_marker = ["此前", "对话摘要"].concat();
+        assert!(!serialized.contains(removed_summary_marker.as_str()));
+        assert!(serialized.contains("继续问"));
     }
 
     #[test]
@@ -709,7 +688,7 @@ mod tests {
             subtitle_choice_id: Some("online:en".into()),
             ..Default::default()
         };
-        let params = session_prompt_params("sess_1", "讲了什么？", Some(&ctx), None);
+        let params = session_prompt_params("sess_1", "讲了什么？", Some(&ctx));
         let prompt = params
             .get("prompt")
             .and_then(Value::as_array)
@@ -740,7 +719,7 @@ mod tests {
             subtitle_choice_id: None,
             ..Default::default()
         };
-        let params = session_prompt_params("sess_1", "hi", Some(&ctx), None);
+        let params = session_prompt_params("sess_1", "hi", Some(&ctx));
         let uri = params
             .get("prompt")
             .and_then(Value::as_array)

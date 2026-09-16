@@ -52,13 +52,11 @@ import {
   useChatHistoryStore,
 } from "@lumina/chat-ui/chatHistoryStore";
 import {
-  canAdoptResumeTarget,
+  canSwitchHistoryConversation,
   canUseVerifiedAgentSessions,
-  formatConversationHistoryContext,
   reconcileConversations,
   resumeHintForConversation,
   shouldRequestHistorySessionList,
-  shouldInjectHistoryContext,
 } from "@lumina/chat-ui/conversationContext";
 import { useChatUiStore } from "@lumina/chat-ui/chatUiStore";
 import { buildAnchoredVideoPromptContext } from "../context";
@@ -170,11 +168,8 @@ export function AcpPanel() {
     useState<HistorySessionListSnapshot | null>(null);
   const [historyListRequested, setHistoryListRequested] = useState(false);
   const historyListRequestSeqRef = useRef(0);
-  const [historyInjectionActive, setHistoryInjectionActive] = useState(false);
-  // 已注入过历史摘要的 Agent session；undefined = 尚未注入。
-  const injectedHistorySessionRef = useRef<string | null | undefined>(
-    undefined,
-  );
+  // 只读是当前界面的可逆状态，不写入 SavedChatConversation，也不持久化。
+  const [readOnlyConversation, setReadOnlyConversation] = useState(false);
   const resumeExpectedSessionIdRef = useRef<string | null>(null);
   const resumeNoticePendingRef = useRef(false);
 
@@ -246,19 +241,12 @@ export function AcpPanel() {
     const expectedSessionId = resumeExpectedSessionIdRef.current;
     if (expectedSessionId) {
       if (event.sessionId === expectedSessionId) {
-        // The requested Agent history is still attached to this session, so
-        // the armed fallback summary remains suppressed by this id match.
-        injectedHistorySessionRef.current = event.sessionId;
         if (resumeNoticePendingRef.current) {
           pushSystem("已恢复该对话的 AI 记忆");
         }
       } else {
-        // Keep the requested id in the ledger. The new id will therefore
-        // cause shouldInjectHistoryContext to arm the fallback on the next
-        // prompt, including when resume failed inside acp_prompt.
-        setHistoryInjectionActive(true);
         if (resumeNoticePendingRef.current) {
-          pushSystem("该对话的 AI 记忆暂不可用，已加载本地历史记录");
+          pushSystem("该对话的 AI 记忆已不存在，已作为新对话继续");
         }
       }
       resumeExpectedSessionIdRef.current = null;
@@ -278,6 +266,7 @@ export function AcpPanel() {
   };
 
   useEffect(() => {
+    if (readOnlyConversation) return;
     if (busy) return;
     if (turns.every((turn) => !turn.userText.trim() && !turn.answer.trim())) {
       return;
@@ -297,6 +286,7 @@ export function AcpPanel() {
     activeProfileId,
     busy,
     conversationId,
+    readOnlyConversation,
     sessionCwd,
     savedSession,
     turns,
@@ -308,13 +298,12 @@ export function AcpPanel() {
       const preserveTurns = options?.preserveTurns ?? false;
       resumeExpectedSessionIdRef.current = null;
       resumeNoticePendingRef.current = false;
+      setReadOnlyConversation(false);
       clearSavedSession();
       if (!preserveTurns) {
         setTurns([]);
         setNotices([]);
         setDraftEmpty();
-        setHistoryInjectionActive(false);
-        injectedHistorySessionRef.current = undefined;
         promptQueueRef.current = [];
         setPromptQueue([]);
         handledProposalIdsRef.current.clear();
@@ -369,6 +358,10 @@ export function AcpPanel() {
   });
 
   const composerBusy = busy || newChatMutation.isPending;
+  const historySwitchBlocked = !canSwitchHistoryConversation({
+    busy,
+    creatingSession: newChatMutation.isPending,
+  });
 
   const reconciledHistory = useMemo(
     () => {
@@ -523,6 +516,7 @@ export function AcpPanel() {
     connectAttempt,
     connectKey,
     queryClient,
+    savedSession,
     sessionActive,
     sessionCwd,
     setSavedSession,
@@ -716,20 +710,6 @@ export function AcpPanel() {
       const profileState = useAcpProfilesStore.getState();
       const settings = clientSettingsFromStore(useAcpSettingsStore.getState());
       const session = useAcpSessionStore.getState();
-      // 恢复历史对话只注入一次：注入成功后 Agent 会话自己保持上下文，
-      // 每轮重发整段摘要纯属浪费 token 与首字延迟。
-      const historyContext = shouldInjectHistoryContext(
-        {
-          armed: historyInjectionActive,
-          injectedSessionId: injectedHistorySessionRef.current,
-        },
-        session.savedSession?.sessionId ?? null,
-      )
-        ? formatConversationHistoryContext(turns)
-        : null;
-      if (historyInjectionActive && session.savedSession?.sessionId) {
-        resumeExpectedSessionIdRef.current = session.savedSession.sessionId;
-      }
 
       try {
         const player = usePlayerStore.getState();
@@ -745,7 +725,6 @@ export function AcpPanel() {
             profileId: profileState.activeProfileId,
             cwd: sessionCwd,
             context: frozenContext,
-            historyContext,
             savedSession: session.savedSession,
             clientSettings: settings,
             profiles: profilesHintFromStore(
@@ -754,10 +733,6 @@ export function AcpPanel() {
             ),
           },
         );
-        if (historyContext) {
-          injectedHistorySessionRef.current =
-            useAcpSessionStore.getState().savedSession?.sessionId ?? null;
-        }
         return result;
       } catch (error) {
         const message = errorMessage(error);
@@ -792,6 +767,7 @@ export function AcpPanel() {
 
   const launchNextQueuedPrompt = () => {
     if (
+      readOnlyConversation ||
       drainLockRef.current ||
       busyRef.current ||
       runMutation.isPending ||
@@ -821,12 +797,20 @@ export function AcpPanel() {
     busy,
     composerBusy,
     connectionState,
+    readOnlyConversation,
     promptQueue,
   ]);
 
   const send = () => {
     const text = draft.trim();
-    if (!text || !available || connectionState !== "connected") return;
+    if (
+      readOnlyConversation ||
+      !text ||
+      !available ||
+      connectionState !== "connected"
+    ) {
+      return;
+    }
     const anchorPositionMs = consumeAnchorPositionMs();
     if (busy || busyRef.current || runMutation.isPending) {
       syncPromptQueue(
@@ -844,7 +828,14 @@ export function AcpPanel() {
 
   const bargeIn = () => {
     const text = draft.trim();
-    if (!text || !available || connectionState !== "connected") return;
+    if (
+      readOnlyConversation ||
+      !text ||
+      !available ||
+      connectionState !== "connected"
+    ) {
+      return;
+    }
     if (!(busy || busyRef.current || runMutation.isPending)) {
       send();
       return;
@@ -874,6 +865,7 @@ export function AcpPanel() {
   const startNewChat = () => {
     if (busy || newChatMutation.isPending) return;
     if (
+      !readOnlyConversation &&
       isBlankChat &&
       sessionActive &&
       connectionState === "connected"
@@ -881,6 +873,7 @@ export function AcpPanel() {
       return;
     }
     if (!available) {
+      setReadOnlyConversation(false);
       setTurns([]);
       setNotices([]);
       setDraftEmpty();
@@ -895,6 +888,16 @@ export function AcpPanel() {
   };
 
   const loadConversation = (id: string) => {
+    if (
+      !canSwitchHistoryConversation({
+        busy,
+        creatingSession: newChatMutation.isPending,
+      })
+    ) {
+      pushSystem("正在回答，请稍后再切换对话");
+      return;
+    }
+
     const item = conversations.find((conversation) => conversation.id === id);
     if (!item) return;
     const resumeHint = resumeHintForConversation(item, {
@@ -907,14 +910,9 @@ export function AcpPanel() {
       resumeHint !== null &&
       sessionActive &&
       currentSessionId === resumeHint.sessionId;
-    // 正忙时无法接管目标会话，此时必须退回摘要兜底（见 canAdoptResumeTarget）。
-    const adoptResumeTarget =
-      resumeHint !== null &&
-      canAdoptResumeTarget({
-        targetIsLiveSession: activeTargetMatches,
-        sessionActive,
-        transitionBlocked: busy || newChatMutation.isPending,
-      });
+    // 忙时切换已被入口处的 canSwitchHistoryConversation 拦下，
+    // 所以到这里只剩「有没有可 resume 的目标」一个条件。
+    const adoptResumeTarget = resumeHint !== null;
     setConversationId(item.id);
     setActiveConversationId(item.id);
     syncTurnIdSeq(idSeq, item.turns);
@@ -926,10 +924,9 @@ export function AcpPanel() {
     setProgress(null);
     setPendingPermission(null);
     handleHistoryOpenChange(false);
-    setHistoryInjectionActive(true);
 
     if (adoptResumeTarget && resumeHint) {
-      injectedHistorySessionRef.current = resumeHint.sessionId;
+      setReadOnlyConversation(false);
       resumeExpectedSessionIdRef.current = resumeHint.sessionId;
       resumeNoticePendingRef.current = true;
       setSavedSession(resumeHint);
@@ -941,13 +938,10 @@ export function AcpPanel() {
         pushSystem("正在恢复该对话的 AI 记忆…");
       }
     } else {
-      injectedHistorySessionRef.current = undefined;
+      setReadOnlyConversation(true);
       resumeExpectedSessionIdRef.current = null;
       resumeNoticePendingRef.current = false;
-      // 无 hint 时清掉会话指针；有 hint 但此刻接管不了则保持现状，
-      // 让当前会话继续服务，靠一次性摘要补上下文。
-      if (!resumeHint) clearSavedSession();
-      pushSystem("已恢复历史对话，继续提问将带上此前上下文");
+      pushSystem("该对话只能作为记录查看");
     }
 
     if (adoptResumeTarget && !activeTargetMatches) {
@@ -965,15 +959,6 @@ export function AcpPanel() {
           });
       }
       return;
-    }
-
-    if (
-      !adoptResumeTarget &&
-      sessionActive &&
-      !busy &&
-      !newChatMutation.isPending
-    ) {
-      newChatMutation.mutate({ preserveTurns: true });
     }
   };
 
@@ -1027,6 +1012,7 @@ export function AcpPanel() {
           activeId={activeConversationId ?? conversationId}
           scopeLabel="当前视频"
           includeAll={historyIncludeAll}
+          historySwitchBlocked={historySwitchBlocked}
           onToggleScope={() => setHistoryIncludeAll((value) => !value)}
           onClose={() => handleHistoryOpenChange(false)}
           onSelect={loadConversation}
@@ -1063,7 +1049,11 @@ export function AcpPanel() {
       <ChatComposerBar
         ref={composerRef}
         value={draft}
-        disabled={!available || connectionState !== "connected"}
+        disabled={
+          readOnlyConversation ||
+          !available ||
+          connectionState !== "connected"
+        }
         busy={composerBusy}
         status={statusQuery.data}
         sessionConnected={connectionState === "connected"}
@@ -1076,7 +1066,9 @@ export function AcpPanel() {
                 ? "连接失败，请点击上方「重连」"
                 : connectionState === "idle"
                   ? "Agent 未连接，请点击上方「重连」"
-                  : "输入问题（Enter 发送，Shift+Enter 换行）"
+                  : readOnlyConversation
+                    ? "该对话仅供查看，请新建或选择可恢复对话"
+                    : "输入问题（Enter 发送，Shift+Enter 换行）"
         }
         onChange={onDraftChange}
         queue={promptQueue}
