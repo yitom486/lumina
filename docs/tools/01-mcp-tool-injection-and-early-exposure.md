@@ -273,3 +273,38 @@ MCP instructions 是 Agent 连接阶段收到的指引，不应替代 Host 的�
 
 不要先假设工具没有注入。必须把“没有启动 MCP”“工具被 profile 过滤”“模型知道但没有调用”区分开。
 
+## 9. 已实测的时序缺口：session/new 不等 MCP 列出
+
+2026-09-16 双边日志对出的实测（Lumina 日志 + `lumina-mcp.log`）：
+
+```text
+13:13:50.246  session/new completed
+13:13:50.283  MCP 子进程启动（+37ms）
+13:13:50.288  tools_list_served chat tools=8（+42ms）
+```
+
+即 `session/new` 返回只代表 Agent thread 建好，**不代表 MCP 已经列出**。首轮 prompt 可以在工具目录到达前就发出去，模型只能拿原生工具（网络搜索）作答；几十毫秒到几秒后 MCP 才列出，后续轮次反而正常——看起来像“会话污染”，实际是迟到。
+
+推论：
+
+- 不要用“首轮没调工具”证明“注册坏了”，先对 `lumina-mcp.log` 里该会话的 `tools_list_served` 时间和首答时间；
+- `session/new` 的耗时（常见 5 秒左右）主要花在 Agent 建 thread 和模型握手，不是等 MCP；
+- 想从 Lumina 侧“等注入成功再建会话”做不到：`session/new` 响应里不带 MCP 状态，App Server 的 listing 事件观测不到，只能事后对日志。
+
+## 10. 每轮 prompt 的工具触发头（与时序无关的通道）
+
+既然 MCP 通道的到达时机没保证，`session/prompt` 里加了一段固定触发头（`crates/lumina-acp/src/wire/session.rs` 的 `TOOL_TRIGGER_HEADER`），永远放在第 0 块、用户原文之前：
+
+- 点名 8 个 Chat 工具（一工具一短语，字幕工坊写工具不在内）；
+- 剧情类问题禁止先网络搜索；
+- 若 `tools/list` 暂无 lumina 工具，要求模型直接说明接入未完成，而不是编造或静默走 web。
+
+它只有名字和触发规则，完整版永远只在 `initialize.instructions` 里，不搞两套权威。单测锁住位置（第 0 块）、措辞（8 个名字全在）和无泄漏（无 `mediaPath` 等内部字段）。
+
+## 11. 观测手段（去哪里看）
+
+- Lumina 日志：`registering Lumina MCP for ACP session`（确认配置送达：command/args/env/profile）、`session/new completed`（耗时不代表等了 MCP）。
+- `lumina-mcp.log`（`LUMINA_MCP_DIAGNOSTIC_LOG` 指向，App 端在 `adapter.rs` 里配）：`server_started` / `initialize_received` / `tools_list_served <profile> tools=<N>` / `tool started|finished`。`no-tools` 会话列出 0 是符合设计的（隔离任务），不要把它当成聊天会话注册失败。
+- ACP 侧 `tool_call observed` 日志：只证明模型“宣布”了调用；真正的执行起止看上一条。
+- 仍在 App Server 肚子里、观测不到的：它何时 spawn 我们的进程、列出后是否缓存、下次是否重列。需要时用 `/mcp` 问它自己，或看任务管理器里 lumina MCP 子进程在不在。
+

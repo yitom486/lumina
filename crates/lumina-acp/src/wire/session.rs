@@ -61,15 +61,26 @@ pub fn session_new_params(cwd: &str, mcp_servers: Value, kind: SessionKind) -> V
 
 /// `session/prompt` params: media travels as a `resource_link` only.
 /// Structured playback data stays in the snapshot for MCP tools; stable tool
-/// guidance comes from MCP `initialize.instructions`, never from here.
+/// guidance lives in MCP `initialize.instructions`. The one exception is the
+/// fixed trigger header below: it rides with the question (no timing
+/// dependency on MCP readiness) and names only the frozen tool contract —
+/// full rules stay in `initialize.instructions`.
+const TOOL_TRIGGER_HEADER: &str = "【工具优先】本轮优先使用 Lumina 本地工具（实际可用以 tools/list 返回为准）：lumina_get_playback_context（播放锚点）、lumina_get_library_context（剧集简介）、lumina_get_episode_index（分集列表）、lumina_get_transcript_window（当前台词）、lumina_get_episode_transcript（他集台词）、lumina_get_audio_marks（音频信号）、lumina_capture_frames（视频截帧）、lumina_propose_video_annotation（批注提议）。剧情类问题禁止先网络搜索；若 tools/list 暂无 lumina 工具，说明接入未完成，请直接说明。";
+const USER_PROMPT_SEPARATOR: &str = "\n\n";
+
 pub fn session_prompt_params(
     session_id: &str,
     text: &str,
     context: Option<&VideoPromptContext>,
 ) -> Value {
     let mut prompt = Vec::new();
+    let has_turn_context = context.is_some_and(|ctx| !ctx.is_empty());
 
     if let Some(ctx) = context.filter(|c| !c.is_empty()) {
+        prompt.push(json!({
+            "type": "text",
+            "text": TOOL_TRIGGER_HEADER,
+        }));
         if let Some(path) = ctx.media_path.as_deref().filter(|p| !p.trim().is_empty()) {
             let name = ctx
                 .media_title
@@ -101,7 +112,11 @@ pub fn session_prompt_params(
 
     prompt.push(json!({
         "type": "text",
-        "text": text,
+        "text": if has_turn_context {
+            format!("{USER_PROMPT_SEPARATOR}{text}")
+        } else {
+            text.to_string()
+        },
     }));
 
     json!({
@@ -689,8 +704,12 @@ mod tests {
             .get("prompt")
             .and_then(Value::as_array)
             .expect("prompt");
-        assert_eq!(prompt.len(), 3);
-        let playback = prompt[1].get("text").and_then(Value::as_str).unwrap_or("");
+        assert_eq!(prompt.len(), 4);
+        let header = prompt[0].get("text").and_then(Value::as_str).unwrap_or("");
+        assert!(header.contains("【工具优先】"));
+        assert!(header.contains("lumina_get_transcript_window"));
+        assert!(header.contains("禁止先网络搜索"));
+        let playback = prompt[2].get("text").and_then(Value::as_str).unwrap_or("");
         assert!(playback.contains("【当前播放】"));
         assert!(playback.contains("01:23"));
         assert!(playback.contains("S01E01"));
@@ -714,12 +733,58 @@ mod tests {
         let playback = params
             .get("prompt")
             .and_then(Value::as_array)
-            .and_then(|p| p.get(1))
+            .and_then(|p| p.get(2))
             .and_then(|b| b.get("text"))
             .and_then(Value::as_str)
             .unwrap_or("");
         assert!(playback.contains("本集标题：第二集"));
         assert!(playback.contains("本集剧情：换集剧情摘要"));
+    }
+
+    #[test]
+    fn tool_trigger_header_leads_when_context_present() {
+        let ctx = VideoPromptContext {
+            media_path: Some(r"D:\videos\demo.mp4".into()),
+            position_ms: Some(5_000),
+            ..Default::default()
+        };
+        let params = session_prompt_params("sess_1", "讲了什么？", Some(&ctx));
+        let prompt = params
+            .get("prompt")
+            .and_then(Value::as_array)
+            .expect("prompt");
+        // Header first, user text last; resource link and playback keep order.
+        let first = prompt
+            .first()
+            .and_then(|b| b.get("text"))
+            .and_then(Value::as_str)
+            .unwrap_or("");
+        assert!(first.starts_with("【工具优先】"));
+        // All eight Chat tools named with one-phrase intros; workshop-only
+        // write tools stay out of the per-turn header.
+        for name in [
+            "lumina_get_playback_context",
+            "lumina_get_library_context",
+            "lumina_get_episode_index",
+            "lumina_get_transcript_window",
+            "lumina_get_episode_transcript",
+            "lumina_get_audio_marks",
+            "lumina_capture_frames",
+            "lumina_propose_video_annotation",
+        ] {
+            assert!(first.contains(name), "header must name {name}");
+        }
+        let last = prompt
+            .last()
+            .and_then(|b| b.get("text"))
+            .and_then(Value::as_str)
+            .unwrap_or("");
+        assert_eq!(last, "\n\n讲了什么？");
+        let serialized = serde_json::to_string(&params).expect("serialize");
+        assert!(
+            !serialized.contains("mediaPath"),
+            "no camelCase internals: {serialized}"
+        );
     }
 
     #[test]
@@ -766,7 +831,7 @@ mod tests {
             .get("prompt")
             .and_then(Value::as_array)
             .expect("prompt");
-        let link = &prompt[0];
+        let link = &prompt[1];
         assert_eq!(
             link.get("type").and_then(Value::as_str),
             Some("resource_link")
@@ -796,7 +861,7 @@ mod tests {
         let uri = params
             .get("prompt")
             .and_then(Value::as_array)
-            .and_then(|p| p.first())
+            .and_then(|p| p.get(1))
             .and_then(|l| l.get("uri"))
             .and_then(Value::as_str)
             .expect("uri");
