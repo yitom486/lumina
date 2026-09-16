@@ -5,6 +5,10 @@ use std::path::PathBuf;
 use crate::error::MediaError;
 use crate::model::MediaToolStatus;
 
+/// Resource directory exported by the Tauri host for domain calls that do not
+/// receive an AppHandle (subtitle, ASR, and MCP child-process paths).
+pub const RESOURCE_DIR_ENV: &str = "LUMINA_RESOURCE_DIR";
+
 /// Lightweight ffprobe presence check (no media file needed) for startup/settings UI.
 /// Missing tool is data (`available: false`), never an error.
 pub fn tool_status(resource_dir: Option<&PathBuf>) -> MediaToolStatus {
@@ -100,7 +104,14 @@ fn tool_candidates(
         paths.push(res.join("ffmpeg").join(unix_name));
     }
 
-    // 1. 开发期：crate manifest 或其祖先目录下的 native/ffmpeg/
+    // 1. Packaged builds: the Tauri host exports its resolved resource dir so
+    // domain crates and the --lumina-mcp child use the same bundled tools.
+    if let Some(resource) = std::env::var_os(RESOURCE_DIR_ENV).map(PathBuf::from) {
+        paths.push(resource.join("ffmpeg").join(windows_name));
+        paths.push(resource.join("ffmpeg").join(unix_name));
+    }
+
+    // 2. 开发期：crate manifest 或其祖先目录下的 native/ffmpeg/
     for root in workspace_native_roots() {
         paths.push(root.join("ffmpeg").join(windows_name));
         paths.push(root.join("ffmpeg").join(unix_name));
@@ -108,13 +119,13 @@ fn tool_candidates(
 
     if let Ok(exe) = std::env::current_exe() {
         if let Some(dir) = exe.parent() {
-            // 2. Windows 安装后：exe 同目录或 ffmpeg/ 子目录
+            // 3. Windows 安装后：exe 同目录或 ffmpeg/ 子目录
             paths.push(dir.join(windows_name));
             paths.push(dir.join(unix_name));
             paths.push(dir.join("ffmpeg").join(windows_name));
             paths.push(dir.join("ffmpeg").join(unix_name));
 
-            // 3. macOS .app bundle：exe 在 MacOS/，resources 在 ../Resources/
+            // 4. macOS .app bundle：exe 在 MacOS/，resources 在 ../Resources/
             if let Some(parent) = dir.parent() {
                 let resources = parent.join("Resources");
                 paths.push(resources.join("ffmpeg").join(windows_name));
@@ -123,7 +134,7 @@ fn tool_candidates(
         }
     }
 
-    // 4. macOS/Linux：系统 PATH（brew / apt 安装的 ffmpeg）
+    // 5. macOS/Linux：系统 PATH（开发机或旧安装的 fallback）
     if let Ok(p) = which::which(unix_name) {
         paths.push(p);
     }
@@ -152,6 +163,22 @@ mod tests {
         assert!(status.available);
         assert!(has_cjk(&status.message));
         assert!(status.hint.is_none());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn unix_resource_dir_fallback_is_supported() {
+        let dir = std::env::temp_dir().join(format!(
+            "lumina-tool-status-{}-unix-resource",
+            std::process::id()
+        ));
+        let ffmpeg_dir = dir.join("ffmpeg");
+        std::fs::create_dir_all(&ffmpeg_dir).expect("mkdir");
+        let expected = ffmpeg_dir.join("ffprobe");
+        std::fs::write(&expected, b"fake").expect("seed");
+
+        let resolved = resolve_ffprobe_with(Some(&dir)).expect("unix resource ffprobe");
+        assert_eq!(resolved, expected);
         let _ = std::fs::remove_dir_all(&dir);
     }
 

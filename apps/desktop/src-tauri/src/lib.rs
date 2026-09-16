@@ -219,6 +219,14 @@ pub fn run() {
             notes_export_markdown_to_file,
         ])
         .setup(|app| {
+            if let Ok(resource_dir) = app.path().resource_dir() {
+                std::env::set_var(
+                    lumina_media::tools::RESOURCE_DIR_ENV,
+                    resource_dir.to_string_lossy().as_ref(),
+                );
+            } else {
+                tracing::warn!("failed to resolve Tauri resource directory");
+            }
             crate::player::mpv::native_library::ensure_libmpv_loaded(app.handle())?;
             attach_native_surface(app)?;
             tracing::info!(elapsed_ms = startup_ms(), "startup: setup done");

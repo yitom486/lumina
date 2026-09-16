@@ -23,7 +23,7 @@
 
 ## Phase 3 摘要
 
-- `ffmpeg.exe` 与 ffprobe 同目录（gitignore）
+- `native/ffmpeg/` 按平台放置 `ffmpeg` 与 `ffprobe`（Windows 为 `.exe`，Unix 无扩展名；原件 gitignore）
 - `SubtitleService`：列轨、抽出、解析 SRT/ASS/VTT
 - `TranscriptPanel`：高亮 + 点击 seek；支持外挂字幕
 - 位图字幕可上画面；文稿需文本轨或 ASR

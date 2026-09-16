@@ -54,16 +54,21 @@ pub fn lumina_mcp_server_entry(snapshot_path: &Path) -> Value {
     let executable = std::env::current_exe()
         .map(|path| path.to_string_lossy().to_string())
         .unwrap_or_else(|_| "lumina".into());
+    let mut env = vec![json!({
+        "name": CONTEXT_FILE_ENV,
+        "value": snapshot_path.to_string_lossy(),
+    })];
+    if let Some(resource_dir) = std::env::var_os(lumina_media::tools::RESOURCE_DIR_ENV) {
+        env.push(json!({
+            "name": lumina_media::tools::RESOURCE_DIR_ENV,
+            "value": resource_dir.to_string_lossy(),
+        }));
+    }
     json!({
         "name": "lumina",
         "command": executable,
         "args": [MCP_SUBCOMMAND],
-        "env": [
-            {
-                "name": CONTEXT_FILE_ENV,
-                "value": snapshot_path.to_string_lossy(),
-            }
-        ]
+        "env": env
     })
 }
 

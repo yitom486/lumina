@@ -35,7 +35,9 @@ Player Runtime（`AppState` → `Mutex<PlayerService>` + `VideoSurface`）由 Ta
 
 - Crate：`libmpv2` 6.x；本地 `apps/desktop/src-tauri/native/mpv/`
 - `build.rs` 链接 libmpv；Windows delay-load `libmpv-2.dll`；Unix 优先 `apps/desktop/src-tauri/native/mpv/runtime/` 或 pkg-config
-- 安装包 resources：`apps/desktop/src-tauri/native/mpv/runtime/` → `mpv/`（`apps/desktop/src-tauri/tauri.conf.json`）
+- 安装包 resources：`apps/desktop/src-tauri/native/mpv/runtime/` → `mpv/`（`apps/desktop/src-tauri/tauri.conf.json`）；
+  FFmpeg/ffprobe 由 `tauri.windows.conf.json`、`tauri.macos.conf.json`、
+  `tauri.linux.conf.json` 映射到 `resources/ffmpeg/`
 
 ### Native surface (M5) — platform matrix (H-P1-4)
 
@@ -97,6 +99,7 @@ demux 368ms，首帧 884ms，稳态 5000/5000ms，三点 seek 6/53/1ms，丢帧 
 - [ ] Windows：视频面单击暂停/双击全屏
 - [ ] macOS：NSView 打开 + seek；记录点击缺失影响
 - [ ] Linux X11：打开 + seek；Wayland 会话启动即得中文明错（非黑屏）
+- [ ] macOS/Linux：安装包内 `resources/ffmpeg/{ffmpeg,ffprobe}` 可执行，系统 PATH 为空仍可媒体探测与字幕抽取
 - [ ] 缺 ffprobe 安装包：媒体信息区中文降级 + hint（`MediaInfoPanel.test.tsx` 已锁 UI）
 
 ### Frontend (M7)

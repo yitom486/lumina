@@ -76,6 +76,55 @@ runs:
         }
         Get-ChildItem $ffmpegDir -Filter '*.exe' | ForEach-Object { "{0} {1}" -f $_.Name, $_.Length }
 
+    - name: Install FFmpeg (macOS/Linux)
+      if: inputs.platform == 'macos' || inputs.platform == 'linux'
+      shell: bash
+      run: |
+        set -euo pipefail
+        ffmpeg_dir='apps/desktop/src-tauri/native/ffmpeg'
+        version_file="$ffmpeg_dir/VERSION"
+        unix_version=$(sed -n 's/^unix_version=//p' "$version_file")
+        url_template=$(sed -n 's/^unix_url=//p' "$version_file")
+        test -n "$unix_version"
+        test -n "$url_template"
+
+        case "$(uname -m)" in
+          x86_64|amd64) arch='amd64' ;;
+          arm64|aarch64) arch='arm64' ;;
+          *) echo "Unsupported runner architecture: $(uname -m)" >&2; exit 1 ;;
+        esac
+
+        platform='${{ inputs.platform }}'
+        tmp_dir="${RUNNER_TEMP:-/tmp}/lumina-ffmpeg-${platform}-${arch}"
+        rm -rf "$tmp_dir"
+        mkdir -p "$tmp_dir" "$ffmpeg_dir"
+
+        for tool in ffmpeg ffprobe; do
+          url="${url_template//\{platform\}/$platform}"
+          url="${url//\{arch\}/$arch}"
+          url="${url//\{tool\}/$tool}"
+          archive="$tmp_dir/$tool.zip"
+          extract_dir="$tmp_dir/$tool"
+          mkdir -p "$extract_dir"
+          curl --fail --location --retry 3 --retry-delay 2 --silent --show-error \
+            "$url" --output "$archive"
+          unzip -q -o "$archive" -d "$extract_dir"
+          binary=$(find "$extract_dir" -type f -name "$tool" -print -quit)
+          if [ -z "$binary" ]; then
+            echo "The FFmpeg archive did not contain $tool for $platform/$arch." >&2
+            exit 1
+          fi
+          install -m 0755 "$binary" "$ffmpeg_dir/$tool"
+        done
+
+        actual_version=$("$ffmpeg_dir/ffmpeg" -version | sed -n '1s/^ffmpeg version \([^ ]*\).*/\1/p')
+        if [ "$actual_version" != "$unix_version" ]; then
+          echo "Expected FFmpeg $unix_version, got $actual_version." >&2
+          exit 1
+        fi
+        "$ffmpeg_dir/ffprobe" -version >/dev/null
+        ls -l "$ffmpeg_dir/ffmpeg" "$ffmpeg_dir/ffprobe"
+
     - name: Install libmpv (macOS)
       if: inputs.platform == 'macos'
       shell: bash
