@@ -1,18 +1,10 @@
 //! Linux X11 child window for libmpv `wid`.
 
-use std::sync::OnceLock;
-
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle, RawDisplayHandle, RawWindowHandle};
-use tauri::{AppHandle, WebviewWindow};
+use tauri::WebviewWindow;
 use x11::xlib::{XCreateSimpleWindow, XDestroyWindow, XMapWindow, XMoveResizeWindow, XUnmapWindow};
 
 use crate::player::error::{PlayerError, PlayerErrorCode};
-
-static SURFACE_APP: OnceLock<AppHandle> = OnceLock::new();
-
-pub fn register_surface_app(app: AppHandle) {
-    let _ = SURFACE_APP.set(app);
-}
 
 pub struct VideoSurface {
     display: isize,

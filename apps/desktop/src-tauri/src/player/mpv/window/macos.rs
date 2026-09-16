@@ -4,23 +4,15 @@
 // objc 宏会展开 `cfg(feature = "cargo-clippy")`，由 Cargo.toml check-cfg 声明。
 #![allow(deprecated)]
 
-use std::sync::OnceLock;
-
 use cocoa::appkit::NSView;
 use cocoa::base::{id, nil, NO, YES};
 use cocoa::foundation::{NSPoint, NSRect, NSSize};
 #[allow(unused_imports)] // sel / sel_impl 供 msg_send! 宏展开使用
 use objc::{class, msg_send, sel, sel_impl};
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
-use tauri::{AppHandle, WebviewWindow};
+use tauri::WebviewWindow;
 
 use crate::player::error::{PlayerError, PlayerErrorCode};
-
-static SURFACE_APP: OnceLock<AppHandle> = OnceLock::new();
-
-pub fn register_surface_app(app: AppHandle) {
-    let _ = SURFACE_APP.set(app);
-}
 
 pub struct VideoSurface {
     view: isize,
