@@ -17,8 +17,9 @@ pub use agent::AgentProfile;
 pub use domain::{
     set_default_environment, AcpClientSettings, AcpEvent, AcpModelDiscoveryResult,
     AcpSessionModelOptions, AcpSessionModelSelection, AcpSessionOption, AcpStatus, AgentKind,
-    AgentProfileInput, AgentProfileStatus, AgentProfilesHint, PermissionMode, PermissionOption,
-    SavedSessionHint, SessionEnvironment, ThinkingLevel, VideoPromptContext,
+    AgentProfileInput, AgentProfileStatus, AgentProfilesHint, AgentSessionInfo,
+    AgentSessionListResult, PermissionMode, PermissionOption, SavedSessionHint, SessionEnvironment,
+    ThinkingLevel, VideoPromptContext,
 };
 pub use error::{AcpError, AcpErrorCode};
 pub use jobs::pool::{PoolConfig, WorkshopPool, DEFAULT_POOL_SIZE};

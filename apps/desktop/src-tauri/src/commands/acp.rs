@@ -5,7 +5,8 @@ use tauri::{AppHandle, Manager, State};
 
 use crate::acp::adapter;
 use crate::acp::{
-    AcpError, AcpEvent, AcpStatus, AgentProfilesHint, SavedSessionHint, VideoPromptContext,
+    AcpError, AcpEvent, AcpStatus, AgentProfilesHint, AgentSessionListResult, SavedSessionHint,
+    VideoPromptContext,
 };
 use crate::mcp::OnlineMediaSnapshot;
 use crate::state::AppState;
@@ -71,6 +72,17 @@ pub async fn acp_connect(
     })
     .await
     .map_err(|error| AcpError::internal(Some(&format!("acp connect join: {error}"))))?
+}
+
+#[tauri::command]
+pub async fn acp_list_agent_sessions(
+    state: State<'_, AppState>,
+    cwd: Option<String>,
+) -> Result<AgentSessionListResult, AcpError> {
+    let acp = state.acp.clone();
+    tauri::async_runtime::spawn_blocking(move || acp.list_agent_sessions(cwd.as_deref()))
+        .await
+        .map_err(|error| AcpError::internal(Some(&format!("acp list sessions join: {error}"))))?
 }
 
 #[tauri::command]

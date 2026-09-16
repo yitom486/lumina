@@ -6,6 +6,7 @@ import type {
   AcpModelDiscoveryResult,
   AcpSessionModelOptions,
   AcpStatus,
+  AgentSessionListResult,
   AgentProfilesHint,
   SavedSessionHint,
   VideoPromptContext,
@@ -36,6 +37,14 @@ export async function acpConnect(
     clientSettings: options?.clientSettings ?? null,
     profiles: options?.profiles,
     onEvent: channel,
+  });
+}
+
+export function listAcpAgentSessions(
+  cwd?: string | null,
+): Promise<AgentSessionListResult> {
+  return invoke<AgentSessionListResult>("acp_list_agent_sessions", {
+    cwd: cwd ?? null,
   });
 }
 

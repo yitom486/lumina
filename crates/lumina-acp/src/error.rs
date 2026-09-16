@@ -145,6 +145,11 @@ mod tests {
         let p = AcpError::protocol(Some("json parse failed"));
         assert_eq!(p.message, "与 Agent 通信失败");
         assert_eq!(p.details.as_deref(), Some("json parse failed"));
+        let list = AcpError::protocol(Some("session/list: invalid response from codex"));
+        assert!(has_cjk(&list.message));
+        assert!(!list.message.contains("session/list"));
+        assert!(!list.message.contains("sessionId"));
+        assert!(!list.message.contains("codex"));
         assert_eq!(
             AcpError::bad_request("提问内容不能为空").message,
             "提问内容不能为空"

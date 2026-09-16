@@ -10,6 +10,7 @@ pub use environment::{set_default_environment, SessionEnvironment};
 pub use model::{
     AcpEvent, AcpModelDiscoveryResult, AcpSessionModelOptions, AcpSessionModelSelection,
     AcpSessionOption, AcpStatus, AgentKind, AgentProfileInput, AgentProfileStatus,
-    AgentProfilesHint, PermissionOption, SavedSessionHint,
+    AgentProfilesHint, AgentSessionInfo, AgentSessionListResult, PermissionOption,
+    SavedSessionHint,
 };
 pub use settings::{AcpClientSettings, PermissionMode, ThinkingLevel};

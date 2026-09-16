@@ -4,12 +4,12 @@ import { Button, cn } from "@lumina/ui";
 
 import {
   formatConversationTime,
-  type SavedChatConversation,
 } from "../chatHistoryStore";
+import type { ReconciledChatConversation } from "../conversationContext";
 
 type Props = {
   open: boolean;
-  items: SavedChatConversation[];
+  items: ReconciledChatConversation[];
   activeId: string | null;
   scopeLabel: string;
   includeAll: boolean;
@@ -76,7 +76,12 @@ export function ChatHistorySheet({
               >
                 <button
                   type="button"
-                  className="min-w-0 flex-1 text-left"
+                  className={cn(
+                    "min-w-0 flex-1 text-left",
+                    item.agentStatus === "missing" &&
+                      "cursor-not-allowed opacity-70",
+                  )}
+                  disabled={item.agentStatus === "missing"}
                   onClick={() => onSelect(item.id)}
                 >
                   <p className="truncate text-[11px] font-medium text-foreground">
@@ -88,6 +93,11 @@ export function ChatHistorySheet({
                       ? ` · ${item.turns.length} 轮`
                       : null}
                   </p>
+                  {item.agentStatus === "missing" ? (
+                    <p className="mt-1 text-[10px] leading-4 text-muted-foreground">
+                      该对话的 AI 记忆已不存在，只能作为记录查看
+                    </p>
+                  ) : null}
                 </button>
                 <Button
                   size="icon"

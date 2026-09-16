@@ -34,6 +34,7 @@ import {
   acpCancel,
   acpClose,
   acpConnect,
+  listAcpAgentSessions,
   acpNewChat,
   acpPrompt,
   getAcpStatus,
@@ -52,8 +53,11 @@ import {
 } from "@lumina/chat-ui/chatHistoryStore";
 import {
   canAdoptResumeTarget,
+  canUseVerifiedAgentSessions,
   formatConversationHistoryContext,
+  reconcileConversations,
   resumeHintForConversation,
+  shouldRequestHistorySessionList,
   shouldInjectHistoryContext,
 } from "@lumina/chat-ui/conversationContext";
 import { useChatUiStore } from "@lumina/chat-ui/chatUiStore";
@@ -71,6 +75,7 @@ import {
 import type {
   AcpConnectionState,
   AcpEvent,
+  AgentSessionListResult,
   ChatTurn,
   PendingPermission,
   ThinkingLevel,
@@ -85,6 +90,12 @@ import { ChatColumn } from "@lumina/chat-ui/components/ChatShell";
 import { ChatToolbar } from "./ChatToolbar";
 import { ChatTurnList } from "./ChatTurnList";
 import { PermissionPrompt } from "./PermissionPrompt";
+
+type HistorySessionListSnapshot = {
+  result: AgentSessionListResult;
+  profileId: string;
+  cwd: string | null;
+};
 
 /** Kept mounted in ChatDock after first open; hide ≠ unmount. */
 export function AcpPanel() {
@@ -155,6 +166,10 @@ export function AcpPanel() {
   );
   const [historyOpen, setHistoryOpen] = useState(false);
   const [historyIncludeAll, setHistoryIncludeAll] = useState(false);
+  const [agentSessionList, setAgentSessionList] =
+    useState<HistorySessionListSnapshot | null>(null);
+  const [historyListRequested, setHistoryListRequested] = useState(false);
+  const historyListRequestSeqRef = useRef(0);
   const [historyInjectionActive, setHistoryInjectionActive] = useState(false);
   // 已注入过历史摘要的 Agent session；undefined = 尚未注入。
   const injectedHistorySessionRef = useRef<string | null | undefined>(
@@ -256,6 +271,12 @@ export function AcpPanel() {
     });
   };
 
+  const clearHistorySessionListState = () => {
+    historyListRequestSeqRef.current += 1;
+    setHistoryListRequested(false);
+    setAgentSessionList(null);
+  };
+
   useEffect(() => {
     if (busy) return;
     if (turns.every((turn) => !turn.userText.trim() && !turn.answer.trim())) {
@@ -335,6 +356,7 @@ export function AcpPanel() {
       if (!options?.preserveTurns) {
         setConversationId(`chat-${Date.now()}`);
         setActiveConversationId(null);
+        clearHistorySessionListState();
         setHistoryOpen(false);
       }
       await queryClient.invalidateQueries({ queryKey: ["acp-status"] });
@@ -347,6 +369,75 @@ export function AcpPanel() {
   });
 
   const composerBusy = busy || newChatMutation.isPending;
+
+  const reconciledHistory = useMemo(
+    () => {
+      const listScopeMatches =
+        agentSessionList?.profileId === activeProfileId &&
+        agentSessionList.cwd === (sessionCwd ?? null);
+      const result = listScopeMatches ? agentSessionList.result : null;
+      return reconcileConversations(scopedHistory, result?.sessions, {
+        verified: canUseVerifiedAgentSessions({
+          hasData: result !== null,
+          verified: result?.verified ?? false,
+          truncated: result?.truncated ?? false,
+          busy: composerBusy,
+        }),
+        queryScope: {
+          profileId: activeProfileId,
+          cwd: sessionCwd ?? null,
+        },
+      });
+    },
+    [activeProfileId, agentSessionList, composerBusy, scopedHistory, sessionCwd],
+  );
+
+  const handleHistoryOpenChange = (open: boolean) => {
+    if (!open) {
+      clearHistorySessionListState();
+      setHistoryOpen(false);
+      return;
+    }
+
+    setHistoryOpen(true);
+    if (
+      !shouldRequestHistorySessionList({
+        historyOpen: true,
+        connected: connectionState === "connected",
+        busy: composerBusy,
+        requested: historyListRequested,
+      })
+    ) {
+      return;
+    }
+
+    const requestSeq = historyListRequestSeqRef.current + 1;
+    historyListRequestSeqRef.current = requestSeq;
+    setHistoryListRequested(true);
+    setAgentSessionList(null);
+    void listAcpAgentSessions(sessionCwd)
+      .then((result) => {
+        if (historyListRequestSeqRef.current !== requestSeq) return;
+        setAgentSessionList({
+          result,
+          profileId: activeProfileId,
+          cwd: sessionCwd ?? null,
+        });
+      })
+      .catch(() => {
+        if (historyListRequestSeqRef.current !== requestSeq) return;
+        setAgentSessionList({
+          result: {
+            verified: false,
+            sessions: [],
+            truncated: false,
+          },
+          profileId: activeProfileId,
+          cwd: sessionCwd ?? null,
+        });
+        pushSystem("暂时无法校验历史对话，仍可使用本地记录");
+      });
+  };
 
   useEffect(() => {
     setAcpResponding(composerBusy);
@@ -834,7 +925,7 @@ export function AcpPanel() {
     setDraftEmpty();
     setProgress(null);
     setPendingPermission(null);
-    setHistoryOpen(false);
+    handleHistoryOpenChange(false);
     setHistoryInjectionActive(true);
 
     if (adoptResumeTarget && resumeHint) {
@@ -919,12 +1010,12 @@ export function AcpPanel() {
           onNewChat={startNewChat}
           onOpenHistory={() => {
             setQuickNoteOpen(false);
-            setHistoryOpen((open) => !open);
+            handleHistoryOpenChange(!historyOpen);
           }}
           quickNoteDisabled={!currentFile}
           quickNoteOpen={quickNoteOpen}
           onQuickNoteOpenChange={(open) => {
-            if (open) setHistoryOpen(false);
+            if (open) handleHistoryOpenChange(false);
             setQuickNoteOpen(open);
           }}
           onQuickNoteSaved={() => pushSystem("批注已保存")}
@@ -932,12 +1023,12 @@ export function AcpPanel() {
         />
         <ChatHistorySheet
           open={historyOpen}
-          items={scopedHistory}
+          items={reconciledHistory}
           activeId={activeConversationId ?? conversationId}
           scopeLabel="当前视频"
           includeAll={historyIncludeAll}
           onToggleScope={() => setHistoryIncludeAll((value) => !value)}
-          onClose={() => setHistoryOpen(false)}
+          onClose={() => handleHistoryOpenChange(false)}
           onSelect={loadConversation}
           onDelete={deleteConversation}
         />

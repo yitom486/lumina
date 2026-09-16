@@ -6,6 +6,7 @@ use std::path::Path;
 use serde_json::{json, Value};
 
 use crate::domain::context::VideoPromptContext;
+use crate::domain::model::AgentSessionInfo;
 
 pub fn initialize_params() -> Value {
     initialize_params_with_tools(true)
@@ -219,6 +220,17 @@ pub fn session_resume_params(session_id: &str, cwd: &str, mcp_servers: Value) ->
     })
 }
 
+pub fn session_list_params(cwd: Option<&str>, cursor: Option<&str>) -> Value {
+    let mut params = json!({});
+    if let Some(cwd) = cwd.filter(|value| !value.trim().is_empty()) {
+        params["cwd"] = json!(cwd);
+    }
+    if let Some(cursor) = cursor.filter(|value| !value.trim().is_empty()) {
+        params["cursor"] = json!(cursor);
+    }
+    params
+}
+
 pub fn session_cancel_params(session_id: &str) -> Value {
     json!({ "sessionId": session_id })
 }
@@ -254,6 +266,7 @@ pub struct InitializeResult {
     pub auth_methods: Vec<AuthMethod>,
     pub supports_session_close: bool,
     pub supports_session_resume: bool,
+    pub supports_session_list: bool,
     pub load_session: bool,
 }
 
@@ -308,6 +321,9 @@ pub fn parse_initialize_result(value: &Value) -> InitializeResult {
     let supports_session_resume =
         capability_present(result, "/agentCapabilities/sessionCapabilities/resume");
 
+    let supports_session_list =
+        capability_present(result, "/agentCapabilities/sessionCapabilities/list");
+
     let load_session = result
         .pointer("/agentCapabilities/loadSession")
         .and_then(Value::as_bool)
@@ -319,8 +335,49 @@ pub fn parse_initialize_result(value: &Value) -> InitializeResult {
         auth_methods,
         supports_session_close,
         supports_session_resume,
+        supports_session_list,
         load_session,
     }
+}
+
+pub fn parse_session_list(value: &Value) -> (Vec<AgentSessionInfo>, Option<String>) {
+    let result = value.get("result").unwrap_or(value);
+    let mut sessions = Vec::new();
+    if let Some(items) = result.get("sessions").and_then(Value::as_array) {
+        for item in items {
+            let Some(session_id) = item
+                .get("sessionId")
+                .and_then(Value::as_str)
+                .filter(|value| !value.trim().is_empty())
+            else {
+                continue;
+            };
+            let Some(cwd) = item
+                .get("cwd")
+                .and_then(Value::as_str)
+                .filter(|value| !value.trim().is_empty())
+            else {
+                continue;
+            };
+            sessions.push(AgentSessionInfo {
+                session_id: session_id.to_string(),
+                cwd: cwd.to_string(),
+                title: item
+                    .get("title")
+                    .and_then(Value::as_str)
+                    .map(str::to_string),
+                updated_at: item
+                    .get("updatedAt")
+                    .and_then(Value::as_str)
+                    .map(str::to_string),
+            });
+        }
+    }
+    let next_cursor = result
+        .get("nextCursor")
+        .and_then(Value::as_str)
+        .map(str::to_string);
+    (sessions, next_cursor)
 }
 
 pub fn parse_session_id(value: &Value) -> Option<String> {
@@ -444,6 +501,74 @@ mod tests {
         });
         let init = parse_initialize_result(&value);
         assert!(init.supports_session_close);
+    }
+
+    #[test]
+    fn session_list_capability_accepts_object_and_true_but_not_missing() {
+        for capability in [json!({}), json!(true)] {
+            let value = json!({
+                "result": {
+                    "agentCapabilities": {
+                        "sessionCapabilities": { "list": capability }
+                    }
+                }
+            });
+            assert!(parse_initialize_result(&value).supports_session_list);
+        }
+        let missing = json!({
+            "result": {
+                "agentCapabilities": { "sessionCapabilities": {} }
+            }
+        });
+        assert!(!parse_initialize_result(&missing).supports_session_list);
+    }
+
+    #[test]
+    fn parses_session_list_and_skips_invalid_items() {
+        let response = json!({
+            "result": {
+                "sessions": [
+                    {
+                        "sessionId": "s1",
+                        "cwd": "D:/movie",
+                        "title": "看剧对话",
+                        "updatedAt": "2026-09-16T10:00:00Z",
+                        "_meta": { "private": true },
+                        "additionalDirectories": ["D:/other"]
+                    },
+                    { "cwd": "D:/movie", "title": "缺 id" },
+                    "not-an-object",
+                    {
+                        "sessionId": "s2",
+                        "cwd": "D:/movie",
+                        "title": null,
+                        "updatedAt": null
+                    }
+                ],
+                "nextCursor": "cursor-2"
+            }
+        });
+        let (sessions, cursor) = parse_session_list(&response);
+        assert_eq!(sessions.len(), 2);
+        assert_eq!(sessions[0].session_id, "s1");
+        assert_eq!(sessions[0].title.as_deref(), Some("看剧对话"));
+        assert_eq!(sessions[1].session_id, "s2");
+        assert_eq!(sessions[1].title, None);
+        assert_eq!(cursor.as_deref(), Some("cursor-2"));
+    }
+
+    #[test]
+    fn session_list_parser_handles_empty_array_and_params() {
+        let (sessions, cursor) = parse_session_list(&json!({
+            "result": { "sessions": [] }
+        }));
+        assert!(sessions.is_empty());
+        assert_eq!(cursor, None);
+        assert_eq!(
+            session_list_params(Some("D:/movie"), Some("cursor-1")),
+            json!({ "cwd": "D:/movie", "cursor": "cursor-1" })
+        );
+        assert_eq!(session_list_params(None, None), json!({}));
     }
 
     #[test]

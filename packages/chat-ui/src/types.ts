@@ -20,6 +20,19 @@ export type SavedSessionHint = {
   cwd: string;
 };
 
+export type AgentSessionInfo = {
+  sessionId: string;
+  cwd: string;
+  title: string | null;
+  updatedAt: string | null;
+};
+
+export type AgentSessionListResult = {
+  verified: boolean;
+  sessions: AgentSessionInfo[];
+  truncated: boolean;
+};
+
 export type AcpStatus = {
   available: boolean;
   adapterFound: boolean;

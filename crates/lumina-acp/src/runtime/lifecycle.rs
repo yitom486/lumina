@@ -13,7 +13,8 @@ use crate::agent::profile::{resolve_active_profile, AgentKind, PreparedProfiles}
 use crate::agent::workspace::resolve_session_cwd;
 use crate::domain::environment::session_env;
 use crate::domain::model::{
-    AcpEvent, AcpSessionModelOptions, AcpSessionModelSelection, SavedSessionHint,
+    AcpEvent, AcpSessionModelOptions, AcpSessionModelSelection, AgentSessionListResult,
+    SavedSessionHint,
 };
 use crate::error::AcpError;
 use crate::runtime::host::AcpHost;
@@ -23,8 +24,8 @@ use crate::runtime::service::AcpService;
 use crate::wire::codec::is_error_response;
 use crate::wire::session::{
     authenticate_params, initialize_params, initialize_params_restricted, parse_initialize_result,
-    parse_session_id, parse_session_model_options, session_close_params, session_new_params,
-    session_resume_params, InitializeResult,
+    parse_session_id, parse_session_list, parse_session_model_options, session_close_params,
+    session_list_params, session_new_params, session_resume_params, InitializeResult,
 };
 
 pub(crate) struct LiveSession {
@@ -163,6 +164,74 @@ impl AcpService {
             ))));
         }
         Ok(())
+    }
+
+    /// Validate saved conversation ids against the already-live Agent.
+    ///
+    /// This path is deliberately read-only and never calls `spawn_session`:
+    /// opening the history panel must not start an Agent process or session.
+    pub fn list_agent_sessions(
+        &self,
+        cwd: Option<&str>,
+    ) -> Result<AgentSessionListResult, AcpError> {
+        if self.is_busy() {
+            return Ok(AgentSessionListResult::default());
+        }
+
+        let mut guard = self
+            .session
+            .lock()
+            .map_err(|_| AcpError::internal(Some("ACP session mutex poisoned")))?;
+        let Some(session) = guard.as_mut() else {
+            return Ok(AgentSessionListResult::default());
+        };
+        if !session.init.supports_session_list {
+            return Ok(AgentSessionListResult::default());
+        }
+
+        let mut cursor: Option<String> = None;
+        let mut sessions = Vec::new();
+        let mut truncated = false;
+        for page in 0..5 {
+            let request_id = session.next_id;
+            session.next_id += 1;
+            write_request(
+                &mut session.stdin,
+                request_id,
+                "session/list",
+                session_list_params(cwd, cursor.as_deref()),
+            )?;
+            let response = read_until_id_raw(
+                self,
+                session,
+                request_id,
+                Duration::from_secs(30),
+                &self.cancel,
+                &self.host,
+                &mut |_| {},
+            )?;
+            if let Some(message) = is_error_response(&response) {
+                return Err(AcpError::protocol(Some(&format!(
+                    "session/list: {message}"
+                ))));
+            }
+            let (mut page_sessions, next_cursor) = parse_session_list(&response);
+            sessions.append(&mut page_sessions);
+            let Some(next_cursor) = next_cursor.filter(|value| !value.trim().is_empty()) else {
+                break;
+            };
+            if page == 4 {
+                truncated = true;
+                break;
+            }
+            cursor = Some(next_cursor);
+        }
+
+        Ok(AgentSessionListResult {
+            verified: true,
+            sessions,
+            truncated,
+        })
     }
 
     pub(crate) fn drop_live_session(&self, wait_for_child: bool) {

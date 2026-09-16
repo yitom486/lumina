@@ -37,6 +37,25 @@ pub struct SavedSessionHint {
     pub cwd: String,
 }
 
+/// Metadata returned by an Agent's session listing. Message content is never
+/// part of this DTO; the local conversation id remains the allowlist boundary.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentSessionInfo {
+    pub session_id: String,
+    pub cwd: String,
+    pub title: Option<String>,
+    pub updated_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentSessionListResult {
+    pub verified: bool,
+    pub sessions: Vec<AgentSessionInfo>,
+    pub truncated: bool,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AcpStatus {
