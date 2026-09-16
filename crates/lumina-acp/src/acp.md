@@ -294,7 +294,9 @@ pub struct VideoPromptContext {
 
 - 本地媒体路径转换为 `resource_link`；
 - 在线页面 URL 保留为 URL；
-- `history_context` 作为可选的历史摘要；
+- `history_context` 作为可选的历史摘要，仅在宿主判断当前 Agent 会话没见过既往
+  对话时传入（恢复历史对话的首轮，或注入过的会话被换掉）；正常聊天为 `None`，
+  上下文由活着的 session 自己保持；
 - 用户问题作为本轮最后一段文本；
 - 播放进度、集数和字幕轨道作为轻量动态上下文每轮发送；
 - 当前集标题/剧情只在媒体或集数切换时发送；
@@ -303,7 +305,7 @@ pub struct VideoPromptContext {
 可以把它理解成三部分：
 
 ```text
-本轮 prompt = 媒体链接 + 播放进度/集数/字幕 + 换集时的本集信息 + 历史摘要（可选）+ 用户问题
+本轮 prompt = 媒体链接 + 播放进度/集数/字幕 + 换集时的本集信息 + 恢复会话首轮的历史摘要 + 用户问题
 snapshot    = 当前播放锚点、当前集信息、series 预热缓存与在线媒体信息
 MCP         = Agent 需要时读取可用 snapshot 数据的工具
 ```

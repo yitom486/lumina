@@ -3,6 +3,27 @@ import type { ChatTurn } from "./types";
 
 const MAX_CONTEXT_CHARS = 12_000;
 
+/**
+ * 历史摘要注入状态。恢复历史对话时 Agent 会话是新的、看不到既往 turn，
+ * 所以要注入一次；注入成功后该会话自己就攒着上下文，不必每轮重发。
+ */
+export type HistoryInjectionState = {
+  /** 本 chat 存在 Agent 未见过的既往 turn */
+  armed: boolean;
+  /** 已注入过的 Agent session id；undefined 表示从未注入 */
+  injectedSessionId?: string | null;
+};
+
+/** 注入过的会话若被换掉（resume 失败、重连），新会话要重新注入一次。 */
+export function shouldInjectHistoryContext(
+  state: HistoryInjectionState,
+  currentSessionId: string | null,
+): boolean {
+  if (!state.armed) return false;
+  if (state.injectedSessionId === undefined) return true;
+  return state.injectedSessionId !== currentSessionId;
+}
+
 /** Format prior turns for Agent prompt injection (not shown in UI). */
 export function formatConversationHistoryContext(
   turns: ChatTurn[],

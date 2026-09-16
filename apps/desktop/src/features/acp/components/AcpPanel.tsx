@@ -50,7 +50,10 @@ import {
   listConversationsForScope,
   useChatHistoryStore,
 } from "@lumina/chat-ui/chatHistoryStore";
-import { formatConversationHistoryContext } from "@lumina/chat-ui/conversationContext";
+import {
+  formatConversationHistoryContext,
+  shouldInjectHistoryContext,
+} from "@lumina/chat-ui/conversationContext";
 import { useChatUiStore } from "@lumina/chat-ui/chatUiStore";
 import { buildAnchoredVideoPromptContext } from "../context";
 import { workspaceCwdFromMedia } from "@lumina/player-ui/cwd";
@@ -150,6 +153,10 @@ export function AcpPanel() {
   const [historyOpen, setHistoryOpen] = useState(false);
   const [historyIncludeAll, setHistoryIncludeAll] = useState(false);
   const [historyInjectionActive, setHistoryInjectionActive] = useState(false);
+  // 已注入过历史摘要的 Agent session；undefined = 尚未注入。
+  const injectedHistorySessionRef = useRef<string | null | undefined>(
+    undefined,
+  );
 
   const available = statusQuery.data?.available ?? false;
   const sessionActive = statusQuery.data?.sessionActive ?? false;
@@ -242,6 +249,7 @@ export function AcpPanel() {
         setNotices([]);
         setDraftEmpty();
         setHistoryInjectionActive(false);
+        injectedHistorySessionRef.current = undefined;
         promptQueueRef.current = [];
         setPromptQueue([]);
         handledProposalIdsRef.current.clear();
@@ -580,14 +588,22 @@ export function AcpPanel() {
       setPendingPermission(null);
 
       const turn = createTurn(idSeq, text, anchorPositionMs);
-      const historyContext = historyInjectionActive
-        ? formatConversationHistoryContext(turns)
-        : null;
       setTurns((prev) => [...prev, turn]);
 
       const profileState = useAcpProfilesStore.getState();
       const settings = clientSettingsFromStore(useAcpSettingsStore.getState());
       const session = useAcpSessionStore.getState();
+      // 恢复历史对话只注入一次：注入成功后 Agent 会话自己保持上下文，
+      // 每轮重发整段摘要纯属浪费 token 与首字延迟。
+      const historyContext = shouldInjectHistoryContext(
+        {
+          armed: historyInjectionActive,
+          injectedSessionId: injectedHistorySessionRef.current,
+        },
+        session.savedSession?.sessionId ?? null,
+      )
+        ? formatConversationHistoryContext(turns)
+        : null;
 
       try {
         const player = usePlayerStore.getState();
@@ -596,7 +612,7 @@ export function AcpPanel() {
           anchorPositionMs,
           durationMs: player.durationMs,
         });
-        return await acpPrompt(
+        const result = await acpPrompt(
           text,
           (event: AcpEvent) => handleEvent(event, turn.id, thinkingLevel),
           {
@@ -612,6 +628,11 @@ export function AcpPanel() {
             ),
           },
         );
+        if (historyContext) {
+          injectedHistorySessionRef.current =
+            useAcpSessionStore.getState().savedSession?.sessionId ?? null;
+        }
+        return result;
       } catch (error) {
         const message = errorMessage(error);
         const code =
@@ -762,6 +783,7 @@ export function AcpPanel() {
     setPendingPermission(null);
     setHistoryOpen(false);
     setHistoryInjectionActive(true);
+    injectedHistorySessionRef.current = undefined;
     pushSystem("已恢复历史对话，继续提问将带上此前上下文");
 
     if (
