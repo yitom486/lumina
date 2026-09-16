@@ -4,7 +4,6 @@ import {
   agentConversationId,
   agentSessionListTrust,
   canSwitchHistoryConversation,
-  historyConversationLoadMode,
   historyConversationAction,
   historyConversationPresentation,
   isAgentConversationId,
@@ -117,10 +116,7 @@ describe("Agent-only conversation ids and behavior", () => {
     expect(isAgentConversationId("chat-local-1")).toBe(false);
   });
 
-  it("keeps Agent-only entries resumable and out of local selection state", () => {
-    expect(
-      historyConversationLoadMode({ origin: "agent", hasResumeHint: false }),
-    ).toBe("resume");
+  it("keeps Agent-only entries out of local selection state", () => {
     expect(shouldPersistConversationSelection("agent")).toBe(false);
     expect(shouldPersistConversationSelection("local")).toBe(true);
     expect(historyConversationPresentation("agent")).toEqual({

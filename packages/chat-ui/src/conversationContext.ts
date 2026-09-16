@@ -68,15 +68,6 @@ export function historyConversationPresentation(
     : { showAgentOnlyLabel: false, showTurnCount: true, showDelete: true };
 }
 
-export type HistoryConversationLoadMode = "resume" | "readOnly";
-
-export function historyConversationLoadMode(input: {
-  origin: ConversationOrigin;
-  hasResumeHint: boolean;
-}): HistoryConversationLoadMode {
-  return input.origin === "agent" || input.hasResumeHint ? "resume" : "readOnly";
-}
-
 export function shouldPersistConversationSelection(
   origin: ConversationOrigin,
 ): boolean {
