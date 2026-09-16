@@ -15,6 +15,7 @@
     "check:rust": "cargo fmt --all --check && cargo check --workspace --all-targets && cargo test --workspace --lib && cargo clippy --workspace --all-targets -- -D warnings",
     "test": "cd apps/desktop && bun run test",
     "test:e2e:online": "cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml --lib public_youtube_resolves_and_reaches_mpv_demux_without_cookies -- --ignored --nocapture",
+    "test:e2e:acp-mcp-priority": "node scripts/test-acp-mcp-tool-priority.mjs",
     "test:unit": "cd apps/desktop && bun run test:unit",
     "test:ui": "cd apps/desktop && bun run test:ui",
     "tauri": "node scripts/tauri-dev.mjs"
