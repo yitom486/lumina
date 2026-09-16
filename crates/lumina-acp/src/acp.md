@@ -438,6 +438,24 @@ acp.request_cancel();
 这会先发送 `session/cancel`。如果 Agent 在规定时间内没有结束，ACP 会终止子进程，
 避免留下卡死的后台任务。
 
+### Codex 会话落盘位置（排查 resume 用）
+
+Lumina 只持久化寻址三件套（`savedSession` 的线程 id/profile/cwd、本地文本
+记录、每轮临时的 `agent-context.json` 快照）；线程本体归 Agent 所有。
+
+- Codex 线程落盘在 `%USERPROFILE%\.codex\sessions\YYYY\MM\DD\`，文件名形如
+  `rollout-<UTC时间戳>-<thread-id>.jsonl`；`CODEX_HOME` 环境变量可改位置，
+  Lumina 在 `agent/launch.rs` 把它固定为 `~/.codex`，与 Codex CLI 同家。
+- `session_meta` 行有 `originator`（Lumina 起的是 `"lumina"`）、`cli_version`、
+  `source`、`cwd`；Lumina 线程标题常是 prompt 首位的 `resource_link` 文件名，
+  在 Codex 侧不好认。
+- rollout 在会话收尾时写：进程被超时杀/退出杀/EOF 掉就没有或停在半截，
+  resume 就报“已不存在”；锁被其它客户端（Cursor/VSCode 扩展、桌面端、
+  Lumina 自己泄漏的旧进程）拿着就报“被占用”。
+- 排查三板斧：Lumina 日志搜 `session/resume failed` 看 details 原文；
+  按 thread id 到落盘目录找 rollout（大小/mtime/尾行是否完整 JSON）；
+  同一 id 去 Codex 侧对照能否打开。
+
 ### 错误返回
 
 错误统一具有以下结构：

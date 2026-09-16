@@ -572,7 +572,16 @@ impl AcpService {
         let snapshot_path = env.snapshot_path(std::path::Path::new(&cwd));
         env.sync_snapshot(&snapshot_path, vision_capable)
             .map_err(|error| AcpError::internal(Some(&error)))?;
-        let mcp_servers = env.mcp_servers(&snapshot_path, self.isolated_task());
+        let isolated = self.isolated_task();
+        let mcp_servers = env.mcp_servers(&snapshot_path, isolated);
+        tracing::info!(
+            session_kind = ?session_kind,
+            isolated,
+            cwd,
+            snapshot = %snapshot_path.display(),
+            mcp = %mcp_servers,
+            "prepared Lumina MCP for ACP session"
+        );
 
         on_event(AcpEvent::Progress {
             message: "正在创建会话…".into(),
@@ -614,6 +623,8 @@ impl AcpService {
                     session.model_options = parse_session_model_options(&response);
                     tracing::info!(
                         elapsed_ms = resume_started.elapsed().as_millis(),
+                        session_kind = ?session_kind,
+                        session_id = %saved.session_id,
                         "session/resume succeeded"
                     );
                     on_event(AcpEvent::Progress {
@@ -687,8 +698,11 @@ impl AcpService {
             .map_err(|error| AcpError::internal(Some(&error)))?;
         let new_id = session.next_id;
         session.next_id += 1;
-        let mcp_servers = env.mcp_servers(&snapshot_path, self.isolated_task());
+        let isolated = self.isolated_task();
+        let mcp_servers = env.mcp_servers(&snapshot_path, isolated);
         tracing::info!(
+            session_kind = ?kind,
+            isolated,
             cwd,
             snapshot = %snapshot_path.display(),
             mcp = %mcp_servers,
@@ -720,6 +734,8 @@ impl AcpService {
         };
         tracing::info!(
             elapsed_ms = new_started.elapsed().as_millis(),
+            session_kind = ?kind,
+            session_id = %session_id,
             "session/new completed"
         );
         session.model_options = parse_session_model_options(&session_resp);

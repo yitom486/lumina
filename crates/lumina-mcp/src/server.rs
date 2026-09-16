@@ -1,14 +1,18 @@
 //! Minimal MCP stdio server exposing Lumina context tools.
 
+use std::fs::OpenOptions;
 use std::io::{self, BufRead, BufWriter, Write};
+use std::path::PathBuf;
 use std::sync::{Arc, Condvar, Mutex, RwLock};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde_json::{json, Value};
 
 use super::executor::TaskExecutor;
 use super::policy::{tool_profile_from_env, McpToolProfile, ToolPolicy};
-use super::snapshot::{read_snapshot, resolve_snapshot_path, LuminaMcpSnapshot};
+use super::snapshot::{read_snapshot, resolve_snapshot_path, LuminaMcpSnapshot, CONTEXT_FILE_ENV};
 use super::tools::handle_tool_call;
+use crate::{DIAGNOSTIC_ID_ENV, DIAGNOSTIC_LOG_ENV};
 
 const PROTOCOL_VERSION: &str = "2024-11-05";
 const TOOL_WORKER_COUNT: usize = 4;
@@ -27,19 +31,61 @@ type ToolState = Arc<RwLock<()>>;
 // subset and JSON schemas for this session.
 const MCP_SERVER_INSTRUCTIONS: &str = "Lumina 提供与当前媒体相关的按需上下文工具；完整目录共 10 个，初始化时即应拉取 tools/list，不要靠猜。实际可调用子集与参数 schema 以 tools/list 返回为准。\n\n目录：\n- lumina_get_playback_context：当前锚点与本集信息。\n- lumina_get_library_context：剧集背景与当前集简介。\n- lumina_get_episode_index：全部分集标题与简介。\n- lumina_get_transcript_window：当前文件锚点附近台词；可选 centerMs/atSec，beforeSec/afterSec/radiusSec 默认前后各60秒。\n- lumina_get_episode_transcript：同剧其他集台词；必填 season/episode。\n- lumina_get_audio_marks：静音区间与响度突增候选（非语义标签）。\n- lumina_get_subtitle_cues / lumina_write_subtitle_track：字幕工坊专用。\n- lumina_capture_frames：锚点附近截帧；仅识图会话可见。\n- lumina_propose_video_annotation：视频批注提议；由用户在界面确认。\n\n工具调用原则：\n(1) 如果当前对话、此前工具结果或问题本身已经足够回答，直接作答，不要重复调用。\n(2) 只调用当前缺失的信息对应的工具，避免每轮并行全量拉取。\n(3) 台词原文和具体剧情点以工具返回为准，禁止先走网络搜索或编造；基于已验证内容的解读、动机分析和前后联系可以直接展开。\n(4) 问本集讲了什么、剧情或对话，必须先调 lumina_get_library_context 或 lumina_get_transcript_window；问其他集必须先调 lumina_get_episode_transcript；问画面细节必须先调 lumina_capture_frames；播放锚点、章节、笔记和字幕/截图工具共用本轮冻结的锚点位置。\n(5) 分集列表使用 lumina_get_episode_index，剧集背景和当前集简介使用 lumina_get_library_context。\n(6) 写视频批注必须先调用 lumina_propose_video_annotation 生成提议，禁止直接写入笔记库；由用户在 Lumina 界面确认保存。\n(7) 引用视频内容使用工具实际返回的时间标记，例如 [03:12]；跨集引用使用 [第N集 · mm:ss]，不要编造时间。\n(8) 跨集引用默认只使用当前集及之前的集数；用户明确要求后续集数时才查询，并提示剧透。\n(9) 制作或翻译外挂字幕请使用 Lumina 文稿面板或 ASR 工作流，不要在本对话中尝试写入字幕轨。\n(10) 若目录中的工具不在 tools/list 中，视为本会话未开放：不要手写调用、不要猜测其返回；如用户追问画面细节而无截图工具，应明说本会话不支持画面分析并基于字幕作答。";
 
-/// Timing probe for the serial-vs-parallel question. stderr only: stdout
-/// must stay pure JSON-RPC, and this process exits before the app's tracing
-/// subscriber exists, so `tracing!` would be a no-op here.
+/// Timing probe for the serial-vs-parallel question. stdout must stay pure
+/// JSON-RPC, and this process exits before the app's tracing subscriber
+/// exists, so diagnostics use stderr plus the optional host log file.
 fn log_timing(event: &str, id: &Value, tool: &str, elapsed_ms: Option<u128>) {
-    match elapsed_ms {
-        Some(elapsed_ms) => {
-            eprintln!("[lumina-mcp-timing] {event} id={id} tool={tool} elapsed_ms={elapsed_ms}")
-        }
-        None => eprintln!("[lumina-mcp-timing] {event} id={id} tool={tool}"),
+    let elapsed = elapsed_ms
+        .map(|value| format!(" elapsed_ms={value}"))
+        .unwrap_or_default();
+    let line = format!(
+        "event={event} pid={} diagnostic_id={} id={id} tool={tool}{elapsed}",
+        std::process::id(),
+        diagnostic_id()
+    );
+    eprintln!("[lumina-mcp-timing] {line}");
+    append_diagnostic(&line);
+}
+
+fn append_diagnostic(line: &str) {
+    let Some(path) = diagnostic_log_path() else {
+        return;
+    };
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    let timestamp_ms = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_millis())
+        .unwrap_or_default();
+    let line = line.replace(['\r', '\n'], " ");
+    if let Ok(mut file) = OpenOptions::new().create(true).append(true).open(path) {
+        let _ = writeln!(file, "unix_ms={timestamp_ms} {line}");
     }
 }
 
+fn diagnostic_log_path() -> Option<PathBuf> {
+    std::env::var_os(DIAGNOSTIC_LOG_ENV).map(PathBuf::from)
+}
+
+fn diagnostic_id() -> String {
+    std::env::var(DIAGNOSTIC_ID_ENV).unwrap_or_else(|_| "missing".into())
+}
+
+fn log_server_started() {
+    let profile = tool_profile_from_env().env_value();
+    let context_configured = std::env::var_os(CONTEXT_FILE_ENV).is_some();
+    let line = format!(
+        "event=server_started pid={} diagnostic_id={} profile={profile} context_file_configured={context_configured}",
+        std::process::id(),
+        diagnostic_id(),
+    );
+    eprintln!("[lumina-mcp-timing] {line}");
+    append_diagnostic(&line);
+}
+
 pub fn run_stdio_server() -> Result<(), String> {
+    log_server_started();
     let stdin = io::stdin();
     let output: Output = Arc::new(Mutex::new(BufWriter::new(io::stdout())));
     let state: ToolState = Arc::new(RwLock::new(()));
@@ -63,23 +109,50 @@ pub fn run_stdio_server() -> Result<(), String> {
             .unwrap_or_default();
         let params = request.get("params").cloned().unwrap_or(Value::Null);
         match method {
-            "initialize" => write_response(&output, success(id, initialize_result(params)))?,
+            "initialize" => {
+                // Receipt probe: proves the harness fetched instructions
+                // before the first turn was answered (stderr and diagnostic file).
+                log_timing(
+                    "initialize_received",
+                    &id,
+                    tool_profile_from_env().env_value(),
+                    None,
+                );
+                write_response(&output, success(id, initialize_result(params)))?
+            }
             "tools/list" => {
                 let profile = tool_profile_from_env();
                 // Tool-free tasks never load the Chat snapshot file.
                 if profile == McpToolProfile::NoTools {
+                    log_timing("tools_list_served", &id, "profile=no-tools tools=0", None);
                     write_response(&output, success(id, json!({ "tools": [] })))?;
                 } else {
-                    let response = match load_snapshot() {
-                        Ok(snapshot) => success(id, tools_list_result(profile, &snapshot)),
-                        Err(message) => error(id, -32000, &message),
-                    };
-                    write_response(&output, response)?;
+                    match load_snapshot() {
+                        Ok(snapshot) => {
+                            let result = tools_list_result(profile, &snapshot);
+                            let count = result
+                                .get("tools")
+                                .and_then(Value::as_array)
+                                .map(Vec::len)
+                                .unwrap_or(0);
+                            log_timing(
+                                "tools_list_served",
+                                &id,
+                                &format!("profile={} tools={count}", profile.env_value()),
+                                None,
+                            );
+                            write_response(&output, success(id, result))?;
+                        }
+                        Err(message) => {
+                            log_timing("tools_list_failed", &id, &message, None);
+                            write_response(&output, error(id, -32000, &message))?;
+                        }
+                    }
                 }
             }
             "tools/call" => {
                 log_timing(
-                    "tools/call received",
+                    "tools_call_received",
                     &id,
                     params.get("name").and_then(Value::as_str).unwrap_or(""),
                     None,
@@ -102,6 +175,7 @@ pub fn run_stdio_server() -> Result<(), String> {
                     }
                 });
                 if let Err(message) = submit {
+                    log_timing("tools_call_submit_failed", &response_id, &message, None);
                     write_response(&output, error(response_id, -32000, &message))?;
                 }
                 continue;

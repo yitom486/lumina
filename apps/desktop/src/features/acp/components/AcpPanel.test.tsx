@@ -3,6 +3,7 @@ import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { usePlayerStore } from "@/features/player";
+import { useAcpSessionStore } from "@lumina/chat-ui/acpSessionStore";
 
 import { AcpPanel } from "./AcpPanel";
 
@@ -86,6 +87,18 @@ describe("AcpPanel", () => {
       .mocked(invoke)
       .mock.calls.filter(([cmd]) => cmd === "acp_connect");
     expect(connectCalls).toHaveLength(0);
+  });
+
+  it("clears any persisted resume hint on mount so a blank chat never silently resumes", async () => {
+    useAcpSessionStore.getState().setSavedSession({
+      sessionId: "stale-thread",
+      profileId: "codex",
+      cwd: "D:\\movie",
+    });
+    renderPanel();
+    await waitFor(() => {
+      expect(useAcpSessionStore.getState().savedSession).toBeNull();
+    });
   });
 
   it("does not trigger infinite re-renders with persisted profiles", async () => {

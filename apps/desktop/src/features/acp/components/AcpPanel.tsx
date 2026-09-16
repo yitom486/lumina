@@ -178,6 +178,16 @@ export function AcpPanel() {
   // `updatedAtMs`, reorder the list and overwrite the stored session id.
   const userSentInConversationRef = useRef(false);
 
+  // F1:空白新会话永不静默恢复。turns/会话 id 是内存态，重启即空；但
+  // savedSession 持久化在 localStorage。不在这里清掉，启动后第一问就会
+  // 带着旧 hint 去 resume，把看不见的旧线程接进空白框（落盘 effect 还会
+  // 把新本地 id 绑到旧线程上）。显式恢复只走历史记录采用路径，那里会
+  // 重新 setSavedSession；同会话内掉线重连不受影响（turns 非空且 store
+  // 仍在，照常带 hint）。
+  useEffect(() => {
+    clearSavedSession();
+  }, [clearSavedSession]);
+
   const available = statusQuery.data?.available ?? false;
   const sessionActive = statusQuery.data?.sessionActive ?? false;
   const sessionCwd = workspaceCwdFromMedia(currentFile);
@@ -233,8 +243,6 @@ export function AcpPanel() {
       ),
     [conversations, sessionCwd, activeProfileId, historyIncludeAll],
   );
-
-  const isBlankChat = turns.length === 0 && notices.length === 0;
 
   const pushSystem = (content: string) => {
     setNotices((prev) => pushNotice(prev, idSeq, content));
@@ -865,11 +873,10 @@ export function AcpPanel() {
     }
   };
 
+  // F2:新建对话必转后端新 session。以前空白框 + 活会话时直接 return，
+  // 用户以为开了新的，下一问续的还是旧线程的隐藏上下文。
   const startNewChat = () => {
     if (busy || newChatMutation.isPending) return;
-    if (isBlankChat && sessionActive && connectionState === "connected") {
-      return;
-    }
     if (!available) {
       userSentInConversationRef.current = false;
       setTurns([]);
@@ -942,6 +949,20 @@ export function AcpPanel() {
     } else {
       resumeExpectedSessionIdRef.current = null;
       resumeNoticePendingRef.current = false;
+      // F3:按提示兑现“作为新对话开始”。不断后端、不清 hint 的话，下一问
+      // 会续上当前活线程（guard.is_some 直接复用），还顺手覆盖这条旧记录。
+      clearSavedSession();
+      if (sessionActive) {
+        void acpClose()
+          .then(() =>
+            queryClient.invalidateQueries({ queryKey: ["acp-status"] }),
+          )
+          .catch((error) => {
+            setConnectionState("error");
+            setProgress(null);
+            pushSystem(errorMessage(error));
+          });
+      }
       pushSystem("这条记录没有可恢复的 AI 记忆，继续发言将作为新对话开始");
     }
 

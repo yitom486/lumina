@@ -26,6 +26,19 @@ use serde_json::{json, Value};
 /// Spawn args for the in-process Lumina MCP stdio server.
 pub const MCP_SUBCOMMAND: &str = "--lumina-mcp";
 
+/// Optional append-only diagnostic log path supplied by the desktop host.
+///
+/// MCP runs as a child of the Agent harness, so its stderr is not guaranteed
+/// to reach Lumina's tracing subscriber. The server keeps stderr diagnostics
+/// for direct probes and mirrors them to this file when the host provides it.
+pub const DIAGNOSTIC_LOG_ENV: &str = "LUMINA_MCP_DIAGNOSTIC_LOG";
+
+/// Per-MCP-child correlation id supplied by the desktop ACP host.
+///
+/// This lets the host's `session/new|resume` registration log be matched to
+/// the child process that later emits `initialize` and `tools/list` events.
+pub const DIAGNOSTIC_ID_ENV: &str = "LUMINA_MCP_DIAGNOSTIC_ID";
+
 pub fn run_if_invoked() -> bool {
     if std::env::args().any(|arg| arg == MCP_SUBCOMMAND) {
         if let Err(error) = server::run_stdio_server() {

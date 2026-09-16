@@ -124,6 +124,19 @@ pub(crate) fn emit_session_update(value: &Value, on_event: &mut dyn FnMut(AcpEve
         }
     }
     if let Some(tool) = extract_tool_call(value) {
+        if tool
+            .title
+            .as_deref()
+            .is_some_and(|title| title.starts_with("mcp__"))
+        {
+            tracing::warn!(
+                tool_call_id = %tool.tool_call_id,
+                title = ?tool.title,
+                status = ?tool.status,
+                detail = ?tool.detail,
+                "ACP MCP startup status observed"
+            );
+        }
         // Timing probe for the serial-vs-parallel question: when the Agent
         // announces each call and when each status lands. `detail` is
         // deliberately not logged (payload bodies would spam the log).

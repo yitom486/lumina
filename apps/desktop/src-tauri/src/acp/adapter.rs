@@ -5,7 +5,9 @@
 //! through [`AppSessionEnvironment`], installed once at startup.
 
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use lumina_acp::{AcpError, SessionEnvironment, VideoPromptContext};
 use lumina_core::{AgentConversation, AgentTaskError, IsolatedAgentTask};
@@ -18,6 +20,17 @@ use crate::mcp::{
 
 /// MCP-backed [`SessionEnvironment`] for ACP spawn paths.
 pub struct AppSessionEnvironment;
+
+static MCP_DIAGNOSTIC_SEQUENCE: AtomicU64 = AtomicU64::new(1);
+
+fn next_mcp_diagnostic_id() -> String {
+    let sequence = MCP_DIAGNOSTIC_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+    let unix_ms = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_millis())
+        .unwrap_or_default();
+    format!("{}-{unix_ms}-{sequence}", std::process::id())
+}
 
 impl SessionEnvironment for AppSessionEnvironment {
     fn snapshot_path(&self, cwd: &Path) -> PathBuf {
@@ -36,6 +49,14 @@ impl SessionEnvironment for AppSessionEnvironment {
         } else {
             crate::mcp::McpToolProfile::Chat
         };
+        let diagnostic_id = next_mcp_diagnostic_id();
+        tracing::info!(
+            diagnostic_id = %diagnostic_id,
+            profile = %profile.env_value(),
+            isolated,
+            snapshot = %snapshot_path.display(),
+            "prepared Lumina MCP server environment"
+        );
         let mut servers = crate::mcp::lumina_mcp_servers(snapshot_path);
         if let Some(env) = servers
             .as_array_mut()
@@ -46,6 +67,16 @@ impl SessionEnvironment for AppSessionEnvironment {
             env.push(serde_json::json!({
                 "name": crate::mcp::TOOL_PROFILE_ENV,
                 "value": profile.env_value(),
+            }));
+            env.push(serde_json::json!({
+                "name": crate::mcp::DIAGNOSTIC_LOG_ENV,
+                "value": crate::commands::system::log_dir()
+                    .join("lumina-mcp.log")
+                    .to_string_lossy(),
+            }));
+            env.push(serde_json::json!({
+                "name": crate::mcp::DIAGNOSTIC_ID_ENV,
+                "value": diagnostic_id,
             }));
         }
         servers
