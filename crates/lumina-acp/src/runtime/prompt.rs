@@ -9,7 +9,9 @@ use crate::agent::profile::{prepare_profiles, AgentKind, PreparedProfiles};
 use crate::agent::workspace::resolve_session_cwd;
 use crate::domain::context::VideoPromptContext;
 use crate::domain::environment::session_env;
-use crate::domain::model::{AcpEvent, AgentProfilesHint, SavedSessionHint, SessionKind};
+use crate::domain::model::{
+    validate_prompt_images, AcpEvent, AgentProfilesHint, PromptImage, SavedSessionHint, SessionKind,
+};
 use crate::domain::settings::AcpClientSettings;
 use crate::error::AcpError;
 use crate::jobs::collector::AgentReplyCollector;
@@ -26,6 +28,7 @@ impl AcpService {
         cwd: Option<String>,
         profile_id: Option<String>,
         context: Option<VideoPromptContext>,
+        images: Vec<PromptImage>,
         saved_session: Option<SavedSessionHint>,
         client_settings: AcpClientSettings,
         profiles: AgentProfilesHint,
@@ -39,6 +42,7 @@ impl AcpService {
             cwd,
             profile_id,
             context,
+            &images,
             saved_session,
             client_settings,
             profiles,
@@ -58,6 +62,7 @@ impl AcpService {
         cwd: Option<String>,
         profile_id: Option<String>,
         context: Option<VideoPromptContext>,
+        images: &[PromptImage],
         saved_session: Option<SavedSessionHint>,
         client_settings: AcpClientSettings,
         profiles: AgentProfilesHint,
@@ -93,6 +98,7 @@ impl AcpService {
             cwd.as_deref(),
             profile_id.as_deref(),
             context.as_ref(),
+            images,
             saved_session.as_ref(),
             &prepared,
             session_kind,
@@ -139,6 +145,7 @@ impl AcpService {
         cwd: Option<&str>,
         profile_id: Option<&str>,
         context: Option<&VideoPromptContext>,
+        images: &[PromptImage],
         saved_session: Option<&SavedSessionHint>,
         prepared: &PreparedProfiles,
         session_kind: SessionKind,
@@ -146,7 +153,11 @@ impl AcpService {
         attempt_label: Option<&str>,
     ) -> Result<(String, Option<String>), AcpError> {
         let prompt_text = prompt_text.trim();
-        if prompt_text.is_empty() {
+        if let Err(error) = validate_prompt_images(images) {
+            Self::log_workshop_exit(attempt_label, None, "bad-image", None, 0);
+            return Err(error);
+        }
+        if prompt_text.is_empty() && images.is_empty() {
             Self::log_workshop_exit(attempt_label, None, "empty-prompt", None, 0);
             return Err(AcpError::bad_request("提问内容不能为空"));
         }
@@ -229,6 +240,17 @@ impl AcpService {
         // Copy: the EOF path takes the guard, so the kind must be owned here.
         let profile_kind = session.profile_kind;
 
+        if !images.is_empty() && !session.init.prompt_image {
+            Self::log_workshop_exit(
+                attempt_label,
+                Some(session.agent.id()),
+                "image-unsupported",
+                None,
+                0,
+            );
+            return Err(AcpError::bad_request("当前 Agent 不支持图片输入"));
+        }
+
         if let Err(error) = resolve_session_cwd(cwd) {
             Self::log_workshop_exit(
                 attempt_label,
@@ -251,7 +273,12 @@ impl AcpService {
             &session.stdin,
             prompt_id,
             "session/prompt",
-            crate::wire::session::session_prompt_params(&session.session_id, prompt_text, context),
+            crate::wire::session::session_prompt_params(
+                &session.session_id,
+                prompt_text,
+                context,
+                images,
+            ),
         ) {
             Self::log_workshop_exit(attempt_label, Some(pid), "prompt-write-failed", None, 0);
             return Err(error);

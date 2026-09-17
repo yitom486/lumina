@@ -161,7 +161,19 @@ export function ChatTurnView({
   return (
     <ChatColumn className="space-y-2">
       <div className="flex justify-end">
-        <div className="max-w-[88%] rounded-lg bg-accent px-3 py-2 text-sm text-accent-foreground whitespace-pre-wrap break-words">
+        <div className="max-w-[88%] space-y-2 rounded-lg bg-accent px-3 py-2 text-sm text-accent-foreground whitespace-pre-wrap break-words">
+          {turn.images && turn.images.length > 0 ? (
+            <div className="flex flex-wrap justify-end gap-2">
+              {turn.images.map((image) => (
+                <img
+                  key={image.id}
+                  src={image.dataUrl}
+                  alt="发送的图片"
+                  className="max-h-40 rounded-md border border-border/50 object-contain"
+                />
+              ))}
+            </div>
+          ) : null}
           {turn.userText}
         </div>
       </div>

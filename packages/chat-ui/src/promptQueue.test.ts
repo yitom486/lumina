@@ -46,4 +46,17 @@ describe("promptQueue", () => {
       ),
     ).toContain("…");
   });
+
+  it("carries pasted images and allows images-only prompts", () => {
+    const images = [
+      { id: "img-1", mimeType: "image/png", dataUrl: "data:image/png;base64,xx" },
+    ];
+    const item = createQueuedPrompt("", 1000, "img-only", images);
+    expect(enqueuePrompt([], item)).toHaveLength(1);
+    expect(bargeInPrompt([], item)).toHaveLength(1);
+    const textOnly = createQueuedPrompt("", 1000, "empty");
+    expect(enqueuePrompt([], textOnly)).toEqual([]);
+    expect(bargeInPrompt([], textOnly)).toEqual([]);
+    expect(item.images).toHaveLength(1);
+  });
 });

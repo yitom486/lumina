@@ -53,6 +53,12 @@ export type LoadedTranscriptEvent = {
   text: string;
 };
 
+/** Pasted image wire input: raw base64 (no `data:` prefix). */
+export type PromptImageInput = {
+  mimeType: string;
+  data: string;
+};
+
 export function acpLoadSession(options: {
   sessionId: string;
   cwd?: string | null;
@@ -90,6 +96,7 @@ export async function acpPrompt(
     cwd?: string;
     profileId?: string;
     context?: VideoPromptContext;
+    images?: PromptImageInput[];
     savedSession?: SavedSessionHint | null;
     clientSettings?: AcpClientSettings;
     profiles: AgentProfilesHint;
@@ -104,6 +111,7 @@ export async function acpPrompt(
     cwd: options?.cwd ?? null,
     profileId: options?.profileId ?? null,
     context: options?.context ?? null,
+    images: options?.images ?? null,
     savedSession: options?.savedSession ?? null,
     clientSettings: options?.clientSettings ?? null,
     profiles: options?.profiles,

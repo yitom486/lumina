@@ -7,6 +7,6 @@ pub mod adapter;
 pub use lumina_acp::{
     AcpClientSettings, AcpError, AcpErrorCode, AcpEvent, AcpService, AcpSessionModelOptions,
     AcpStatus, AgentKind, AgentProfileInput, AgentProfileStatus, AgentProfilesHint,
-    AgentSessionListResult, PermissionMode, PermissionOption, SavedSessionHint, ThinkingLevel,
-    VideoPromptContext,
+    AgentSessionListResult, PermissionMode, PermissionOption, PromptImage, SavedSessionHint,
+    ThinkingLevel, VideoPromptContext,
 };

@@ -1,18 +1,24 @@
+import type { ChatImageAttachment } from "./types";
+
 export type QueuedPrompt = {
   id: string;
   text: string;
   anchorPositionMs: number;
+  /** Pasted images ride along; empty/absent means text-only. */
+  images?: ChatImageAttachment[];
 };
 
 export function createQueuedPrompt(
   text: string,
   anchorPositionMs: number,
   id = `q-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+  images?: ChatImageAttachment[],
 ): QueuedPrompt {
   return {
     id,
     text: text.trim(),
     anchorPositionMs,
+    ...(images && images.length > 0 ? { images: [...images] } : null),
   };
 }
 
@@ -21,7 +27,7 @@ export function enqueuePrompt(
   queue: QueuedPrompt[],
   item: QueuedPrompt,
 ): QueuedPrompt[] {
-  if (!item.text) return queue;
+  if (!item.text && !(item.images && item.images.length > 0)) return queue;
   return [...queue, item];
 }
 
@@ -33,7 +39,7 @@ export function bargeInPrompt(
   _queue: QueuedPrompt[],
   item: QueuedPrompt,
 ): QueuedPrompt[] {
-  if (!item.text) return [];
+  if (!item.text && !(item.images && item.images.length > 0)) return [];
   return [item];
 }
 

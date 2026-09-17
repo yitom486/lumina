@@ -46,6 +46,7 @@ pub fn prompt_isolated_restricted(
         None,
         Some(profile_id),
         None,
+        &[],
         None,
         isolated_client_settings(),
         profiles,

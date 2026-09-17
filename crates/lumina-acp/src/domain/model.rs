@@ -69,6 +69,43 @@ pub struct SavedSessionHint {
     pub cwd: String,
 }
 
+/// User-pasted image riding a prompt (`session/prompt` image block).
+/// `data` is raw base64 (no `data:` prefix); the wire layer wraps it.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PromptImage {
+    pub mime_type: String,
+    pub data: String,
+}
+
+/// Pasted-image guardrails: user input validation, so failures speak
+/// plain business Chinese (`bad_request`) instead of leaking wire terms.
+pub fn validate_prompt_images(images: &[PromptImage]) -> Result<(), crate::error::AcpError> {
+    const ALLOWED: [&str; 4] = ["image/png", "image/jpeg", "image/webp", "image/gif"];
+    /// Base64 chars per image (~6MB decoded).
+    const MAX_IMAGE_CHARS: usize = 8 * 1024 * 1024;
+    const MAX_IMAGES: usize = 4;
+    if images.len() > MAX_IMAGES {
+        return Err(crate::error::AcpError::bad_request("一次最多发送 4 张图片"));
+    }
+    for image in images {
+        if !ALLOWED.contains(&image.mime_type.trim().to_ascii_lowercase().as_str()) {
+            return Err(crate::error::AcpError::bad_request(
+                "图片格式不受支持，仅支持 PNG/JPEG/WebP/GIF",
+            ));
+        }
+        if image.data.trim().is_empty() {
+            return Err(crate::error::AcpError::bad_request("图片内容为空"));
+        }
+        if image.data.len() > MAX_IMAGE_CHARS {
+            return Err(crate::error::AcpError::bad_request(
+                "图片过大，单张不能超过 8MB",
+            ));
+        }
+    }
+    Ok(())
+}
+
 /// Metadata returned by an Agent's session listing. Message content is never
 /// part of this DTO. The kind is recorded for future filtering, but is not
 /// used as a filter in this batch because existing sessions are unmarked.
@@ -246,4 +283,48 @@ pub enum AcpEvent {
         code: String,
         message: String,
     },
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn image(mime_type: &str, data: &str) -> PromptImage {
+        PromptImage {
+            mime_type: mime_type.to_string(),
+            data: data.to_string(),
+        }
+    }
+
+    #[test]
+    fn prompt_image_validation_accepts_supported_kinds() {
+        for mime in ["image/png", "image/jpeg", "image/webp", "image/gif"] {
+            validate_prompt_images(std::slice::from_ref(&image(mime, "aGVsbG8=")))
+                .expect("supported image");
+        }
+        validate_prompt_images(&[]).expect("no images");
+    }
+
+    #[test]
+    fn prompt_image_validation_rejects_with_business_chinese() {
+        let bad_mime =
+            validate_prompt_images(std::slice::from_ref(&image("image/svg+xml", "aGVsbG8=")))
+                .expect_err("svg rejected");
+        assert!(bad_mime.message.contains("PNG"));
+
+        let empty = validate_prompt_images(std::slice::from_ref(&image("image/png", "  ")))
+            .expect_err("empty rejected");
+        assert!(empty.message.contains("为空"));
+
+        let oversized = validate_prompt_images(std::slice::from_ref(&image(
+            "image/png",
+            &"a".repeat(8 * 1024 * 1024 + 1),
+        )))
+        .expect_err("oversized rejected");
+        assert!(oversized.message.contains("8MB"));
+
+        let too_many: Vec<PromptImage> = (0..5).map(|_| image("image/png", "aGVsbG8=")).collect();
+        let capped = validate_prompt_images(&too_many).expect_err("fifth image rejected");
+        assert!(capped.message.contains("4 张"));
+    }
 }

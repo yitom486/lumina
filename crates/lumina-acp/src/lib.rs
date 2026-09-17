@@ -18,8 +18,8 @@ pub use domain::{
     set_default_environment, AcpClientSettings, AcpEvent, AcpModelDiscoveryResult,
     AcpSessionModelOptions, AcpSessionModelSelection, AcpSessionOption, AcpStatus, AgentKind,
     AgentProfileInput, AgentProfileStatus, AgentProfilesHint, AgentSessionInfo,
-    AgentSessionListResult, PermissionMode, PermissionOption, ResumeOutcome, SavedSessionHint,
-    SessionEnvironment, SessionKind, ThinkingLevel, VideoPromptContext,
+    AgentSessionListResult, PermissionMode, PermissionOption, PromptImage, ResumeOutcome,
+    SavedSessionHint, SessionEnvironment, SessionKind, ThinkingLevel, VideoPromptContext,
 };
 pub use error::{AcpError, AcpErrorCode};
 pub use jobs::pool::{PoolConfig, WorkshopPool, DEFAULT_POOL_SIZE};

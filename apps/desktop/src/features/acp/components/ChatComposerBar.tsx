@@ -4,7 +4,7 @@ import { ArrowUp, ListPlus, Loader2, Zap } from "lucide-react";
 import { Button } from "@lumina/ui/button";
 import { cn } from "@lumina/ui/utils";
 
-import type { AcpStatus, PermissionMode } from "../types";
+import type { AcpStatus, ChatImageAttachment, PermissionMode } from "../types";
 import { previewQueuedText, type QueuedPrompt } from "@lumina/chat-ui/promptQueue";
 import { useAgentModelControls } from "../useAgentModelControls";
 import { focusComposerTextarea } from "@lumina/chat-ui/components/composerFocus";
@@ -24,6 +24,9 @@ type Props = {
   onBargeIn?: () => void;
   onRemoveQueued?: (id: string) => void;
   onClearQueue?: () => void;
+  attachments?: ChatImageAttachment[];
+  onPasteImages?: (files: File[]) => void;
+  onRemoveAttachment?: (id: string) => void;
 };
 
 export type ChatComposerBarHandle = {
@@ -49,6 +52,9 @@ export const ChatComposerBar = forwardRef<ChatComposerBarHandle, Props>(
       onBargeIn,
       onRemoveQueued,
       onClearQueue,
+      attachments = [],
+      onPasteImages,
+      onRemoveAttachment,
     },
     ref,
   ) {
@@ -87,8 +93,9 @@ export const ChatComposerBar = forwardRef<ChatComposerBarHandle, Props>(
     }, [busy, disabled, focusInput]);
 
     const hasText = value.trim().length > 0;
-    const canSendIdle = !disabled && !busy && hasText;
-    const canEnqueue = !disabled && Boolean(busy) && hasText;
+    const hasImages = attachments.length > 0;
+    const canSendIdle = !disabled && !busy && (hasText || hasImages);
+    const canEnqueue = !disabled && Boolean(busy) && (hasText || hasImages);
     const canBargeIn = canEnqueue && Boolean(onBargeIn);
     const canPrimarySend = busy ? canEnqueue : canSendIdle;
 
@@ -120,7 +127,9 @@ export const ChatComposerBar = forwardRef<ChatComposerBarHandle, Props>(
                     {index + 1}.
                   </span>
                   <span className="min-w-0 flex-1 truncate">
-                    {previewQueuedText(item.text)}
+                    {item.images && item.images.length > 0
+                      ? `图片×${item.images.length} ${previewQueuedText(item.text)}`
+                      : previewQueuedText(item.text)}
                   </span>
                   {onRemoveQueued ? (
                     <button
@@ -144,6 +153,29 @@ export const ChatComposerBar = forwardRef<ChatComposerBarHandle, Props>(
             busy && "chat-composer-active p-px",
           )}
         >
+          {attachments.length > 0 ? (
+            <div className="flex flex-wrap gap-2 px-3 pt-2">
+              {attachments.map((attachment) => (
+                <div key={attachment.id} className="relative shrink-0">
+                  <img
+                    src={attachment.dataUrl}
+                    alt="粘贴的图片"
+                    className="size-14 rounded-md border border-border object-cover"
+                  />
+                  {onRemoveAttachment ? (
+                    <button
+                      type="button"
+                      aria-label="移除图片"
+                      className="absolute -right-1.5 -top-1.5 flex size-4 items-center justify-center rounded-full bg-muted text-[10px] leading-none text-muted-foreground hover:text-destructive"
+                      onClick={() => onRemoveAttachment(attachment.id)}
+                    >
+                      ×
+                    </button>
+                  ) : null}
+                </div>
+              ))}
+            </div>
+          ) : null}
           <textarea
             ref={textareaRef}
             className={cn(
@@ -160,6 +192,14 @@ export const ChatComposerBar = forwardRef<ChatComposerBarHandle, Props>(
             value={value}
             disabled={disabled}
             onChange={(e) => onChange(e.target.value)}
+            onPaste={(e) => {
+              const files = Array.from(e.clipboardData?.files ?? []).filter(
+                (file) => file.type.startsWith("image/"),
+              );
+              if (files.length === 0 || !onPasteImages) return;
+              e.preventDefault();
+              onPasteImages(files);
+            }}
             onKeyDown={(e) => {
               if (e.key !== "Enter" || e.shiftKey) return;
               e.preventDefault();

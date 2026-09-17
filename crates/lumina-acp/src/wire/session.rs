@@ -6,7 +6,7 @@ use std::path::Path;
 use serde_json::{json, Value};
 
 use crate::domain::context::VideoPromptContext;
-use crate::domain::model::{AgentSessionInfo, ResumeOutcome, SessionKind};
+use crate::domain::model::{AgentSessionInfo, PromptImage, ResumeOutcome, SessionKind};
 
 pub fn initialize_params() -> Value {
     initialize_params_with_tools(true)
@@ -72,6 +72,7 @@ pub fn session_prompt_params(
     session_id: &str,
     text: &str,
     context: Option<&VideoPromptContext>,
+    images: &[PromptImage],
 ) -> Value {
     let mut prompt = Vec::new();
     let has_turn_context = context.is_some_and(|ctx| !ctx.is_empty());
@@ -110,14 +111,28 @@ pub fn session_prompt_params(
         }
     }
 
-    prompt.push(json!({
-        "type": "text",
-        "text": if has_turn_context {
-            format!("{USER_PROMPT_SEPARATOR}{text}")
-        } else {
-            text.to_string()
-        },
-    }));
+    // Images-only prompts skip the empty text block; text-only prompts
+    // always keep theirs (existing shape, pinned by tests).
+    if !text.is_empty() || images.is_empty() {
+        prompt.push(json!({
+            "type": "text",
+            "text": if has_turn_context {
+                format!("{USER_PROMPT_SEPARATOR}{text}")
+            } else {
+                text.to_string()
+            },
+        }));
+    }
+
+    // Pasted images ride after the question: the trigger header stays first
+    // (MCP timing) and user content keeps question-then-evidence order.
+    for image in images {
+        prompt.push(json!({
+            "type": "image",
+            "data": image.data,
+            "mimeType": image.mime_type,
+        }));
+    }
 
     json!({
         "sessionId": session_id,
@@ -312,6 +327,7 @@ pub struct InitializeResult {
     pub supports_session_resume: bool,
     pub supports_session_list: bool,
     pub load_session: bool,
+    pub prompt_image: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -373,6 +389,11 @@ pub fn parse_initialize_result(value: &Value) -> InitializeResult {
         .and_then(Value::as_bool)
         .unwrap_or(false);
 
+    let prompt_image = result
+        .pointer("/agentCapabilities/promptCapabilities/image")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+
     InitializeResult {
         protocol_version,
         agent_name,
@@ -381,6 +402,7 @@ pub fn parse_initialize_result(value: &Value) -> InitializeResult {
         supports_session_resume,
         supports_session_list,
         load_session,
+        prompt_image,
     }
 }
 
@@ -733,7 +755,7 @@ mod tests {
             episode_title: None,
             episode_overview: None,
         };
-        let params = session_prompt_params("sess_1", "这段讲了什么？", Some(&ctx));
+        let params = session_prompt_params("sess_1", "这段讲了什么？", Some(&ctx), &[]);
         let prompt = params
             .get("prompt")
             .and_then(Value::as_array)
@@ -763,7 +785,7 @@ mod tests {
             episode_title: Some("第二集".into()),
             episode_overview: Some("换集剧情摘要".into()),
         };
-        let params = session_prompt_params("sess_1", "讲了什么？", Some(&ctx));
+        let params = session_prompt_params("sess_1", "讲了什么？", Some(&ctx), &[]);
         let playback = params
             .get("prompt")
             .and_then(Value::as_array)
@@ -782,7 +804,7 @@ mod tests {
             position_ms: Some(5_000),
             ..Default::default()
         };
-        let params = session_prompt_params("sess_1", "讲了什么？", Some(&ctx));
+        let params = session_prompt_params("sess_1", "讲了什么？", Some(&ctx), &[]);
         let prompt = params
             .get("prompt")
             .and_then(Value::as_array)
@@ -823,7 +845,7 @@ mod tests {
 
     #[test]
     fn prompt_without_context_is_user_text_only() {
-        let params = session_prompt_params("sess_1", "你好", None);
+        let params = session_prompt_params("sess_1", "你好", None, &[]);
         let prompt = params
             .get("prompt")
             .and_then(Value::as_array)
@@ -833,8 +855,59 @@ mod tests {
     }
 
     #[test]
+    fn prompt_appends_image_blocks_after_user_text() {
+        let images = [
+            PromptImage {
+                mime_type: "image/png".to_string(),
+                data: "aGVsbG8=".to_string(),
+            },
+            PromptImage {
+                mime_type: "image/jpeg".to_string(),
+                data: "d29ybGQ=".to_string(),
+            },
+        ];
+        let params = session_prompt_params("sess_1", "这是什么？", None, &images);
+        let prompt = params
+            .get("prompt")
+            .and_then(Value::as_array)
+            .expect("prompt");
+        assert_eq!(prompt.len(), 3);
+        assert_eq!(
+            prompt[0].get("text").and_then(Value::as_str),
+            Some("这是什么？")
+        );
+        for (block, (mime, data)) in prompt[1..]
+            .iter()
+            .zip([("image/png", "aGVsbG8="), ("image/jpeg", "d29ybGQ=")])
+        {
+            assert_eq!(block.get("type").and_then(Value::as_str), Some("image"));
+            assert_eq!(block.get("mimeType").and_then(Value::as_str), Some(mime));
+            assert_eq!(block.get("data").and_then(Value::as_str), Some(data));
+        }
+        let serialized = serde_json::to_string(&params).expect("serialize");
+        assert!(
+            !serialized.contains("base64,"),
+            "raw base64 only, no data: prefix"
+        );
+    }
+
+    #[test]
+    fn prompt_image_capability_defaults_off_and_parses_on() {
+        let off = parse_initialize_result(&json!({
+            "result": { "agentCapabilities": {} }
+        }));
+        assert!(!off.prompt_image);
+        let on = parse_initialize_result(&json!({
+            "result": {
+                "agentCapabilities": { "promptCapabilities": { "image": true } }
+            }
+        }));
+        assert!(on.prompt_image);
+    }
+
+    #[test]
     fn prompt_never_includes_history_summary() {
-        let params = session_prompt_params("sess_1", "继续问", None);
+        let params = session_prompt_params("sess_1", "继续问", None, &[]);
         let serialized = serde_json::to_string(&params).expect("serialize");
         let removed_summary_marker = ["此前", "对话摘要"].concat();
         assert!(!serialized.contains(removed_summary_marker.as_str()));
@@ -860,7 +933,7 @@ mod tests {
             subtitle_choice_id: Some("online:en".into()),
             ..Default::default()
         };
-        let params = session_prompt_params("sess_1", "讲了什么？", Some(&ctx));
+        let params = session_prompt_params("sess_1", "讲了什么？", Some(&ctx), &[]);
         let prompt = params
             .get("prompt")
             .and_then(Value::as_array)
@@ -891,7 +964,7 @@ mod tests {
             subtitle_choice_id: None,
             ..Default::default()
         };
-        let params = session_prompt_params("sess_1", "hi", Some(&ctx));
+        let params = session_prompt_params("sess_1", "hi", Some(&ctx), &[]);
         let uri = params
             .get("prompt")
             .and_then(Value::as_array)

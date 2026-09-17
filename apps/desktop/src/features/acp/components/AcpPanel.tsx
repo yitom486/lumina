@@ -39,6 +39,14 @@ import {
   acpSwitchSession,
   getAcpStatus,
 } from "../api";
+import type { PromptImageInput } from "../api";
+import {
+  PASTED_IMAGE_LIMIT,
+  pastedImageId,
+  pickAcceptableFiles,
+  readPastedFile,
+  toPromptImageInput,
+} from "../pastedImages";
 import {
   acpQueryKeys,
   fetchAgentTranscript,
@@ -77,6 +85,7 @@ import {
 import type {
   AcpConnectionState,
   AcpEvent,
+  ChatImageAttachment,
   ChatTurn,
   PendingPermission,
   ResumeOutcome,
@@ -132,6 +141,8 @@ export function AcpPanel() {
   const turnListRef = useRef<HTMLDivElement | null>(null);
   const composerRef = useRef<ChatComposerBarHandle | null>(null);
   const [draft, setDraft] = useState("");
+  // 粘贴图片附件：随下一条发送（或排队），发送/建新/切换即清空，不落盘。
+  const [attachments, setAttachments] = useState<ChatImageAttachment[]>([]);
   const [turns, setTurns] = useState<ChatTurn[]>([]);
   const [notices, setNotices] = useState<SystemNotice[]>([]);
   const [busy, setBusy] = useState(false);
@@ -197,6 +208,34 @@ export function AcpPanel() {
   const setDraftEmpty = () => {
     clearTypingAnchor();
     setDraft("");
+    setAttachments([]);
+  };
+
+  const handlePasteImages = (files: File[]) => {
+    const { accepted, rejected } = pickAcceptableFiles(files, attachments.length);
+    for (const reason of rejected) pushSystem(reason);
+    if (accepted.length === 0) return;
+    void (async () => {
+      const next: ChatImageAttachment[] = [];
+      for (const file of accepted) {
+        try {
+          const dataUrl = await readPastedFile(file);
+          if (!dataUrl.startsWith("data:image/")) continue;
+          next.push({
+            id: pastedImageId(),
+            mimeType: file.type.toLowerCase(),
+            dataUrl,
+          });
+        } catch {
+          pushSystem(`图片读取失败：${file.name || "未命名文件"}`);
+        }
+      }
+      if (next.length > 0) {
+        setAttachments((prev) =>
+          [...prev, ...next].slice(0, PASTED_IMAGE_LIMIT),
+        );
+      }
+    })();
   };
 
   const onDraftChange = (next: string) => {
@@ -771,21 +810,30 @@ export function AcpPanel() {
     mutationFn: async ({
       text,
       anchorPositionMs,
+      images,
     }: {
       text: string;
       anchorPositionMs: number;
+      images: ChatImageAttachment[];
     }) => {
       busyRef.current = true;
       setBusy(true);
       setProgress(null);
       setPendingPermission(null);
 
-      const turn = createTurn(idSeq, text, anchorPositionMs);
+      const turn: ChatTurn = {
+        ...createTurn(idSeq, text, anchorPositionMs),
+        ...(images.length > 0 ? { images: [...images] } : null),
+      };
       setTurns((prev) => [...prev, turn]);
 
       const profileState = useAcpProfilesStore.getState();
       const settings = clientSettingsFromStore(useAcpSettingsStore.getState());
       const session = useAcpSessionStore.getState();
+      const promptImages: PromptImageInput[] = images.flatMap((image) => {
+        const input = toPromptImageInput(image);
+        return input ? [input] : [];
+      });
 
       try {
         const player = usePlayerStore.getState();
@@ -801,6 +849,7 @@ export function AcpPanel() {
             profileId: profileState.activeProfileId,
             cwd: sessionCwd,
             context: frozenContext,
+            images: promptImages,
             savedSession: session.savedSession,
             clientSettings: settings,
             profiles: profilesHintFromStore(
@@ -859,6 +908,7 @@ export function AcpPanel() {
     runMutation.mutate({
       text: next.text,
       anchorPositionMs: next.anchorPositionMs,
+      images: next.images ?? [],
     });
   };
 
@@ -877,8 +927,9 @@ export function AcpPanel() {
 
   const send = () => {
     const text = draft.trim();
+    const images = attachments;
     if (
-      !text ||
+      (!text && images.length === 0) ||
       !available ||
       connectionState !== "connected"
     ) {
@@ -890,20 +941,23 @@ export function AcpPanel() {
       syncPromptQueue(
         enqueuePrompt(
           promptQueueRef.current,
-          createQueuedPrompt(text, anchorPositionMs),
+          createQueuedPrompt(text, anchorPositionMs, undefined, images),
         ),
       );
       setDraft("");
+      setAttachments([]);
       return;
     }
     setDraft("");
-    runMutation.mutate({ text, anchorPositionMs });
+    setAttachments([]);
+    runMutation.mutate({ text, anchorPositionMs, images });
   };
 
   const bargeIn = () => {
     const text = draft.trim();
+    const images = attachments;
     if (
-      !text ||
+      (!text && images.length === 0) ||
       !available ||
       connectionState !== "connected"
     ) {
@@ -917,10 +971,11 @@ export function AcpPanel() {
     syncPromptQueue(
       bargeInPrompt(
         promptQueueRef.current,
-        createQueuedPrompt(text, anchorPositionMs),
+        createQueuedPrompt(text, anchorPositionMs, undefined, images),
       ),
     );
     setDraft("");
+    setAttachments([]);
     void acpCancel();
   };
 
@@ -1226,6 +1281,11 @@ export function AcpPanel() {
           syncPromptQueue(removeQueuedPrompt(promptQueueRef.current, id));
         }}
         onClearQueue={() => syncPromptQueue([])}
+        attachments={attachments}
+        onPasteImages={handlePasteImages}
+        onRemoveAttachment={(id) =>
+          setAttachments((prev) => prev.filter((item) => item.id !== id))
+        }
       />
 
       <AgentSettingsPanel

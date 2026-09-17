@@ -5,8 +5,8 @@ use tauri::{AppHandle, Manager, State};
 
 use crate::acp::adapter;
 use crate::acp::{
-    AcpError, AcpEvent, AcpStatus, AgentProfilesHint, AgentSessionListResult, SavedSessionHint,
-    VideoPromptContext,
+    AcpError, AcpEvent, AcpStatus, AgentProfilesHint, AgentSessionListResult, PromptImage,
+    SavedSessionHint, VideoPromptContext,
 };
 use crate::mcp::OnlineMediaSnapshot;
 use crate::state::AppState;
@@ -123,6 +123,7 @@ pub async fn acp_prompt(
     cwd: Option<String>,
     profile_id: Option<String>,
     context: Option<VideoPromptContext>,
+    images: Option<Vec<PromptImage>>,
     saved_session: Option<SavedSessionHint>,
     client_settings: Option<AcpClientSettings>,
     profiles: AgentProfilesHint,
@@ -207,11 +208,13 @@ pub async fn acp_prompt(
         }
         adapter::write_prompt_snapshot(&session_cwd, &snapshot)?;
         let context = enrich_prompt_context(context, &snapshot, media_changed);
+        let images = images.unwrap_or_default();
         acp.prompt(
             text,
             cwd,
             profile_id,
             context,
+            images,
             saved_session,
             settings,
             profiles,

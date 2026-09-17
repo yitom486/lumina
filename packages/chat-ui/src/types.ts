@@ -184,6 +184,13 @@ export type ChatActivity = {
   text?: string;
 };
 
+/** User-pasted image: kept as data URL for <img> preview and turn display. */
+export type ChatImageAttachment = {
+  id: string;
+  mimeType: string;
+  dataUrl: string;
+};
+
 export type ChatMessageStatus = "streaming" | "done" | "error";
 
 export type ChatTurn = {
@@ -193,6 +200,8 @@ export type ChatTurn = {
   status: ChatMessageStatus;
   activities: ChatActivity[];
   showActivities: boolean;
+  /** Pasted images shown above the question; absent on old/loaded turns. */
+  images?: ChatImageAttachment[];
   /** Question anchor (frozen at keystroke); used for note saving. Absent on old turns. */
   anchorMs?: number | null;
   /** Pre-tool agent stream; sealed when a tool call starts. */
