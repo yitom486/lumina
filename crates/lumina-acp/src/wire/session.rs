@@ -232,6 +232,19 @@ pub fn session_resume_params(session_id: &str, cwd: &str, mcp_servers: Value) ->
     })
 }
 
+/// `session/load` params: thread history comes back as streamed
+/// `session/update` notifications, not in the final result (codex-acp
+/// `loadSession` → `getOrCreateSessionWithHistory` + `streamThreadHistory`).
+/// Shape mirrors `session/resume` (`zLoadSessionRequest` requires
+/// `sessionId` + `cwd` + `mcpServers`).
+pub fn session_load_params(session_id: &str, cwd: &str, mcp_servers: Value) -> Value {
+    json!({
+        "sessionId": session_id,
+        "cwd": cwd,
+        "mcpServers": mcp_servers,
+    })
+}
+
 /// Tell an occupied conversation apart from a lost one.
 ///
 /// Codex enforces a single writer per conversation and refuses to reattach one
@@ -508,6 +521,27 @@ mod tests {
         });
         assert_eq!(extract_agent_text(&value), None);
         assert_eq!(parse_stop_reason(&value).as_deref(), Some("end_turn"));
+    }
+
+    #[test]
+    fn session_load_params_mirror_resume_shape() {
+        // Shape pinned to codex-acp `zLoadSessionRequest`
+        // (`sessionId` + `cwd` + `mcpServers`); history itself arrives as
+        // streamed `session/update`, never in the final result.
+        let mcp_servers = json!([]);
+        let params = session_load_params("sess-1", "D:/videos", mcp_servers.clone());
+        assert_eq!(
+            params,
+            json!({
+                "sessionId": "sess-1",
+                "cwd": "D:/videos",
+                "mcpServers": [],
+            })
+        );
+        assert_eq!(
+            params,
+            session_resume_params("sess-1", "D:/videos", mcp_servers)
+        );
     }
 
     #[test]

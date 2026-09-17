@@ -632,6 +632,12 @@ impl AcpService {
             let Some(saved) = saved else {
                 return Err(AcpError::internal(Some("saved session missing for resume")));
             };
+            let hint_short: String = saved.session_id.chars().take(8).collect();
+            tracing::info!(
+                hint = %hint_short,
+                session_kind = ?kind,
+                "session/resume attempting"
+            );
             on_event(AcpEvent::Progress {
                 message: "正在恢复上次会话…".into(),
             });
@@ -679,6 +685,7 @@ impl AcpService {
                         %error,
                         ?outcome,
                         elapsed_ms = resume_started.elapsed().as_millis(),
+                        hint = %hint_short,
                         "session/resume failed; creating new session"
                     );
                     self.create_new_session(
@@ -695,6 +702,28 @@ impl AcpService {
                 }
             }
         } else {
+            let resume_skip_reason = if !supports_resume {
+                "unsupported"
+            } else {
+                match saved.as_ref() {
+                    Some(hint) if hint.session_id.is_empty() => "no_hint",
+                    Some(hint) if hint.profile_id != profile_id || hint.cwd != cwd => {
+                        "scope_mismatch"
+                    }
+                    Some(_) => "scope_mismatch",
+                    None => "no_hint",
+                }
+            };
+            let skip_hint_short: String = match saved.as_ref() {
+                Some(hint) => hint.session_id.chars().take(8).collect(),
+                None => String::new(),
+            };
+            tracing::info!(
+                reason = resume_skip_reason,
+                hint = %skip_hint_short,
+                session_kind = ?kind,
+                "session/resume skipped; creating new session"
+            );
             self.create_new_session(
                 session,
                 NewSessionSpec {

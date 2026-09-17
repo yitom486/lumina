@@ -48,6 +48,21 @@ export function listAcpAgentSessions(
   });
 }
 
+export type LoadedTranscriptEvent = {
+  role: "user" | "agent" | "tool";
+  text: string;
+};
+
+export function acpLoadSession(options: {
+  sessionId: string;
+  cwd?: string | null;
+}): Promise<LoadedTranscriptEvent[]> {
+  return invoke<LoadedTranscriptEvent[]>("acp_load_session", {
+    sessionId: options.sessionId,
+    cwd: options.cwd ?? null,
+  });
+}
+
 export function respondAcpPermission(
   requestId: string,
   optionId: string | null,

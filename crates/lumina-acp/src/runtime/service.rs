@@ -7,9 +7,13 @@
 //! line IO in `super::io`, inbound handling in `super::inbound`, isolated
 //! workshop tasks in `crate::jobs::isolated`.
 
+use std::io::BufRead;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{mpsc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
+
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 use crate::agent::profile::{prepare_profiles, resolve_active_profile};
 use crate::agent::status::status_from_profiles;
@@ -22,8 +26,13 @@ use crate::domain::model::{
 use crate::domain::settings::{AcpClientSettings, PermissionMode};
 use crate::error::AcpError;
 use crate::runtime::host::AcpHost;
-use crate::wire::codec::is_error_response;
-use crate::wire::session::session_cancel_params;
+use crate::runtime::inbound::handle_inbound_side_effects;
+use crate::runtime::io::write_request;
+use crate::wire::codec::{classify_inbound, is_error_response};
+use crate::wire::session::{session_cancel_params, session_load_params};
+use crate::wire::updates::{
+    extract_plan_summary, extract_tool_call, extract_tool_call_content_chunk,
+};
 
 pub struct AcpService {
     pub(crate) busy: AtomicBool,
@@ -537,6 +546,298 @@ impl Default for AcpService {
     }
 }
 
+/// One neutral transcript turn replayed by `session/load`.
+///
+/// The Agent streams history as `session/update` notifications
+/// (`user_message_chunk` / `agent_message_chunk` / `agent_thought_chunk` /
+/// `tool_call*`); the final `session/load` result carries only modes and
+/// config options, never text. Roles stay neutral (`user` / `agent` /
+/// `tool`) so callers can rebuild local archives without learning ACP
+/// update kinds.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LoadedTurn {
+    pub role: String,
+    pub text: String,
+}
+
+impl LoadedTurn {
+    fn new(role: &str, text: String) -> Option<Self> {
+        if text.trim().is_empty() {
+            return None;
+        }
+        Some(Self {
+            role: role.to_string(),
+            text,
+        })
+    }
+}
+
+/// Bound for one `session/load` replay (history streams are smaller than a
+/// full prompt turn, which gets 600s; large threads still need headroom).
+const LOAD_TRANSCRIPT_TIMEOUT_SECS: u64 = 120;
+
+/// Resets `busy` when a transcript load exits on any path.
+struct BusyReset<'a>(&'a AtomicBool);
+
+impl Drop for BusyReset<'_> {
+    fn drop(&mut self) {
+        self.0.store(false, Ordering::SeqCst);
+    }
+}
+
+impl AcpService {
+    /// Replay a stored thread's real text via `session/load`.
+    ///
+    /// History panels used to restore only Agent memory (`session/resume`)
+    /// and never pulled the thread's actual turns, so the local archive
+    /// drifted from the thread. codex-acp implements `session/load`
+    /// (`zLoadSessionRequest`: `sessionId` + `cwd` + `mcpServers`) by
+    /// resuming the thread and re-streaming every turn as `session/update`
+    /// (`getOrCreateSessionWithHistory` + `streamThreadHistory`); the final
+    /// result carries no text. This mirrors that: send `session/load` on the
+    /// live child and collect the streamed updates until the matching
+    /// response id arrives.
+    ///
+    /// Refuses with `busy` while a prompt (or another load) runs so two
+    /// writers never share the child's stdin. Any failure maps to a fixed
+    /// business error with the wire detail in `details`. Stream-desync
+    /// failures (timeout, EOF, IO error, cancel) drop the live session so
+    /// the next prompt spawns clean instead of eating trailing history as
+    /// its own reply.
+    pub fn load_session_transcript(
+        &self,
+        session_id: String,
+        cwd: Option<String>,
+    ) -> Result<Vec<LoadedTurn>, AcpError> {
+        let session_id = session_id.trim();
+        if session_id.is_empty() {
+            return Err(AcpError::bad_request("会话标识不能为空"));
+        }
+        if self
+            .busy
+            .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+            .is_err()
+        {
+            return Err(AcpError::busy());
+        }
+        let _busy = BusyReset(&self.busy);
+        self.cancel.store(false, Ordering::SeqCst);
+
+        let workspace = resolve_session_cwd(cwd.as_deref())?;
+        let cwd_string = workspace.to_string_lossy().into_owned();
+        let vision_capable = session_env()
+            .ok()
+            .and_then(|env| env.snapshot_vision_capable(&workspace))
+            .unwrap_or(true);
+        let env = session_env()?;
+        let snapshot_path = env.snapshot_path(&workspace);
+        env.sync_snapshot(&snapshot_path, vision_capable)
+            .map_err(|error| AcpError::internal(Some(&error)))?;
+        let mcp_servers = env.mcp_servers(&snapshot_path, self.isolated_task());
+
+        let mut guard = self
+            .session
+            .lock()
+            .map_err(|_| AcpError::internal(Some("ACP session mutex poisoned")))?;
+        let session = guard
+            .as_mut()
+            .ok_or_else(|| AcpError::protocol(Some("no active agent session")))?;
+        if !session.init.load_session {
+            return Err(AcpError::protocol(Some(
+                "agent does not advertise session/load",
+            )));
+        }
+        let request_id = session.next_id;
+        session.next_id += 1;
+        write_request(
+            &session.stdin,
+            request_id,
+            "session/load",
+            session_load_params(session_id, &cwd_string, mcp_servers),
+        )?;
+
+        let started = Instant::now();
+        let deadline = started + Duration::from_secs(LOAD_TRANSCRIPT_TIMEOUT_SECS);
+        let mut turns = Vec::new();
+        tracing::info!(session_id, cwd = %cwd_string, "ACP session/load started");
+        loop {
+            if self.cancel.load(Ordering::SeqCst) {
+                self.abandon_desynced_session(&mut guard);
+                return Err(AcpError::cancelled());
+            }
+            if Instant::now() > deadline {
+                self.abandon_desynced_session(&mut guard);
+                tracing::warn!(
+                    session_id,
+                    elapsed_ms = started.elapsed().as_millis(),
+                    "ACP session/load timed out"
+                );
+                return Err(AcpError::protocol(Some("session/load timed out")));
+            }
+            let mut line = String::new();
+            match session.reader.read_line(&mut line) {
+                Ok(0) => {
+                    self.abandon_desynced_session(&mut guard);
+                    return Err(AcpError::protocol(Some("EOF on stdout")));
+                }
+                Ok(_) => {}
+                Err(error) => {
+                    self.abandon_desynced_session(&mut guard);
+                    tracing::warn!(%error, "ACP session/load read failed");
+                    return Err(AcpError::protocol(Some(&format!(
+                        "read ACP stdout: {error}"
+                    ))));
+                }
+            }
+            let trimmed = line.trim();
+            if trimmed.is_empty() {
+                continue;
+            }
+            let value: Value = match serde_json::from_str(trimmed) {
+                Ok(value) => value,
+                Err(error) => {
+                    let sample: String = trimmed.chars().take(200).collect();
+                    tracing::debug!(line = %sample, %error, "ACP skipping non-JSON stdout line");
+                    continue;
+                }
+            };
+            // History fast path: `read_until_id_raw` funnels these through
+            // `emit_session_update`, which drops `user_message_chunk` (chat
+            // never echoes the user). A shared read would lose every user
+            // turn, so transcript collection maps the raw update here.
+            if value.get("method").and_then(Value::as_str) == Some("session/update")
+                && value.get("id").is_none()
+            {
+                if let Some(turn) = map_load_update_to_turn(&value) {
+                    turns.push(turn);
+                }
+                continue;
+            }
+            let mut sink = |_: AcpEvent| {};
+            match handle_inbound_side_effects(
+                self,
+                session,
+                &self.host,
+                classify_inbound(value),
+                &self.cancel,
+                &mut sink,
+            )? {
+                Some((id, response)) if id == request_id => {
+                    if let Some(message) = is_error_response(&response) {
+                        return Err(AcpError::protocol(Some(&format!(
+                            "session/load: {message}"
+                        ))));
+                    }
+                    tracing::info!(
+                        session_id,
+                        turns = turns.len(),
+                        elapsed_ms = started.elapsed().as_millis(),
+                        "ACP session/load completed"
+                    );
+                    return Ok(turns);
+                }
+                Some(_) | None => {}
+            }
+        }
+    }
+
+    /// Take + terminate the live child after a stream-desync failure
+    /// (timeout, EOF, IO error, cancel): the Agent may still be streaming
+    /// history afterwards, and that backlog would otherwise be eaten as the
+    /// next prompt's reply. Callers hold the session lock; this never blocks.
+    fn abandon_desynced_session(
+        &self,
+        guard: &mut std::sync::MutexGuard<'_, Option<crate::runtime::lifecycle::LiveSession>>,
+    ) {
+        if let Some(mut taken) = guard.take() {
+            self.clear_cancel_writer();
+            taken.agent.terminate(false);
+        }
+    }
+}
+
+/// Map one streamed `session/update` notification to a neutral transcript turn.
+///
+/// Accepts the full notification (`method` + `params.update`) as well as a
+/// bare update object so the mapping stays unit-testable without a child.
+/// Empty bodies map to `None` (status-only tool updates, blank chunks).
+/// `agent_thought_chunk` folds into `agent`: reasoning is agent text and the
+/// DTO only knows `user` / `agent` / `tool`.
+pub(crate) fn map_load_update_to_turn(value: &Value) -> Option<LoadedTurn> {
+    let update = load_update(value)?;
+    match update.get("sessionUpdate").and_then(Value::as_str)? {
+        "user_message_chunk" => LoadedTurn::new("user", load_content_text(update.get("content")?)?),
+        "agent_message_chunk" | "agent_thought_chunk" => {
+            LoadedTurn::new("agent", load_content_text(update.get("content")?)?)
+        }
+        "tool_call" | "tool_call_update" => {
+            let tool = extract_tool_call(value)?;
+            let text = tool
+                .detail
+                .filter(|text| !text.trim().is_empty())
+                .or_else(|| tool.title.filter(|text| !text.trim().is_empty()))?;
+            LoadedTurn::new("tool", text)
+        }
+        "tool_call_content_chunk" => {
+            let (_, detail) = extract_tool_call_content_chunk(value)?;
+            LoadedTurn::new("tool", detail)
+        }
+        "plan" => LoadedTurn::new("agent", extract_plan_summary(value)?),
+        _ => None,
+    }
+}
+
+fn load_update(value: &Value) -> Option<&Value> {
+    if let Some(update) = value.pointer("/params/update") {
+        if update.is_object() {
+            return Some(update);
+        }
+    }
+    if value.get("sessionUpdate").is_some() {
+        return Some(value);
+    }
+    None
+}
+
+/// Plain text out of an ACP content block: bare string, `{type:text}`,
+/// arrays of blocks, and `resource_link` (rendered like codex-acp history
+/// replay: `[@name](uri)`).
+fn load_content_text(content: &Value) -> Option<String> {
+    if let Some(text) = content.as_str() {
+        return Some(text.to_string());
+    }
+    if content.get("type").and_then(Value::as_str) == Some("resource_link") {
+        let uri = content.get("uri").and_then(Value::as_str).unwrap_or("");
+        if uri.trim().is_empty() {
+            return None;
+        }
+        let name = content
+            .get("name")
+            .and_then(Value::as_str)
+            .filter(|name| !name.trim().is_empty())
+            .unwrap_or(uri);
+        return Some(format!("[@{name}]({uri})"));
+    }
+    if let Some(text) = content.get("text").and_then(Value::as_str) {
+        return Some(text.to_string());
+    }
+    let blocks = content.as_array()?;
+    let mut parts = Vec::new();
+    for item in blocks {
+        if let Some(text) = load_content_text(item) {
+            if !text.trim().is_empty() {
+                parts.push(text);
+            }
+        }
+    }
+    if parts.is_empty() {
+        None
+    } else {
+        Some(parts.join(""))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -714,6 +1015,156 @@ mod tests {
             .rotate_isolated_session("p", None, &mut |_| {})
             .expect("no-op ok");
         assert!(!slot_occupied(&service));
+    }
+
+    #[test]
+    fn load_transcript_timeout_is_locked() {
+        // History replay bound: large threads need headroom, but a wedged
+        // agent must fail loudly instead of hanging the history panel.
+        assert_eq!(LOAD_TRANSCRIPT_TIMEOUT_SECS, 120);
+    }
+
+    #[test]
+    fn load_session_transcript_refuses_while_busy_without_side_effects() {
+        use std::sync::atomic::Ordering;
+
+        let service = AcpService::new();
+        service.busy.store(true, Ordering::SeqCst);
+        let err = service
+            .load_session_transcript("sess-1".to_string(), None)
+            .expect_err("busy load must fail");
+        assert_eq!(err.code, crate::AcpErrorCode::Busy);
+        assert!(!service.cancel.load(Ordering::SeqCst));
+    }
+
+    #[test]
+    fn load_session_transcript_rejects_blank_session_id() {
+        let service = AcpService::new();
+        let err = service
+            .load_session_transcript("   ".to_string(), None)
+            .expect_err("blank id must fail");
+        assert_eq!(err.code, crate::AcpErrorCode::ProtocolError);
+        assert!(err.message.contains("会话标识"));
+    }
+
+    #[test]
+    fn load_transcript_mapping_covers_user_agent_tool_and_skips_empty() {
+        use serde_json::json;
+
+        // Shapes mirror codex-acp history replay (`createUserMessageChunk` /
+        // `createAgentMessageChunk` / tool_call updates over `session/update`).
+        let user = json!({
+            "method": "session/update",
+            "params": {
+                "sessionId": "sess-1",
+                "update": {
+                    "sessionUpdate": "user_message_chunk",
+                    "content": { "type": "text", "text": "这段讲了什么？" },
+                },
+            },
+        });
+        assert_eq!(
+            map_load_update_to_turn(&user),
+            Some(LoadedTurn {
+                role: "user".to_string(),
+                text: "这段讲了什么？".to_string(),
+            })
+        );
+
+        let agent = json!({
+            "method": "session/update",
+            "params": {
+                "sessionId": "sess-1",
+                "update": {
+                    "sessionUpdate": "agent_message_chunk",
+                    "content": [
+                        { "type": "text", "text": "本集讲了" },
+                        { "type": "text", "text": "重逢。" },
+                    ],
+                },
+            },
+        });
+        assert_eq!(
+            map_load_update_to_turn(&agent),
+            Some(LoadedTurn {
+                role: "agent".to_string(),
+                text: "本集讲了重逢。".to_string(),
+            })
+        );
+
+        // Reasoning folds into `agent`: the DTO only knows user/agent/tool.
+        let thought = json!({
+            "sessionUpdate": "agent_thought_chunk",
+            "content": { "type": "text", "text": "先查台词再回答" },
+        });
+        assert_eq!(
+            map_load_update_to_turn(&thought)
+                .as_ref()
+                .map(|turn| turn.role.as_str()),
+            Some("agent")
+        );
+
+        let tool = json!({
+            "method": "session/update",
+            "params": {
+                "sessionId": "sess-1",
+                "update": {
+                    "sessionUpdate": "tool_call",
+                    "toolCallId": "call-1",
+                    "title": "搜索",
+                    "status": "completed",
+                    "content": [
+                        {
+                            "type": "content",
+                            "content": { "type": "text", "text": "找到 3 条台词" },
+                        },
+                    ],
+                },
+            },
+        });
+        assert_eq!(
+            map_load_update_to_turn(&tool),
+            Some(LoadedTurn {
+                role: "tool".to_string(),
+                text: "找到 3 条台词".to_string(),
+            })
+        );
+
+        // Empty bodies never become turns: blank agent chunk, status-only
+        // tool update, and metadata updates carry no transcript text.
+        for empty in [
+            json!({
+                "method": "session/update",
+                "params": {
+                    "update": {
+                        "sessionUpdate": "agent_message_chunk",
+                        "content": { "type": "text", "text": "   " },
+                    },
+                },
+            }),
+            json!({
+                "method": "session/update",
+                "params": {
+                    "update": {
+                        "sessionUpdate": "tool_call_update",
+                        "toolCallId": "call-1",
+                        "status": "completed",
+                    },
+                },
+            }),
+            json!({
+                "method": "session/update",
+                "params": {
+                    "update": {
+                        "sessionUpdate": "session_info_update",
+                        "title": "看剧对话",
+                    },
+                },
+            }),
+            json!({ "id": 7, "result": {} }),
+        ] {
+            assert_eq!(map_load_update_to_turn(&empty), None, "value={empty}");
+        }
     }
 
     #[test]

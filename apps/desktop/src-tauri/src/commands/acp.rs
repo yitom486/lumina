@@ -86,6 +86,18 @@ pub async fn acp_list_agent_sessions(
 }
 
 #[tauri::command]
+pub async fn acp_load_session(
+    state: State<'_, AppState>,
+    session_id: String,
+    cwd: Option<String>,
+) -> Result<Vec<lumina_acp::runtime::service::LoadedTurn>, AcpError> {
+    let acp = state.acp.clone();
+    tauri::async_runtime::spawn_blocking(move || acp.load_session_transcript(session_id, cwd))
+        .await
+        .map_err(|error| AcpError::internal(Some(&format!("acp load session join: {error}"))))?
+}
+
+#[tauri::command]
 pub async fn acp_sync_mcp_capabilities(
     _state: State<'_, AppState>,
     cwd: Option<String>,

@@ -51,6 +51,23 @@ export function historyConversationAction(input: {
   return "available";
 }
 
+/** Tooltip for a history row whose AI memory is proven gone. */
+export const MISSING_HISTORY_CONVERSATION_TITLE = "AI 记忆已不存在";
+
+/**
+ * Row-level select gate for the history sheet. Only a proven-missing Agent
+ * memory disables the row, regardless of origin (local or agent-only).
+ * Local archive rows without a session id stay selectable: they remain
+ * viewable locally and continue as a new conversation (F3 path).
+ */
+export function isHistoryConversationDisabled(input: {
+  agentStatus: AgentSessionStatus;
+  agentSessionId: string | null;
+}): boolean {
+  if (input.agentSessionId == null || input.agentSessionId === "") return false;
+  return input.agentStatus === "missing";
+}
+
 export type AgentSessionStatus = "live" | "missing" | "unverified";
 export type ConversationOrigin = "local" | "agent";
 
@@ -188,7 +205,9 @@ export function reconcileConversations(
       : conversation.updatedAtMs;
     const agentStatus: AgentSessionStatus = agent
       ? "live"
-      : matchable && options.trust.canAssertMissing
+      : matchable &&
+          Boolean(conversation.agentSessionId) &&
+          options.trust.canAssertMissing
         ? "missing"
         : "unverified";
 

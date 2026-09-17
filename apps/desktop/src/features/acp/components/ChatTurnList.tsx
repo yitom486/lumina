@@ -35,13 +35,10 @@ export function ChatTurnList({
     );
   }
 
+  // 系统通知跟在对话尾部（时间顺序），而不是堆在顶部：连接/恢复这类
+  // 生命周期事件只有落在尾部才和用户看到的因果一致。
   return (
     <ChatColumn className="min-h-0 space-y-4 py-3">
-      {notices.map((n) => (
-        <p key={n.id} className="text-center text-[11px] text-muted-foreground">
-          {n.content}
-        </p>
-      ))}
       {turns.map((turn) => (
         <ChatTurnView
           key={turn.id}
@@ -50,6 +47,11 @@ export function ChatTurnList({
           onDismissAnnotation={onDismissAnnotation}
           onSaveAnnotation={onSaveAnnotation}
         />
+      ))}
+      {notices.map((n) => (
+        <p key={n.id} className="text-center text-[11px] text-muted-foreground">
+          {n.content}
+        </p>
       ))}
       <div ref={endRef} />
     </ChatColumn>

@@ -6,6 +6,8 @@ import { formatConversationTime } from "../chatHistoryStore";
 import {
   historyConversationAction,
   historyConversationPresentation,
+  isHistoryConversationDisabled,
+  MISSING_HISTORY_CONVERSATION_TITLE,
   type ReconciledChatConversation,
 } from "../conversationContext";
 
@@ -76,6 +78,11 @@ export function ChatHistorySheet({
               switchBlocked: historySwitchBlocked,
             });
             const presentation = historyConversationPresentation(item.origin);
+            const rowDisabled = isHistoryConversationDisabled({
+              agentStatus: item.agentStatus,
+              agentSessionId: item.agentSessionId,
+            });
+            const disabled = action === "busy" || rowDisabled;
             return (
               <li key={item.id}>
                 <div
@@ -88,10 +95,12 @@ export function ChatHistorySheet({
                     type="button"
                     className={cn(
                       "min-w-0 flex-1 text-left",
-                      action !== "available" &&
-                        "cursor-not-allowed opacity-70",
+                      disabled && "cursor-not-allowed opacity-70",
                     )}
-                    disabled={action !== "available"}
+                    disabled={disabled}
+                    title={
+                      rowDisabled ? MISSING_HISTORY_CONVERSATION_TITLE : undefined
+                    }
                     onClick={() => onSelect(item.id)}
                   >
                     <p className="truncate text-[11px] font-medium text-foreground">
@@ -108,7 +117,7 @@ export function ChatHistorySheet({
                         仅 AI 记忆，无本地对话记录
                       </p>
                     ) : null}
-                    {action === "missing" ? (
+                    {rowDisabled && action !== "busy" ? (
                       <p className="mt-1 text-[10px] leading-4 text-muted-foreground">
                         该对话的 AI 记忆已不存在，只能作为记录查看
                       </p>
