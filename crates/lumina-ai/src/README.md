@@ -38,7 +38,7 @@
 ## 2. 构建思路与设计原则
 
 1. **聊天会话零污染（Zero Chat History Pollution）**：
-   - 如果直接在主聊天窗口让 Agent 翻译一部电影的 1500 句台词，会导致后续对话的 Token 消耗激增、上下文被噪音淹没。`lumina-ai` 强制走 `AgentInvoker::invoke_isolated`，完全剥离主会话上下文；底层可以通过 `WorkshopPool` 复用隔离 session，但不会复用 Chat session。
+   - 如果直接在主聊天窗口让 Agent 翻译一部电影的 1500 句台词，会导致后续对话的 Token 消耗激增、上下文被噪音淹没。`lumina-ai` 为每个批次通过 `AgentInvoker::open_conversation` 获取隔离会话；默认实现会回退到 `invoke_isolated`，宿主也可以通过 `WorkshopPool` 复用作业级隔离 session，但不会复用 Chat session。
 2. **纯依赖注入与面向端口编程（Port-Driven）**：
    - 本 crate 仅依赖 `lumina-core` 和 `lumina-subtitle`，完全不直接依赖 `lumina-acp`、子进程或网络库。具体的 AI 模型调用由宿主通过动态分发 `&dyn AgentInvoker` 传入。
 
@@ -91,12 +91,17 @@ let result = translate_and_export_track(
 
 ## 4. 内部子模块全景
 
-`lumina-ai/src/` 包含以下核心源码模块：
+`lumina-ai/src/` 包含以下核心源码模块。翻译功能现在采用目录模块布局：`translate/mod.rs` 是 `translate` 的模块入口，原来的 `translate.rs` 已移除；因此 `lumina_ai::translate::*` 与 crate 根部重新导出的公开 API 均保持不变。
 
 | 源码文件 | 模块名称 | 核心职责与导出项 |
 | :--- | :--- | :--- |
 | [`lib.rs`](./lib.rs) | 根模块 | 重新导出公开接口；定义隔离调用原则。 |
-| [`translate.rs`](./translate.rs) | `translate` | • `translate_and_export_track`: 完整翻译端到端流水线（加载源字幕、批次切分、调用 AI、输出 `.srt`）。<br>• `translate_cues`: 纯内存字幕队列翻译（4 并发、序号对齐、人名 post-check＋单次重试）。<br>• `proofread_cues`: 同语言校对（不翻译不改轴）。<br>• 批处理 Prompt 构造与容错 JSON 反序列化解析。 |
+| [`translate/mod.rs`](./translate/mod.rs) | `translate` 入口 | 保存公开契约：语言归一化、批次大小、进度类型、检查点工厂、翻译结果类型，以及各子模块的公开 re-export。 |
+| [`translate/orchestrator.rs`](./translate/orchestrator.rs) | 编排层 | • `translate_and_export_track`: 加载源字幕、调用翻译流程并导出 `.srt`。<br>• `translate_cues`: 纯内存字幕队列翻译，最多 4 个隔离 Agent 并发、按输入顺序合并，并执行索引/人名校验与单次重试。<br>• `proofread_cues`: 同语言校对，不翻译、不改变时间轴。 |
+| [`translate/agent.rs`](./translate/agent.rs) | Agent 交互层 | 构造翻译/校对任务 Prompt，调用 `AgentInvoker`，解析结构化 JSON，并映射底层 Agent 错误。 |
+| [`translate/batch.rs`](./translate/batch.rs) | 批处理基础设施 | 批次并发执行、结果按序合并、索引对齐、一次性修复重试和人名词表校验。 |
+| [`translate/context.rs`](./translate/context.rs) | 上下文与词表 | 管理剧集简介、人名变体、翻译词表及跨批次新增的人名上下文。 |
+| [`translate/tests.rs`](./translate/tests.rs) | 单元测试 | 覆盖批次顺序、断点恢复、JSON 修复、错误映射、词表重试和时间轴保持。 |
 
 ---
 
@@ -115,7 +120,9 @@ sequenceDiagram
     Sub-->>AI: 返回原始 Cues 列表 (如 120 句)
 
     loop 按 40 句一个批次分块
-        AI->>Port: invoke_isolated(IsolatedAgentTask { prompt, model })
+        AI->>Port: open_conversation(...)
+        Port-->>AI: 批次级隔离会话（默认回退 invoke_isolated）
+        AI->>Port: prompt(IsolatedAgentTask { prompt, model })
         Port-->>AI: 返回批量翻译 JSON
         AI->>AI: 校准索引，组装翻译后的 Cue 序列
         AI-->>UI: 进度回调 ("正在翻译第 1/3 批…")

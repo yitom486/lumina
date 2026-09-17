@@ -1,7 +1,13 @@
-use super::agent::{agent_json, map_agent_error, parse_agent_json, TranslatedBatch};
+use super::agent::{
+    agent_json, map_agent_error, parse_agent_json, translate_batch, TranslatedBatch,
+};
+use super::batch::{
+    align_batch_texts, align_with_one_retry, glossary_mismatches, run_batches_in_order,
+    AttemptTracker,
+};
 use super::context::{context_block, extract_reported_names};
 use super::*;
-use lumina_core::{AgentConversation, AgentTaskError, IsolatedAgentTask};
+use lumina_core::{AgentConversation, AgentInvoker, AgentTaskError, IsolatedAgentTask};
 use serde_json::{json, Value};
 use std::sync::Mutex;
 
