@@ -126,6 +126,30 @@ export async function acpNewChat(
   });
 }
 
+export async function acpSwitchSession(
+  onEvent?: (event: AcpEvent) => void,
+  options?: {
+    cwd?: string;
+    profileId?: string;
+    savedSession?: SavedSessionHint | null;
+    clientSettings?: AcpClientSettings;
+    profiles: AgentProfilesHint;
+  },
+): Promise<void> {
+  const channel = new Channel<AcpEvent>();
+  if (onEvent) {
+    channel.onmessage = onEvent;
+  }
+  await invoke("acp_switch_session", {
+    cwd: options?.cwd ?? null,
+    profileId: options?.profileId ?? null,
+    savedSession: options?.savedSession ?? null,
+    clientSettings: options?.clientSettings ?? null,
+    profiles: options?.profiles,
+    onEvent: channel,
+  });
+}
+
 export async function acpSetSessionModel(
   options: {
     modelId?: string | null;

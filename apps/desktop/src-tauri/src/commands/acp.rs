@@ -327,6 +327,42 @@ pub async fn acp_new_chat(
     .map_err(|error| AcpError::internal(Some(&format!("acp new chat join: {error}"))))?
 }
 
+/// Switch the visible conversation on the live agent process when possible
+/// (close + resume/new without respawning). Falls back to a full connect
+/// honoring the hint when no live process exists.
+#[tauri::command]
+#[allow(clippy::too_many_arguments)]
+pub async fn acp_switch_session(
+    state: State<'_, AppState>,
+    cwd: Option<String>,
+    profile_id: Option<String>,
+    saved_session: Option<SavedSessionHint>,
+    client_settings: Option<AcpClientSettings>,
+    profiles: AgentProfilesHint,
+    on_event: Channel<AcpEvent>,
+) -> Result<(), AcpError> {
+    let acp = state.acp.clone();
+    let snapshots = state.prompt_snapshots.clone();
+    let settings = client_settings.unwrap_or_default();
+    tauri::async_runtime::spawn_blocking(move || {
+        adapter::reset_prompt_snapshot_state(&snapshots);
+        acp.switch_session(
+            cwd,
+            profile_id,
+            saved_session,
+            settings,
+            profiles,
+            |event| {
+                if let Err(error) = on_event.send(event) {
+                    tracing::warn!(%error, "failed to send ACP switch session event");
+                }
+            },
+        )
+    })
+    .await
+    .map_err(|error| AcpError::internal(Some(&format!("acp switch session join: {error}"))))?
+}
+
 #[tauri::command]
 pub async fn acp_close(app: AppHandle) -> Result<(), AcpError> {
     tauri::async_runtime::spawn_blocking(move || {

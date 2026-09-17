@@ -52,7 +52,8 @@ use tracing_subscriber::{layer::SubscriberExt as _, util::SubscriberInitExt as _
 
 use commands::acp::{
     acp_cancel, acp_close, acp_connect, acp_list_agent_sessions, acp_new_chat, acp_prompt,
-    acp_respond_permission, acp_set_session_model, acp_status, acp_sync_mcp_capabilities,
+    acp_respond_permission, acp_set_session_model, acp_status, acp_switch_session,
+    acp_sync_mcp_capabilities,
 };
 use commands::asr::{asr_install, asr_status, asr_transcribe};
 use commands::library::{
@@ -202,6 +203,7 @@ pub fn run() {
             acp_connect,
             acp_list_agent_sessions,
             acp_new_chat,
+            acp_switch_session,
             acp_sync_mcp_capabilities,
             acp_set_session_model,
             acp_prompt,

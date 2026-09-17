@@ -320,6 +320,106 @@ impl AcpService {
         }
     }
 
+    /// Switch the visible conversation without killing the agent process:
+    /// close the current agent-side session and resume-or-create the target
+    /// on the same child. `saved_session` carries the adopted history hint
+    /// (`None` means a genuinely fresh thread). Falls back to a full connect
+    /// honoring the hint when no live process exists or the close fails.
+    pub fn switch_session<F>(
+        &self,
+        cwd: Option<String>,
+        profile_id: Option<String>,
+        saved_session: Option<SavedSessionHint>,
+        client_settings: AcpClientSettings,
+        profiles: AgentProfilesHint,
+        mut on_event: F,
+    ) -> Result<(), AcpError>
+    where
+        F: FnMut(AcpEvent),
+    {
+        if self.is_busy() {
+            return Err(AcpError::busy());
+        }
+
+        self.cancel.store(false, Ordering::SeqCst);
+        if let Ok(mut guard) = self.permission_mode.lock() {
+            *guard = client_settings.permission_mode;
+        }
+
+        let prepared = prepare_profiles(&profiles);
+        let workspace = resolve_session_cwd(cwd.as_deref())?;
+        let cwd_string = workspace.to_string_lossy().into_owned();
+        let profile = resolve_active_profile(&prepared, profile_id.as_deref())?;
+
+        let mut guard = self
+            .session
+            .lock()
+            .map_err(|_| AcpError::internal(Some("ACP session mutex poisoned")))?;
+
+        if let Some(session) = guard.as_mut() {
+            on_event(AcpEvent::Progress {
+                message: "正在切换对话…".into(),
+            });
+            self.host.set_workspace(workspace);
+            self.host.release_all();
+
+            if session.init.supports_session_close {
+                if let Err(error) = Self::close_agent_session(self, session, &mut on_event) {
+                    tracing::warn!(%error, "session/close failed during switch; respawning agent");
+                    drop(guard);
+                    self.drop_live_session(true);
+                    self.clear_cancel_writer();
+                    return self.connect(
+                        Some(cwd_string),
+                        profile_id,
+                        saved_session,
+                        client_settings,
+                        profiles,
+                        on_event,
+                    );
+                }
+            }
+
+            let new_session_id = self.open_session_on_live_process(
+                session,
+                saved_session.as_ref(),
+                crate::runtime::lifecycle::NewSessionSpec {
+                    cwd: &cwd_string,
+                    profile_id: &profile.id,
+                    vision_capable: client_settings.vision_capable,
+                    kind: SessionKind::Chat,
+                    resume: None,
+                },
+                &mut on_event,
+            )?;
+            session.session_id = new_session_id;
+
+            if let Some(selection) = client_settings.model_selection() {
+                self.apply_model_selection(session, &selection, &mut on_event)?;
+            } else if let Ok(selection_guard) = self.next_session_model_selection.lock() {
+                if let Some(selection) = selection_guard.clone() {
+                    self.apply_model_selection(session, &selection, &mut on_event)?;
+                }
+            }
+
+            self.publish_cancel_writer(session);
+            on_event(AcpEvent::Progress {
+                message: "对话已切换".into(),
+            });
+            Ok(())
+        } else {
+            drop(guard);
+            self.connect(
+                cwd,
+                profile_id,
+                saved_session,
+                client_settings,
+                profiles,
+                on_event,
+            )
+        }
+    }
+
     /// Apply model / reasoning overrides to the live session without rotating it.
     pub fn set_session_model<F>(
         &self,
@@ -503,6 +603,30 @@ mod tests {
 
     fn slot_occupied(service: &AcpService) -> bool {
         service.session.lock().expect("lock").is_some()
+    }
+
+    #[test]
+    fn switch_session_refuses_while_busy_without_side_effects() {
+        use std::sync::atomic::Ordering;
+
+        let service = AcpService::new();
+        service.busy.store(true, Ordering::SeqCst);
+        let err = service
+            .switch_session(
+                None,
+                None,
+                None,
+                AcpClientSettings::default(),
+                crate::domain::model::AgentProfilesHint {
+                    active_profile_id: String::new(),
+                    profiles: Vec::new(),
+                },
+                &mut |_| {},
+            )
+            .expect_err("busy switch must fail");
+        assert_eq!(err.code, crate::AcpErrorCode::Busy);
+        assert!(!slot_occupied(&service));
+        assert!(!service.cancel.load(Ordering::SeqCst));
     }
 
     /// Cancel must preempt a prompt blocked in `read_line`: the prompt loop

@@ -37,6 +37,7 @@ import {
   listAcpAgentSessions,
   acpNewChat,
   acpPrompt,
+  acpSwitchSession,
   getAcpStatus,
 } from "../api";
 import { profilesHintFromStore } from "@lumina/chat-ui/defaultAgentProfiles";
@@ -79,6 +80,7 @@ import type {
   AgentSessionListResult,
   ChatTurn,
   PendingPermission,
+  SavedSessionHint,
   ThinkingLevel,
 } from "../types";
 import { useVideoPromptContext } from "../useVideoPromptContext";
@@ -370,10 +372,57 @@ export function AcpPanel() {
     },
   });
 
-  const composerBusy = busy || newChatMutation.isPending;
+  // 同进程切换：不断 Agent 进程，只关旧会话、resume 或新建目标。
+  // UI 状态（turns/记录选择）由调用方负责，mutation 只管连接态。
+  const switchSessionMutation = useMutation({
+    mutationFn: async (options: {
+      savedSession: SavedSessionHint | null;
+    }) => {
+      clearSavedSession();
+      setConnectionState("connecting");
+
+      const profileState = useAcpProfilesStore.getState();
+      const settings = clientSettingsFromStore(useAcpSettingsStore.getState());
+
+      await acpSwitchSession(
+        (event: AcpEvent) => {
+          if (event.type === "progress") {
+            setProgress(event.message);
+          }
+          if (event.type === "sessionSaved") {
+            handleSessionSaved(event);
+          }
+        },
+        {
+          profileId: profileState.activeProfileId,
+          cwd: sessionCwd,
+          savedSession: options.savedSession,
+          clientSettings: settings,
+          profiles: profilesHintFromStore(
+            profileState.activeProfileId,
+            profileState.profiles,
+          ),
+        },
+      );
+    },
+    onSuccess: async () => {
+      setConnectionState("connected");
+      setProgress(null);
+      await queryClient.invalidateQueries({ queryKey: ["acp-status"] });
+    },
+    onError: (error) => {
+      setConnectionState("error");
+      setProgress(null);
+      pushSystem(errorMessage(error));
+    },
+  });
+
+  const switchingSession = switchSessionMutation.isPending;
+  const composerBusy =
+    busy || newChatMutation.isPending || switchingSession;
   const historySwitchBlocked = !canSwitchHistoryConversation({
     busy,
-    creatingSession: newChatMutation.isPending,
+    creatingSession: newChatMutation.isPending || switchingSession,
   });
 
   const reconciledHistory = useMemo(
@@ -473,6 +522,8 @@ export function AcpPanel() {
 
     if (newChatMutation.isPending) return;
 
+    if (switchingSession) return;
+
     if (sessionActive) {
       setConnectionState("connected");
       return;
@@ -535,6 +586,7 @@ export function AcpPanel() {
     setSavedSession,
     statusQuery.isLoading,
     newChatMutation.isPending,
+    switchingSession,
   ]);
 
   const handleReconnect = () => {
@@ -949,37 +1001,20 @@ export function AcpPanel() {
     } else {
       resumeExpectedSessionIdRef.current = null;
       resumeNoticePendingRef.current = false;
-      // F3:按提示兑现“作为新对话开始”。不断后端、不清 hint 的话，下一问
-      // 会续上当前活线程（guard.is_some 直接复用），还顺手覆盖这条旧记录。
-      clearSavedSession();
+      // F3:按提示兑现“作为新对话开始”。同进程关旧会话、开新线程，
+      // 不杀 Agent 进程；下一问不再续旧线程，也不再覆盖这条旧记录。
       if (sessionActive) {
-        void acpClose()
-          .then(() =>
-            queryClient.invalidateQueries({ queryKey: ["acp-status"] }),
-          )
-          .catch((error) => {
-            setConnectionState("error");
-            setProgress(null);
-            pushSystem(errorMessage(error));
-          });
+        switchSessionMutation.mutate({ savedSession: null });
+      } else {
+        clearSavedSession();
       }
       pushSystem("这条记录没有可恢复的 AI 记忆，继续发言将作为新对话开始");
     }
 
     if (adoptResumeTarget && !activeTargetMatches) {
-      if (sessionActive) {
-        setConnectionState("connecting");
-        setProgress("正在恢复该对话的 AI 记忆…");
-        void acpClose()
-          .then(() =>
-            queryClient.invalidateQueries({ queryKey: ["acp-status"] }),
-          )
-          .catch((error) => {
-            setConnectionState("error");
-            setProgress(null);
-            pushSystem(errorMessage(error));
-          });
-      }
+      // 同进程切换：不断 Agent 进程，关旧会话后 resume 目标线程。
+      setProgress("正在恢复该对话的 AI 记忆…");
+      switchSessionMutation.mutate({ savedSession: resumeHint });
       return;
     }
   };

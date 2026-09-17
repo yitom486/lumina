@@ -565,17 +565,52 @@ impl AcpService {
         }
 
         session.init = init.clone();
-        let supports_resume = init.supports_session_resume;
+        let session_id = self.open_session_on_live_process(
+            &mut session,
+            saved_session,
+            NewSessionSpec {
+                cwd: &cwd,
+                profile_id: &profile.id,
+                vision_capable,
+                kind: session_kind,
+                resume: None,
+            },
+            on_event,
+        )?;
+
+        session.session_id = session_id;
+        workspace_guard.1 = false;
+        Ok(session)
+    }
+
+    /// Open (resume when possible, else create) a session on an ALREADY-LIVE
+    /// agent process. Shared by fresh spawn and same-process rotation
+    /// (`switch_session`), so both paths resume-or-create identically.
+    pub(crate) fn open_session_on_live_process(
+        &self,
+        session: &mut LiveSession,
+        saved_session: Option<&SavedSessionHint>,
+        spec: NewSessionSpec<'_>,
+        on_event: &mut dyn FnMut(AcpEvent),
+    ) -> Result<String, AcpError> {
+        let NewSessionSpec {
+            cwd,
+            profile_id,
+            vision_capable,
+            kind,
+            resume: _,
+        } = spec;
+        let supports_resume = session.init.supports_session_resume;
 
         // Snapshot IO goes through the app-provided environment (M5).
         let env = session_env()?;
-        let snapshot_path = env.snapshot_path(std::path::Path::new(&cwd));
+        let snapshot_path = env.snapshot_path(std::path::Path::new(cwd));
         env.sync_snapshot(&snapshot_path, vision_capable)
             .map_err(|error| AcpError::internal(Some(&error)))?;
         let isolated = self.isolated_task();
         let mcp_servers = env.mcp_servers(&snapshot_path, isolated);
         tracing::info!(
-            session_kind = ?session_kind,
+            session_kind = ?kind,
             isolated,
             cwd,
             snapshot = %snapshot_path.display(),
@@ -590,10 +625,10 @@ impl AcpService {
         let saved = saved_session.cloned();
         let try_resume = supports_resume
             && saved.as_ref().is_some_and(|s| {
-                s.profile_id == profile.id && s.cwd == cwd && !s.session_id.is_empty()
+                s.profile_id == profile_id && s.cwd == cwd && !s.session_id.is_empty()
             });
 
-        let session_id = if try_resume {
+        if try_resume {
             let Some(saved) = saved else {
                 return Err(AcpError::internal(Some("saved session missing for resume")));
             };
@@ -606,12 +641,12 @@ impl AcpService {
                 &session.stdin,
                 resume_id,
                 "session/resume",
-                session_resume_params(&saved.session_id, &cwd, mcp_servers),
+                session_resume_params(&saved.session_id, cwd, mcp_servers),
             )?;
             let resume_started = Instant::now();
             let resume_resp = read_until_id_raw(
                 self,
-                &mut session,
+                session,
                 resume_id,
                 Duration::from_secs(60),
                 &self.cancel,
@@ -623,7 +658,7 @@ impl AcpService {
                     session.model_options = parse_session_model_options(&response);
                     tracing::info!(
                         elapsed_ms = resume_started.elapsed().as_millis(),
-                        session_kind = ?session_kind,
+                        session_kind = ?kind,
                         session_id = %saved.session_id,
                         "session/resume succeeded"
                     );
@@ -632,11 +667,11 @@ impl AcpService {
                     });
                     on_event(AcpEvent::SessionSaved {
                         session_id: saved.session_id.clone(),
-                        profile_id: profile.id.clone(),
-                        cwd: cwd.clone(),
+                        profile_id: profile_id.to_string(),
+                        cwd: cwd.to_string(),
                         resume: Some(ResumeOutcome::Resumed),
                     });
-                    saved.session_id
+                    Ok(saved.session_id)
                 }
                 Err(error) => {
                     let outcome = classify_resume_failure(error.details.as_deref());
@@ -647,35 +682,31 @@ impl AcpService {
                         "session/resume failed; creating new session"
                     );
                     self.create_new_session(
-                        &mut session,
+                        session,
                         NewSessionSpec {
-                            cwd: &cwd,
-                            profile_id: &profile.id,
+                            cwd,
+                            profile_id,
                             vision_capable,
-                            kind: session_kind,
+                            kind,
                             resume: Some(outcome),
                         },
                         on_event,
-                    )?
+                    )
                 }
             }
         } else {
             self.create_new_session(
-                &mut session,
+                session,
                 NewSessionSpec {
-                    cwd: &cwd,
-                    profile_id: &profile.id,
+                    cwd,
+                    profile_id,
                     vision_capable,
-                    kind: session_kind,
+                    kind,
                     resume: None,
                 },
                 on_event,
-            )?
-        };
-
-        session.session_id = session_id;
-        workspace_guard.1 = false;
-        Ok(session)
+            )
+        }
     }
 
     pub(crate) fn create_new_session(
