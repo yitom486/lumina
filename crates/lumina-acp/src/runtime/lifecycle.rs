@@ -1,4 +1,4 @@
-﻿//! Live ACP session lifecycle: spawn, session/new|resume|close, rotation.
+//! Live ACP session lifecycle: spawn, session/new|resume|close, rotation.
 //!
 //! Pure move from `runtime/service.rs` (no behavior change).
 
@@ -11,7 +11,7 @@ use std::time::{Duration, Instant};
 
 use crate::agent::launch::{pick_auth_method, resolve_launch};
 use crate::agent::profile::{resolve_active_profile, AgentKind, PreparedProfiles};
-use crate::agent::workspace::resolve_session_cwd;
+use crate::agent::workspace::{resolve_session_cwd, same_workspace};
 use crate::domain::environment::session_env;
 use crate::domain::model::{
     AcpEvent, AcpSessionModelOptions, AcpSessionModelSelection, AgentSessionListResult,
@@ -623,9 +623,15 @@ impl AcpService {
         });
 
         let saved = saved_session.cloned();
+        // Workspace compare must ignore spelling: the request `cwd` is
+        // canonicalized (`\\?\D:\...` verbatim on Windows) while a stored
+        // hint keeps the frontend spelling (`D:\...`). A plain `==` reports
+        // `scope_mismatch` forever and resume is never attempted.
         let try_resume = supports_resume
             && saved.as_ref().is_some_and(|s| {
-                s.profile_id == profile_id && s.cwd == cwd && !s.session_id.is_empty()
+                s.profile_id == profile_id
+                    && same_workspace(&s.cwd, cwd)
+                    && !s.session_id.is_empty()
             });
 
         if try_resume {
@@ -707,7 +713,9 @@ impl AcpService {
             } else {
                 match saved.as_ref() {
                     Some(hint) if hint.session_id.is_empty() => "no_hint",
-                    Some(hint) if hint.profile_id != profile_id || hint.cwd != cwd => {
+                    Some(hint)
+                        if hint.profile_id != profile_id || !same_workspace(&hint.cwd, cwd) =>
+                    {
                         "scope_mismatch"
                     }
                     Some(_) => "scope_mismatch",
@@ -722,6 +730,12 @@ impl AcpService {
                 reason = resume_skip_reason,
                 hint = %skip_hint_short,
                 session_kind = ?kind,
+                // Both sides of the scope check: a future `scope_mismatch`
+                // must be diagnosable without guessing which field drifted.
+                want_profile = profile_id,
+                want_cwd = cwd,
+                got_profile = saved.as_ref().map(|s| s.profile_id.as_str()).unwrap_or(""),
+                got_cwd = saved.as_ref().map(|s| s.cwd.as_str()).unwrap_or(""),
                 "session/resume skipped; creating new session"
             );
             self.create_new_session(

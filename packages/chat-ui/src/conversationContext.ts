@@ -1,35 +1,14 @@
-import type { SavedChatConversation } from "./chatHistoryStore";
 import type {
   AgentSessionInfo,
   ResumeOutcome,
-  SavedSessionHint,
 } from "./types";
 
 /**
- * Build a resume hint only when the saved conversation belongs to the exact
- * profile and workspace currently being connected to.
+ * 历史真相唯一来源：Agent 侧 `session/list`。
  *
- * `cwd: null` cannot produce a valid SavedSessionHint: the ACP lifecycle has
- * already resolved a concrete workspace before comparing it for resume.
+ * 本地不再维护会话注册表/转录存档/标题账本，只保留本文件里的纯显示换算
+ * （列表行、恢复提示语）与内存态缓存（调用方各自持有，不落盘）。
  */
-export function resumeHintForConversation(
-  conversation: Pick<
-    SavedChatConversation,
-    "agentSessionId" | "profileId" | "cwd"
-  >,
-  scope: { profileId: string; cwd: string | null },
-): SavedSessionHint | null {
-  const sessionId = conversation.agentSessionId;
-  if (!sessionId || !conversation.cwd || !scope.cwd) return null;
-  if (conversation.profileId !== scope.profileId) return null;
-  if (conversation.cwd !== scope.cwd) return null;
-
-  return {
-    sessionId,
-    profileId: scope.profileId,
-    cwd: scope.cwd,
-  };
-}
 
 /** Pure gate shared by the history list and the load path. */
 export function canSwitchHistoryConversation(input: {
@@ -39,87 +18,19 @@ export function canSwitchHistoryConversation(input: {
   return !input.busy && !input.creatingSession;
 }
 
-export type HistoryConversationAction = "available" | "busy" | "missing";
-
-/** Resolve the UI action state without embedding the priority in a component. */
-export function historyConversationAction(input: {
-  agentStatus: AgentSessionStatus;
-  switchBlocked: boolean;
-}): HistoryConversationAction {
-  if (input.switchBlocked) return "busy";
-  if (input.agentStatus === "missing") return "missing";
-  return "available";
-}
-
-/** Tooltip for a history row whose AI memory is proven gone. */
-export const MISSING_HISTORY_CONVERSATION_TITLE = "AI 记忆已不存在";
-
-/**
- * Row-level select gate for the history sheet. Only a proven-missing Agent
- * memory disables the row, regardless of origin (local or agent-only).
- * Local archive rows without a session id stay selectable: they remain
- * viewable locally and continue as a new conversation (F3 path).
- */
-export function isHistoryConversationDisabled(input: {
-  agentStatus: AgentSessionStatus;
-  agentSessionId: string | null;
-}): boolean {
-  if (input.agentSessionId == null || input.agentSessionId === "") return false;
-  return input.agentStatus === "missing";
-}
-
-export type AgentSessionStatus = "live" | "missing" | "unverified";
-export type ConversationOrigin = "local" | "agent";
-
-export type HistoryConversationPresentation = {
-  showAgentOnlyLabel: boolean;
-  showTurnCount: boolean;
-  showDelete: boolean;
-};
-
-export function historyConversationPresentation(
-  origin: ConversationOrigin,
-): HistoryConversationPresentation {
-  return origin === "agent"
-    ? { showAgentOnlyLabel: true, showTurnCount: false, showDelete: false }
-    : { showAgentOnlyLabel: false, showTurnCount: true, showDelete: true };
-}
-
-export function shouldPersistConversationSelection(
-  origin: ConversationOrigin,
-): boolean {
-  return origin === "local";
-}
-
-export type ReconciledChatConversation = SavedChatConversation & {
-  agentStatus: AgentSessionStatus;
-  origin: ConversationOrigin;
-};
-
-const AGENT_CONVERSATION_ID_PREFIX = "agent:";
-
-/** Stable display id for an Agent session that has no local transcript. */
-export function agentConversationId(sessionId: string): string {
-  return `${AGENT_CONVERSATION_ID_PREFIX}${sessionId}`;
-}
-
-/** Identify synthetic Agent-only history entries without touching persistence. */
-export function isAgentConversationId(id: string): boolean {
-  return id.startsWith(AGENT_CONVERSATION_ID_PREFIX);
-}
-
 /**
  * 列表结果能支撑哪种断言。分两层，因为「没翻完」只影响反向判断：
  * 已经出现在返回里的会话是确实存在的正向证据，与翻页是否穷尽无关；
  * 而「没出现」只有在翻完之后才能解释成不存在。
  *
- * 曾经把这两者合成一个布尔，导致会话总量超过翻页上限时整份结果被否决，
- * 历史面板什么都显示不出来。
+ * 注意：busy 不再参与——切换/回答期间 Query 缓存里的已校验行依然有效，
+ * 藏起来只会让列表“消失”。忙时禁的是点选（调用方的 switchBlocked）与
+ * 新拉取（hook 的 enabled 门），不是展示。
  */
 export type AgentSessionListTrust = {
-  /** 命中可断言存在，可据此标 live 并合成 Agent-only 条目 */
+  /** 命中可断言存在，可据此展示列表 */
   canMatch: boolean;
-  /** 未命中可断言不存在，可据此标 missing */
+  /** 未命中可断言不存在 */
   canAssertMissing: boolean;
 };
 
@@ -127,13 +38,102 @@ export function agentSessionListTrust(input: {
   hasData: boolean;
   verified: boolean;
   truncated: boolean;
-  busy: boolean;
 }): AgentSessionListTrust {
-  const canMatch = input.hasData && input.verified && !input.busy;
+  const canMatch = input.hasData && input.verified;
   return { canMatch, canAssertMissing: canMatch && !input.truncated };
 }
 
-/** Fetch the metadata once when the user opens history on a connected Agent. */
+export type HistoryThreadRow = {
+  sessionId: string;
+  title: string;
+  updatedAtMs: number;
+};
+
+/**
+ * 原生标题里属于脚手架回声的前缀：prompt 触发头、resource_link 文件名、
+ * 播放信息块。这些是发给模型看的，不是给人看的。
+ */
+const SCAFFOLD_TITLE_MARKERS = ["【工具优先】", "[@", "媒体："];
+
+function isScaffoldTitle(title: string): boolean {
+  const trimmed = title.trim();
+  return SCAFFOLD_TITLE_MARKERS.some((marker) =>
+    trimmed.startsWith(marker),
+  );
+}
+
+/**
+ * `[@name]` 文件回声里提炼媒体标签：去扩展名、点换空格、截断。
+ * 同一目录下各集文件名不同，提炼后每行可区分（哪集一眼可见）；
+ * 提炼失败才回退通用标签。纯显示换算，不编内容。
+ */
+function mediaLabelFromFileEcho(title: string): string | null {
+  const trimmed = title.trim();
+  if (!trimmed.startsWith("[@")) return null;
+  const end = trimmed.indexOf("]");
+  if (end <= 2) return null;
+  const label = trimmed
+    .slice(2, end)
+    .replace(/\.[a-z0-9]{2,5}$/i, "")
+    .replace(/[.。_]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 42)
+    .trim();
+  return label || null;
+}
+
+/**
+ * 原生会话条目 → 历史列表行。标题优先级：
+ * 本轮见过的用户首句 ＞ 像人话的原生标题 ＞ 按自家 prompt 结构提炼。
+ *
+ * 脚手架回声不直接展示短 id：`【工具优先】`是 Lumina prompt 头的独家
+ * 指纹（外部客户端写不出，比 kind 元数据更硬——老线程根本没有 kind），
+ * `[@文件名]`/`媒体：`是我们的内容块形状。文件名回声提炼成媒体标签
+ * （各集可区分），触发头回声标出来源；点开一次后一律由真实首句覆盖。
+ */
+export function historyThreadRows(
+  sessions: AgentSessionInfo[] | null | undefined,
+  titleOverrides?: Record<string, string>,
+): HistoryThreadRow[] {
+  if (!Array.isArray(sessions)) return [];
+  return sessions
+    .filter(
+      (session): session is AgentSessionInfo =>
+        !!session &&
+        typeof session.sessionId === "string" &&
+        session.sessionId.trim() !== "",
+    )
+    .map((session) => {
+      const parsed = session.updatedAt
+        ? Date.parse(session.updatedAt)
+        : Number.NaN;
+      let title = titleOverrides?.[session.sessionId];
+      if (!title) {
+        const nativeTitle = session.title?.trim();
+        if (nativeTitle && !isScaffoldTitle(nativeTitle)) {
+          title = nativeTitle;
+        } else if (nativeTitle) {
+          title =
+            mediaLabelFromFileEcho(nativeTitle) ?? "Lumina 对话";
+        } else {
+          // 真无标题才回退：新线程带 kind，老外部线程给短 id。
+          // 脚手架回声走上面分支，永不掉到这里。
+          title =
+            session.kind === "chat"
+              ? "Lumina 对话"
+              : `对话 ${session.sessionId.slice(0, 8)}`;
+        }
+      }
+      return {
+        sessionId: session.sessionId,
+        title,
+        updatedAtMs: Number.isFinite(parsed) ? parsed : 0,
+      };
+    })
+    .sort((a, b) => b.updatedAtMs - a.updatedAtMs);
+}
+
 /**
  * 恢复 AI 记忆后给用户看的提示。
  *
@@ -158,101 +158,4 @@ export function resumeOutcomeNotice(input: {
         ? "已恢复该对话的 AI 记忆"
         : "该对话的 AI 记忆已不存在，已作为新对话继续";
   }
-}
-
-export function shouldRequestHistorySessionList(input: {
-  historyOpen: boolean;
-  connected: boolean;
-  busy: boolean;
-  requested: boolean;
-}): boolean {
-  return input.historyOpen && input.connected && !input.busy && !input.requested;
-}
-
-/**
- * Reconcile local records with Agent metadata. Only a verified result scoped
- * to the exact queried cwd may add Agent-only entries; unverified data never
- * invents history rows, and the Agent response is still bounded by that cwd.
- */
-export function reconcileConversations(
-  local: SavedChatConversation[],
-  agentSessions: AgentSessionInfo[] | null | undefined,
-  options: {
-    trust: AgentSessionListTrust;
-    queryScope?: { profileId: string; cwd: string | null };
-  },
-): ReconciledChatConversation[] {
-  const canMatch = options.trust.canMatch && Array.isArray(agentSessions);
-  const byId = new Map(
-    (agentSessions ?? []).map((session) => [session.sessionId, session]),
-  );
-
-  const reconciledLocal = local.map((conversation) => {
-    const withinQueryScope =
-      !options.queryScope ||
-      (conversation.profileId === options.queryScope.profileId &&
-        conversation.cwd === options.queryScope.cwd);
-    const matchable = canMatch && withinQueryScope;
-    const agent = matchable && conversation.agentSessionId
-      ? byId.get(conversation.agentSessionId)
-      : undefined;
-    const agentTitle = agent?.title?.trim();
-    const parsedUpdatedAt = agent?.updatedAt
-      ? Date.parse(agent.updatedAt)
-      : Number.NaN;
-    const updatedAtMs = Number.isFinite(parsedUpdatedAt)
-      ? parsedUpdatedAt
-      : conversation.updatedAtMs;
-    const agentStatus: AgentSessionStatus = agent
-      ? "live"
-      : matchable &&
-          Boolean(conversation.agentSessionId) &&
-          options.trust.canAssertMissing
-        ? "missing"
-        : "unverified";
-
-    return {
-      ...conversation,
-      agentStatus,
-      origin: "local" as const,
-      title: agentTitle || conversation.title,
-      updatedAtMs,
-    };
-  });
-
-  if (!canMatch || !options.queryScope || !options.queryScope.cwd) {
-    return reconciledLocal;
-  }
-
-  const localSessionIds = new Set(
-    local
-      .map((conversation) => conversation.agentSessionId)
-      .filter((sessionId): sessionId is string => Boolean(sessionId)),
-  );
-  const agentOnly = (agentSessions ?? [])
-    .filter(
-      (session) =>
-        session.cwd === options.queryScope?.cwd &&
-        !localSessionIds.has(session.sessionId),
-    )
-    .map((session) => {
-      const parsedUpdatedAt = session.updatedAt
-        ? Date.parse(session.updatedAt)
-        : Number.NaN;
-      return {
-        id: agentConversationId(session.sessionId),
-        title: session.title?.trim() || "未命名对话",
-        cwd: options.queryScope!.cwd,
-        profileId: options.queryScope!.profileId,
-        agentSessionId: session.sessionId,
-        updatedAtMs: Number.isFinite(parsedUpdatedAt) ? parsedUpdatedAt : 0,
-        turns: [],
-        agentStatus: "live" as const,
-        origin: "agent" as const,
-      };
-    });
-
-  return [...reconciledLocal, ...agentOnly].sort(
-    (a, b) => b.updatedAtMs - a.updatedAtMs,
-  );
 }

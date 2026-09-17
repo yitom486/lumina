@@ -8,15 +8,22 @@ type Props = {
   turns: ChatTurn[];
   notices: { id: string; content: string }[];
   emptyHint?: string;
+  /**
+   * 为 true 才跟随到底部（现问现答的流式过程）。
+   * 打开历史时调用方置 false 并自行滚到顶部：读旧对话从头看，
+   * 不能每次落定都被拽回尾部。
+   */
+  followEnd: boolean;
   annotationWorkspace?: string | null;
   onDismissAnnotation?: (turnId: string) => void;
-  onSaveAnnotation?: (turnId: string, proposalId?: string) => void;
+  onSaveAnnotation?: (turnId: string) => void;
 };
 
 export function ChatTurnList({
   turns,
   notices,
   emptyHint = "向 AI Agent 提问。打开视频后会附带播放上下文。",
+  followEnd,
   annotationWorkspace,
   onDismissAnnotation,
   onSaveAnnotation,
@@ -24,8 +31,8 @@ export function ChatTurnList({
   const endRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    endRef.current?.scrollIntoView({ behavior: "auto", block: "end" });
-  }, [turns, notices]);
+    if (followEnd) endRef.current?.scrollIntoView({ behavior: "auto", block: "end" });
+  }, [turns, notices, followEnd]);
 
   if (turns.length === 0 && notices.length === 0) {
     return (
@@ -35,8 +42,8 @@ export function ChatTurnList({
     );
   }
 
-  // 系统通知跟在对话尾部（时间顺序），而不是堆在顶部：连接/恢复这类
-  // 生命周期事件只有落在尾部才和用户看到的因果一致。
+  // 操作反馈跟在对话尾部（时间顺序）。会话出身（恢复/新建）是出生证明，
+  // 由调用方钉在列表顶部单槽展示，不进这里、不堆积。
   return (
     <ChatColumn className="min-h-0 space-y-4 py-3">
       {turns.map((turn) => (

@@ -94,6 +94,39 @@ fn normalize_abs(path: PathBuf) -> PathBuf {
     }
 }
 
+/// Compare two workspace spellings for the same directory.
+///
+/// The request `cwd` is canonicalized (`\\?\D:\...` verbatim on Windows)
+/// while a stored hint keeps the spelling the frontend sent (`D:\...`).
+/// A plain string compare therefore always reports `scope_mismatch` on
+/// Windows and resume is skipped forever. Strip the verbatim prefix,
+/// unify separators and trailing slashes (and case on Windows, whose
+/// filesystem is case-insensitive) before comparing. Pure string work:
+/// no IO, infallible, so it can never turn a match into a new error.
+pub fn same_workspace(a: &str, b: &str) -> bool {
+    normalize_workspace_spelling(a) == normalize_workspace_spelling(b)
+}
+
+fn normalize_workspace_spelling(raw: &str) -> String {
+    let mut value = raw.trim().replace('/', "\\");
+    if let Some(stripped) = value.strip_prefix("\\\\?\\UNC\\") {
+        value = format!("\\\\{stripped}");
+    } else if let Some(stripped) = value.strip_prefix("\\\\?\\") {
+        value = stripped.to_string();
+    }
+    while value.len() > 1 && value.ends_with('\\') {
+        value.pop();
+    }
+    #[cfg(windows)]
+    {
+        value.to_ascii_lowercase()
+    }
+    #[cfg(not(windows))]
+    {
+        value
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -128,5 +161,21 @@ mod tests {
                 .unwrap_or_else(|_| tmp.parent().unwrap().to_path_buf())
         );
         let _ = std::fs::remove_file(&tmp);
+    }
+
+    #[test]
+    fn same_workspace_ignores_verbatim_prefix_and_separators() {
+        // Canonical request spelling vs the raw frontend hint: the exact
+        // pair that used to force `scope_mismatch` on every Windows resume.
+        assert!(same_workspace("\\\\?\\D:\\movie\\x", "D:\\movie\\x",));
+        assert!(same_workspace("D:/movie/x/", "D:\\movie\\x"));
+        assert!(!same_workspace("D:\\movie\\a", "D:\\movie\\b"));
+        assert!(!same_workspace("", "D:\\movie\\x"));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn same_workspace_is_case_insensitive_on_windows() {
+        assert!(same_workspace("D:\\Movie\\x", "d:\\movie\\X"));
     }
 }

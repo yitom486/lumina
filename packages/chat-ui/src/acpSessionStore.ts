@@ -1,5 +1,4 @@
 import { create } from "zustand";
-import { persist } from "zustand/middleware";
 
 import type { SavedSessionHint } from "./types";
 
@@ -9,28 +8,12 @@ type AcpSessionStore = {
   clearSavedSession: () => void;
 };
 
-/** Session id hint for ACP resume; chat transcripts live in chatHistoryStore. */
-export const useAcpSessionStore = create<AcpSessionStore>()(
-  persist(
-    (set) => ({
-      savedSession: null,
-      setSavedSession: (savedSession) => set({ savedSession }),
-      clearSavedSession: () => set({ savedSession: null }),
-    }),
-    {
-      name: "lumina-acp-session",
-      partialize: (state) => ({
-        savedSession: state.savedSession,
-      }),
-      merge: (persisted, current) => {
-        const saved = (persisted ?? {}) as Partial<
-          Pick<AcpSessionStore, "savedSession">
-        >;
-        return {
-          ...current,
-          savedSession: saved.savedSession ?? current.savedSession ?? null,
-        };
-      },
-    },
-  ),
-);
+/**
+ * 当前连接的原生会话 id。纯内存，不落盘：历史真相在 Agent 侧
+ * `session/list`，重启后由用户从历史列表选择，不再静默恢复旧线程。
+ */
+export const useAcpSessionStore = create<AcpSessionStore>()((set) => ({
+  savedSession: null,
+  setSavedSession: (savedSession) => set({ savedSession }),
+  clearSavedSession: () => set({ savedSession: null }),
+}));

@@ -12,7 +12,6 @@ export * from "./profilesSignature";
 export * from "./defaultAgentProfiles";
 export * from "./promptQueue";
 export * from "./chatUiStore";
-export * from "./chatHistoryStore";
 export * from "./acpSettingsStore";
 export * from "./acpProfilesStore";
 export * from "./acpSessionStore";

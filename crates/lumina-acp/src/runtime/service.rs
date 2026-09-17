@@ -725,13 +725,45 @@ impl AcpService {
             )? {
                 Some((id, response)) if id == request_id => {
                     if let Some(message) = is_error_response(&response) {
+                        // This path used to be silent: the UI reported a load
+                        // failure with no backend trace of the agent's reason.
+                        tracing::warn!(
+                            session_id,
+                            turns = turns.len(),
+                            elapsed_ms = started.elapsed().as_millis(),
+                            %message,
+                            "ACP session/load failed"
+                        );
                         return Err(AcpError::protocol(Some(&format!(
                             "session/load: {message}"
                         ))));
                     }
+                    let mut user_turns = 0usize;
+                    let mut agent_turns = 0usize;
+                    let mut tool_turns = 0usize;
+                    for turn in &turns {
+                        match turn.role.as_str() {
+                            "user" => user_turns += 1,
+                            "agent" => agent_turns += 1,
+                            _ => tool_turns += 1,
+                        }
+                    }
                     tracing::info!(
                         session_id,
                         turns = turns.len(),
+                        user_turns,
+                        agent_turns,
+                        tool_turns,
+                        // Role pairing without content: shows whether user
+                        // content landed in agent bubbles and vice versa.
+                        turns_detail = %turns
+                            .iter()
+                            .map(|turn| {
+                                let kind = turn.role.chars().next().unwrap_or('?');
+                                format!("{kind}:{}", turn.text.len())
+                            })
+                            .collect::<Vec<_>>()
+                            .join(","),
                         elapsed_ms = started.elapsed().as_millis(),
                         "ACP session/load completed"
                     );

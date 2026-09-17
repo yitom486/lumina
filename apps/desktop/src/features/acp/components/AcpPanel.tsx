@@ -34,13 +34,18 @@ import {
   acpCancel,
   acpClose,
   acpConnect,
-  acpLoadSession,
   acpNewChat,
   acpPrompt,
   acpSwitchSession,
   getAcpStatus,
 } from "../api";
-import { acpQueryKeys, useAgentSessionList } from "../queries";
+import {
+  acpQueryKeys,
+  fetchAgentTranscript,
+  getTranscriptCache,
+  prefetchAgentSessionList,
+  useAgentSessionList,
+} from "../queries";
 import { profilesHintFromStore } from "@lumina/chat-ui/defaultAgentProfiles";
 import {
   applyAcpEventToTurn,
@@ -50,17 +55,11 @@ import {
   type SystemNotice,
 } from "@lumina/chat-ui/chatTurns";
 import {
-  listConversationsForScope,
-  useChatHistoryStore,
-} from "@lumina/chat-ui/chatHistoryStore";
-import {
   agentSessionListTrust,
   canSwitchHistoryConversation,
+  historyThreadRows,
   resumeOutcomeNotice,
-  isAgentConversationId,
-  reconcileConversations,
-  resumeHintForConversation,
-  shouldPersistConversationSelection,
+  type HistoryThreadRow,
 } from "@lumina/chat-ui/conversationContext";
 import { useChatUiStore } from "@lumina/chat-ui/chatUiStore";
 import { buildAnchoredVideoPromptContext } from "../context";
@@ -96,6 +95,15 @@ import { ChatTurnList } from "./ChatTurnList";
 import { PermissionPrompt } from "./PermissionPrompt";
 
 /** Kept mounted in ChatDock after first open; hide ≠ unmount. */
+function firstUserTextOf(turns: ChatTurn[]): string | null {
+  const text = turns
+    .find((turn) => turn.userText.trim())
+    ?.userText.trim()
+    .slice(0, 64);
+  return text || null;
+}
+
+/** Kept mounted in ChatDock after first open; hide ≠ unmount. */
 export function AcpPanel() {
   const queryClient = useQueryClient();
   const currentFile = usePlayerStore((s) => s.currentFile);
@@ -106,15 +114,6 @@ export function AcpPanel() {
   const hasSavedSession = useAcpSessionStore((s) => s.savedSession !== null);
   const setSavedSession = useAcpSessionStore((s) => s.setSavedSession);
   const clearSavedSession = useAcpSessionStore((s) => s.clearSavedSession);
-  const conversations = useChatHistoryStore((s) => s.conversations);
-  const activeConversationId = useChatHistoryStore((s) => s.activeConversationId);
-  const upsertActiveConversation = useChatHistoryStore(
-    (s) => s.upsertActiveConversation,
-  );
-  const setActiveConversationId = useChatHistoryStore(
-    (s) => s.setActiveConversationId,
-  );
-  const deleteConversation = useChatHistoryStore((s) => s.deleteConversation);
   const setAcpResponding = useChatUiStore((s) => s.setAcpResponding);
 
   const statusQuery = useQuery({
@@ -159,27 +158,29 @@ export function AcpPanel() {
     };
   };
   const [quickNoteOpen, setQuickNoteOpen] = useState(false);
-  const [conversationId, setConversationId] = useState(
-    () => `chat-${Date.now()}`,
-  );
   const [historyOpen, setHistoryOpen] = useState(false);
-  const [historyIncludeAll, setHistoryIncludeAll] = useState(false);
   const resumeExpectedSessionIdRef = useRef<string | null>(null);
   const resumeNoticePendingRef = useRef(false);
   const transcriptLoadSeqRef = useRef(0);
-  // Only a prompt the user actually sent makes this conversation worth saving.
-  // Opening a record must never write it back: the reload alone would bump
-  // `updatedAtMs`, reorder the list and overwrite the stored session id.
-  const userSentInConversationRef = useRef(false);
+  // 标题覆盖（本轮内存，不落盘）：原生标题常是 prompt 脚手架/文件名，
+  // 用本轮见过的用户首句覆盖。文本缓存走 TanStack Query（transcript key）。
+  const [titleOverrides, setTitleOverrides] = useState<Record<string, string>>(
+    {},
+  );
+  const turnsRef = useRef<ChatTurn[]>([]);
+  turnsRef.current = turns;
 
-  // F1:空白新会话永不静默恢复。turns/会话 id 是内存态，重启即空；但
-  // savedSession 持久化在 localStorage。不在这里清掉，启动后第一问就会
-  // 带着旧 hint 去 resume，把看不见的旧线程接进空白框（落盘 effect 还会
-  // 把新本地 id 绑到旧线程上）。显式恢复只走历史记录采用路径，那里会
-  // 重新 setSavedSession；同会话内掉线重连不受影响（turns 非空且 store
-  // 仍在，照常带 hint）。
+  // 空白框永不静默恢复：启动不清 hint，第一问就会把看不见的旧线程接进来。
+  // 显式恢复只走历史列表打开路径。同时清掉已下线的本地账本残留
+  // （旧版本把对话存档/session hint 落在 localStorage）。
   useEffect(() => {
     clearSavedSession();
+    try {
+      window.localStorage.removeItem("lumina-acp-chat-history");
+      window.localStorage.removeItem("lumina-acp-session");
+    } catch {
+      // 私有模式等极端环境：清不掉也不影响，内存态本来就是空的。
+    }
   }, [clearSavedSession]);
 
   const available = statusQuery.data?.available ?? false;
@@ -227,17 +228,6 @@ export function AcpPanel() {
     return first?.userText.trim().slice(0, 72) ?? null;
   }, [turns]);
 
-  const scopedHistory = useMemo(
-    () =>
-      listConversationsForScope(
-        conversations,
-        sessionCwd,
-        activeProfileId,
-        historyIncludeAll,
-      ),
-    [conversations, sessionCwd, activeProfileId, historyIncludeAll],
-  );
-
   const pushSystem = (content: string) => {
     setNotices((prev) => pushNotice(prev, idSeq, content));
   };
@@ -267,6 +257,11 @@ export function AcpPanel() {
     outcome: ResumeOutcome | "fresh";
     sessionId: string;
   } | null>(null);
+  // 会话出身单槽展示（恢复/新建）：钉在对话列表顶部，不进尾部通知、
+  // 不堆积。新会话落定即替换，旧的不留。
+  const [sessionBanner, setSessionBanner] = useState<string | null>(null);
+  // 读历史时从头看（false），现问现答时跟到底（true）。
+  const [stickToEnd, setStickToEnd] = useState(true);
 
   const handleSessionSaved = (
     event: Extract<AcpEvent, { type: "sessionSaved" }>,
@@ -275,7 +270,7 @@ export function AcpPanel() {
     const shortId = event.sessionId.slice(0, 8);
     if (expectedSessionId) {
       if (resumeNoticePendingRef.current) {
-        pushSystem(
+        setSessionBanner(
           `${resumeOutcomeNotice({
             outcome: event.resume,
             sessionMatchedRequest: event.sessionId === expectedSessionId,
@@ -286,15 +281,15 @@ export function AcpPanel() {
       resumeNoticePendingRef.current = false;
     } else if (event.resume) {
       // 自动路径（重连/报错重建）以前静默：恢复成功用户不知道，
-      // 旧记忆丢失也只剩一个常驻顶栏。现在每次落定都在尾部留一行。
-      pushSystem(
+      // 旧记忆丢失也只剩一个常驻顶栏。现在落定即换顶部横条。
+      setSessionBanner(
         `${resumeOutcomeNotice({
           outcome: event.resume,
           sessionMatchedRequest: false,
         })}（${shortId}）`,
       );
     } else {
-      pushSystem(`已连接，开始新对话（${shortId}）`);
+      setSessionBanner(`已连接，开始新对话（${shortId}）`);
     }
     setLastSessionResolution({
       outcome: event.resume ?? "fresh",
@@ -305,54 +300,28 @@ export function AcpPanel() {
       profileId: event.profileId,
       cwd: event.cwd,
     });
-  };
-
-  // 关面板/建新对话后丢掉会话列表缓存：下次打开按当前作用域重拉。
-  // 与旧的手写 clear 语义一致（不清别人的 key，只清当前作用域）。
-  const clearHistorySessionListState = () => {
-    void queryClient.removeQueries({
-      queryKey: acpQueryKeys.sessionList(activeProfileId, sessionCwd ?? null),
+    // 新线程要出现在历史列表里：通知列表缓存失效。
+    void queryClient.invalidateQueries({ queryKey: ["acp-session-list"] });
+    // 本轮见过的用户首句覆盖原生垃圾标题（只记一次，不覆盖已有）。
+    setTitleOverrides((prev) => {
+      if (prev[event.sessionId]) return prev;
+      const text = firstUserTextOf(turnsRef.current);
+      if (!text) return prev;
+      return { ...prev, [event.sessionId]: text };
     });
   };
 
-  // 列表拉取失败沿用旧语义：提示一句（每个失败只提示一次），面板继续用本地记录。
+  // 列表拉取失败提示一句（每个失败只提示一次）。
   const sessionListErrorNoticedRef = useRef(false);
   const noticeSessionListError = (failed: boolean) => {
     if (failed && !sessionListErrorNoticedRef.current) {
       sessionListErrorNoticedRef.current = true;
-      pushSystem("暂时无法校验历史对话，仍可使用本地记录");
+      pushSystem("历史列表暂时无法加载，可稍后重试");
     }
     if (!failed) {
       sessionListErrorNoticedRef.current = false;
     }
   };
-
-  useEffect(() => {
-    if (!userSentInConversationRef.current) return;
-    if (busy) return;
-    if (turns.every((turn) => !turn.userText.trim() && !turn.answer.trim())) {
-      return;
-    }
-    upsertActiveConversation({
-      id: conversationId,
-      cwd: sessionCwd ?? null,
-      profileId: activeProfileId,
-      agentSessionId:
-        savedSession?.profileId === activeProfileId &&
-        savedSession.cwd === (sessionCwd ?? null)
-          ? savedSession.sessionId
-          : null,
-      turns,
-    });
-  }, [
-    activeProfileId,
-    busy,
-    conversationId,
-    sessionCwd,
-    savedSession,
-    turns,
-    upsertActiveConversation,
-  ]);
 
   const newChatMutation = useMutation({
     mutationFn: async (options?: { preserveTurns?: boolean }) => {
@@ -360,11 +329,9 @@ export function AcpPanel() {
       resumeExpectedSessionIdRef.current = null;
       resumeNoticePendingRef.current = false;
       setLastSessionResolution(null);
+      setSessionBanner(null);
       clearSavedSession();
       if (!preserveTurns) {
-        // A reconnect that keeps the turns stays on the same conversation, so
-        // it must keep the right to save them too.
-        userSentInConversationRef.current = false;
         setTurns([]);
         setNotices([]);
         setDraftEmpty();
@@ -407,9 +374,6 @@ export function AcpPanel() {
       setConnectionState("connected");
       setProgress(null);
       if (!options?.preserveTurns) {
-        setConversationId(`chat-${Date.now()}`);
-        setActiveConversationId(null);
-        clearHistorySessionListState();
         setHistoryOpen(false);
       }
       await queryClient.invalidateQueries({ queryKey: ["acp-status"] });
@@ -428,6 +392,7 @@ export function AcpPanel() {
       savedSession: SavedSessionHint | null;
     }) => {
       setLastSessionResolution(null);
+      setSessionBanner(null);
       clearSavedSession();
       setConnectionState("connecting");
 
@@ -475,51 +440,70 @@ export function AcpPanel() {
     creatingSession: newChatMutation.isPending || switchingSession,
   });
 
-  const { snapshot: agentSessionList, isError: sessionListFailed } =
-    useAgentSessionList({
-      historyOpen,
-      connected: connectionState === "connected",
-      blocked: composerBusy,
-      profileId: activeProfileId,
-      cwd: sessionCwd ?? null,
-    });
+  const {
+    snapshot: agentSessionList,
+    isError: sessionListFailed,
+    isPending: sessionListPending,
+  } = useAgentSessionList({
+    historyOpen,
+    connected: connectionState === "connected",
+    blocked: composerBusy,
+    profileId: activeProfileId,
+    cwd: sessionCwd ?? null,
+  });
   useEffect(() => {
     noticeSessionListError(sessionListFailed);
   });
+  // 加载态与空态必须长得不一样：以前没数据时“加载中”和“真没有”
+  // 是同一句话，用户只能干等。pending 且无任何缓存才算加载中。
+  const sessionListLoading =
+    historyOpen && sessionListPending && !agentSessionList;
 
-  const reconciledHistory = useMemo(
+  const historyRows: HistoryThreadRow[] = useMemo(
     () => {
       const listScopeMatches =
         agentSessionList?.profileId === activeProfileId &&
         agentSessionList.cwd === (sessionCwd ?? null);
       const result = listScopeMatches ? agentSessionList.result : null;
-      return reconcileConversations(scopedHistory, result?.sessions, {
-        trust: agentSessionListTrust({
-          hasData: result !== null,
-          verified: result?.verified ?? false,
-          truncated: result?.truncated ?? false,
-          busy: composerBusy,
-        }),
-        queryScope: {
-          profileId: activeProfileId,
-          cwd: sessionCwd ?? null,
-        },
+      const trusted = agentSessionListTrust({
+        hasData: result !== null,
+        verified: result?.verified ?? false,
+        truncated: result?.truncated ?? false,
       });
+      // 历史真相 = 原生列表。未校验（失败/忙）时不展示，避免把残缺当全部。
+      if (!trusted.canMatch) return [];
+      return historyThreadRows(result?.sessions, titleOverrides);
     },
-    [activeProfileId, agentSessionList, composerBusy, scopedHistory, sessionCwd],
+    [
+      activeProfileId,
+      agentSessionList,
+      composerBusy,
+      sessionCwd,
+      titleOverrides,
+    ],
   );
 
   const handleHistoryOpenChange = (open: boolean) => {
-    if (!open) {
-      clearHistorySessionListState();
-      setHistoryOpen(false);
-      return;
-    }
-
-    // 拉取由 useAgentSessionList 按 Query key 自动触发（打开 + 已连接 +
-    // 非忙）；串话、作用域隔离、失败降级都在 hook 内处理。
-    setHistoryOpen(true);
+    // 关面板不清缓存：staleTime 内的重复打开直接秒开；
+    // 新线程落定由 sessionSaved 失效缓存，作用域切换 key 天然隔离。
+    setHistoryOpen(open);
   };
+
+  // 历史列表预热：连接空闲就拉一次写进 Query 缓存，用户点开即秒开。
+  // staleTime 内的重复预热是无操作，不走 IPC。
+  useEffect(() => {
+    if (connectionState !== "connected" || composerBusy) return;
+    void prefetchAgentSessionList(queryClient, {
+      profileId: activeProfileId,
+      cwd: sessionCwd ?? null,
+    });
+  }, [
+    connectionState,
+    composerBusy,
+    activeProfileId,
+    sessionCwd,
+    queryClient,
+  ]);
 
   useEffect(() => {
     setAcpResponding(composerBusy);
@@ -901,7 +885,7 @@ export function AcpPanel() {
       return;
     }
     const anchorPositionMs = consumeAnchorPositionMs();
-    userSentInConversationRef.current = true;
+    setStickToEnd(true);
     if (busy || busyRef.current || runMutation.isPending) {
       syncPromptQueue(
         enqueuePrompt(
@@ -930,7 +914,6 @@ export function AcpPanel() {
       return;
     }
     const anchorPositionMs = consumeAnchorPositionMs();
-    userSentInConversationRef.current = true;
     syncPromptQueue(
       bargeInPrompt(
         promptQueueRef.current,
@@ -956,10 +939,11 @@ export function AcpPanel() {
   // 用户以为开了新的，下一问续的还是旧线程的隐藏上下文。
   const startNewChat = () => {
     if (busy || newChatMutation.isPending) return;
+    setStickToEnd(false);
     if (!available) {
-      userSentInConversationRef.current = false;
       setTurns([]);
       setNotices([]);
+      setSessionBanner(null);
       setDraftEmpty();
       setProgress(null);
       setPendingPermission(null);
@@ -971,7 +955,9 @@ export function AcpPanel() {
     newChatMutation.mutate();
   };
 
-  const loadConversation = (id: string) => {
+  // 打开历史线程：串行 resume → load。单 stdio 连接上绝不并发两件事：
+  // 先定归属（记忆），落定后再独占连接读文本。失败说实话，不回退假存档。
+  const loadConversation = async (sessionId: string) => {
     if (
       !canSwitchHistoryConversation({
         busy,
@@ -981,128 +967,130 @@ export function AcpPanel() {
       pushSystem("正在回答，请稍后再切换对话");
       return;
     }
-
-    const item = reconciledHistory.find((conversation) => conversation.id === id);
-    if (!item) return;
-    const resumeHint = resumeHintForConversation(item, {
-      profileId: activeProfileId,
-      cwd: sessionCwd ?? null,
-    });
-    const currentSessionId = useAcpSessionStore.getState().savedSession
-      ?.sessionId;
-    const activeTargetMatches =
-      resumeHint !== null &&
-      sessionActive &&
-      currentSessionId === resumeHint.sessionId;
-    const adoptResumeTarget = resumeHint !== null;
-    // 合成 id 只是列表显示用的键，绝不能进持久化：一旦被存成本地记录的 id，
-    // deleteHistoryConversation 的合成 id 防御会让那条记录永远删不掉。
-    setConversationId(
-      item.origin === "agent" ? `chat-${Date.now()}` : item.id,
-    );
-    if (shouldPersistConversationSelection(item.origin)) {
-      setActiveConversationId(item.id);
+    if (switchSessionMutation.isPending) {
+      pushSystem("正在切换对话，请稍后");
+      return;
     }
-    userSentInConversationRef.current = false;
-    syncTurnIdSeq(idSeq, item.turns);
-    seedHandledProposals(item.turns);
+    const target = sessionId.trim();
+    if (!target) return;
+    if (!sessionCwd) {
+      pushSystem("当前没有工作目录，无法打开该对话");
+      return;
+    }
+
+    const loadSeq = transcriptLoadSeqRef.current + 1;
+    transcriptLoadSeqRef.current = loadSeq;
+    // 秒开：Query 缓存里有就先摆（上次 load 的原生文本），回放回来再替换。
+    // 缓存 miss 即空——不再有本地存档可回退，也不再编假存档。
+    const scope = {
+      profileId: activeProfileId,
+      cwd: sessionCwd,
+      sessionId: target,
+    };
+    let cached: ChatTurn[] = [];
+    try {
+      cached = mapLoadedTranscript(getTranscriptCache(queryClient, scope));
+    } catch {
+      cached = [];
+    }
+    syncTurnIdSeq(idSeq, cached);
+    seedHandledProposals(cached);
     syncPromptQueue([]);
-    setTurns(item.turns);
+    setTurns([...cached]);
+    // 读历史从头看：停掉跟随到底，滚到顶部。
+    setStickToEnd(false);
+    turnListRef.current?.scrollTo({ top: 0 });
     setNotices([]);
     setDraftEmpty();
-    setProgress(null);
     setPendingPermission(null);
     handleHistoryOpenChange(false);
 
-    if (adoptResumeTarget && resumeHint) {
-      resumeExpectedSessionIdRef.current = resumeHint.sessionId;
+    const hint: SavedSessionHint = {
+      sessionId: target,
+      profileId: activeProfileId,
+      cwd: sessionCwd,
+    };
+    const currentId = useAcpSessionStore.getState().savedSession?.sessionId;
+    const alreadyOnTarget = sessionActive && currentId === target;
+    if (!alreadyOnTarget) {
+      resumeExpectedSessionIdRef.current = target;
       resumeNoticePendingRef.current = true;
-      setSavedSession(resumeHint);
-      if (activeTargetMatches) {
-        resumeExpectedSessionIdRef.current = null;
-        resumeNoticePendingRef.current = false;
-        // 同活会话即同线程：无需后端往返，直接记为沿用，避免“无反应”。
-        setLastSessionResolution({
-          outcome: "resumed",
-          sessionId: resumeHint.sessionId,
-        });
-        pushSystem("已恢复该对话的 AI 记忆");
-      } else {
-        pushSystem("正在恢复该对话的 AI 记忆…");
+      setProgress("正在恢复该对话的 AI 记忆…");
+      try {
+        await switchSessionMutation.mutateAsync({ savedSession: hint });
+      } catch {
+        // 归属未定（busy 等原文已由 mutation onError 报出），不读文本。
+        if (transcriptLoadSeqRef.current !== loadSeq) return;
+        setProgress(null);
+        return;
+      }
+      if (transcriptLoadSeqRef.current !== loadSeq) return;
+      // resume 若失败，后端会新建会话并把归属切走：此时再去 load 旧线程
+      // 必然失败，直接说实话，不浪费一次回放。
+      if (
+        useAcpSessionStore.getState().savedSession?.sessionId !== target
+      ) {
+        pushSystem(
+          cached.length > 0
+            ? "该对话的 AI 记忆已不存在，仅可查看缓存"
+            : "该对话的 AI 记忆已不存在，无文本可载入",
+        );
+        setProgress(null);
+        return;
       }
     } else {
-      resumeExpectedSessionIdRef.current = null;
-      resumeNoticePendingRef.current = false;
-      // F3:按提示兑现“作为新对话开始”。同进程关旧会话、开新线程，
-      // 不杀 Agent 进程；下一问不再续旧线程，也不再覆盖这条旧记录。
-      if (sessionActive) {
-        switchSessionMutation.mutate({ savedSession: null });
-      } else {
-        clearSavedSession();
+      setLastSessionResolution({ outcome: "resumed", sessionId: target });
+      setSessionBanner(`已恢复该对话的 AI 记忆（${target.slice(0, 8)}）`);
+    }
+
+    setProgress("正在载入该对话的真实记录…");
+    try {
+      // 串行：归属落定后才读，写进 transcript key 缓存（staleTime 0，
+      // 每次打开都重新回放，线程可能被其它客户端续写）。
+      const events = await fetchAgentTranscript(queryClient, scope);
+      if (transcriptLoadSeqRef.current !== loadSeq) return;
+      let mapped: ChatTurn[] = [];
+      try {
+        mapped = mapLoadedTranscript(events);
+      } catch {
+        mapped = [];
       }
-      pushSystem("这条记录没有可恢复的 AI 记忆，继续发言将作为新对话开始");
-    }
-
-    if (adoptResumeTarget && resumeHint) {
-      const targetSessionId = resumeHint.sessionId;
-      const targetCwd = resumeHint.cwd;
-      const loadSeq = transcriptLoadSeqRef.current + 1;
-      transcriptLoadSeqRef.current = loadSeq;
-      setProgress("正在载入该对话的真实记录…");
-      const loadWithTimeout = new Promise<
-        Awaited<ReturnType<typeof acpLoadSession>>
-      >((resolve, reject) => {
-        const timer = window.setTimeout(() => reject(new Error("timeout")), 10_000);
-        acpLoadSession({ sessionId: targetSessionId, cwd: targetCwd }).then(
-          (events) => {
-            window.clearTimeout(timer);
-            resolve(events);
-          },
-          (error) => {
-            window.clearTimeout(timer);
-            reject(error);
-          },
+      if (mapped.length === 0) {
+        pushSystem(
+          cached.length > 0
+            ? "远端暂无可显示的文本，已保留缓存"
+            : "未能载入该对话的文本，可稍后重试",
         );
-      });
-      void loadWithTimeout.then(
-        (events) => {
-          if (transcriptLoadSeqRef.current !== loadSeq) return;
-          let mapped: ChatTurn[] = [];
-          try {
-            mapped = mapLoadedTranscript(events);
-          } catch {
-            mapped = [];
-          }
-          if (mapped.length === 0) {
-            pushSystem("只恢复了 AI 记忆，框内仍是本地存档");
-            if (activeTargetMatches) setProgress(null);
-            return;
-          }
-          syncTurnIdSeq(idSeq, mapped);
-          seedHandledProposals(mapped);
-          setTurns(mapped);
-          if (activeTargetMatches) setProgress(null);
-        },
-        () => {
-          if (transcriptLoadSeqRef.current !== loadSeq) return;
-          pushSystem("只恢复了 AI 记忆，框内仍是本地存档");
-          if (activeTargetMatches) setProgress(null);
-        },
-      );
+        setProgress(null);
+        return;
+      }
+      syncTurnIdSeq(idSeq, mapped);
+      seedHandledProposals(mapped);
+      const title = firstUserTextOf(mapped);
+      if (title) {
+        setTitleOverrides((prev) =>
+          prev[target] ? prev : { ...prev, [target]: title },
+        );
+      }
+      setTurns(mapped);
+      turnListRef.current?.scrollTo({ top: 0 });
+      setProgress(null);
+    } catch (error) {
+      if (transcriptLoadSeqRef.current !== loadSeq) return;
+      // 超时（125s 前端计时）与后端秒回的失败是两回事，不共用一句话，
+      // 否则下次看日志对不上（后端秒回失败时前端却报超时）。
+      const timedOut = error instanceof Error && error.message === "timeout";
+      let message: string;
+      if (cached.length > 0) {
+        message = timedOut ? "载入超时，已保留缓存" : "载入失败，已保留缓存";
+      } else {
+        message = timedOut
+          ? "载入该对话的文本超时，可稍后重试"
+          : "未能载入该对话的文本，可稍后重试";
+      }
+      pushSystem(message);
+      setProgress(null);
     }
-
-    if (adoptResumeTarget && !activeTargetMatches) {
-      // 同进程切换：不断 Agent 进程，关旧会话后 resume 目标线程。
-      // 真实记录载入与 resume 并行：上面已先 setTurns 本地存档保证即时响应，
-      // 这里不再覆盖“正在载入该对话的真实记录…”的进度，成功才替换 turns。
-      switchSessionMutation.mutate({ savedSession: resumeHint });
-      return;
-    }
-  };
-
-  const deleteHistoryConversation = (id: string) => {
-    if (isAgentConversationId(id)) return;
-    deleteConversation(id);
   };
 
   // 常驻会话真相：只反映后端最后一次 sessionSaved / 本地同线程续接，
@@ -1145,7 +1133,7 @@ export function AcpPanel() {
           }
           loading={statusQuery.isLoading}
           busy={composerBusy}
-          historyCount={reconciledHistory.length}
+          historyCount={historyRows.length}
           onNewChat={startNewChat}
           onOpenHistory={() => {
             setQuickNoteOpen(false);
@@ -1162,15 +1150,20 @@ export function AcpPanel() {
         />
         <ChatHistorySheet
           open={historyOpen}
-          items={reconciledHistory}
-          activeId={activeConversationId ?? conversationId}
-          scopeLabel="当前视频"
-          includeAll={historyIncludeAll}
-          historySwitchBlocked={historySwitchBlocked}
-          onToggleScope={() => setHistoryIncludeAll((value) => !value)}
+          rows={historyRows}
+          activeSessionId={savedSession?.sessionId ?? null}
+          switchBlocked={historySwitchBlocked}
+          loading={sessionListLoading}
+          onRefresh={() =>
+            void queryClient.invalidateQueries({
+              queryKey: acpQueryKeys.sessionList(
+                activeProfileId,
+                sessionCwd ?? null,
+              ),
+            })
+          }
           onClose={() => handleHistoryOpenChange(false)}
-          onSelect={loadConversation}
-          onDelete={deleteHistoryConversation}
+          onSelect={(sessionId) => void loadConversation(sessionId)}
         />
       </ChatColumn>
 
@@ -1178,9 +1171,15 @@ export function AcpPanel() {
         ref={turnListRef}
         className="chat-scroll min-h-0 flex-1 overflow-y-auto overscroll-y-contain"
       >
+        {sessionBanner ? (
+          <p className="px-3 pb-1 pt-3 text-center text-[11px] text-muted-foreground">
+            {sessionBanner}
+          </p>
+        ) : null}
         <ChatTurnList
           turns={turns}
           notices={notices}
+          followEnd={stickToEnd}
           annotationWorkspace={sessionCwd}
           onDismissAnnotation={handleDismissAnnotation}
           onSaveAnnotation={handleSaveAnnotation}

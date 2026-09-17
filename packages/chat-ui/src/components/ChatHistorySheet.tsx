@@ -1,41 +1,44 @@
-import { History, Trash2 } from "lucide-react";
+import { History, RefreshCw } from "lucide-react";
 
 import { Button, cn } from "@lumina/ui";
 
-import { formatConversationTime } from "../chatHistoryStore";
-import {
-  historyConversationAction,
-  historyConversationPresentation,
-  isHistoryConversationDisabled,
-  MISSING_HISTORY_CONVERSATION_TITLE,
-  type ReconciledChatConversation,
-} from "../conversationContext";
+import type { HistoryThreadRow } from "../conversationContext";
 
 type Props = {
   open: boolean;
-  items: ReconciledChatConversation[];
-  activeId: string | null;
-  scopeLabel: string;
-  includeAll: boolean;
-  historySwitchBlocked: boolean;
-  onToggleScope: () => void;
+  rows: HistoryThreadRow[];
+  activeSessionId: string | null;
+  switchBlocked: boolean;
+  loading: boolean;
+  onRefresh: () => void;
   onClose: () => void;
-  onSelect: (id: string) => void;
-  onDelete: (id: string) => void;
+  onSelect: (sessionId: string) => void;
 };
 
-/** Inline panel below the toolbar — avoids absolute overlay clipping in ChatDock. */
+export function formatConversationTime(updatedAtMs: number): string {
+  if (!Number.isFinite(updatedAtMs) || updatedAtMs <= 0) return "";
+  return new Intl.DateTimeFormat("zh-CN", {
+    month: "numeric",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(new Date(updatedAtMs));
+}
+
+/**
+ * 历史对话 = Agent 侧 `session/list` 原样呈现。本地不存账：
+ * 无删除（原生无 delete 方法，假删不如不删）、无本地/Agent 双行制、
+ * 无存档态——列表里出现的即原生存在的线程。
+ */
 export function ChatHistorySheet({
   open,
-  items,
-  activeId,
-  scopeLabel,
-  includeAll,
-  historySwitchBlocked,
-  onToggleScope,
+  rows,
+  activeSessionId,
+  switchBlocked,
+  loading,
+  onRefresh,
   onClose,
   onSelect,
-  onDelete,
 }: Props) {
   if (!open) return null;
 
@@ -50,10 +53,14 @@ export function ChatHistorySheet({
           <Button
             size="sm"
             variant="ghost"
-            className="h-7 max-w-[7rem] truncate px-2 text-[10px]"
-            onClick={onToggleScope}
+            className="h-7 px-2 text-[10px]"
+            disabled={loading}
+            onClick={onRefresh}
           >
-            {includeAll ? "仅当前视频" : scopeLabel}
+            <RefreshCw
+              className={cn("size-3", loading && "animate-spin")}
+            />
+            刷新
           </Button>
           <Button
             size="sm"
@@ -66,29 +73,25 @@ export function ChatHistorySheet({
         </div>
       </div>
 
-      {items.length === 0 ? (
+      {loading && rows.length === 0 ? (
         <p className="px-3 pb-4 pt-1 text-center text-[11px] text-muted-foreground">
-          暂无已保存的对话记录
+          正在加载历史…
+        </p>
+      ) : rows.length === 0 ? (
+        <p className="px-3 pb-4 pt-1 text-center text-[11px] text-muted-foreground">
+          暂无历史对话，在本目录开始新对话后会出现在列表中
         </p>
       ) : (
         <ul className="max-h-56 overflow-y-auto pb-1">
-          {items.map((item) => {
-            const action = historyConversationAction({
-              agentStatus: item.agentStatus,
-              switchBlocked: historySwitchBlocked,
-            });
-            const presentation = historyConversationPresentation(item.origin);
-            const rowDisabled = isHistoryConversationDisabled({
-              agentStatus: item.agentStatus,
-              agentSessionId: item.agentSessionId,
-            });
-            const disabled = action === "busy" || rowDisabled;
+          {rows.map((row) => {
+            const disabled = switchBlocked;
+            const time = formatConversationTime(row.updatedAtMs);
             return (
-              <li key={item.id}>
+              <li key={row.sessionId}>
                 <div
                   className={cn(
                     "flex items-start gap-2 px-2 py-2 hover:bg-muted/60",
-                    item.id === activeId && "bg-muted/40",
+                    row.sessionId === activeSessionId && "bg-muted/40",
                   )}
                 >
                   <button
@@ -98,47 +101,20 @@ export function ChatHistorySheet({
                       disabled && "cursor-not-allowed opacity-70",
                     )}
                     disabled={disabled}
-                    title={
-                      rowDisabled ? MISSING_HISTORY_CONVERSATION_TITLE : undefined
-                    }
-                    onClick={() => onSelect(item.id)}
+                    onClick={() => onSelect(row.sessionId)}
                   >
                     <p className="truncate text-[11px] font-medium text-foreground">
-                      {item.title}
+                      {row.title}
                     </p>
                     <p className="mt-0.5 text-[10px] text-muted-foreground">
-                      {formatConversationTime(item.updatedAtMs)}
-                      {presentation.showTurnCount && item.turns.length > 0
-                        ? ` · ${item.turns.length} 轮`
-                        : null}
+                      {time ? time : `对话 ${row.sessionId.slice(0, 8)}`}
                     </p>
-                    {presentation.showAgentOnlyLabel ? (
-                      <p className="mt-1 text-[10px] leading-4 text-muted-foreground">
-                        仅 AI 记忆，无本地对话记录
-                      </p>
-                    ) : null}
-                    {rowDisabled && action !== "busy" ? (
-                      <p className="mt-1 text-[10px] leading-4 text-muted-foreground">
-                        该对话的 AI 记忆已不存在，只能作为记录查看
-                      </p>
-                    ) : null}
-                    {action === "busy" ? (
+                    {disabled ? (
                       <p className="mt-1 text-[10px] leading-4 text-muted-foreground">
                         正在回答，请稍后再切换对话
                       </p>
                     ) : null}
                   </button>
-                  {presentation.showDelete ? (
-                    <Button
-                      size="icon"
-                      variant="ghost"
-                      className="size-7 shrink-0 text-muted-foreground hover:text-destructive"
-                      aria-label="删除对话"
-                      onClick={() => onDelete(item.id)}
-                    >
-                      <Trash2 className="size-3.5" />
-                    </Button>
-                  ) : null}
                 </div>
               </li>
             );
