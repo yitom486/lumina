@@ -83,6 +83,8 @@ pub fn handle_tool_call(
         capture_frame_tool(snapshot, args)
     } else if name == contract::TOOL_AUDIO_MARKS {
         audio_marks(snapshot, args)
+    } else if name == contract::TOOL_ENTITY_TIMELINE {
+        entity_timeline(snapshot, args)
     } else if name == contract::TOOL_SEEK_PLAYBACK {
         seek_playback(snapshot, args)
     } else if name == contract::TOOL_PROPOSE_ANNOTATION {
@@ -790,6 +792,166 @@ fn snapshot_cwd() -> Result<PathBuf, String> {
         .ok_or_else(|| "无法定位会话目录".to_string())
 }
 
+/// 单集扫描输入：来自索引的集信息 + 该集解析出的台词（或失败原因）。
+struct EpisodeScanInput {
+    season: u32,
+    episode: u32,
+    #[allow(dead_code)]
+    media_file_name: String,
+    transcript: Result<Transcript, String>,
+}
+
+struct EntityHit {
+    season: u32,
+    episode: u32,
+    first_seen_ms: u64,
+    occurrences: u32,
+}
+
+/// 单次时间线扫描最多解析的集数（防长剧全季拉爆 IO）。
+const ENTITY_TIMELINE_MAX_EPISODES: usize = 60;
+
+/// 聚合产物：`entities[name] → 逐集命中`，外加无法加载字幕的集（集号 + 原因）。
+type EntityAggregation = (Vec<(String, Vec<EntityHit>)>, Vec<(u32, u32, String)>);
+
+/// 纯函数聚合：名字 × 台词集上做大小写不敏感子串匹配，输出逐集命中
+/// （首次出现锚点 + 次数）与无法加载字幕的集。数据是机械聚合
+/// （derived），不做任何语义判断；名字由调用方（模型）从上下文挑选。
+fn aggregate_entity_timeline(names: &[String], episodes: &[EpisodeScanInput]) -> EntityAggregation {
+    let mut entities: Vec<(String, Vec<EntityHit>)> = names
+        .iter()
+        .map(|name| (name.trim().to_string(), Vec::new()))
+        .collect();
+    let mut skipped: Vec<(u32, u32, String)> = Vec::new();
+
+    for entry in episodes {
+        let transcript = match &entry.transcript {
+            Ok(transcript) => transcript,
+            Err(reason) => {
+                skipped.push((entry.season, entry.episode, reason.clone()));
+                continue;
+            }
+        };
+        for (index, name) in names.iter().enumerate() {
+            let needle = name.trim().to_lowercase();
+            if needle.is_empty() {
+                continue;
+            }
+            let mut occurrences = 0u32;
+            let mut first_seen_ms = None;
+            for cue in &transcript.cues {
+                if cue.text.to_lowercase().contains(&needle) {
+                    occurrences += 1;
+                    if first_seen_ms.is_none() {
+                        first_seen_ms = Some(cue.start_ms);
+                    }
+                }
+            }
+            if occurrences > 0 {
+                entities[index].1.push(EntityHit {
+                    season: entry.season,
+                    episode: entry.episode,
+                    first_seen_ms: first_seen_ms.unwrap_or(0),
+                    occurrences,
+                });
+            }
+        }
+    }
+    (entities, skipped)
+}
+
+/// 全季「角色出场时间线」：逐集检索台词里的名字出现情况。纯只读聚合
+/// （derived=true 标明非语义），数据不足时明说，禁止编造。台词解析是
+/// IO 重操作 → heavy limiter。仅本地媒体库会话可用（在线会话无文件库）。
+fn entity_timeline(snapshot: &LuminaMcpSnapshot, args: &Value) -> Result<Value, String> {
+    let anchor = require_anchor(snapshot)?;
+    let names: Vec<String> = args
+        .get("names")
+        .and_then(Value::as_array)
+        .map(|values| {
+            values
+                .iter()
+                .filter_map(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(str::to_string)
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    if names.is_empty() {
+        return Err("请提供要检索的人物名（names）".to_string());
+    }
+    let names: Vec<String> = names.into_iter().take(8).collect();
+    let choice_id = resolve_subtitle_choice_id(args, anchor)?;
+    let (root, media_path) = resolve_paths(anchor)?;
+    let group_key = resolve_group_key(&root, anchor, &media_path)?;
+    let index = load_library_index(&root)
+        .map_err(|error| error.message.clone())?
+        .ok_or_else(|| "当前媒体未加入媒体库".to_string())?;
+
+    let mut files: Vec<_> = index
+        .files
+        .iter()
+        .filter(|file| file.group_key == group_key && file.episode.is_some())
+        .collect();
+    files.sort_by_key(|file| {
+        (
+            file.season.unwrap_or(1),
+            file.episode.unwrap_or(0),
+            file.file_name.clone(),
+        )
+    });
+    if files.len() > ENTITY_TIMELINE_MAX_EPISODES {
+        files.truncate(ENTITY_TIMELINE_MAX_EPISODES);
+    }
+
+    let scans: Vec<EpisodeScanInput> = files
+        .iter()
+        .map(|file| EpisodeScanInput {
+            season: file.season.unwrap_or(1),
+            episode: file.episode.unwrap_or(0),
+            media_file_name: file.file_name.clone(),
+            transcript: load_tool_transcript(&root.join(&file.relative_path), &choice_id),
+        })
+        .collect();
+
+    let (aggregated, skipped) = aggregate_entity_timeline(&names, &scans);
+    let entities: Vec<Value> = aggregated
+        .into_iter()
+        .map(|(name, episodes)| {
+            let hits: Vec<_> = episodes
+                .iter()
+                .map(|hit| {
+                    json!({
+                        "season": hit.season,
+                        "episode": hit.episode,
+                        "firstSeenMs": hit.first_seen_ms,
+                        "occurrences": hit.occurrences,
+                    })
+                })
+                .collect();
+            json!({
+                "name": name,
+                "episodeCount": hits.len(),
+                "episodes": hits,
+            })
+        })
+        .collect();
+    let skipped: Vec<_> = skipped
+        .iter()
+        .map(|(season, episode, reason)| {
+            json!({ "season": season, "episode": episode, "reason": reason })
+        })
+        .collect();
+    text_result(&json!({
+        "derived": true,
+        "note": "机械聚合自本机媒体库的台词文本；非语义判断，仅供参考。",
+        "names": names,
+        "entities": entities,
+        "skippedEpisodes": skipped,
+    }))
+}
+
 /// `--lumina-mcp` 子进程不持有播放器：seek 请求写入会话目录的控制文件，
 /// 由主 GUI 进程的 watcher 消费并写回执（nonce 匹配 + 限时轮询）。
 const SEEK_CONTROL_FILE: &str = "mcp-control.json";
@@ -931,6 +1093,67 @@ mod tests {
         let err = seek_playback(&snapshot, &json!({ "positionMs": 1_000 }))
             .expect_err("no anchor must refuse");
         assert!(err.contains("没有打开的视频"));
+    }
+
+    #[test]
+    fn entity_timeline_aggregates_hits_and_skips_failed_transcripts() {
+        let episodes = vec![
+            EpisodeScanInput {
+                season: 1,
+                episode: 1,
+                media_file_name: "S01E01.mkv".into(),
+                transcript: Err("无字幕".into()),
+            },
+            seek_scan_helper(
+                1,
+                2,
+                &[("焕金说了一句台词", 1_000), ("焕金与崔雄再次相见", 5_000)],
+            ),
+        ];
+        let (aggregated, skipped) =
+            aggregate_entity_timeline(&["焕金".to_string(), "不存在角色".to_string()], &episodes);
+        let (name, hits) = &aggregated[0];
+        assert_eq!(name, "焕金");
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].season, 1);
+        assert_eq!(hits[0].episode, 2);
+        assert_eq!(hits[0].first_seen_ms, 1_000);
+        assert_eq!(hits[0].occurrences, 2);
+        // 无命中的名字也原样返回（0 命中即「没有出现」，不编造）。
+        assert!(aggregated[1].1.is_empty());
+        assert_eq!(skipped, vec![(1, 1, "无字幕".to_string())]);
+    }
+
+    fn seek_scan_helper(season: u32, episode: u32, cues: &[(&str, u64)]) -> EpisodeScanInput {
+        let transcript = Transcript {
+            source_path: format!("S{:02}E{:02}.mkv", season, episode),
+            choice_id: "embedded:0".into(),
+            stream_index: None,
+            language: None,
+            codec_name: None,
+            cues: cues
+                .iter()
+                .map(|(text, start)| Cue {
+                    index: 0,
+                    start_ms: *start,
+                    end_ms: *start + 1,
+                    text: (*text).into(),
+                })
+                .collect(),
+        };
+        EpisodeScanInput {
+            season,
+            episode,
+            media_file_name: format!("S{:02}E{:02}.mkv", season, episode),
+            transcript: Ok(transcript),
+        }
+    }
+
+    #[test]
+    fn entity_timeline_requires_names() {
+        let snapshot = seek_snapshot();
+        let err = entity_timeline(&snapshot, &json!({})).expect_err("names required");
+        assert!(err.contains("names"));
     }
 
     #[test]

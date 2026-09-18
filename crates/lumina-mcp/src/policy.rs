@@ -17,9 +17,9 @@ use super::tools::{subtitle_workshop_enabled, video_annotations_enabled, vision_
 // module keeps the MCP-side re-export so existing `policy::TOOL_*` paths and
 // `tools/list` order stay byte-identical.
 pub use lumina_core::tool_contract::{
-    TOOL_AUDIO_MARKS, TOOL_CAPTURE_FRAMES, TOOL_EPISODE_INDEX, TOOL_EPISODE_TRANSCRIPT,
-    TOOL_LIBRARY_CONTEXT, TOOL_PLAYBACK_CONTEXT, TOOL_PROPOSE_ANNOTATION, TOOL_SEEK_PLAYBACK,
-    TOOL_SUBTITLE_CUES, TOOL_TRANSCRIPT_WINDOW, TOOL_WRITE_SUBTITLE_TRACK,
+    TOOL_AUDIO_MARKS, TOOL_CAPTURE_FRAMES, TOOL_ENTITY_TIMELINE, TOOL_EPISODE_INDEX,
+    TOOL_EPISODE_TRANSCRIPT, TOOL_LIBRARY_CONTEXT, TOOL_PLAYBACK_CONTEXT, TOOL_PROPOSE_ANNOTATION,
+    TOOL_SEEK_PLAYBACK, TOOL_SUBTITLE_CUES, TOOL_TRANSCRIPT_WINDOW, TOOL_WRITE_SUBTITLE_TRACK,
 };
 
 /// Env var carrying the profile into the MCP server process.
@@ -84,6 +84,7 @@ pub fn allowed_tool_names(
                 TOOL_SEEK_PLAYBACK,
                 TOOL_LIBRARY_CONTEXT,
                 TOOL_EPISODE_INDEX,
+                TOOL_ENTITY_TIMELINE,
                 TOOL_TRANSCRIPT_WINDOW,
                 TOOL_EPISODE_TRANSCRIPT,
                 TOOL_AUDIO_MARKS,
@@ -190,6 +191,7 @@ mod tests {
                 TOOL_SEEK_PLAYBACK,
                 TOOL_LIBRARY_CONTEXT,
                 TOOL_EPISODE_INDEX,
+                TOOL_ENTITY_TIMELINE,
                 TOOL_TRANSCRIPT_WINDOW,
                 TOOL_EPISODE_TRANSCRIPT,
                 TOOL_AUDIO_MARKS,
