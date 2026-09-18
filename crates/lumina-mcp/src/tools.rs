@@ -799,6 +799,9 @@ struct EpisodeScanInput {
     #[allow(dead_code)]
     media_file_name: String,
     transcript: Result<Transcript, String>,
+    /// 用户已确认的批注/笔记（body 截断防膨胀）：语义知识只来自
+    /// 用户确认过的内容，AI 永远没有直写路径。
+    notes: Vec<(u64, String)>,
 }
 
 struct EntityHit {
@@ -811,49 +814,79 @@ struct EntityHit {
 /// 单次时间线扫描最多解析的集数（防长剧全季拉爆 IO）。
 const ENTITY_TIMELINE_MAX_EPISODES: usize = 60;
 
-/// 聚合产物：`entities[name] → 逐集命中`，外加无法加载字幕的集（集号 + 原因）。
-type EntityAggregation = (Vec<(String, Vec<EntityHit>)>, Vec<(u32, u32, String)>);
+/// 用户确认的批注（语义知识，与机械聚合的 derived 数据分开承载）。
+struct EntityAnnotation {
+    season: u32,
+    episode: u32,
+    position_ms: u64,
+    body: String,
+}
+
+struct EntityAggregated {
+    name: String,
+    hits: Vec<EntityHit>,
+    annotations: Vec<EntityAnnotation>,
+}
 
 /// 纯函数聚合：名字 × 台词集上做大小写不敏感子串匹配，输出逐集命中
-/// （首次出现锚点 + 次数）与无法加载字幕的集。数据是机械聚合
-/// （derived），不做任何语义判断；名字由调用方（模型）从上下文挑选。
-fn aggregate_entity_timeline(names: &[String], episodes: &[EpisodeScanInput]) -> EntityAggregation {
-    let mut entities: Vec<(String, Vec<EntityHit>)> = names
+/// （首次出现锚点 + 次数）、无法加载字幕的集，以及正文提到该名字的
+/// 用户确认批注。台词命中是 derived（机械）；批注是用户确认的知识，
+/// 只读回带，AI 没有任何直写路径。名字由调用方（模型）从上下文挑选。
+fn aggregate_entity_timeline(
+    names: &[String],
+    episodes: &[EpisodeScanInput],
+) -> (Vec<EntityAggregated>, Vec<(u32, u32, String)>) {
+    let mut entities: Vec<EntityAggregated> = names
         .iter()
-        .map(|name| (name.trim().to_string(), Vec::new()))
+        .map(|name| EntityAggregated {
+            name: name.trim().to_string(),
+            hits: Vec::new(),
+            annotations: Vec::new(),
+        })
         .collect();
     let mut skipped: Vec<(u32, u32, String)> = Vec::new();
 
     for entry in episodes {
-        let transcript = match &entry.transcript {
-            Ok(transcript) => transcript,
-            Err(reason) => {
-                skipped.push((entry.season, entry.episode, reason.clone()));
-                continue;
-            }
-        };
+        if let Err(reason) = &entry.transcript {
+            skipped.push((entry.season, entry.episode, reason.clone()));
+        }
         for (index, name) in names.iter().enumerate() {
             let needle = name.trim().to_lowercase();
             if needle.is_empty() {
                 continue;
             }
-            let mut occurrences = 0u32;
-            let mut first_seen_ms = None;
-            for cue in &transcript.cues {
-                if cue.text.to_lowercase().contains(&needle) {
-                    occurrences += 1;
-                    if first_seen_ms.is_none() {
-                        first_seen_ms = Some(cue.start_ms);
-                    }
+            // 用户确认批注：正文提到该名字即回带（独立于台词命中）。
+            for (position_ms, body) in &entry.notes {
+                if body.to_lowercase().contains(&needle)
+                    && entities[index].annotations.len() < ENTITY_TIMELINE_MAX_NOTES
+                {
+                    entities[index].annotations.push(EntityAnnotation {
+                        season: entry.season,
+                        episode: entry.episode,
+                        position_ms: *position_ms,
+                        body: body.clone(),
+                    });
                 }
             }
-            if occurrences > 0 {
-                entities[index].1.push(EntityHit {
-                    season: entry.season,
-                    episode: entry.episode,
-                    first_seen_ms: first_seen_ms.unwrap_or(0),
-                    occurrences,
-                });
+            if let Ok(transcript) = &entry.transcript {
+                let mut occurrences = 0u32;
+                let mut first_seen_ms = None;
+                for cue in &transcript.cues {
+                    if cue.text.to_lowercase().contains(&needle) {
+                        occurrences += 1;
+                        if first_seen_ms.is_none() {
+                            first_seen_ms = Some(cue.start_ms);
+                        }
+                    }
+                }
+                if occurrences > 0 {
+                    entities[index].hits.push(EntityHit {
+                        season: entry.season,
+                        episode: entry.episode,
+                        first_seen_ms: first_seen_ms.unwrap_or(0),
+                        occurrences,
+                    });
+                }
             }
         }
     }
@@ -907,19 +940,24 @@ fn entity_timeline(snapshot: &LuminaMcpSnapshot, args: &Value) -> Result<Value, 
 
     let scans: Vec<EpisodeScanInput> = files
         .iter()
-        .map(|file| EpisodeScanInput {
-            season: file.season.unwrap_or(1),
-            episode: file.episode.unwrap_or(0),
-            media_file_name: file.file_name.clone(),
-            transcript: load_tool_transcript(&root.join(&file.relative_path), &choice_id),
+        .map(|file| {
+            let episode_media_path = root.join(&file.relative_path);
+            EpisodeScanInput {
+                season: file.season.unwrap_or(1),
+                episode: file.episode.unwrap_or(0),
+                media_file_name: file.file_name.clone(),
+                transcript: load_tool_transcript(&episode_media_path, &choice_id),
+                notes: load_group_episode_notes(&episode_media_path),
+            }
         })
         .collect();
 
     let (aggregated, skipped) = aggregate_entity_timeline(&names, &scans);
     let entities: Vec<Value> = aggregated
         .into_iter()
-        .map(|(name, episodes)| {
-            let hits: Vec<_> = episodes
+        .map(|entity| {
+            let hits: Vec<_> = entity
+                .hits
                 .iter()
                 .map(|hit| {
                     json!({
@@ -930,10 +968,24 @@ fn entity_timeline(snapshot: &LuminaMcpSnapshot, args: &Value) -> Result<Value, 
                     })
                 })
                 .collect();
+            let notes: Vec<Value> = entity
+                .annotations
+                .iter()
+                .map(|annotation| {
+                    json!({
+                        "source": "userConfirmedAnnotation",
+                        "season": annotation.season,
+                        "episode": annotation.episode,
+                        "positionMs": annotation.position_ms,
+                        "body": annotation.body,
+                    })
+                })
+                .collect();
             json!({
-                "name": name,
+                "name": entity.name,
                 "episodeCount": hits.len(),
                 "episodes": hits,
+                "confirmedAnnotations": notes,
             })
         })
         .collect();
@@ -945,12 +997,36 @@ fn entity_timeline(snapshot: &LuminaMcpSnapshot, args: &Value) -> Result<Value, 
         .collect();
     text_result(&json!({
         "derived": true,
-        "note": "机械聚合自本机媒体库的台词文本；非语义判断，仅供参考。",
+        "note": "机械聚合自本机媒体库的台词文本；非语义判断，仅供参考。confirmedAnnotation 为用户确认过的批注，可作为已验证知识。",
         "names": names,
         "entities": entities,
         "skippedEpisodes": skipped,
     }))
 }
+
+/// 读取一集的用户确认笔记（批注确认后即为 Note）。读失败按无笔记降级——
+/// 语义知识只来自用户确认，AI 没有任何直写路径。
+fn load_group_episode_notes(episode_media_path: &Path) -> Vec<(u64, String)> {
+    let service =
+        lumina_notes::service::NoteService::with_path(lumina_notes::store::default_store_path());
+    let Ok(notes) = service.list_for_media(&episode_media_path.to_string_lossy()) else {
+        return Vec::new();
+    };
+    notes
+        .into_iter()
+        .map(|note| {
+            (
+                note.position_ms,
+                note.body.chars().take(NOTE_BODY_SNIPPET_MAX).collect(),
+            )
+        })
+        .collect()
+}
+
+/// 单条笔记正文截断（防长批注拉爆 payload）。
+const NOTE_BODY_SNIPPET_MAX: usize = 600;
+/// 每个人物最多回带的确认笔记条数。
+const ENTITY_TIMELINE_MAX_NOTES: usize = 10;
 
 /// `--lumina-mcp` 子进程不持有播放器：seek 请求写入会话目录的控制文件，
 /// 由主 GUI 进程的 watcher 消费并写回执（nonce 匹配 + 限时轮询）。
@@ -1103,24 +1179,33 @@ mod tests {
                 episode: 1,
                 media_file_name: "S01E01.mkv".into(),
                 transcript: Err("无字幕".into()),
+                notes: Vec::new(),
             },
-            seek_scan_helper(
-                1,
-                2,
-                &[("焕金说了一句台词", 1_000), ("焕金与崔雄再次相见", 5_000)],
-            ),
+            EpisodeScanInput {
+                notes: vec![(30_000, "焕金与崔雄的关系线：重逢后的和解".into())],
+                ..seek_scan_helper(
+                    1,
+                    2,
+                    &[("焕金说了一句台词", 1_000), ("焕金与崔雄再次相见", 5_000)],
+                )
+            },
         ];
         let (aggregated, skipped) =
             aggregate_entity_timeline(&["焕金".to_string(), "不存在角色".to_string()], &episodes);
-        let (name, hits) = &aggregated[0];
-        assert_eq!(name, "焕金");
-        assert_eq!(hits.len(), 1);
-        assert_eq!(hits[0].season, 1);
-        assert_eq!(hits[0].episode, 2);
-        assert_eq!(hits[0].first_seen_ms, 1_000);
-        assert_eq!(hits[0].occurrences, 2);
+        assert_eq!(aggregated[0].name, "焕金");
+        assert_eq!(aggregated[0].hits.len(), 1);
+        assert_eq!(aggregated[0].hits[0].season, 1);
+        assert_eq!(aggregated[0].hits[0].episode, 2);
+        assert_eq!(aggregated[0].hits[0].first_seen_ms, 1_000);
+        assert_eq!(aggregated[0].hits[0].occurrences, 2);
+        // 用户确认批注与台词命中独立：正文提到名字即回带。
+        assert_eq!(aggregated[0].annotations.len(), 1);
+        assert_eq!(aggregated[0].annotations[0].episode, 2);
+        assert_eq!(aggregated[0].annotations[0].position_ms, 30_000);
+        assert!(aggregated[0].annotations[0].body.contains("崔雄"));
         // 无命中的名字也原样返回（0 命中即「没有出现」，不编造）。
-        assert!(aggregated[1].1.is_empty());
+        assert!(aggregated[1].hits.is_empty());
+        assert!(aggregated[1].annotations.is_empty());
         assert_eq!(skipped, vec![(1, 1, "无字幕".to_string())]);
     }
 
@@ -1146,6 +1231,7 @@ mod tests {
             episode,
             media_file_name: format!("S{:02}E{:02}.mkv", season, episode),
             transcript: Ok(transcript),
+            notes: Vec::new(),
         }
     }
 

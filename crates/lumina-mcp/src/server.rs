@@ -251,7 +251,7 @@ fn tool_json(name: &str) -> Option<Value> {
     if name == contract::TOOL_ENTITY_TIMELINE {
         let mut tool = json!({
             "name": contract::TOOL_ENTITY_TIMELINE,
-            "description": "Mechanically aggregated cross-episode appearance timeline for character names, derived from this machine's library transcripts. Returns per-episode hit counts and first-seen anchors (derived=true; non-semantic, never a relationship claim). Provide 1-8 character names; unavailable subtitle data is reported per episode instead of being invented. Local media-library sessions only.",
+            "description": "Mechanically aggregated cross-episode appearance timeline for character names, derived from this machine's library transcripts, plus the user's confirmed annotations that mention those names (confirmedAnnotations = user-approved knowledge). Returns per-episode hit counts and first-seen anchors (derived=true; non-semantic, never a relationship claim). Provide 1-8 character names; unavailable subtitle data is reported per episode instead of being invented. Local media-library sessions only.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
