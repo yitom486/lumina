@@ -58,6 +58,41 @@ export function exportNotesMarkdown(mediaPath: string): Promise<string> {
   return invoke("notes_export_markdown", { mediaPath });
 }
 
+/** 打卡卡片 PNG 落盘（canvas 渲染在前端，此处只传 base64）。 */
+export async function exportNoteRecapCard(
+  mediaPath: string,
+  timeLabel: string,
+  pngBase64: string,
+): Promise<string | null> {
+  const destPath = await save({
+    title: "导出打卡卡片",
+    filters: [{ name: "PNG", extensions: ["png"] }],
+    defaultPath: suggestRecapCardPath(mediaPath, timeLabel),
+  });
+  if (!destPath) return null;
+  await invoke("notes_export_recap_card", { destPath, pngBase64 });
+  return destPath;
+}
+
+export function suggestRecapCardPath(
+  mediaPath: string,
+  timeLabel: string,
+): string {
+  const normalized = mediaPath.replace(/\\/g, "/");
+  const lastSlash = normalized.lastIndexOf("/");
+  const baseName =
+    lastSlash >= 0 ? normalized.slice(lastSlash + 1) : normalized;
+  const stem = baseName
+    .replace(/\.[a-z0-9]{2,5}$/i, "")
+    .replace(/[<>:"/\\|?*]/g, "_");
+  const stamp = timeLabel.replace(/[:\s]/g, "");
+  const fileName = `${stem}-${stamp}.png`;
+  const parent = lastSlash >= 0 ? normalized.slice(0, lastSlash) : "";
+  if (!parent) return fileName;
+  const sep = mediaPath.includes("\\") ? "\\" : "/";
+  return `${parent.replace(/\//g, sep)}${sep}${fileName}`;
+}
+
 export async function exportNotesMarkdownToFile(
   mediaPath: string,
 ): Promise<string | null> {

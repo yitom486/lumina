@@ -70,8 +70,8 @@ use commands::library::{
 use commands::media::{media_inspect, media_list_siblings, media_tool_status};
 use commands::notes::{
     notes_create, notes_delete, notes_dismiss_proposal, notes_export_markdown,
-    notes_export_markdown_to_file, notes_get_frame, notes_list, notes_load_latest_proposal,
-    notes_preview_quotes, notes_update,
+    notes_export_markdown_to_file, notes_export_recap_card, notes_get_frame, notes_list,
+    notes_load_latest_proposal, notes_preview_quotes, notes_update,
 };
 use commands::player::{
     player_get_state, player_list_playback_formats, player_open, player_pause, player_play,
@@ -215,6 +215,7 @@ pub fn run() {
             notes_dismiss_proposal,
             notes_export_markdown,
             notes_export_markdown_to_file,
+            notes_export_recap_card,
         ])
         .setup(|app| {
             if let Ok(resource_dir) = app.path().resource_dir() {

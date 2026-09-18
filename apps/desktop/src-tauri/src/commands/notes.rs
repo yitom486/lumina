@@ -166,3 +166,21 @@ pub async fn notes_export_markdown_to_file(
     .await
     .map_err(|error| NoteError::internal(Some(&format!("notes export file join: {error}"))))?
 }
+
+/// 打卡卡片 PNG 落盘（canvas 渲染在前端，此处只负责二进制写盘）。
+#[tauri::command]
+pub async fn notes_export_recap_card(
+    dest_path: String,
+    png_base64: String,
+) -> Result<(), NoteError> {
+    tauri::async_runtime::spawn_blocking(move || {
+        use base64::Engine as _;
+        let bytes = base64::engine::general_purpose::STANDARD
+            .decode(png_base64.trim())
+            .map_err(|error| NoteError::io(Some(&format!("decode png: {error}"))))?;
+        std::fs::write(&dest_path, bytes)
+            .map_err(|error| NoteError::io(Some(&format!("write png: {error}"))))
+    })
+    .await
+    .map_err(|error| NoteError::internal(Some(&format!("recap card write join: {error}"))))?
+}

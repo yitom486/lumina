@@ -21,6 +21,7 @@ import {
 } from "../api";
 import { noteFrameKey, notesKey } from "@lumina/query-keys";
 import { useNoteComposeStore } from "../noteComposeStore";
+import { RecapCardDialog } from "./RecapCardDialog";
 import {
   activeCueListIndex,
   indicesAroundPlayback,
@@ -70,6 +71,7 @@ export function NotesPanel() {
   const [exportSavedPath, setExportSavedPath] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [includeFrame, setIncludeFrame] = useState(false);
+  const [recapCardNoteId, setRecapCardNoteId] = useState<string | null>(null);
   const activeCueRef = useRef<HTMLLabelElement | null>(null);
 
   const body = useNoteComposeStore((s) => s.body);
@@ -104,6 +106,9 @@ export function NotesPanel() {
     queryFn: () => listNotes(mediaPath!),
     enabled: Boolean(mediaPath),
   });
+
+  const recapCardNote =
+    notesQuery.data?.find((note) => note.id === recapCardNoteId) ?? null;
 
   useEffect(() => {
     if (mediaPath) {
@@ -470,6 +475,14 @@ export function NotesPanel() {
               <p className="min-w-0 flex-1 whitespace-pre-wrap">{note.body}</p>
               <button
                 type="button"
+                className="shrink-0 text-muted-foreground hover:text-primary"
+                title="生成打卡卡片"
+                onClick={() => setRecapCardNoteId(note.id)}
+              >
+                卡
+              </button>
+              <button
+                type="button"
                 className="shrink-0 text-muted-foreground hover:text-destructive"
                 onClick={() => deleteMutation.mutate(note.id)}
               >
@@ -510,6 +523,15 @@ export function NotesPanel() {
         <p className="text-[11px] text-muted-foreground">
           已保存至 {exportSavedPath}
         </p>
+      ) : null}
+
+      {recapCardNote ? (
+        <RecapCardDialog
+          note={recapCardNote}
+          mediaPath={mediaPath ?? ""}
+          open
+          onClose={() => setRecapCardNoteId(null)}
+        />
       ) : null}
     </div>
   );
