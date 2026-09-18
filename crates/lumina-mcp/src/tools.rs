@@ -83,6 +83,8 @@ pub fn handle_tool_call(
         capture_frame_tool(snapshot, args)
     } else if name == contract::TOOL_AUDIO_MARKS {
         audio_marks(snapshot, args)
+    } else if name == contract::TOOL_SEEK_PLAYBACK {
+        seek_playback(snapshot, args)
     } else if name == contract::TOOL_PROPOSE_ANNOTATION {
         if !video_annotations_enabled(snapshot) {
             Err("该工具未对当前会话开放".to_string())
@@ -788,6 +790,110 @@ fn snapshot_cwd() -> Result<PathBuf, String> {
         .ok_or_else(|| "无法定位会话目录".to_string())
 }
 
+/// `--lumina-mcp` 子进程不持有播放器：seek 请求写入会话目录的控制文件，
+/// 由主 GUI 进程的 watcher 消费并写回执（nonce 匹配 + 限时轮询）。
+const SEEK_CONTROL_FILE: &str = "mcp-control.json";
+const SEEK_RESULT_FILE: &str = "mcp-control-result.json";
+const SEEK_CONFIRM_TIMEOUT_MS: u64 = 8_000;
+const SEEK_POLL_INTERVAL_MS: u64 = 200;
+
+fn seek_nonce() -> String {
+    static SEQUENCE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+    let unix_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or_default();
+    let sequence = SEQUENCE.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    format!("{unix_ms}-{sequence}")
+}
+
+pub(crate) fn seek_control_paths() -> Result<(PathBuf, PathBuf), String> {
+    let snapshot_dir = crate::snapshot::resolve_snapshot_path()
+        .and_then(|path| path.parent().map(Path::to_path_buf))
+        .ok_or_else(|| "无法定位会话目录".to_string())?;
+    Ok((
+        snapshot_dir.join(SEEK_CONTROL_FILE),
+        snapshot_dir.join(SEEK_RESULT_FILE),
+    ))
+}
+
+fn seek_playback(snapshot: &LuminaMcpSnapshot, args: &Value) -> Result<Value, String> {
+    // 播放器在主 GUI 进程：本工具把跳转请求写入会话控制文件，由宿主
+    // watcher 消费并写回执；这里只做参数校验、下发与限时确认。
+    if snapshot
+        .anchor
+        .as_ref()
+        .map(|anchor| anchor.media_path.trim().is_empty())
+        .unwrap_or(true)
+    {
+        return Err("当前没有打开的视频，无法跳转".to_string());
+    }
+
+    let position_ms = args
+        .get("positionMs")
+        .and_then(Value::as_u64)
+        .ok_or_else(|| "跳转请求缺少 positionMs".to_string())?;
+    let reason = args
+        .get("reason")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .trim()
+        .to_string();
+
+    let (control_path, result_path) = seek_control_paths()?;
+    if let Some(parent) = control_path.parent() {
+        let _ = fs::create_dir_all(parent);
+    }
+    let nonce = seek_nonce();
+    let now_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or_default();
+    let request = json!({
+        "kind": "seek",
+        "positionMs": position_ms,
+        "reason": reason,
+        "nonce": nonce,
+        "requestedAtMs": now_ms,
+    });
+    fs::write(
+        &control_path,
+        serde_json::to_string(&request).map_err(|error| error.to_string())?,
+    )
+    .map_err(|error| format!("写入跳转请求失败: {error}"))?;
+
+    let deadline =
+        std::time::Instant::now() + std::time::Duration::from_millis(SEEK_CONFIRM_TIMEOUT_MS);
+    loop {
+        std::thread::sleep(std::time::Duration::from_millis(SEEK_POLL_INTERVAL_MS));
+        if let Ok(text) = fs::read_to_string(&result_path) {
+            if let Ok(value) = serde_json::from_str::<Value>(&text) {
+                if value.get("nonce").and_then(Value::as_str) == Some(nonce.as_str()) {
+                    let status = value
+                        .get("status")
+                        .and_then(Value::as_str)
+                        .unwrap_or("error");
+                    if status != "ok" {
+                        return Err(value
+                            .get("message")
+                            .and_then(Value::as_str)
+                            .unwrap_or("播放器未能完成跳转")
+                            .to_string());
+                    }
+                    let landed = value.get("landedPositionMs").and_then(Value::as_u64);
+                    return text_result(&json!({
+                        "requestedPositionMs": position_ms,
+                        "landedPositionMs": landed,
+                    }));
+                }
+            }
+        }
+        if std::time::Instant::now() >= deadline {
+            return Err("播放器未确认跳转请求，请稍后重试".to_string());
+        }
+    }
+}
+
 fn text_result<T: Serialize>(payload: &T) -> Result<Value, String> {
     let text = serde_json::to_string_pretty(payload).map_err(|error| error.to_string())?;
     Ok(json!({
@@ -800,6 +906,100 @@ fn text_result<T: Serialize>(payload: &T) -> Result<Value, String> {
 mod tests {
     use super::*;
     use crate::snapshot::{AgentCapabilities, CONTEXT_FILE_ENV};
+
+    fn seek_snapshot() -> LuminaMcpSnapshot {
+        LuminaMcpSnapshot {
+            anchor: Some(PromptAnchor {
+                media_path: r"D:\videos\demo.mp4".into(),
+                media_title: None,
+                library_root: None,
+                group_key: None,
+                season: None,
+                episode: None,
+                position_ms: 10_000,
+                duration_ms: Some(60_000),
+                sent_at_ms: 0,
+                subtitle_choice_id: None,
+            }),
+            ..LuminaMcpSnapshot::empty()
+        }
+    }
+
+    #[test]
+    fn seek_tool_refuses_without_anchor() {
+        let snapshot = LuminaMcpSnapshot::empty();
+        let err = seek_playback(&snapshot, &json!({ "positionMs": 1_000 }))
+            .expect_err("no anchor must refuse");
+        assert!(err.contains("没有打开的视频"));
+    }
+
+    #[test]
+    fn seek_tool_requires_position() {
+        let err = seek_playback(&seek_snapshot(), &json!({}))
+            .expect_err("missing positionMs must refuse");
+        assert!(err.contains("positionMs"));
+    }
+
+    /// Full round trip: tool writes the control file, a fake host watcher
+    /// confirms with the same nonce, and the tool reports the landed position.
+    /// Env var is restored afterwards (same convention as the capture chain).
+    #[test]
+    fn seek_tool_round_trips_through_control_file() {
+        let dir = std::env::temp_dir().join(format!("lumina-seek-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("seek temp dir");
+        let previous = std::env::var(CONTEXT_FILE_ENV).ok();
+        std::env::set_var(
+            CONTEXT_FILE_ENV,
+            dir.join(".lumina").join("agent-context.json"),
+        );
+
+        let seek_dir = dir.clone();
+        let fake_host = std::thread::spawn(move || {
+            let control = seek_dir.join(".lumina").join("mcp-control.json");
+            let mut seen = String::new();
+            for _ in 0..40 {
+                std::thread::sleep(std::time::Duration::from_millis(50));
+                if let Ok(text) = std::fs::read_to_string(&control) {
+                    if text != seen {
+                        seen = text;
+                        break;
+                    }
+                }
+            }
+            assert!(!seen.is_empty(), "control file never appeared");
+            let value: Value = serde_json::from_str(&seen).expect("control json");
+            let nonce = value.get("nonce").and_then(Value::as_str).expect("nonce");
+            assert_eq!(
+                value.get("positionMs").and_then(Value::as_u64),
+                Some(42_000)
+            );
+            std::fs::write(
+                seek_dir.join(".lumina").join("mcp-control-result.json"),
+                serde_json::to_string(&json!({
+                    "nonce": nonce,
+                    "status": "ok",
+                    "landedPositionMs": 42_000,
+                }))
+                .expect("result json"),
+            )
+            .expect("write result");
+        });
+
+        let result = seek_playback(&seek_snapshot(), &json!({ "positionMs": 42_000 }))
+            .expect("seek round trip");
+        let _ = fake_host.join();
+        let text = result
+            .pointer("/content/0/text")
+            .and_then(Value::as_str)
+            .expect("text payload");
+        assert!(text.contains("42000"), "landed position reported: {text}");
+
+        match previous {
+            Some(value) => std::env::set_var(CONTEXT_FILE_ENV, value),
+            None => std::env::remove_var(CONTEXT_FILE_ENV),
+        }
+        let _ = std::fs::remove_dir_all(dir);
+    }
 
     #[test]
     fn capture_tool_refuses_without_vision() {

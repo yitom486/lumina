@@ -3,6 +3,7 @@
 //! Chat snapshot lifecycle + MCP session environment live in `adapter`.
 
 pub mod adapter;
+pub mod mcp_control;
 
 pub use lumina_acp::{
     AcpClientSettings, AcpError, AcpErrorCode, AcpEvent, AcpService, AcpSessionModelOptions,

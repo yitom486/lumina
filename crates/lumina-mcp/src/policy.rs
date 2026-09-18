@@ -18,8 +18,8 @@ use super::tools::{subtitle_workshop_enabled, video_annotations_enabled, vision_
 // `tools/list` order stay byte-identical.
 pub use lumina_core::tool_contract::{
     TOOL_AUDIO_MARKS, TOOL_CAPTURE_FRAMES, TOOL_EPISODE_INDEX, TOOL_EPISODE_TRANSCRIPT,
-    TOOL_LIBRARY_CONTEXT, TOOL_PLAYBACK_CONTEXT, TOOL_PROPOSE_ANNOTATION, TOOL_SUBTITLE_CUES,
-    TOOL_TRANSCRIPT_WINDOW, TOOL_WRITE_SUBTITLE_TRACK,
+    TOOL_LIBRARY_CONTEXT, TOOL_PLAYBACK_CONTEXT, TOOL_PROPOSE_ANNOTATION, TOOL_SEEK_PLAYBACK,
+    TOOL_SUBTITLE_CUES, TOOL_TRANSCRIPT_WINDOW, TOOL_WRITE_SUBTITLE_TRACK,
 };
 
 /// Env var carrying the profile into the MCP server process.
@@ -81,6 +81,7 @@ pub fn allowed_tool_names(
         McpToolProfile::Chat => {
             let mut tools = vec![
                 TOOL_PLAYBACK_CONTEXT,
+                TOOL_SEEK_PLAYBACK,
                 TOOL_LIBRARY_CONTEXT,
                 TOOL_EPISODE_INDEX,
                 TOOL_TRANSCRIPT_WINDOW,
@@ -186,6 +187,7 @@ mod tests {
             names,
             vec![
                 TOOL_PLAYBACK_CONTEXT,
+                TOOL_SEEK_PLAYBACK,
                 TOOL_LIBRARY_CONTEXT,
                 TOOL_EPISODE_INDEX,
                 TOOL_TRANSCRIPT_WINDOW,

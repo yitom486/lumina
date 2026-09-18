@@ -38,6 +38,11 @@ impl SessionEnvironment for AppSessionEnvironment {
     }
 
     fn sync_snapshot(&self, snapshot_path: &Path, vision_capable: bool) -> Result<(), String> {
+        // MCP 反向控制（seek）按会话工作区登记：snapshot 在
+        // `<workspace>/.lumina/agent-context.json`，工作区是其祖父目录。
+        if let Some(workspace) = snapshot_path.parent().and_then(|parent| parent.parent()) {
+            crate::acp::mcp_control::register_workspace(workspace);
+        }
         sync_snapshot_capabilities(snapshot_path, vision_capable)
     }
 

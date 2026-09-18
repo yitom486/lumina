@@ -227,6 +227,7 @@ pub fn run() {
             }
             crate::player::mpv::native_library::ensure_libmpv_loaded(app.handle())?;
             attach_native_surface(app)?;
+            crate::acp::mcp_control::start_control_watcher(app.handle().clone());
             tracing::info!(elapsed_ms = startup_ms(), "startup: setup done");
             Ok(())
         })

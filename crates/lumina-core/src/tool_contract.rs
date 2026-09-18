@@ -22,6 +22,7 @@ pub const TOOL_SUBTITLE_CUES: &str = "lumina_get_subtitle_cues";
 pub const TOOL_WRITE_SUBTITLE_TRACK: &str = "lumina_write_subtitle_track";
 pub const TOOL_CAPTURE_FRAMES: &str = "lumina_capture_frames";
 pub const TOOL_PROPOSE_ANNOTATION: &str = "lumina_propose_video_annotation";
+pub const TOOL_SEEK_PLAYBACK: &str = "lumina_seek_playback";
 
 /// Every known tool, in `tools/list` declaration order.
 pub const ALL_TOOLS: &[&str] = &[
@@ -35,12 +36,13 @@ pub const ALL_TOOLS: &[&str] = &[
     TOOL_WRITE_SUBTITLE_TRACK,
     TOOL_CAPTURE_FRAMES,
     TOOL_PROPOSE_ANNOTATION,
+    TOOL_SEEK_PLAYBACK,
 ];
 
 /// Number of known tools (locked: adding a tool is a contract change).
-pub const TOOL_COUNT: usize = 10;
+pub const TOOL_COUNT: usize = 11;
 
-/// True for the ten canonical names, false for anything else (including the
+/// True for the canonical names, false for anything else (including the
 /// historical `Unknown tool` path, which MCP preserves verbatim).
 pub fn is_known_tool(name: &str) -> bool {
     matches!(
@@ -55,6 +57,7 @@ pub fn is_known_tool(name: &str) -> bool {
             | TOOL_WRITE_SUBTITLE_TRACK
             | TOOL_CAPTURE_FRAMES
             | TOOL_PROPOSE_ANNOTATION
+            | TOOL_SEEK_PLAYBACK
     )
 }
 
