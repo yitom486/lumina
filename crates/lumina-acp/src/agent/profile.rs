@@ -9,7 +9,7 @@ pub use crate::domain::model::{
     AgentKind, AgentProfileStatus, AuthPolicy, EnvPreset, LauncherPreset, SessionStoragePreset,
 };
 pub use crate::domain::model::{AgentProfileInput, AgentProfilesHint};
-use crate::error::AcpError;
+use crate::error::{AcpError, AcpErrorCode};
 
 use super::launch::{resolve_launch, CODEX_ACP_PACKAGE};
 
@@ -45,14 +45,24 @@ const ANTIGRAVITY_AUTH_ERROR_MESSAGE: &str =
     "Google 账号尚未授权，请点击「登录 Google 账号」完成授权并在代理通畅下重试";
 const GENERIC_AUTH_ERROR_MESSAGE: &str =
     "该 AI Agent 尚未完成登录或认证，请按其官方指引完成登录后重试";
+const ANTIGRAVITY_AUTH_FAILURE_MESSAGE: &str =
+    "Google 账号认证失败，请检查网络代理与登录授权后重试";
 
 impl AgentProfile {
     pub fn uses_codex_acp_launcher(&self) -> bool {
         self.launcher == Some(LauncherPreset::CodexAcp)
     }
 
+    pub fn uses_antigravity_launcher(&self) -> bool {
+        self.launcher == Some(LauncherPreset::AntigravityAcp)
+    }
+
     pub fn injects_codex_cli_env(&self) -> bool {
         self.env_preset == Some(EnvPreset::CodexCli)
+    }
+
+    pub fn injects_antigravity_proxy_env(&self) -> bool {
+        self.env_preset == Some(EnvPreset::AntigravityProxy)
     }
 
     pub fn stores_codex_rollouts(&self) -> bool {
@@ -63,12 +73,20 @@ impl AgentProfile {
         self.auth_policy == Some(AuthPolicy::CodexLocal)
     }
 
+    pub fn is_antigravity_oauth(&self) -> bool {
+        self.auth_policy == Some(AuthPolicy::AntigravityOauth)
+    }
+
     pub fn is_codex_like(&self) -> bool {
         self.injects_codex_cli_env() || self.is_codex_local_auth()
     }
 
     pub fn is_antigravity(&self) -> bool {
-        self.kind == AgentKind::Antigravity || self.id == "antigravity"
+        self.uses_antigravity_launcher()
+            || self.injects_antigravity_proxy_env()
+            || self.is_antigravity_oauth()
+            || self.kind == AgentKind::Antigravity
+            || self.id == "antigravity"
     }
 
     pub fn empty_reply_hint(&self) -> String {
@@ -88,6 +106,21 @@ impl AgentProfile {
             CODEX_AUTH_ERROR_MESSAGE.into()
         } else {
             GENERIC_AUTH_ERROR_MESSAGE.into()
+        }
+    }
+
+    /// Fixed business `message` per profile; raw wire text stays in `details`.
+    pub fn auth_failure_error(&self, details: Option<&str>) -> AcpError {
+        if self.is_antigravity() {
+            AcpError::new(
+                AcpErrorCode::ProtocolError,
+                ANTIGRAVITY_AUTH_FAILURE_MESSAGE,
+                details.map(str::to_string),
+            )
+        } else if self.is_codex_local_auth() {
+            AcpError::codex_auth_required(details)
+        } else {
+            AcpError::protocol(details)
         }
     }
 }
@@ -216,9 +249,9 @@ fn builtin_antigravity() -> AgentProfile {
         },
         args: Vec::new(),
         env,
-        launcher: None,
-        env_preset: None,
-        auth_policy: None,
+        launcher: Some(LauncherPreset::AntigravityAcp),
+        env_preset: Some(EnvPreset::AntigravityProxy),
+        auth_policy: Some(AuthPolicy::AntigravityOauth),
         auth_methods: vec!["oauth-personal".into()],
         session_storage: None,
     }
@@ -289,6 +322,15 @@ fn merge_builtin_profiles(profiles: &mut Vec<AgentProfile>) {
             continue;
         }
         if builtin.id == "antigravity" {
+            if let Some(existing) = profiles
+                .iter_mut()
+                .find(|profile| profile.id == "antigravity")
+            {
+                if existing.kind == AgentKind::Antigravity {
+                    apply_missing_antigravity_presets(existing);
+                    continue;
+                }
+            }
             if !profiles.iter().any(|profile| profile.id == "antigravity") {
                 profiles.push(builtin);
             }
@@ -341,6 +383,22 @@ fn apply_missing_codex_presets(profile: &mut AgentProfile) {
     }
     if profile.session_storage.is_none() {
         profile.session_storage = codex.session_storage;
+    }
+}
+
+fn apply_missing_antigravity_presets(profile: &mut AgentProfile) {
+    let antigravity = builtin_antigravity();
+    if profile.launcher.is_none() {
+        profile.launcher = antigravity.launcher;
+    }
+    if profile.env_preset.is_none() {
+        profile.env_preset = antigravity.env_preset;
+    }
+    if profile.auth_policy.is_none() {
+        profile.auth_policy = antigravity.auth_policy;
+    }
+    if profile.auth_methods.is_empty() {
+        profile.auth_methods = antigravity.auth_methods;
     }
 }
 
@@ -414,9 +472,40 @@ mod tests {
     fn builtin_antigravity_profile_properties() {
         let agy = builtin_antigravity();
         assert!(agy.is_antigravity());
+        assert!(agy.uses_antigravity_launcher());
+        assert!(agy.injects_antigravity_proxy_env());
+        assert!(agy.is_antigravity_oauth());
         assert!(!agy.uses_codex_acp_launcher());
+        assert!(!agy.injects_codex_cli_env());
+        assert!(!agy.is_codex_local_auth());
         assert_eq!(agy.empty_reply_hint(), ANTIGRAVITY_EMPTY_REPLY_HINT);
         assert_eq!(agy.auth_error_message(), ANTIGRAVITY_AUTH_ERROR_MESSAGE);
+    }
+
+    #[test]
+    fn legacy_antigravity_hint_without_presets_gets_presets_backfilled() {
+        let mut hint = default_profiles_hint();
+        hint.profiles = hint
+            .profiles
+            .into_iter()
+            .map(|mut profile| {
+                if profile.id == "antigravity" {
+                    profile.launcher = None;
+                    profile.env_preset = None;
+                    profile.auth_policy = None;
+                }
+                profile
+            })
+            .collect();
+        let prepared = prepare_profiles(&hint);
+        let agy = prepared
+            .profiles
+            .iter()
+            .find(|profile| profile.id == "antigravity")
+            .expect("antigravity");
+        assert!(agy.uses_antigravity_launcher());
+        assert!(agy.injects_antigravity_proxy_env());
+        assert!(agy.is_antigravity_oauth());
     }
 
     #[test]

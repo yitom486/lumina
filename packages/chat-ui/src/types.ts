@@ -3,6 +3,12 @@ import type { VideoAnnotationProposal } from "@lumina/contracts";
 
 export type AgentKind = "Codex" | "Claude" | "Antigravity" | "Custom";
 
+/** Per-profile behavior presets; absent = fully generic ACP behavior. */
+export type AgentLauncherPreset = "codex-acp" | "antigravity-acp";
+export type AgentEnvPreset = "codex-cli" | "antigravity-proxy";
+export type AgentAuthPolicy = "codex-local" | "antigravity-oauth";
+export type AgentSessionStoragePreset = "codex-rollouts";
+
 export type AgentProfileStatus = {
   id: string;
   name: string;
@@ -85,6 +91,11 @@ export type AgentProfileInput = {
   command: string;
   args?: string[];
   env?: Record<string, string>;
+  launcher?: AgentLauncherPreset;
+  envPreset?: AgentEnvPreset;
+  authPolicy?: AgentAuthPolicy;
+  authMethods?: string[];
+  sessionStorage?: AgentSessionStoragePreset;
 };
 
 export type AgentProfilesHint = {

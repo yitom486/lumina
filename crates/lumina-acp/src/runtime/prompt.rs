@@ -5,7 +5,7 @@
 use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant};
 
-use crate::agent::profile::{prepare_profiles, AgentKind, PreparedProfiles};
+use crate::agent::profile::{prepare_profiles, PreparedProfiles};
 use crate::agent::workspace::resolve_session_cwd;
 use crate::domain::context::VideoPromptContext;
 use crate::domain::environment::session_env;
@@ -237,8 +237,8 @@ impl AcpService {
                 return Err(AcpError::internal(Some("ACP session missing after spawn")));
             }
         };
-        // Copy: the EOF path takes the guard, so the kind must be owned here.
-        let profile_kind = session.profile_kind;
+        // Copy: the EOF path takes the guard, so the hint must be owned here.
+        let empty_reply_hint = session.empty_reply_hint.clone();
 
         if !images.is_empty() && !session.init.prompt_image {
             Self::log_workshop_exit(
@@ -419,7 +419,7 @@ impl AcpService {
                             stop.as_deref(),
                             chunks,
                         );
-                        return self.empty_reply_outcome(profile_kind, stop);
+                        return self.empty_reply_outcome(&empty_reply_hint, stop);
                     }
                     Self::log_workshop_exit(
                         attempt_label,
@@ -456,7 +456,7 @@ impl AcpService {
                 Some("end_turn"),
                 chunks,
             );
-            return self.empty_reply_outcome(profile_kind, Some("end_turn".into()));
+            return self.empty_reply_outcome(&empty_reply_hint, Some("end_turn".into()));
         }
         Self::log_workshop_exit(attempt_label, Some(pid), "ok", Some("end_turn"), chunks);
         Ok((final_text, Some("end_turn".into())))
@@ -505,22 +505,17 @@ impl AcpService {
     /// Zero-output outcome split by caller kind. Chat keeps the human-readable
     /// hint as a successful reply (existing UX); isolated tasks get a typed
     /// `NoOutput` error so callers retry or fail loudly instead of parsing
-    /// hint prose as JSON. Unit-covered without a live agent process.
+    /// hint prose as JSON. The hint comes from the active profile. Unit-covered
+    /// without a live agent process.
     fn empty_reply_outcome(
         &self,
-        profile_kind: AgentKind,
+        empty_reply_hint: &str,
         stop: Option<String>,
     ) -> Result<(String, Option<String>), AcpError> {
         if self.isolated_task() {
             return Err(AcpError::no_output(stop.as_deref()));
         }
-        let empty_hint = match profile_kind {
-            AgentKind::Codex => {
-                "（会话结束，未解析到文本回复；请确认 Codex 已登录，且模型走 Responses API）"
-            }
-            _ => "（会话结束，未解析到文本回复；请确认该 ACP Agent 可用）",
-        };
-        Ok((empty_hint.into(), stop))
+        Ok((empty_reply_hint.to_string(), stop))
     }
 }
 
@@ -553,17 +548,23 @@ mod tests {
         // Chat (tools enabled): keeps the human-readable hint as success.
         let chat = AcpService::new();
         let (text, stop) = chat
-            .empty_reply_outcome(crate::agent::profile::AgentKind::Codex, None)
+            .empty_reply_outcome(crate::agent::profile::CODEX_EMPTY_REPLY_HINT, None)
             .expect("chat keeps hint");
         assert!(text.contains("Codex"));
         assert_eq!(stop, None);
+
+        let generic = AcpService::new();
+        let (text, _) = generic
+            .empty_reply_outcome(crate::agent::profile::GENERIC_EMPTY_REPLY_HINT, None)
+            .expect("generic hint");
+        assert!(!text.contains("Codex"));
 
         // Isolated task: typed error carrying the stop reason, never prose.
         let isolated = AcpService::new();
         isolated.tool_access_enabled.store(false, Ordering::SeqCst);
         let err = isolated
             .empty_reply_outcome(
-                crate::agent::profile::AgentKind::Codex,
+                crate::agent::profile::CODEX_EMPTY_REPLY_HINT,
                 Some("end_turn".into()),
             )
             .expect_err("isolated errors");

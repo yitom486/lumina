@@ -21,6 +21,10 @@ export function defaultAgentProfiles(): AgentProfileInput[] {
       command: bunx,
       args: [CODEX_ACP_PACKAGE],
       env: {},
+      launcher: "codex-acp",
+      envPreset: "codex-cli",
+      authPolicy: "codex-local",
+      sessionStorage: "codex-rollouts",
     },
     {
       id: "antigravity",
@@ -29,6 +33,10 @@ export function defaultAgentProfiles(): AgentProfileInput[] {
       command: antigravity,
       args: [],
       env: { ACP_PROXY_PORT: "7897" },
+      launcher: "antigravity-acp",
+      envPreset: "antigravity-proxy",
+      authPolicy: "antigravity-oauth",
+      authMethods: ["oauth-personal"],
     },
     {
       id: "claude",

@@ -24,6 +24,9 @@ pub enum LauncherPreset {
     /// codex-acp fallback chain: standalone adapter → dev tree → `bun x` → `bunx`.
     #[serde(rename = "codex-acp")]
     CodexAcp,
+    /// `command` → antigravity-acp discovery fallback (`find_antigravity`).
+    #[serde(rename = "antigravity-acp")]
+    AntigravityAcp,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -31,6 +34,9 @@ pub enum EnvPreset {
     /// Inject `CODEX_PATH` / `CODEX_HOME` / `TERM` and prepend the Codex bin dir.
     #[serde(rename = "codex-cli")]
     CodexCli,
+    /// Inject local HTTP/SOCKS proxy env (`ACP_PROXY_PORT`, default 7897).
+    #[serde(rename = "antigravity-proxy")]
+    AntigravityProxy,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -38,6 +44,9 @@ pub enum AuthPolicy {
     /// Codex-style dynamic auth preference (ChatGPT login vs API key).
     #[serde(rename = "codex-local")]
     CodexLocal,
+    /// Antigravity-style dynamic auth preference (Google OAuth vs Gemini key).
+    #[serde(rename = "antigravity-oauth")]
+    AntigravityOauth,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

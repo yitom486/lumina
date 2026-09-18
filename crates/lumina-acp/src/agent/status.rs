@@ -28,9 +28,11 @@ pub fn status_from_profiles(hint: &AgentProfilesHint) -> AcpStatus {
 
     let message = if available {
         let name = active.map(|p| p.name.as_str()).unwrap_or("Agent");
-        let kind = active.map(|p| p.kind).unwrap_or(AgentKind::Custom);
+        let active_profile = prepared.profiles.iter().find(|p| p.id == active_id);
+        let codex_like = active_profile.is_some_and(|p| p.is_codex_like());
+        let antigravity = active_profile.is_some_and(|p| p.is_antigravity());
         let codex_home = codex_home_label();
-        if kind == AgentKind::Antigravity {
+        if antigravity {
             let port = active
                 .and_then(|p| p.env.get("ACP_PROXY_PORT"))
                 .map(String::as_str)
@@ -40,11 +42,11 @@ pub fn status_from_profiles(hint: &AgentProfilesHint) -> AcpStatus {
             } else {
                 format!("{name} 已就绪，尚未登录 Google 账号，请在下方点击登录")
             }
-        } else if kind == AgentKind::Codex && codex_found && codex_config_found {
+        } else if codex_like && codex_found && codex_config_found {
             format!("{name} 已检测到本机配置，发起提问时将验证连接")
-        } else if kind == AgentKind::Codex && codex_found {
+        } else if codex_like && codex_found {
             format!("{name} 已找到，但未检测到 {codex_home} 登录配置")
-        } else if kind == AgentKind::Codex && bunx_found {
+        } else if codex_like && bunx_found {
             format!("{name} 启动器已找到，首次提问将下载并验证 Agent")
         } else {
             format!("{name} 已就绪（仅在你发起会话时启动）")

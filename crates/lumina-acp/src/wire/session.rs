@@ -248,8 +248,8 @@ pub fn session_resume_params(session_id: &str, cwd: &str, mcp_servers: Value) ->
 }
 
 /// `session/load` params: thread history comes back as streamed
-/// `session/update` notifications, not in the final result (codex-acp
-/// `loadSession` → `getOrCreateSessionWithHistory` + `streamThreadHistory`).
+/// `session/update` notifications, not in the final result (generic ACP
+/// shape, calibrated against the codex-acp reference implementation).
 /// Shape mirrors `session/resume` (`zLoadSessionRequest` requires
 /// `sessionId` + `cwd` + `mcpServers`).
 pub fn session_load_params(session_id: &str, cwd: &str, mcp_servers: Value) -> Value {
@@ -586,7 +586,7 @@ mod tests {
 
     #[test]
     fn session_load_params_mirror_resume_shape() {
-        // Shape pinned to codex-acp `zLoadSessionRequest`
+        // Generic ACP shape, calibrated against the codex-acp `zLoadSessionRequest`
         // (`sessionId` + `cwd` + `mcpServers`); history itself arrives as
         // streamed `session/update`, never in the final result.
         let mcp_servers = json!([]);
@@ -645,7 +645,7 @@ mod tests {
 
     #[test]
     fn occupied_resume_failure_is_not_reported_as_lost() {
-        // Shape taken from a real codex-acp refusal.
+        // Generic ACP refusal shape, taken from a real codex-acp refusal.
         assert_eq!(
             classify_resume_failure(Some(
                 "Internal error: thread 01a09b84-d8a8-7462-aade-7c4c1da433e2 \
@@ -761,8 +761,58 @@ mod tests {
             ],
             ..InitializeResult::default()
         };
-        let picked = crate::agent::launch::pick_auth_method(&init).expect("method");
+        let profile = codex_local_test_profile();
+        let picked =
+            crate::agent::launch::pick_auth_method(&profile, &init).expect("method");
         assert_eq!(picked.id, "chat-gpt");
+    }
+
+    #[test]
+    fn pick_auth_uses_profile_policy_over_static_list() {
+        let init = InitializeResult {
+            auth_methods: vec![
+                AuthMethod {
+                    id: "gemini-api-key".into(),
+                    name: "Gemini API Key".into(),
+                },
+                AuthMethod {
+                    id: "oauth-personal".into(),
+                    name: "Google OAuth".into(),
+                },
+            ],
+            ..InitializeResult::default()
+        };
+        let profile = crate::agent::profile::AgentProfile {
+            id: "antigravity".into(),
+            name: "Google Antigravity".into(),
+            kind: crate::domain::model::AgentKind::Antigravity,
+            command: String::new(),
+            args: Vec::new(),
+            env: Default::default(),
+            launcher: None,
+            env_preset: None,
+            auth_policy: Some(crate::domain::model::AuthPolicy::AntigravityOauth),
+            auth_methods: Vec::new(),
+            session_storage: None,
+        };
+        let picked = crate::agent::launch::pick_auth_method(&profile, &init).expect("method");
+        assert_eq!(picked.id, "oauth-personal");
+    }
+
+    fn codex_local_test_profile() -> crate::agent::profile::AgentProfile {
+        crate::agent::profile::AgentProfile {
+            id: "codex".into(),
+            name: "Codex".into(),
+            kind: crate::domain::model::AgentKind::Codex,
+            command: String::new(),
+            args: Vec::new(),
+            env: Default::default(),
+            launcher: None,
+            env_preset: None,
+            auth_policy: Some(crate::domain::model::AuthPolicy::CodexLocal),
+            auth_methods: Vec::new(),
+            session_storage: None,
+        }
     }
 
     #[test]

@@ -10,7 +10,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use crate::agent::launch::{pick_auth_method, resolve_launch};
-use crate::agent::profile::{resolve_active_profile, AgentKind, PreparedProfiles};
+use crate::agent::profile::{resolve_active_profile, PreparedProfiles};
 use crate::agent::workspace::{resolve_session_cwd, same_workspace};
 use crate::domain::environment::session_env;
 use crate::domain::model::{
@@ -67,7 +67,9 @@ pub(crate) struct LiveSession {
     pub(crate) session_id: String,
     pub(crate) next_id: u64,
     pub(crate) init: InitializeResult,
-    pub(crate) profile_kind: AgentKind,
+    /// Profile-derived empty-reply copy; the prompt loop owns it because the
+    /// EOF path takes the session guard.
+    pub(crate) empty_reply_hint: String,
     pub(crate) model_options: AcpSessionModelOptions,
 }
 
@@ -420,6 +422,9 @@ impl AcpService {
         tracing::info!(
             profile_id = %profile.id,
             profile_kind = ?profile.kind,
+            launcher = ?profile.launcher,
+            env_preset = ?profile.env_preset,
+            auth_policy = ?profile.auth_policy,
             program = %launch.program.display(),
             argument_count = launch.args.len(),
             cwd = %workspace.display(),
@@ -517,7 +522,7 @@ impl AcpService {
             session_id: String::new(),
             next_id: 1,
             init: InitializeResult::default(),
-            profile_kind: profile.kind,
+            empty_reply_hint: profile.empty_reply_hint(),
             model_options: AcpSessionModelOptions::default(),
         };
 
@@ -565,7 +570,7 @@ impl AcpService {
         }
 
         // Authenticate when Agent advertises methods — prefer ChatGPT when ~/.codex exists.
-        if let Some(method) = pick_auth_method(&init) {
+        if let Some(method) = pick_auth_method(&profile, &init) {
             on_event(AcpEvent::Progress {
                 message: format!("正在认证（{}）…", method.name),
             });
@@ -588,19 +593,9 @@ impl AcpService {
             )?;
             if let Some(msg) = is_error_response(&auth_resp) {
                 session.agent.terminate(false);
-                if profile.kind == AgentKind::Codex {
-                    return Err(AcpError::codex_auth_required(Some(&format!(
-                        "authenticate failed: {msg}"
-                    ))));
-                }
-                if profile.kind == AgentKind::Antigravity {
-                    return Err(AcpError::protocol(Some(&format!(
-                        "Google 账号认证失败：{msg}（请检查网络代理与登录授权）"
-                    ))));
-                }
-                return Err(AcpError::protocol(Some(&format!(
-                    "authenticate failed: {msg}"
-                ))));
+                return Err(
+                    profile.auth_failure_error(Some(&format!("authenticate failed: {msg}")))
+                );
             }
         }
 

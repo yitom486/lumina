@@ -7,7 +7,6 @@ use crate::agent::discover::{
     codex_config_present, codex_home_dir, find_acp_adapter, find_antigravity, find_bun, find_bunx,
     find_codex, find_command, find_dev_codex_acp_entry,
 };
-use crate::domain::model::AgentKind;
 use crate::error::AcpError;
 use crate::wire::session::{AuthMethod, InitializeResult};
 
@@ -24,9 +23,9 @@ pub struct LaunchSpec {
 }
 
 pub fn resolve_launch(profile: &AgentProfile) -> Result<LaunchSpec, AcpError> {
-    let (program, args) = if is_builtin_codex(profile) {
-        resolve_builtin_codex_launch(profile)?
-    } else if profile.kind == AgentKind::Antigravity {
+    let (program, args) = if profile.uses_codex_acp_launcher() {
+        resolve_codex_acp_fallback(profile)?
+    } else if profile.uses_antigravity_launcher() {
         let program = resolve_program(&profile.command)
             .or_else(find_antigravity)
             .ok_or_else(|| {
@@ -47,12 +46,12 @@ pub fn resolve_launch(profile: &AgentProfile) -> Result<LaunchSpec, AcpError> {
     };
 
     let mut env = profile.env.clone();
-    if profile.kind == AgentKind::Codex && !env.contains_key("CODEX_PATH") {
+    if profile.injects_codex_cli_env() && !env.contains_key("CODEX_PATH") {
         if let Some(codex) = find_codex() {
             env.insert("CODEX_PATH".into(), codex.to_string_lossy().to_string());
         }
     }
-    augment_spawn_env(profile.kind, &mut env);
+    augment_spawn_env(profile, &mut env);
 
     Ok(LaunchSpec {
         program,
@@ -60,13 +59,6 @@ pub fn resolve_launch(profile: &AgentProfile) -> Result<LaunchSpec, AcpError> {
         env,
         display_name: profile.name.clone(),
     })
-}
-
-fn is_builtin_codex(profile: &AgentProfile) -> bool {
-    profile.id == "codex"
-        && profile.kind == AgentKind::Codex
-        && matches!(profile.command.as_str(), "bunx" | "bunx.exe")
-        && profile.args.first().map(String::as_str) == Some(CODEX_ACP_PACKAGE)
 }
 
 fn resolve_program(command: &str) -> Option<PathBuf> {
@@ -77,9 +69,7 @@ fn resolve_program(command: &str) -> Option<PathBuf> {
     find_command(command)
 }
 
-fn resolve_builtin_codex_launch(
-    profile: &AgentProfile,
-) -> Result<(PathBuf, Vec<String>), AcpError> {
+fn resolve_codex_acp_fallback(profile: &AgentProfile) -> Result<(PathBuf, Vec<String>), AcpError> {
     if let Some(adapter) = find_acp_adapter() {
         return Ok((adapter, Vec::new()));
     }
@@ -98,11 +88,11 @@ fn resolve_builtin_codex_launch(
         return Ok((bunx, profile.args.clone()));
     }
     Err(AcpError::not_configured(Some(
-        "codex profile requires bun, bunx, or a standalone codex-acp adapter",
+        "codex-acp launcher requires bun, bunx, or a standalone codex-acp adapter",
     )))
 }
 
-fn augment_spawn_env(kind: AgentKind, env: &mut HashMap<String, String>) {
+fn augment_spawn_env(profile: &AgentProfile, env: &mut HashMap<String, String>) {
     // Strip PyInstaller environment variables so child processes don't trigger security checks
     env.retain(|k, _| !k.starts_with("_PYI") && !k.starts_with("_MEI"));
 
@@ -118,7 +108,7 @@ fn augment_spawn_env(kind: AgentKind, env: &mut HashMap<String, String>) {
         }
     }
 
-    if kind == AgentKind::Antigravity {
+    if profile.injects_antigravity_proxy_env() {
         let proxy_port = env
             .get("ACP_PROXY_PORT")
             .and_then(|s| s.trim().parse::<u16>().ok())
@@ -145,7 +135,7 @@ fn augment_spawn_env(kind: AgentKind, env: &mut HashMap<String, String>) {
         return;
     }
 
-    if kind != AgentKind::Codex {
+    if !profile.injects_codex_cli_env() {
         return;
     }
 
@@ -206,31 +196,44 @@ fn prepend_path_dir(env: &mut HashMap<String, String>, dir: &Path) {
     }
 }
 
-/// Pick an auth method compatible with the local setup (ChatGPT login vs API
-/// key, or Google Antigravity OAuth). Auth *policy* (config/env reads) belongs to `agent`; `wire` only
-/// parses `InitializeResult` and constructs requests.
-pub fn pick_auth_method(init: &InitializeResult) -> Option<&AuthMethod> {
+/// Pick an auth method compatible with the local setup. Auth *policy* lives
+/// on the profile (`codex-local` reads Codex config/env, `antigravity-oauth`
+/// prefers Google OAuth); profiles without a policy fall back to static
+/// `auth_methods` or the first advertised method. `wire` only parses
+/// `InitializeResult` and constructs requests.
+pub fn pick_auth_method<'a>(
+    profile: &AgentProfile,
+    init: &'a InitializeResult,
+) -> Option<&'a AuthMethod> {
     if init.auth_methods.is_empty() {
         return None;
     }
-    // Google Antigravity auth priority:
-    if let Some(method) = init.auth_methods.iter().find(|m| m.id == "oauth-personal") {
-        return Some(method);
-    }
-    if let Some(method) = init.auth_methods.iter().find(|m| m.id == "gemini-api-key") {
-        if std::env::var("GEMINI_API_KEY").is_ok() {
+    if profile.is_antigravity_oauth() {
+        if let Some(method) = init.auth_methods.iter().find(|m| m.id == "oauth-personal") {
             return Some(method);
         }
+        if let Some(method) = init.auth_methods.iter().find(|m| m.id == "gemini-api-key") {
+            if std::env::var("GEMINI_API_KEY").is_ok() {
+                return Some(method);
+            }
+        }
     }
-    let order: &[&str] = if codex_config_present() {
-        &["chat-gpt", "chat-gpt-device-code", "gateway", "api-key"]
-    } else if std::env::var("OPENAI_API_KEY").is_ok() {
-        &["api-key", "chat-gpt", "chat-gpt-device-code", "gateway"]
-    } else {
-        &["chat-gpt", "chat-gpt-device-code", "api-key", "gateway"]
-    };
-    for id in order {
-        if let Some(method) = init.auth_methods.iter().find(|method| method.id == *id) {
+    if profile.is_codex_local_auth() {
+        let order: &[&str] = if codex_config_present() {
+            &["chat-gpt", "chat-gpt-device-code", "gateway", "api-key"]
+        } else if std::env::var("OPENAI_API_KEY").is_ok() {
+            &["api-key", "chat-gpt", "chat-gpt-device-code", "gateway"]
+        } else {
+            &["chat-gpt", "chat-gpt-device-code", "api-key", "gateway"]
+        };
+        for id in order {
+            if let Some(method) = init.auth_methods.iter().find(|method| method.id == *id) {
+                return Some(method);
+            }
+        }
+    }
+    for id in &profile.auth_methods {
+        if let Some(method) = init.auth_methods.iter().find(|method| &method.id == id) {
             return Some(method);
         }
     }

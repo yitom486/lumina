@@ -10,6 +10,7 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use crate::agent::profile::{prepare_profiles, resolve_active_profile};
 use crate::domain::model::{AcpEvent, AcpSessionModelSelection, AgentProfilesHint, SessionKind};
 use crate::error::{AcpError, AcpErrorCode};
 use crate::jobs::isolated::isolated_client_settings;
@@ -167,12 +168,26 @@ pub struct WorkshopPool {
     closed: AtomicBool,
     job_id: String,
     session_ids: Arc<Mutex<BTreeSet<String>>>,
+    /// Codex-rollout cleanup runs only for profiles that declare
+    /// `sessionStorage: codex-rollouts`; other agents leave no such files.
+    cleanup_codex_rollouts: bool,
 }
 
 impl WorkshopPool {
     pub fn new(config: PoolConfig, job_id: String) -> Self {
         let size = config.size.max(1);
         let session_ids = Arc::new(Mutex::new(BTreeSet::new()));
+        let override_id = if config.profile_id.trim().is_empty() {
+            None
+        } else {
+            Some(config.profile_id.as_str())
+        };
+        let cleanup_codex_rollouts = {
+            let prepared = prepare_profiles(&config.profiles);
+            resolve_active_profile(&prepared, override_id)
+                .map(|profile| profile.stores_codex_rollouts())
+                .unwrap_or(false)
+        };
         let slots = (0..size)
             .map(|_| {
                 Arc::new(PoolSlot {
@@ -193,6 +208,7 @@ impl WorkshopPool {
             closed: AtomicBool::new(false),
             job_id,
             session_ids,
+            cleanup_codex_rollouts,
         }
     }
 
@@ -214,6 +230,7 @@ impl WorkshopPool {
             closed: AtomicBool::new(false),
             job_id: job_id.to_string(),
             session_ids: Arc::new(Mutex::new(BTreeSet::new())),
+            cleanup_codex_rollouts: false,
         }
     }
 
@@ -303,7 +320,9 @@ impl WorkshopPool {
             .lock()
             .map(|ids| ids.clone())
             .unwrap_or_default();
-        crate::jobs::rollout::cleanup_codex_rollouts(&session_ids, &self.job_id);
+        if self.cleanup_codex_rollouts {
+            crate::jobs::rollout::cleanup_codex_rollouts(&session_ids, &self.job_id);
+        }
     }
 }
 

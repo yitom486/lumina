@@ -946,7 +946,7 @@ fn load_content_text(content: &Value) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::agent::profile::AgentKind;
+    use crate::agent::profile::CODEX_EMPTY_REPLY_HINT;
     use std::process::Stdio;
 
     /// Fabricate a slot session around a process that already exited: stdin
@@ -974,7 +974,7 @@ mod tests {
                 supports_session_close,
                 ..crate::wire::session::InitializeResult::default()
             },
-            profile_kind: AgentKind::Codex,
+            empty_reply_hint: CODEX_EMPTY_REPLY_HINT.to_string(),
             model_options: AcpSessionModelOptions::default(),
         }
     }
@@ -1002,7 +1002,7 @@ mod tests {
                 supports_session_close: true,
                 ..crate::wire::session::InitializeResult::default()
             },
-            profile_kind: AgentKind::Codex,
+            empty_reply_hint: CODEX_EMPTY_REPLY_HINT.to_string(),
             model_options: AcpSessionModelOptions::default(),
         }
     }
