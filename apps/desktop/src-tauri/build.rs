@@ -3,6 +3,10 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 fn main() {
+    // App icons are embedded into the platform binary by the Tauri build.
+    // Explicitly watch the directory so changing an icon invalidates the
+    // incremental build instead of reusing a binary with stale resources.
+    println!("cargo:rerun-if-changed=icons");
     tauri_build::build();
     link_and_stage_libmpv();
     stage_lumina_osc();
