@@ -77,33 +77,40 @@ pub async fn acp_connect(
 #[tauri::command]
 pub async fn acp_list_agent_sessions(
     state: State<'_, AppState>,
+    profile_id: Option<String>,
     cwd: Option<String>,
 ) -> Result<AgentSessionListResult, AcpError> {
     let acp = state.acp.clone();
-    tauri::async_runtime::spawn_blocking(move || acp.list_agent_sessions(cwd.as_deref()))
-        .await
-        .map_err(|error| AcpError::internal(Some(&format!("acp list sessions join: {error}"))))?
+    tauri::async_runtime::spawn_blocking(move || {
+        acp.list_agent_sessions(profile_id.as_deref(), cwd.as_deref())
+    })
+    .await
+    .map_err(|error| AcpError::internal(Some(&format!("acp list sessions join: {error}"))))?
 }
 
 #[tauri::command]
 pub async fn acp_load_session(
     state: State<'_, AppState>,
+    profile_id: Option<String>,
     session_id: String,
     cwd: Option<String>,
 ) -> Result<Vec<lumina_acp::runtime::service::LoadedTurn>, AcpError> {
     let acp = state.acp.clone();
-    tauri::async_runtime::spawn_blocking(move || acp.load_session_transcript(session_id, cwd))
-        .await
-        .map_err(|error| AcpError::internal(Some(&format!("acp load session join: {error}"))))?
+    tauri::async_runtime::spawn_blocking(move || {
+        acp.load_session_transcript(profile_id, session_id, cwd)
+    })
+    .await
+    .map_err(|error| AcpError::internal(Some(&format!("acp load session join: {error}"))))?
 }
 
 #[tauri::command]
 pub async fn acp_delete_session(
     state: State<'_, AppState>,
+    profile_id: Option<String>,
     session_id: String,
 ) -> Result<(), AcpError> {
     let acp = state.acp.clone();
-    tauri::async_runtime::spawn_blocking(move || acp.delete_session(session_id))
+    tauri::async_runtime::spawn_blocking(move || acp.delete_session(profile_id, session_id))
         .await
         .map_err(|error| AcpError::internal(Some(&format!("acp delete session join: {error}"))))?
 }

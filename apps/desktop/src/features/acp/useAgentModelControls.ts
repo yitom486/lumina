@@ -39,7 +39,16 @@ export function useAgentModelControls({
   const patchSettings = useAcpSettingsStore((s) => s.patchSettings);
 
   const optionSource =
-    status?.sessionModelOptions ?? discoveredOptions ?? null;
+    status?.activeProfileId === activeProfileId
+      ? (status?.sessionModelOptions ?? discoveredOptions ?? null)
+      : (discoveredOptions ?? null);
+
+  // Discovery results describe one agent's session; switching profile must
+  // not carry, say, Codex GPT models into Antigravity's composer.
+  useEffect(() => {
+    setDiscoveredOptions(null);
+    setControlError(null);
+  }, [activeProfileId]);
 
   useEffect(() => {
     if (!optionSource) return;

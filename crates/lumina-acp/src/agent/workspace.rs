@@ -89,9 +89,33 @@ fn default_session_cwd() -> PathBuf {
 fn normalize_abs(path: PathBuf) -> PathBuf {
     // Best-effort canonicalize; fall back to the absolute path we already have.
     match path.canonicalize() {
-        Ok(canonical) => canonical,
+        Ok(canonical) => strip_verbatim_prefix(canonical),
         Err(_) => path,
     }
+}
+
+/// Windows `canonicalize` returns `\\?\C:\...` verbatim paths. Codex tolerates
+/// them, but Antigravity's Go fs layer percent-encodes the prefix into
+/// `file://%3F/...` and panics (`invalid URL escape "%3F"`), killing every
+/// `session/new`. Agents therefore always get the plain `C:\...` spelling
+/// (UNC keeps the `\\server\share` form).
+#[cfg(windows)]
+fn strip_verbatim_prefix(path: PathBuf) -> PathBuf {
+    let Some(text) = path.as_os_str().to_str() else {
+        return path;
+    };
+    if let Some(rest) = text.strip_prefix(r"\\?\UNC\") {
+        PathBuf::from(format!(r"\\{rest}"))
+    } else if let Some(rest) = text.strip_prefix(r"\\?\") {
+        PathBuf::from(rest)
+    } else {
+        path
+    }
+}
+
+#[cfg(not(windows))]
+fn strip_verbatim_prefix(path: PathBuf) -> PathBuf {
+    path
 }
 
 /// Compare two workspace spellings for the same directory.
@@ -153,14 +177,40 @@ mod tests {
         let tmp = std::env::temp_dir().join("lumina-acp-cwd-file.mp4");
         let _ = std::fs::write(&tmp, b"x");
         let cwd = resolve_session_cwd(Some(tmp.to_str().expect("utf8"))).expect("cwd");
-        assert_eq!(
-            cwd,
-            tmp.parent()
-                .expect("parent")
-                .canonicalize()
-                .unwrap_or_else(|_| tmp.parent().unwrap().to_path_buf())
-        );
+        let parent = tmp.parent().expect("parent");
+        assert!(same_workspace(
+            &cwd.to_string_lossy(),
+            &parent.to_string_lossy()
+        ));
         let _ = std::fs::remove_file(&tmp);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn resolve_cwd_never_carries_the_verbatim_prefix() {
+        let cwd = resolve_session_cwd(None).expect("cwd");
+        let text = cwd.to_string_lossy();
+        assert!(
+            !text.starts_with(r"\\?\"),
+            "agents must receive plain paths, got {text}"
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn strip_verbatim_handles_drive_and_unc() {
+        assert_eq!(
+            strip_verbatim_prefix(PathBuf::from(r"\\?\C:\movie\x")),
+            PathBuf::from(r"C:\movie\x")
+        );
+        assert_eq!(
+            strip_verbatim_prefix(PathBuf::from(r"\\?\UNC\server\share\x")),
+            PathBuf::from(r"\\server\share\x")
+        );
+        assert_eq!(
+            strip_verbatim_prefix(PathBuf::from(r"C:\plain\x")),
+            PathBuf::from(r"C:\plain\x")
+        );
     }
 
     #[test]

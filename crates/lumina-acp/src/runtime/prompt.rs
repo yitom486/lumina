@@ -5,7 +5,7 @@
 use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant};
 
-use crate::agent::profile::{prepare_profiles, PreparedProfiles};
+use crate::agent::profile::{prepare_profiles, resolve_active_profile, PreparedProfiles};
 use crate::agent::workspace::resolve_session_cwd;
 use crate::domain::context::VideoPromptContext;
 use crate::domain::environment::session_env;
@@ -163,8 +163,16 @@ impl AcpService {
         }
 
         let profile_override = profile_id;
+        let resolved_profile = match resolve_active_profile(prepared, profile_override) {
+            Ok(profile) => profile,
+            Err(error) => {
+                Self::log_workshop_exit(attempt_label, None, "profile-missing", None, 0);
+                return Err(error);
+            }
+        };
 
-        // Ensure live session (reuse when possible).
+        // Ensure live session (reuse only when it belongs to this profile —
+        // a live Codex process must never answer prompts labeled Antigravity).
         {
             let mut guard = match self.session.lock() {
                 Ok(guard) => guard,
@@ -173,7 +181,19 @@ impl AcpService {
                     return Err(AcpError::internal(Some("ACP session mutex poisoned")));
                 }
             };
-            if guard.is_none() {
+            let reuse = guard
+                .as_ref()
+                .is_some_and(|session| session.profile_id == resolved_profile.id);
+            if !reuse {
+                if let Some(stale) = guard.take() {
+                    tracing::info!(
+                        stale_profile = %stale.profile_id,
+                        target_profile = %resolved_profile.id,
+                        "live agent belongs to another profile; winding down before spawn"
+                    );
+                    self.clear_cancel_writer();
+                    self.wind_down_session(stale);
+                }
                 // Snapshot IO goes through the app-provided environment (M5);
                 // missing snapshot still means vision-capable, as before.
                 let vision_capable = resolve_session_cwd(cwd)

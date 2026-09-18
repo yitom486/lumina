@@ -41,9 +41,11 @@ export async function acpConnect(
 }
 
 export function listAcpAgentSessions(
+  profileId: string,
   cwd?: string | null,
 ): Promise<AgentSessionListResult> {
   return invoke<AgentSessionListResult>("acp_list_agent_sessions", {
+    profileId,
     cwd: cwd ?? null,
   });
 }
@@ -60,17 +62,25 @@ export type PromptImageInput = {
 };
 
 export function acpLoadSession(options: {
+  profileId: string;
   sessionId: string;
   cwd?: string | null;
 }): Promise<LoadedTranscriptEvent[]> {
   return invoke<LoadedTranscriptEvent[]>("acp_load_session", {
+    profileId: options.profileId,
     sessionId: options.sessionId,
     cwd: options.cwd ?? null,
   });
 }
 
-export function acpDeleteSession(sessionId: string): Promise<void> {
-  return invoke("acp_delete_session", { sessionId });
+export function acpDeleteSession(options: {
+  profileId: string;
+  sessionId: string;
+}): Promise<void> {
+  return invoke("acp_delete_session", {
+    profileId: options.profileId,
+    sessionId: options.sessionId,
+  });
 }
 
 export function respondAcpPermission(

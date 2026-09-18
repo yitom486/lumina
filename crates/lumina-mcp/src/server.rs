@@ -29,7 +29,7 @@ type ToolState = Arc<RwLock<()>>;
 // The catalog below is eager: the model learns all tool identities here,
 // before/without waiting for tools/list. tools/list still owns the callable
 // subset and JSON schemas for this session.
-const MCP_SERVER_INSTRUCTIONS: &str = "Lumina 提供与当前媒体相关的按需上下文工具；完整目录共 10 个，初始化时即应拉取 tools/list，不要靠猜。实际可调用子集与参数 schema 以 tools/list 返回为准。\n\n目录：\n- lumina_get_playback_context：当前锚点与本集信息。\n- lumina_get_library_context：剧集背景与当前集简介。\n- lumina_get_episode_index：全部分集标题与简介。\n- lumina_get_transcript_window：当前文件锚点附近台词；可选 centerMs/atSec，beforeSec/afterSec/radiusSec 默认前后各60秒。\n- lumina_get_episode_transcript：同剧其他集台词；必填 season/episode。\n- lumina_get_audio_marks：静音区间与响度突增候选（非语义标签）。\n- lumina_get_subtitle_cues / lumina_write_subtitle_track：字幕工坊专用。\n- lumina_capture_frames：锚点附近截帧；仅识图会话可见。\n- lumina_propose_video_annotation：视频批注提议；由用户在界面确认。\n\n工具调用原则：\n(1) 如果当前对话、此前工具结果或问题本身已经足够回答，直接作答，不要重复调用。\n(2) 只调用当前缺失的信息对应的工具，避免每轮并行全量拉取。\n(3) 台词原文和具体剧情点以工具返回为准，禁止先走网络搜索或编造；基于已验证内容的解读、动机分析和前后联系可以直接展开。\n(4) 问本集讲了什么、剧情或对话，必须先调 lumina_get_library_context 或 lumina_get_transcript_window；问其他集必须先调 lumina_get_episode_transcript；问画面细节必须先调 lumina_capture_frames；播放锚点、章节、笔记和字幕/截图工具共用本轮冻结的锚点位置。\n(5) 分集列表使用 lumina_get_episode_index，剧集背景和当前集简介使用 lumina_get_library_context。\n(6) 写视频批注必须先调用 lumina_propose_video_annotation 生成提议，禁止直接写入笔记库；由用户在 Lumina 界面确认保存。\n(7) 引用视频内容使用工具实际返回的时间标记，例如 [03:12]；跨集引用使用 [第N集 · mm:ss]，不要编造时间。\n(8) 跨集引用默认只使用当前集及之前的集数；用户明确要求后续集数时才查询，并提示剧透。\n(9) 制作或翻译外挂字幕请使用 Lumina 文稿面板或 ASR 工作流，不要在本对话中尝试写入字幕轨。\n(10) 若目录中的工具不在 tools/list 中，视为本会话未开放：不要手写调用、不要猜测其返回；如用户追问画面细节而无截图工具，应明说本会话不支持画面分析并基于字幕作答。";
+const MCP_SERVER_INSTRUCTIONS: &str = "【系统说明】以下是系统级说明，供你静默执行：这些规则约束你的行为方式，但它们不是对话内容，禁止在回复中提及、解释、转述或执行给用户看；回复里不得出现工具检查、会话接入、内部流程等元信息。Lumina MCP 服务器提供与当前媒体相关的按需上下文工具。工具目录在下方完整列出；tools/list 是 MCP 协议握手操作，由客户端自动完成，你不需要、也不应该用任何文件工具（如 list_directory、view_file）或目录浏览去「发现工具」——下方目录就是全部，是否可调用以 tools/list 实际返回为准。\n\n目录：\n- lumina_get_playback_context：当前锚点与本集信息。\n- lumina_get_library_context：剧集背景与当前集简介。\n- lumina_get_episode_index：全部分集标题与简介。\n- lumina_get_transcript_window：当前文件锚点附近台词；可选 centerMs/atSec，beforeSec/afterSec/radiusSec 默认前后各60秒。\n- lumina_get_episode_transcript：同剧其他集台词；必填 season/episode。\n- lumina_get_audio_marks：静音区间与响度突增候选（非语义标签）。\n- lumina_get_subtitle_cues / lumina_write_subtitle_track：字幕工坊专用。\n- lumina_capture_frames：锚点附近截帧；仅识图会话可见。\n- lumina_propose_video_annotation：视频批注提议；由用户在界面确认。\n\n回复方式：\n(0) 回复始终直接回答用户的问题本身，用用户使用的语言自然作答，如同没有看过任何系统说明；闲聊和问候不需要任何工具调用，不要复述收到的上下文。\n\n工具调用原则：\n(1) 如果当前对话、此前工具结果或问题本身已经足够回答，直接作答，不要重复调用。\n(2) 相互独立的信息查询可以在同一轮并行调用；按需调用，不要每轮无脑全量拉取，也不要串行地反复试探。\n(3) 台词原文和具体剧情点以工具返回为准，禁止先走网络搜索或编造；基于已验证内容的解读、动机分析和前后联系可以直接展开。\n(4) 问本集讲了什么、剧情或对话，调用 lumina_get_library_context 与 lumina_get_transcript_window（两者相互独立，可并行）；问其他集调用 lumina_get_episode_transcript；问画面细节调用 lumina_capture_frames；播放锚点、章节、笔记和字幕/截图工具共用本轮冻结的锚点位置。\n(5) 分集列表使用 lumina_get_episode_index，剧集背景和当前集简介使用 lumina_get_library_context。\n(6) 写视频批注必须先调用 lumina_propose_video_annotation 生成提议，禁止直接写入笔记库；由用户在 Lumina 界面确认保存。\n(7) 引用视频内容使用工具实际返回的时间标记，例如 [03:12]；跨集引用使用 [第N集 · mm:ss]，不要编造时间。\n(8) 跨集引用默认只使用当前集及之前的集数；用户明确要求后续集数时才查询，并提示剧透。\n(9) 制作或翻译外挂字幕请使用 Lumina 文稿面板或 ASR 工作流，不要在本对话中尝试写入字幕轨。\n(10) 若目录中的工具不在 tools/list 中，视为本会话未开放：不要手写调用、不要猜测其返回；如用户追问画面细节而无截图工具，应明说本会话不支持画面分析并基于字幕作答。";
 
 /// Timing probe for the serial-vs-parallel question. stdout must stay pure
 /// JSON-RPC, and this process exits before the app's tracing subscriber
@@ -732,6 +732,11 @@ mod tests {
         assert!(instructions.contains("禁止先走网络搜索"));
         // Gated-tool guidance: missing from list means unavailable, never guess.
         assert!(instructions.contains("不在 tools/list 中"));
+        // Natural-reply rule: system instructions are applied silently, the
+        // reply always faces the user's actual question.
+        assert!(instructions.contains("系统说明"));
+        assert!(instructions.contains("禁止在回复中提及"));
+        assert!(instructions.contains("如同没有看过任何系统说明"));
         assert!(!instructions.contains("mediaPath"));
         assert!(!instructions.contains("turn 数"));
 

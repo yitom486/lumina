@@ -762,8 +762,7 @@ mod tests {
             ..InitializeResult::default()
         };
         let profile = codex_local_test_profile();
-        let picked =
-            crate::agent::launch::pick_auth_method(&profile, &init).expect("method");
+        let picked = crate::agent::launch::pick_auth_method(&profile, &init).expect("method");
         assert_eq!(picked.id, "chat-gpt");
     }
 

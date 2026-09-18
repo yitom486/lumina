@@ -90,8 +90,13 @@ impl AcpService {
         status.busy = self.busy.load(Ordering::SeqCst);
         if let Ok(guard) = self.session.lock() {
             status.session_active = guard.is_some();
-            status.session_model_options =
-                guard.as_ref().map(|session| session.model_options.clone());
+            // Model options describe one agent's live session. Reporting them
+            // for a different active profile made the composer show, say,
+            // Codex GPT models while Antigravity was connecting.
+            status.session_model_options = guard
+                .as_ref()
+                .filter(|session| session.profile_id == status.active_profile_id)
+                .map(|session| session.model_options.clone());
         }
         status
     }
@@ -366,6 +371,26 @@ impl AcpService {
             .map_err(|_| AcpError::internal(Some("ACP session mutex poisoned")))?;
 
         if let Some(session) = guard.as_mut() {
+            // A live agent process cannot serve another profile: prompts,
+            // history and models would all keep hitting the old ACP server.
+            // Wind it down (graceful, rollout-flush preserving) and let the
+            // full connect spawn the newly active agent.
+            if session.profile_id != profile.id {
+                on_event(AcpEvent::Progress {
+                    message: format!("正在切换到 {}…", profile.name),
+                });
+                drop(guard);
+                self.drop_live_session(true);
+                self.clear_cancel_writer();
+                return self.connect(
+                    Some(cwd_string),
+                    profile_id,
+                    saved_session,
+                    client_settings,
+                    profiles,
+                    on_event,
+                );
+            }
             on_event(AcpEvent::Progress {
                 message: "正在切换对话…".into(),
             });
@@ -607,6 +632,7 @@ impl AcpService {
     /// its own reply.
     pub fn load_session_transcript(
         &self,
+        profile_id: Option<String>,
         session_id: String,
         cwd: Option<String>,
     ) -> Result<Vec<LoadedTurn>, AcpError> {
@@ -623,6 +649,23 @@ impl AcpService {
         }
         let _busy = BusyReset(&self.busy);
         self.cancel.store(false, Ordering::SeqCst);
+
+        // Refuse a cross-profile load before any workspace/snapshot work.
+        {
+            let guard = self
+                .session
+                .lock()
+                .map_err(|_| AcpError::internal(Some("ACP session mutex poisoned")))?;
+            if let Some(session) = guard.as_ref() {
+                if let Some(requested) = profile_id.as_deref().filter(|id| !id.trim().is_empty()) {
+                    if session.profile_id != requested {
+                        return Err(AcpError::bad_request(
+                            "该对话属于其他 Agent，请先切换到对应 Agent 再查看",
+                        ));
+                    }
+                }
+            }
+        }
 
         let workspace = resolve_session_cwd(cwd.as_deref())?;
         let cwd_string = workspace.to_string_lossy().into_owned();
@@ -794,7 +837,11 @@ impl AcpService {
     /// single stdio stream. Refuses the currently attached session id:
     /// deleting the live attachment from under the next prompt would
     /// strand it. Callers switch away (or start fresh) first.
-    pub fn delete_session(&self, session_id: String) -> Result<(), AcpError> {
+    pub fn delete_session(
+        &self,
+        profile_id: Option<String>,
+        session_id: String,
+    ) -> Result<(), AcpError> {
         let session_id = session_id.trim();
         if session_id.is_empty() {
             return Err(AcpError::bad_request("会话标识不能为空"));
@@ -815,6 +862,13 @@ impl AcpService {
         let session = guard
             .as_mut()
             .ok_or_else(|| AcpError::protocol(Some("no active agent session")))?;
+        if let Some(requested) = profile_id.as_deref().filter(|id| !id.trim().is_empty()) {
+            if session.profile_id != requested {
+                return Err(AcpError::bad_request(
+                    "该对话属于其他 Agent，请先切换到对应 Agent 再删除",
+                ));
+            }
+        }
         if !session.init.supports_session_delete {
             return Err(AcpError::protocol(Some(
                 "agent does not advertise session/delete",
@@ -969,6 +1023,7 @@ mod tests {
             stdin: std::sync::Arc::new(std::sync::Mutex::new(stdin)),
             reader: BufReader::new(stdout),
             session_id: "test-session".to_string(),
+            profile_id: "codex".to_string(),
             next_id: 1,
             init: crate::wire::session::InitializeResult {
                 supports_session_close,
@@ -997,6 +1052,7 @@ mod tests {
             stdin: std::sync::Arc::new(std::sync::Mutex::new(stdin)),
             reader: BufReader::new(stdout),
             session_id: "silent-session".to_string(),
+            profile_id: "codex".to_string(),
             next_id: 1,
             init: crate::wire::session::InitializeResult {
                 supports_session_close: true,
@@ -1009,6 +1065,31 @@ mod tests {
 
     fn slot_occupied(service: &AcpService) -> bool {
         service.session.lock().expect("lock").is_some()
+    }
+
+    #[test]
+    fn status_hides_model_options_of_another_profiles_live_session() {
+        let service = AcpService::new();
+        let mut session = dead_slot_session(true);
+        session.model_options.models.push(crate::AcpSessionOption {
+            value: "gpt-5.6".into(),
+            name: "GPT-5.6".into(),
+            description: None,
+        });
+        *service.session.lock().expect("lock") = Some(session);
+
+        // Live session belongs to codex: options visible while codex is active…
+        let codex_hint = crate::agent::profile::default_profiles_hint();
+        let status = service.status(&codex_hint);
+        assert!(status.session_model_options.is_some());
+        assert!(status.session_active);
+
+        // …but hidden the moment another profile becomes active.
+        let mut antigravity_hint = codex_hint;
+        antigravity_hint.active_profile_id = "antigravity".into();
+        let status = service.status(&antigravity_hint);
+        assert!(status.session_model_options.is_none());
+        assert!(status.session_active);
     }
 
     #[test]
@@ -1042,7 +1123,7 @@ mod tests {
         let service = AcpService::new();
         service.busy.store(true, Ordering::SeqCst);
         let err = service
-            .delete_session("sess-1".to_string())
+            .delete_session(None, "sess-1".to_string())
             .expect_err("busy delete must fail");
         assert_eq!(err.code, crate::AcpErrorCode::Busy);
         assert!(!slot_occupied(&service));
@@ -1054,11 +1135,155 @@ mod tests {
     fn delete_session_rejects_blank_session_id() {
         let service = AcpService::new();
         let err = service
-            .delete_session("   ".to_string())
+            .delete_session(None, "   ".to_string())
             .expect_err("blank id must fail");
         // `bad_request` carries a specific Chinese message on ProtocolError.
         assert_eq!(err.code, crate::AcpErrorCode::ProtocolError);
         assert!(err.message.contains("不能为空"));
+    }
+
+    #[test]
+    fn list_agent_sessions_reports_unverified_for_other_profile() {
+        let service = AcpService::new();
+        let mut session = dead_slot_session(true);
+        session.init.supports_session_list = true;
+        *service.session.lock().expect("lock") = Some(session);
+
+        // The live agent is codex; asking as antigravity must not surface
+        // codex history under the antigravity scope.
+        let result = service
+            .list_agent_sessions(Some("antigravity"), None)
+            .expect("mismatch degrades to unverified");
+        assert!(!result.verified);
+        assert!(result.sessions.is_empty());
+        assert!(!result.truncated);
+    }
+
+    #[test]
+    fn cross_profile_delete_is_refused() {
+        let service = AcpService::new();
+        *service.session.lock().expect("lock") = Some(dead_slot_session(true));
+
+        let err = service
+            .delete_session(Some("antigravity".into()), "sess-1".into())
+            .expect_err("cross-profile delete refused");
+        assert!(err.message.contains("其他 Agent"));
+
+        // Same profile passes the gate (then hits the dead transport).
+        let err = service
+            .delete_session(Some("codex".into()), "sess-1".into())
+            .expect_err("dead stdin errors");
+        assert_eq!(err.code, crate::AcpErrorCode::ProtocolError);
+    }
+
+    #[test]
+    fn cross_profile_load_is_refused() {
+        let service = AcpService::new();
+        *service.session.lock().expect("lock") = Some(dead_slot_session(true));
+
+        let err = service
+            .load_session_transcript(Some("antigravity".into()), "sess-1".into(), None)
+            .expect_err("cross-profile load refused");
+        assert!(err.message.contains("其他 Agent"));
+    }
+
+    /// 专用回归：activeProfile 变化时，底层所有 agent 相关状态必须整体跟随。
+    ///
+    /// 挂着一个 Codex live 会话，把 active profile 切到另一个 Agent，逐项断言：
+    /// status 不再透出旧 Agent 的模型选项；session/list / load / delete 都拒绝
+    /// 服务旧 Agent；switch/prompt 会把旧 Agent 进程退场（slot 清空）。任何一处
+    /// 还认旧 Agent，这个测试就红。
+    fn foreign_profile_hint(profile_id: &str, command: &str) -> AgentProfilesHint {
+        let mut hint = crate::agent::profile::default_profiles_hint();
+        hint.active_profile_id = profile_id.into();
+        hint.profiles.push(crate::AgentProfileInput {
+            id: profile_id.into(),
+            name: "Test Agent".into(),
+            kind: crate::AgentKind::Custom,
+            command: command.into(),
+            args: Vec::new(),
+            env: Default::default(),
+            launcher: None,
+            env_preset: None,
+            auth_policy: None,
+            auth_methods: Vec::new(),
+            session_storage: None,
+        });
+        hint
+    }
+
+    #[test]
+    fn active_profile_change_propagates_to_every_agent_scoped_state() {
+        let hint = foreign_profile_hint("ghost", "definitely-not-here-xyz-ghost");
+        let service = AcpService::new();
+        let mut session = dead_slot_session(true);
+        session.init.supports_session_list = true;
+        session.init.supports_session_delete = true;
+        session.init.load_session = true;
+        session.model_options.models.push(crate::AcpSessionOption {
+            value: "gpt-5.6".into(),
+            name: "GPT-5.6".into(),
+            description: None,
+        });
+        *service.session.lock().expect("lock") = Some(session);
+
+        // 1. status: 旧 Agent 的模型选项必须立刻消失。
+        let status = service.status(&hint);
+        assert!(status.session_active);
+        assert!(status.session_model_options.is_none());
+
+        // 2. session/list 不把 Codex 会话当作 ghost 的历史。
+        let list = service
+            .list_agent_sessions(Some("ghost"), None)
+            .expect("mismatch degrades to unverified");
+        assert!(!list.verified);
+        assert!(list.sessions.is_empty());
+
+        // 3. load / delete 拒绝服务旧 Agent。
+        let err = service
+            .load_session_transcript(Some("ghost".into()), "sess-1".into(), None)
+            .expect_err("cross-profile load refused");
+        assert!(err.message.contains("其他 Agent"));
+        let err = service
+            .delete_session(Some("ghost".into()), "sess-1".into())
+            .expect_err("cross-profile delete refused");
+        assert!(err.message.contains("其他 Agent"));
+
+        // 4. 切换：旧 Agent 进程退场（slot 清空），再按新 profile spawn（此处
+        //    ghost 不可用 → NotConfigured，但状态已归属新 profile）。
+        let err = service
+            .switch_session(
+                None,
+                Some("ghost".into()),
+                None,
+                crate::AcpClientSettings::default(),
+                hint.clone(),
+                |_| {},
+            )
+            .expect_err("ghost agent unavailable");
+        assert_eq!(err.code, crate::AcpErrorCode::NotConfigured);
+        assert!(!slot_occupied(&service));
+        let status = service.status(&hint);
+        assert!(!status.session_active);
+        assert!(status.session_model_options.is_none());
+
+        // 5. prompt 同理：不会在旧 Agent 进程上继续提问。
+        *service.session.lock().expect("lock") = Some(dead_slot_session(true));
+        let err = service
+            .prompt(
+                "hi",
+                None,
+                Some("ghost".into()),
+                None,
+                Vec::new(),
+                None,
+                crate::AcpClientSettings::default(),
+                hint,
+                |_| {},
+            )
+            .expect_err("ghost agent unavailable");
+        assert_eq!(err.code, crate::AcpErrorCode::NotConfigured);
+        assert!(!slot_occupied(&service));
     }
 
     /// Cancel must preempt a prompt blocked in `read_line`: the prompt loop
@@ -1162,7 +1387,7 @@ mod tests {
         let service = AcpService::new();
         service.busy.store(true, Ordering::SeqCst);
         let err = service
-            .load_session_transcript("sess-1".to_string(), None)
+            .load_session_transcript(None, "sess-1".to_string(), None)
             .expect_err("busy load must fail");
         assert_eq!(err.code, crate::AcpErrorCode::Busy);
         assert!(!service.cancel.load(Ordering::SeqCst));
@@ -1172,7 +1397,7 @@ mod tests {
     fn load_session_transcript_rejects_blank_session_id() {
         let service = AcpService::new();
         let err = service
-            .load_session_transcript("   ".to_string(), None)
+            .load_session_transcript(None, "   ".to_string(), None)
             .expect_err("blank id must fail");
         assert_eq!(err.code, crate::AcpErrorCode::ProtocolError);
         assert!(err.message.contains("会话标识"));

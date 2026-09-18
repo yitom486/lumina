@@ -113,6 +113,13 @@ fn augment_spawn_env(profile: &AgentProfile, env: &mut HashMap<String, String>) 
             .get("ACP_PROXY_PORT")
             .and_then(|s| s.trim().parse::<u16>().ok())
             .unwrap_or(7897);
+        // Clash/v2ray 本地代理对 HTTP_PROXY/HTTPS_PROXY 只认 http:// scheme；
+        // 用户在 profile.env 里误填 https:// 会让 Agent 直连失败。
+        for key in ["HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy"] {
+            if let Some(value) = env.get_mut(key) {
+                force_http_scheme(value);
+            }
+        }
         let http_proxy = format!("http://127.0.0.1:{proxy_port}");
         let socks_proxy = format!("socks5://127.0.0.1:{proxy_port}");
 
@@ -181,6 +188,14 @@ fn augment_spawn_env(profile: &AgentProfile, env: &mut HashMap<String, String>) 
     }
 }
 
+/// Clash 系本地代理对 `HTTP_PROXY`/`HTTPS_PROXY` 只认 `http://` scheme；
+/// `https://` 会被直接拒连。主机/端口原样保留，只改 scheme。
+fn force_http_scheme(value: &mut String) {
+    if value.len() >= 8 && value[..8].eq_ignore_ascii_case("https://") {
+        *value = format!("http://{}", value[8..].trim_start());
+    }
+}
+
 fn prepend_path_dir(env: &mut HashMap<String, String>, dir: &Path) {
     let path_key = if cfg!(windows) { "Path" } else { "PATH" };
     let mut merged = vec![dir.to_path_buf()];
@@ -238,4 +253,65 @@ pub fn pick_auth_method<'a>(
         }
     }
     init.auth_methods.first()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::domain::model::{EnvPreset, LauncherPreset};
+
+    #[test]
+    fn https_scheme_is_rewritten_to_http_for_local_proxies() {
+        let mut value = "https://127.0.0.1:7897".to_string();
+        force_http_scheme(&mut value);
+        assert_eq!(value, "http://127.0.0.1:7897");
+
+        let mut value = "HTTPS://proxy.local:7890".to_string();
+        force_http_scheme(&mut value);
+        assert_eq!(value, "http://proxy.local:7890");
+
+        let mut value = "http://127.0.0.1:7890".to_string();
+        force_http_scheme(&mut value);
+        assert_eq!(value, "http://127.0.0.1:7890");
+
+        let mut value = "127.0.0.1:7897".to_string();
+        force_http_scheme(&mut value);
+        assert_eq!(value, "127.0.0.1:7897");
+    }
+
+    #[test]
+    fn antigravity_proxy_env_never_carries_https_scheme() {
+        let command = std::env::current_exe().expect("test exe");
+        let profile = AgentProfile {
+            id: "antigravity-test".into(),
+            name: "Antigravity Test".into(),
+            kind: crate::domain::model::AgentKind::Antigravity,
+            command: command.to_string_lossy().to_string(),
+            args: Vec::new(),
+            env: HashMap::from([
+                ("ACP_PROXY_PORT".into(), "7897".into()),
+                ("HTTPS_PROXY".into(), "https://127.0.0.1:7897".into()),
+                ("https_proxy".into(), "https://127.0.0.1:7897".into()),
+            ]),
+            launcher: Some(LauncherPreset::AntigravityAcp),
+            env_preset: Some(EnvPreset::AntigravityProxy),
+            auth_policy: None,
+            auth_methods: Vec::new(),
+            session_storage: None,
+        };
+
+        let spec = resolve_launch(&profile).expect("launch resolves");
+
+        for key in ["HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy"] {
+            let value = spec.env.get(key).expect(key);
+            assert!(
+                value.starts_with("http://"),
+                "{key} must use http:// scheme, got {value}"
+            );
+        }
+        for key in ["ALL_PROXY", "all_proxy"] {
+            let value = spec.env.get(key).expect(key);
+            assert!(value.starts_with("socks5://"), "{key} got {value}");
+        }
+    }
 }

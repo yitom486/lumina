@@ -81,6 +81,21 @@ impl AgentProfile {
         self.injects_codex_cli_env() || self.is_codex_local_auth()
     }
 
+    /// Whether this profile has stored local credentials the agent can pick
+    /// up on its own. Declared per auth policy (data, not kind): codex-local
+    /// reads `~/.codex/auth.json`, antigravity-oauth reads the Gemini
+    /// credential files. When present, the ACP `authenticate` step must be
+    /// skipped so a stored login is never replaced by an interactive flow.
+    pub fn has_stored_credentials(&self) -> bool {
+        match self.auth_policy {
+            Some(AuthPolicy::CodexLocal) => crate::agent::discover::codex_auth_present(),
+            Some(AuthPolicy::AntigravityOauth) => {
+                crate::agent::discover::antigravity_credentials_present()
+            }
+            _ => false,
+        }
+    }
+
     pub fn is_antigravity(&self) -> bool {
         self.uses_antigravity_launcher()
             || self.injects_antigravity_proxy_env()
@@ -464,6 +479,7 @@ mod tests {
             assert!(!profile.injects_codex_cli_env());
             assert!(!profile.is_codex_local_auth());
             assert!(!profile.stores_codex_rollouts());
+            assert!(!profile.has_stored_credentials());
             assert_eq!(profile.empty_reply_hint(), GENERIC_EMPTY_REPLY_HINT);
         }
     }

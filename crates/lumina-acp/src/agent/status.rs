@@ -43,7 +43,7 @@ pub fn status_from_profiles(hint: &AgentProfilesHint) -> AcpStatus {
                 format!("{name} 已就绪，尚未登录 Google 账号，请在下方点击登录")
             }
         } else if codex_like && codex_found && codex_config_found {
-            format!("{name} 已检测到本机配置，发起提问时将验证连接")
+            format!("{name} 已检测到本机 Codex 登录配置，将直接复用，无需重新认证")
         } else if codex_like && codex_found {
             format!("{name} 已找到，但未检测到 {codex_home} 登录配置")
         } else if codex_like && bunx_found {

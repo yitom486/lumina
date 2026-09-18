@@ -199,6 +199,27 @@ export function AcpPanel() {
   const sessionActive = statusQuery.data?.sessionActive ?? false;
   const sessionCwd = workspaceCwdFromMedia(currentFile);
   const connectKey = `${activeProfileId}:${profilesSig}:${sessionCwd ?? ""}`;
+
+  // 换 Agent = 换世界。面板私有对话态（turns/notices/标题覆盖）在**渲染期
+  // 同步**重置（React "adjust state during render" 模式，无 effect 时序、
+  // 无旧内容闪帧）；跨组件共享的 savedSession 与 ref 记账留给下方 effect
+  // （外部 store 的写不能放渲染期）。
+  const [renderedProfileId, setRenderedProfileId] = useState(activeProfileId);
+  if (renderedProfileId !== activeProfileId) {
+    setRenderedProfileId(activeProfileId);
+    setTurns([]);
+    setNotices([]);
+    setTitleOverrides({});
+  }
+  const lastResetProfileRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (lastResetProfileRef.current === activeProfileId) return;
+    lastResetProfileRef.current = activeProfileId;
+    clearSavedSession();
+    resumeExpectedSessionIdRef.current = null;
+    transcriptLoadSeqRef.current += 1;
+  }, [activeProfileId, clearSavedSession]);
+
   const videoContext = useVideoPromptContext();
   const {
     handleDraftChange,
@@ -744,6 +765,9 @@ export function AcpPanel() {
         break;
       case "permissionResolved":
         setPendingPermission(null);
+        // auto 决议是系统代批，没有用户动作，静默即可；
+        // 只有用户真正批准/拒绝时才值得一条系统提示。
+        if (event.decision === "auto" || event.decision === "cancelled") break;
         if (level !== "hidden") {
           pushSystem(`权限：${event.decision}`);
         }
@@ -1174,7 +1198,7 @@ export function AcpPanel() {
         continue;
       }
       try {
-        await acpDeleteSession(target);
+        await acpDeleteSession({ profileId: activeProfileId, sessionId: target });
         removed.push(target);
       } catch (error) {
         pushSystem(errorMessage(error));
@@ -1219,7 +1243,7 @@ export function AcpPanel() {
     }
     if (!window.confirm("删除该对话吗？远端线程将被永久删除。")) return;
     try {
-      await acpDeleteSession(target);
+      await acpDeleteSession({ profileId: activeProfileId, sessionId: target });
       void queryClient.removeQueries({
         queryKey: acpQueryKeys.transcript(
           activeProfileId,

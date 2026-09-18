@@ -158,6 +158,9 @@ export function AgentSettingsPanel({
               disabled={controlsDisabled}
               onChange={(e) => {
                 setActiveProfileId(e.target.value);
+                // Model ids are agent-specific (e.g. GPT-5.6 belongs to
+                // Codex); never leak a saved selection into another agent.
+                patchSettings({ modelId: "", reasoningEffort: "" });
                 refreshStatus();
               }}
             >

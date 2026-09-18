@@ -104,6 +104,15 @@ pub fn codex_config_present() -> bool {
         .unwrap_or(false)
 }
 
+/// Whether the user already carries stored Codex credentials (`auth.json`).
+/// When present the Codex App Server uses them for prompts on its own, so
+/// the ACP `authenticate` step must not force a fresh browser login.
+pub fn codex_auth_present() -> bool {
+    codex_home_dir()
+        .map(|home| home.join("auth.json").is_file())
+        .unwrap_or(false)
+}
+
 pub fn codex_home_dir() -> Option<PathBuf> {
     if let Ok(dir) = std::env::var("CODEX_HOME") {
         let path = PathBuf::from(dir);
@@ -331,6 +340,7 @@ mod tests {
     #[test]
     fn codex_config_helpers_do_not_panic() {
         let _ = codex_config_present();
+        let _ = codex_auth_present();
         let _ = codex_home_dir();
         let _ = codex_fallback_candidates();
         let _ = antigravity_dir();

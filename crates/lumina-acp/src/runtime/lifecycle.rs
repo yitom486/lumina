@@ -65,6 +65,9 @@ pub(crate) struct LiveSession {
     pub(crate) stdin: SharedStdin,
     pub(crate) reader: BufReader<std::process::ChildStdout>,
     pub(crate) session_id: String,
+    /// Profile the live agent was spawned for; status only reports this
+    /// session's model options while this profile is the active one.
+    pub(crate) profile_id: String,
     pub(crate) next_id: u64,
     pub(crate) init: InitializeResult,
     /// Profile-derived empty-reply copy; the prompt loop owns it because the
@@ -213,8 +216,12 @@ impl AcpService {
     ///
     /// This path is deliberately read-only and never calls `spawn_session`:
     /// opening the history panel must not start an Agent process or session.
+    /// `profile_id` scopes the query: a live agent serving another profile
+    /// reports nothing (the result stays unverified), so one agent's history
+    /// can never be presented as another agent's.
     pub fn list_agent_sessions(
         &self,
+        profile_id: Option<&str>,
         cwd: Option<&str>,
     ) -> Result<AgentSessionListResult, AcpError> {
         if self.is_busy() {
@@ -228,6 +235,16 @@ impl AcpService {
         let Some(session) = guard.as_mut() else {
             return Ok(AgentSessionListResult::default());
         };
+        if let Some(requested) = profile_id {
+            if session.profile_id != requested {
+                tracing::info!(
+                    live_profile = %session.profile_id,
+                    requested_profile = %requested,
+                    "session/list skipped: live agent is another profile"
+                );
+                return Ok(AgentSessionListResult::default());
+            }
+        }
         if !session.init.supports_session_list {
             return Ok(AgentSessionListResult::default());
         }
@@ -331,7 +348,7 @@ impl AcpService {
     /// long as the agent stays quiet. A fixed grace period on a detached
     /// thread keeps the caller instant and still bounds the agent's lifetime,
     /// the same trade already made for `session/cancel`.
-    fn wind_down_session(&self, mut session: LiveSession) {
+    pub(crate) fn wind_down_session(&self, mut session: LiveSession) {
         if !session.init.supports_session_close {
             session.agent.terminate(false);
             return;
@@ -520,6 +537,7 @@ impl AcpService {
             stdin: Arc::new(Mutex::new(stdin)),
             reader,
             session_id: String::new(),
+            profile_id: profile.id.clone(),
             next_id: 1,
             init: InitializeResult::default(),
             empty_reply_hint: profile.empty_reply_hint(),
@@ -569,8 +587,24 @@ impl AcpService {
             });
         }
 
-        // Authenticate when Agent advertises methods — prefer ChatGPT when ~/.codex exists.
-        if let Some(method) = pick_auth_method(&profile, &init) {
+        // Authenticate only when the agent advertises methods AND we cannot
+        // reuse stored credentials. Stored logins (codex auth.json, Gemini
+        // tokens, …) are picked up by the agent on its own; the decision is
+        // data-driven per profile auth policy, never per agent hard-coding.
+        let skip_authenticate = profile.has_stored_credentials();
+        if skip_authenticate {
+            tracing::info!(
+                profile_id = %profile.id,
+                auth_policy = ?profile.auth_policy,
+                "skipping authenticate; reusing stored agent credentials"
+            );
+        }
+        let auth_method = if skip_authenticate {
+            None
+        } else {
+            pick_auth_method(&profile, &init)
+        };
+        if let Some(method) = auth_method {
             on_event(AcpEvent::Progress {
                 message: format!("正在认证（{}）…", method.name),
             });
@@ -703,6 +737,11 @@ impl AcpService {
             match resume_resp {
                 Ok(response) => {
                     session.model_options = parse_session_model_options(&response);
+                    Self::log_parsed_model_options(
+                        &response,
+                        &session.model_options,
+                        "session/resume",
+                    );
                     tracing::info!(
                         elapsed_ms = resume_started.elapsed().as_millis(),
                         session_kind = ?kind,
@@ -848,6 +887,7 @@ impl AcpService {
             "session/new completed"
         );
         session.model_options = parse_session_model_options(&session_resp);
+        Self::log_parsed_model_options(&session_resp, &session.model_options, "session/new");
         on_event(AcpEvent::SessionSaved {
             session_id: session_id.clone(),
             profile_id: profile_id.to_string(),
@@ -855,5 +895,41 @@ impl AcpService {
             resume,
         });
         Ok(session_id)
+    }
+
+    /// Diagnose one wire response's model/config metadata. Never logs option
+    /// values wholesale (they can carry custom ids); counts and ids only.
+    fn log_parsed_model_options(
+        response: &serde_json::Value,
+        parsed: &AcpSessionModelOptions,
+        stage: &str,
+    ) {
+        let raw = response
+            .pointer("/result/configOptions")
+            .or_else(|| response.get("configOptions"));
+        let raw_config_ids: Vec<String> = raw
+            .and_then(serde_json::Value::as_array)
+            .map(|options| {
+                options
+                    .iter()
+                    .filter_map(|option| {
+                        option
+                            .get("id")
+                            .and_then(serde_json::Value::as_str)
+                            .map(str::to_string)
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        tracing::info!(
+            stage,
+            has_config_options = raw.is_some(),
+            config_option_ids = ?raw_config_ids,
+            parsed_models = parsed.models.len(),
+            parsed_reasoning_efforts = parsed.reasoning_efforts.len(),
+            current_model = ?parsed.current_model_id,
+            current_reasoning_effort = ?parsed.current_reasoning_effort,
+            "ACP session model options diagnostic"
+        );
     }
 }

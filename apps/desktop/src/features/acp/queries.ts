@@ -40,7 +40,7 @@ export function sessionListQuery(profileId: string, cwd: string | null) {
   return {
     queryKey: acpQueryKeys.sessionList(profileId, cwd),
     queryFn: async (): Promise<HistorySessionListSnapshot> => {
-      const result = await listAcpAgentSessions(cwd);
+      const result = await listAcpAgentSessions(profileId, cwd);
       return { result, profileId, cwd };
     },
   } as const;
@@ -107,6 +107,7 @@ export function prefetchAgentSessionList(
 const LOAD_SESSION_TIMEOUT_MS = 125_000;
 
 function loadSessionWithTimeout(
+  profileId: string,
   sessionId: string,
   cwd: string | null,
 ): Promise<LoadedTranscriptEvent[]> {
@@ -116,7 +117,7 @@ function loadSessionWithTimeout(
         () => reject(new Error("timeout")),
         LOAD_SESSION_TIMEOUT_MS,
       );
-      acpLoadSession({ sessionId, cwd }).then(
+      acpLoadSession({ profileId, sessionId, cwd }).then(
         (events) => {
           window.clearTimeout(timer);
           resolve(events);
@@ -148,7 +149,8 @@ export function fetchAgentTranscript(
       input.cwd,
       input.sessionId,
     ),
-    queryFn: () => loadSessionWithTimeout(input.sessionId, input.cwd),
+    queryFn: () =>
+      loadSessionWithTimeout(input.profileId, input.sessionId, input.cwd),
     staleTime: 0,
     retry: false,
   });
