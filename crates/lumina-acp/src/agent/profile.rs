@@ -5,8 +5,10 @@ use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 
-pub use crate::domain::model::{AgentKind, AgentProfileStatus};
-use crate::domain::model::{AgentProfileInput, AgentProfilesHint};
+pub use crate::domain::model::{
+    AgentKind, AgentProfileStatus, AuthPolicy, EnvPreset, LauncherPreset, SessionStoragePreset,
+};
+pub use crate::domain::model::{AgentProfileInput, AgentProfilesHint};
 use crate::error::AcpError;
 
 use super::launch::{resolve_launch, CODEX_ACP_PACKAGE};
@@ -23,6 +25,71 @@ pub struct AgentProfile {
     pub args: Vec<String>,
     #[serde(default)]
     pub env: HashMap<String, String>,
+    pub launcher: Option<LauncherPreset>,
+    pub env_preset: Option<EnvPreset>,
+    pub auth_policy: Option<AuthPolicy>,
+    #[serde(default)]
+    pub auth_methods: Vec<String>,
+    pub session_storage: Option<SessionStoragePreset>,
+}
+
+pub(crate) const CODEX_EMPTY_REPLY_HINT: &str =
+    "（会话结束，未解析到文本回复；请确认 Codex 已登录，且模型走 Responses API）";
+pub(crate) const ANTIGRAVITY_EMPTY_REPLY_HINT: &str =
+    "（会话结束，未解析到文本回复；请确认 Google 账号已授权且网络代理正常）";
+pub(crate) const GENERIC_EMPTY_REPLY_HINT: &str =
+    "（会话结束，未解析到文本回复；请确认该 ACP Agent 可用）";
+const CODEX_AUTH_ERROR_MESSAGE: &str =
+    "Codex 尚未登录或 API 未配置，请在终端运行 codex login 后重试";
+const ANTIGRAVITY_AUTH_ERROR_MESSAGE: &str =
+    "Google 账号尚未授权，请点击「登录 Google 账号」完成授权并在代理通畅下重试";
+const GENERIC_AUTH_ERROR_MESSAGE: &str =
+    "该 AI Agent 尚未完成登录或认证，请按其官方指引完成登录后重试";
+
+impl AgentProfile {
+    pub fn uses_codex_acp_launcher(&self) -> bool {
+        self.launcher == Some(LauncherPreset::CodexAcp)
+    }
+
+    pub fn injects_codex_cli_env(&self) -> bool {
+        self.env_preset == Some(EnvPreset::CodexCli)
+    }
+
+    pub fn stores_codex_rollouts(&self) -> bool {
+        self.session_storage == Some(SessionStoragePreset::CodexRollouts)
+    }
+
+    pub fn is_codex_local_auth(&self) -> bool {
+        self.auth_policy == Some(AuthPolicy::CodexLocal)
+    }
+
+    pub fn is_codex_like(&self) -> bool {
+        self.injects_codex_cli_env() || self.is_codex_local_auth()
+    }
+
+    pub fn is_antigravity(&self) -> bool {
+        self.kind == AgentKind::Antigravity || self.id == "antigravity"
+    }
+
+    pub fn empty_reply_hint(&self) -> String {
+        if self.is_antigravity() {
+            ANTIGRAVITY_EMPTY_REPLY_HINT.into()
+        } else if self.is_codex_local_auth() {
+            CODEX_EMPTY_REPLY_HINT.into()
+        } else {
+            GENERIC_EMPTY_REPLY_HINT.into()
+        }
+    }
+
+    pub fn auth_error_message(&self) -> String {
+        if self.is_antigravity() {
+            ANTIGRAVITY_AUTH_ERROR_MESSAGE.into()
+        } else if self.is_codex_local_auth() {
+            CODEX_AUTH_ERROR_MESSAGE.into()
+        } else {
+            GENERIC_AUTH_ERROR_MESSAGE.into()
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -43,6 +110,11 @@ pub fn default_profiles_hint() -> AgentProfilesHint {
                 command: profile.command,
                 args: profile.args,
                 env: profile.env,
+                launcher: profile.launcher,
+                env_preset: profile.env_preset,
+                auth_policy: profile.auth_policy,
+                auth_methods: profile.auth_methods,
+                session_storage: profile.session_storage,
             })
             .collect(),
     }
@@ -99,6 +171,11 @@ fn profile_from_input(input: &AgentProfileInput) -> AgentProfile {
         command: input.command.clone(),
         args: input.args.clone(),
         env: input.env.clone(),
+        launcher: input.launcher,
+        env_preset: input.env_preset,
+        auth_policy: input.auth_policy,
+        auth_methods: input.auth_methods.clone(),
+        session_storage: input.session_storage,
     }
 }
 
@@ -117,7 +194,34 @@ fn profile_status(profile: &AgentProfile) -> AgentProfileStatus {
 }
 
 fn builtin_profiles() -> Vec<AgentProfile> {
-    vec![builtin_codex(), builtin_claude(), builtin_custom_template()]
+    vec![
+        builtin_codex(),
+        builtin_antigravity(),
+        builtin_claude(),
+        builtin_custom_template(),
+    ]
+}
+
+fn builtin_antigravity() -> AgentProfile {
+    let mut env = HashMap::new();
+    env.insert("ACP_PROXY_PORT".into(), "7897".into());
+    AgentProfile {
+        id: "antigravity".into(),
+        name: "Google Antigravity".into(),
+        kind: AgentKind::Antigravity,
+        command: if cfg!(windows) {
+            "agy_acp_server.exe".into()
+        } else {
+            "agy_acp_server".into()
+        },
+        args: Vec::new(),
+        env,
+        launcher: None,
+        env_preset: None,
+        auth_policy: None,
+        auth_methods: vec!["oauth-personal".into()],
+        session_storage: None,
+    }
 }
 
 fn builtin_codex() -> AgentProfile {
@@ -132,6 +236,11 @@ fn builtin_codex() -> AgentProfile {
         },
         args: vec![CODEX_ACP_PACKAGE.into()],
         env: HashMap::new(),
+        launcher: Some(LauncherPreset::CodexAcp),
+        env_preset: Some(EnvPreset::CodexCli),
+        auth_policy: Some(AuthPolicy::CodexLocal),
+        auth_methods: Vec::new(),
+        session_storage: Some(SessionStoragePreset::CodexRollouts),
     }
 }
 
@@ -147,6 +256,11 @@ fn builtin_claude() -> AgentProfile {
         },
         args: Vec::new(),
         env: HashMap::new(),
+        launcher: None,
+        env_preset: None,
+        auth_policy: None,
+        auth_methods: Vec::new(),
+        session_storage: None,
     }
 }
 
@@ -158,6 +272,11 @@ fn builtin_custom_template() -> AgentProfile {
         command: String::new(),
         args: Vec::new(),
         env: HashMap::new(),
+        launcher: None,
+        env_preset: None,
+        auth_policy: None,
+        auth_methods: Vec::new(),
+        session_storage: None,
     }
 }
 
@@ -165,6 +284,12 @@ fn merge_builtin_profiles(profiles: &mut Vec<AgentProfile>) {
     for builtin in builtin_profiles() {
         if builtin.id == "custom" && builtin.command.is_empty() {
             if !profiles.iter().any(|profile| profile.id == "custom") {
+                profiles.push(builtin);
+            }
+            continue;
+        }
+        if builtin.id == "antigravity" {
+            if !profiles.iter().any(|profile| profile.id == "antigravity") {
                 profiles.push(builtin);
             }
             continue;
@@ -179,6 +304,8 @@ fn merge_builtin_profiles(profiles: &mut Vec<AgentProfile>) {
                     && existing.env.is_empty()
                 {
                     *existing = builtin;
+                } else if existing.kind == AgentKind::Codex && is_default_codex_command(existing) {
+                    apply_missing_codex_presets(existing);
                 }
                 continue;
             }
@@ -186,6 +313,34 @@ fn merge_builtin_profiles(profiles: &mut Vec<AgentProfile>) {
         if !profiles.iter().any(|profile| profile.id == builtin.id) {
             profiles.push(builtin);
         }
+    }
+}
+
+/// The `bunx @agentclientprotocol/codex-acp` shape that the built-in preset
+/// ships with. Only this shape receives implicit presets; a user-customized
+/// codex command keeps fully generic behavior (as before this refactor).
+fn is_default_codex_command(profile: &AgentProfile) -> bool {
+    matches!(profile.command.as_str(), "bunx" | "bunx.exe")
+        && profile.args.len() == 1
+        && profile.args.first().map(String::as_str) == Some(CODEX_ACP_PACKAGE)
+}
+
+fn apply_missing_codex_presets(profile: &mut AgentProfile) {
+    let codex = builtin_codex();
+    if profile.launcher.is_none() {
+        profile.launcher = codex.launcher;
+    }
+    if profile.env_preset.is_none() {
+        profile.env_preset = codex.env_preset;
+    }
+    if profile.auth_policy.is_none() {
+        profile.auth_policy = codex.auth_policy;
+    }
+    if profile.auth_methods.is_empty() {
+        profile.auth_methods = codex.auth_methods;
+    }
+    if profile.session_storage.is_none() {
+        profile.session_storage = codex.session_storage;
     }
 }
 
@@ -204,6 +359,10 @@ mod tests {
             .expect("codex");
         assert!(codex.command.contains("bunx"));
         assert_eq!(codex.args, vec![CODEX_ACP_PACKAGE]);
+        assert!(hint
+            .profiles
+            .iter()
+            .any(|profile| profile.id == "antigravity"));
         assert!(hint.profiles.iter().any(|profile| profile.id == "claude"));
     }
 
@@ -224,5 +383,113 @@ mod tests {
         let prepared = prepare_profiles(&hint);
         let active = resolve_active_profile(&prepared, None).expect("load");
         assert_eq!(active.id, "custom");
+    }
+
+    #[test]
+    fn builtin_codex_carries_all_presets() {
+        let codex = builtin_codex();
+        assert!(codex.uses_codex_acp_launcher());
+        assert!(codex.injects_codex_cli_env());
+        assert!(codex.is_codex_local_auth());
+        assert!(codex.stores_codex_rollouts());
+        assert_eq!(codex.empty_reply_hint(), CODEX_EMPTY_REPLY_HINT);
+        assert_eq!(codex.auth_error_message(), CODEX_AUTH_ERROR_MESSAGE);
+    }
+
+    #[test]
+    fn non_codex_profiles_are_fully_generic() {
+        for profile in builtin_profiles() {
+            if profile.id == "codex" || profile.id == "antigravity" {
+                continue;
+            }
+            assert!(!profile.uses_codex_acp_launcher());
+            assert!(!profile.injects_codex_cli_env());
+            assert!(!profile.is_codex_local_auth());
+            assert!(!profile.stores_codex_rollouts());
+            assert_eq!(profile.empty_reply_hint(), GENERIC_EMPTY_REPLY_HINT);
+        }
+    }
+
+    #[test]
+    fn builtin_antigravity_profile_properties() {
+        let agy = builtin_antigravity();
+        assert!(agy.is_antigravity());
+        assert!(!agy.uses_codex_acp_launcher());
+        assert_eq!(agy.empty_reply_hint(), ANTIGRAVITY_EMPTY_REPLY_HINT);
+        assert_eq!(agy.auth_error_message(), ANTIGRAVITY_AUTH_ERROR_MESSAGE);
+    }
+
+    #[test]
+    fn legacy_codex_hint_without_presets_gets_presets_backfilled() {
+        let mut hint = default_profiles_hint();
+        hint.profiles = hint
+            .profiles
+            .into_iter()
+            .map(|mut profile| {
+                if profile.id == "codex" {
+                    profile.launcher = None;
+                    profile.env_preset = None;
+                    profile.auth_policy = None;
+                    profile.session_storage = None;
+                }
+                profile
+            })
+            .collect();
+        let prepared = prepare_profiles(&hint);
+        let codex = prepared
+            .profiles
+            .iter()
+            .find(|profile| profile.id == "codex")
+            .expect("codex");
+        assert!(codex.uses_codex_acp_launcher());
+        assert!(codex.injects_codex_cli_env());
+        assert!(codex.is_codex_local_auth());
+        assert!(codex.stores_codex_rollouts());
+    }
+
+    #[test]
+    fn user_customized_codex_command_stays_generic() {
+        let mut hint = default_profiles_hint();
+        hint.profiles = hint
+            .profiles
+            .into_iter()
+            .map(|mut profile| {
+                if profile.id == "codex" {
+                    profile.command = "C:\\tools\\codex-acp.exe".into();
+                    profile.args = Vec::new();
+                    profile.launcher = None;
+                    profile.env_preset = None;
+                    profile.auth_policy = None;
+                    profile.session_storage = None;
+                }
+                profile
+            })
+            .collect();
+        let prepared = prepare_profiles(&hint);
+        let codex = prepared
+            .profiles
+            .iter()
+            .find(|profile| profile.id == "codex")
+            .expect("codex");
+        assert!(!codex.uses_codex_acp_launcher());
+        assert!(!codex.injects_codex_cli_env());
+        assert!(!codex.is_codex_local_auth());
+    }
+
+    #[test]
+    fn profile_input_deserializes_without_new_fields() {
+        let json = r#"{
+            "id": "codex",
+            "name": "Codex（默认）",
+            "kind": "Codex",
+            "command": "bunx.exe",
+            "args": ["@agentclientprotocol/codex-acp"]
+        }"#;
+        let input: AgentProfileInput = serde_json::from_str(json).expect("legacy profile json");
+        assert!(input.launcher.is_none());
+        assert!(input.env_preset.is_none());
+        assert!(input.auth_policy.is_none());
+        assert!(input.session_storage.is_none());
+        assert!(input.auth_methods.is_empty());
     }
 }

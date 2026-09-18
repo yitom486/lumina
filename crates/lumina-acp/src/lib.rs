@@ -13,13 +13,14 @@ pub mod runtime;
 pub mod wire;
 
 // ---- Canonical root API (stable; app/Tauri use only these) ----
-pub use agent::AgentProfile;
+pub use agent::{login_antigravity, AgentProfile};
 pub use domain::{
     set_default_environment, AcpClientSettings, AcpEvent, AcpModelDiscoveryResult,
     AcpSessionModelOptions, AcpSessionModelSelection, AcpSessionOption, AcpStatus, AgentKind,
     AgentProfileInput, AgentProfileStatus, AgentProfilesHint, AgentSessionInfo,
-    AgentSessionListResult, PermissionMode, PermissionOption, PromptImage, ResumeOutcome,
-    SavedSessionHint, SessionEnvironment, SessionKind, ThinkingLevel, VideoPromptContext,
+    AgentSessionListResult, AuthPolicy, EnvPreset, LauncherPreset, PermissionMode,
+    PermissionOption, PromptImage, ResumeOutcome, SavedSessionHint, SessionEnvironment,
+    SessionKind, SessionStoragePreset, ThinkingLevel, VideoPromptContext,
 };
 pub use error::{AcpError, AcpErrorCode};
 pub use jobs::pool::{PoolConfig, WorkshopPool, DEFAULT_POOL_SIZE};

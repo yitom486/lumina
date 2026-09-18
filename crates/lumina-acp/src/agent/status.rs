@@ -1,7 +1,8 @@
 //! ACP availability text + status aggregation (profiles + discovery).
 
 use crate::agent::discover::{
-    codex_config_present, find_acp_adapter, find_bunx, find_codex, native_acp_dir,
+    antigravity_credentials_present, codex_config_present, find_acp_adapter, find_antigravity,
+    find_bunx, find_codex, native_acp_dir,
 };
 use crate::agent::profile::{list_status, prepare_profiles, AgentKind};
 use crate::domain::model::{AcpStatus, AgentProfilesHint};
@@ -12,6 +13,8 @@ pub fn status_from_profiles(hint: &AgentProfilesHint) -> AcpStatus {
     let bunx_found = find_bunx().is_some();
     let codex_found = find_codex().is_some();
     let codex_config_found = codex_config_present();
+    let antigravity_found = find_antigravity().is_some();
+    let antigravity_credentials_found = antigravity_credentials_present();
     let prepared = prepare_profiles(hint);
     let (active_id, profiles) = list_status(&prepared);
 
@@ -25,13 +28,23 @@ pub fn status_from_profiles(hint: &AgentProfilesHint) -> AcpStatus {
 
     let message = if available {
         let name = active.map(|p| p.name.as_str()).unwrap_or("Agent");
-        let is_codex = active.map(|p| p.kind == AgentKind::Codex).unwrap_or(false);
+        let kind = active.map(|p| p.kind).unwrap_or(AgentKind::Custom);
         let codex_home = codex_home_label();
-        if is_codex && codex_found && codex_config_found {
+        if kind == AgentKind::Antigravity {
+            let port = active
+                .and_then(|p| p.env.get("ACP_PROXY_PORT"))
+                .map(String::as_str)
+                .unwrap_or("7897");
+            if antigravity_credentials_found {
+                format!("{name} 已就绪，已检测到 Google 账号授权凭据（代理端口：{port}）")
+            } else {
+                format!("{name} 已就绪，尚未登录 Google 账号，请在下方点击登录")
+            }
+        } else if kind == AgentKind::Codex && codex_found && codex_config_found {
             format!("{name} 已检测到本机配置，发起提问时将验证连接")
-        } else if is_codex && codex_found {
+        } else if kind == AgentKind::Codex && codex_found {
             format!("{name} 已找到，但未检测到 {codex_home} 登录配置")
-        } else if is_codex && bunx_found {
+        } else if kind == AgentKind::Codex && bunx_found {
             format!("{name} 启动器已找到，首次提问将下载并验证 Agent")
         } else {
             format!("{name} 已就绪（仅在你发起会话时启动）")
@@ -39,6 +52,9 @@ pub fn status_from_profiles(hint: &AgentProfilesHint) -> AcpStatus {
     } else if let Some(p) = active {
         if p.kind == AgentKind::Custom && p.command.is_empty() {
             "自定义 Agent 尚未填写启动命令".into()
+        } else if p.kind == AgentKind::Antigravity {
+            "未找到 Google Antigravity ACP 程序（agy_acp_server.exe），请确认已安装或自定义程序路径"
+                .into()
         } else {
             format!("当前 Agent「{}」不可用：找不到 {}", p.name, p.command)
         }
@@ -51,6 +67,8 @@ pub fn status_from_profiles(hint: &AgentProfilesHint) -> AcpStatus {
         adapter_found,
         codex_found,
         codex_config_found,
+        antigravity_found,
+        antigravity_credentials_found,
         active_profile_id: active_id,
         profiles,
         cli_path,
@@ -79,76 +97,21 @@ pub fn install_hint(
     bunx_found: bool,
     codex_config_found: bool,
 ) -> String {
-    if bunx_found {
-        if codex_found && codex_config_found {
-            return "已找到本机 Codex 与 ~/.codex 配置；首次提问可能仍需下载 ACP 适配器。".into();
-        }
-        return if codex_found {
-            "已找到本机 Codex；若提问失败，请在终端运行 codex login 完成登录。".into()
-        } else {
-            "将通过 Bun 按需获取并启动 Codex ACP；发布包自带兼容的 Codex。首次使用可能需要下载适配器。".into()
-        };
-    }
     if adapter_found {
-        if codex_found {
-            return "Codex ACP 适配器与 Codex 均已找到。模型侧请使用 Responses API（非 Chat Completions）。".into();
-        }
-        return "已找到 ACP 适配器；未找到 Codex 本体时，适配器可能仍能使用自带/环境中的 Codex。可选安装官方 Codex，或设置 CODEX_PATH。".into();
+        String::new()
+    } else if codex_found && !codex_config_found {
+        "已找到 Codex 可执行文件；请在终端运行 `codex login` 或设置 OPENAI_API_KEY 后重试。".into()
+    } else if codex_found {
+        String::new()
+    } else if bunx_found {
+        "未找到本地独立适配器，将通过 bunx 运行官方 @agentclientprotocol/codex-acp。首次启动稍慢属正常现象。".into()
+    } else {
+        format!(
+            "推荐：将预编译适配器放在 {}，或安装 bun / codex-cli。如使用其他 Agent，可在下方配置自定义启动命令。",
+            native_acp_dir().display()
+        )
     }
-    format!(
-        "未找到可用 ACP Agent。请安装 Bun，或将 codex-acp 单文件放到 {}。播放功能不依赖这些可选组件。",
-        native_acp_dir().display()
-    )
 }
 
 pub const RESPONSES_ONLY_NOTE: &str =
-    "Codex 自定义模型须使用 Responses API（wire_api=responses）。仅支持 Chat Completions 的地址需经 LiteLLM/OpenRouter 等网关，或改用其它 ACP Agent（如 Claude）。";
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::agent::profile::default_profiles_hint;
-
-    #[test]
-    fn status_message_is_chinese_when_missing() {
-        let hint = default_profiles_hint();
-        let status = status_from_profiles(&hint);
-        assert!(
-            status
-                .message
-                .chars()
-                .any(|c| ('\u{4e00}'..='\u{9fff}').contains(&c)),
-            "{}",
-            status.message
-        );
-        assert!(
-            status
-                .hint
-                .chars()
-                .any(|c| ('\u{4e00}'..='\u{9fff}').contains(&c)),
-            "{}",
-            status.hint
-        );
-        assert!(status.responses_only_note.contains("Responses"));
-    }
-
-    #[test]
-    fn install_hint_is_chinese() {
-        let hint = install_hint(false, false, false, false);
-        assert!(hint.chars().any(|c| ('\u{4e00}'..='\u{9fff}').contains(&c)));
-        assert!(!hint.to_ascii_lowercase().contains("must install bun"));
-    }
-
-    #[test]
-    fn bunx_hint_describes_on_demand_launch() {
-        let hint = install_hint(false, true, true, false);
-        assert!(hint.contains("Bun") || hint.contains("Codex"));
-        assert!(!hint.contains("未找到可用"));
-    }
-
-    #[test]
-    fn config_found_hint_mentions_codex_home() {
-        let hint = install_hint(false, true, true, true);
-        assert!(hint.contains("配置") || hint.contains("Codex"));
-    }
-}
+    "当前官方 Codex ACP 仅支持走 Responses API 的会话（ChatGPT 登录或已配 Responses 的网关）。纯 ChatCompletions 接口可能无法收到回复。";

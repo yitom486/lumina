@@ -15,9 +15,15 @@ function mergeProfiles(
   if (!Array.isArray(persisted) || persisted.length === 0) {
     return fallback;
   }
-  return persisted.map((item) =>
+  const persistedList = persisted.map((item) =>
     normalizeProfileInput(item as AgentProfileInput),
   );
+  for (const fallbackItem of fallback) {
+    if (!persistedList.some((item) => item.id === fallbackItem.id)) {
+      persistedList.push(fallbackItem);
+    }
+  }
+  return persistedList;
 }
 
 type AcpProfilesStore = {

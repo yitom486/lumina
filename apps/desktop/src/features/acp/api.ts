@@ -69,6 +69,10 @@ export function acpLoadSession(options: {
   });
 }
 
+export function acpDeleteSession(sessionId: string): Promise<void> {
+  return invoke("acp_delete_session", { sessionId });
+}
+
 export function respondAcpPermission(
   requestId: string,
   optionId: string | null,
@@ -197,5 +201,11 @@ export function discoverAcpModels(
 ): Promise<AcpModelDiscoveryResult> {
   return invoke<AcpModelDiscoveryResult>("library_agent_models_discover", {
     config: { profileId, profiles },
+  });
+}
+
+export function acpLoginAntigravity(proxyPort?: number): Promise<string> {
+  return invoke<string>("acp_login_antigravity", {
+    proxyPort: proxyPort ?? null,
   });
 }

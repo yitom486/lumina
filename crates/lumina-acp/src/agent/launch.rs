@@ -4,13 +4,14 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use crate::agent::discover::{
-    codex_config_present, codex_home_dir, find_acp_adapter, find_bun, find_bunx, find_codex,
-    find_command, find_dev_codex_acp_entry,
+    codex_config_present, codex_home_dir, find_acp_adapter, find_antigravity, find_bun, find_bunx,
+    find_codex, find_command, find_dev_codex_acp_entry,
 };
+use crate::domain::model::AgentKind;
 use crate::error::AcpError;
 use crate::wire::session::{AuthMethod, InitializeResult};
 
-use super::profile::{AgentKind, AgentProfile};
+use super::profile::AgentProfile;
 
 pub const CODEX_ACP_PACKAGE: &str = "@agentclientprotocol/codex-acp";
 
@@ -25,6 +26,16 @@ pub struct LaunchSpec {
 pub fn resolve_launch(profile: &AgentProfile) -> Result<LaunchSpec, AcpError> {
     let (program, args) = if is_builtin_codex(profile) {
         resolve_builtin_codex_launch(profile)?
+    } else if profile.kind == AgentKind::Antigravity {
+        let program = resolve_program(&profile.command)
+            .or_else(find_antigravity)
+            .ok_or_else(|| {
+                AcpError::not_configured(Some(&format!(
+                    "agent `{}` (Google Antigravity) command not found: {}",
+                    profile.id, profile.command
+                )))
+            })?;
+        (program, profile.args.clone())
     } else {
         let program = resolve_program(&profile.command).ok_or_else(|| {
             AcpError::not_configured(Some(&format!(
@@ -92,6 +103,9 @@ fn resolve_builtin_codex_launch(
 }
 
 fn augment_spawn_env(kind: AgentKind, env: &mut HashMap<String, String>) {
+    // Strip PyInstaller environment variables so child processes don't trigger security checks
+    env.retain(|k, _| !k.starts_with("_PYI") && !k.starts_with("_MEI"));
+
     if cfg!(windows) {
         if !env.contains_key("USERPROFILE") {
             if let Ok(value) = std::env::var("USERPROFILE") {
@@ -102,6 +116,33 @@ fn augment_spawn_env(kind: AgentKind, env: &mut HashMap<String, String>) {
         if let Ok(value) = std::env::var("HOME") {
             env.insert("HOME".into(), value);
         }
+    }
+
+    if kind == AgentKind::Antigravity {
+        let proxy_port = env
+            .get("ACP_PROXY_PORT")
+            .and_then(|s| s.trim().parse::<u16>().ok())
+            .unwrap_or(7897);
+        let http_proxy = format!("http://127.0.0.1:{proxy_port}");
+        let socks_proxy = format!("socks5://127.0.0.1:{proxy_port}");
+
+        env.entry("HTTP_PROXY".into())
+            .or_insert_with(|| http_proxy.clone());
+        env.entry("HTTPS_PROXY".into())
+            .or_insert_with(|| http_proxy.clone());
+        env.entry("http_proxy".into())
+            .or_insert_with(|| http_proxy.clone());
+        env.entry("https_proxy".into())
+            .or_insert_with(|| http_proxy.clone());
+        env.entry("ALL_PROXY".into())
+            .or_insert_with(|| socks_proxy.clone());
+        env.entry("all_proxy".into())
+            .or_insert_with(|| socks_proxy.clone());
+        env.entry("NO_PROXY".into())
+            .or_insert_with(|| "localhost,127.0.0.1,::1".into());
+        env.entry("no_proxy".into())
+            .or_insert_with(|| "localhost,127.0.0.1,::1".into());
+        return;
     }
 
     if kind != AgentKind::Codex {
@@ -166,11 +207,20 @@ fn prepend_path_dir(env: &mut HashMap<String, String>, dir: &Path) {
 }
 
 /// Pick an auth method compatible with the local setup (ChatGPT login vs API
-/// key). Auth *policy* (config/env reads) belongs to `agent`; `wire` only
+/// key, or Google Antigravity OAuth). Auth *policy* (config/env reads) belongs to `agent`; `wire` only
 /// parses `InitializeResult` and constructs requests.
 pub fn pick_auth_method(init: &InitializeResult) -> Option<&AuthMethod> {
     if init.auth_methods.is_empty() {
         return None;
+    }
+    // Google Antigravity auth priority:
+    if let Some(method) = init.auth_methods.iter().find(|m| m.id == "oauth-personal") {
+        return Some(method);
+    }
+    if let Some(method) = init.auth_methods.iter().find(|m| m.id == "gemini-api-key") {
+        if std::env::var("GEMINI_API_KEY").is_ok() {
+            return Some(method);
+        }
     }
     let order: &[&str] = if codex_config_present() {
         &["chat-gpt", "chat-gpt-device-code", "gateway", "api-key"]

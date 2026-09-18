@@ -1,7 +1,7 @@
-import type { VideoAnnotationProposal } from "@lumina/contracts";
 export type { NoteQuote, VideoAnnotationProposal } from "@lumina/contracts";
+import type { VideoAnnotationProposal } from "@lumina/contracts";
 
-export type AgentKind = "Codex" | "Claude" | "Custom";
+export type AgentKind = "Codex" | "Claude" | "Antigravity" | "Custom";
 
 export type AgentProfileStatus = {
   id: string;
@@ -45,6 +45,8 @@ export type AcpStatus = {
   adapterFound: boolean;
   codexFound: boolean;
   codexConfigFound?: boolean;
+  antigravityFound?: boolean;
+  antigravityCredentialsFound?: boolean;
   activeProfileId: string;
   profiles: AgentProfileStatus[];
   cliPath?: string | null;

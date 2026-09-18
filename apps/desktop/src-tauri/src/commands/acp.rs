@@ -98,6 +98,17 @@ pub async fn acp_load_session(
 }
 
 #[tauri::command]
+pub async fn acp_delete_session(
+    state: State<'_, AppState>,
+    session_id: String,
+) -> Result<(), AcpError> {
+    let acp = state.acp.clone();
+    tauri::async_runtime::spawn_blocking(move || acp.delete_session(session_id))
+        .await
+        .map_err(|error| AcpError::internal(Some(&format!("acp delete session join: {error}"))))?
+}
+
+#[tauri::command]
 pub async fn acp_sync_mcp_capabilities(
     _state: State<'_, AppState>,
     cwd: Option<String>,
@@ -390,4 +401,13 @@ pub async fn acp_close(app: AppHandle) -> Result<(), AcpError> {
     })
     .await
     .map_err(|error| AcpError::internal(Some(&format!("acp close join: {error}"))))?
+}
+
+#[tauri::command]
+pub async fn acp_login_antigravity(proxy_port: Option<u16>) -> Result<String, AcpError> {
+    tauri::async_runtime::spawn_blocking(move || lumina_acp::login_antigravity(proxy_port))
+        .await
+        .map_err(|error| {
+            AcpError::internal(Some(&format!("acp login antigravity join: {error}")))
+        })?
 }

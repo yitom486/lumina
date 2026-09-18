@@ -27,9 +27,9 @@ use crate::domain::settings::{AcpClientSettings, PermissionMode};
 use crate::error::AcpError;
 use crate::runtime::host::AcpHost;
 use crate::runtime::inbound::handle_inbound_side_effects;
-use crate::runtime::io::write_request;
+use crate::runtime::io::{read_until_id_raw, write_request};
 use crate::wire::codec::{classify_inbound, is_error_response};
-use crate::wire::session::{session_cancel_params, session_load_params};
+use crate::wire::session::{session_cancel_params, session_delete_params, session_load_params};
 use crate::wire::updates::{
     extract_plan_summary, extract_tool_call, extract_tool_call_content_chunk,
 };
@@ -787,6 +787,79 @@ impl AcpService {
             taken.agent.terminate(false);
         }
     }
+
+    /// Delete a stored thread via native `session/delete`.
+    ///
+    /// Refuses while a prompt (or load) runs: delete shares the child's
+    /// single stdio stream. Refuses the currently attached session id:
+    /// deleting the live attachment from under the next prompt would
+    /// strand it. Callers switch away (or start fresh) first.
+    pub fn delete_session(&self, session_id: String) -> Result<(), AcpError> {
+        let session_id = session_id.trim();
+        if session_id.is_empty() {
+            return Err(AcpError::bad_request("会话标识不能为空"));
+        }
+        if self
+            .busy
+            .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+            .is_err()
+        {
+            return Err(AcpError::busy());
+        }
+        let _busy = BusyReset(&self.busy);
+
+        let mut guard = self
+            .session
+            .lock()
+            .map_err(|_| AcpError::internal(Some("ACP session mutex poisoned")))?;
+        let session = guard
+            .as_mut()
+            .ok_or_else(|| AcpError::protocol(Some("no active agent session")))?;
+        if !session.init.supports_session_delete {
+            return Err(AcpError::protocol(Some(
+                "agent does not advertise session/delete",
+            )));
+        }
+        if session.session_id == session_id {
+            return Err(AcpError::bad_request("不能删除正在使用的对话"));
+        }
+        let request_id = session.next_id;
+        session.next_id += 1;
+        write_request(
+            &session.stdin,
+            request_id,
+            "session/delete",
+            session_delete_params(session_id),
+        )?;
+        let started = Instant::now();
+        let mut sink = |_: AcpEvent| {};
+        let response = read_until_id_raw(
+            self,
+            session,
+            request_id,
+            Duration::from_secs(30),
+            &self.cancel,
+            &self.host,
+            &mut sink,
+        )?;
+        if let Some(message) = is_error_response(&response) {
+            tracing::warn!(
+                session_id,
+                elapsed_ms = started.elapsed().as_millis(),
+                %message,
+                "ACP session/delete failed"
+            );
+            return Err(AcpError::protocol(Some(&format!(
+                "session/delete: {message}"
+            ))));
+        }
+        tracing::info!(
+            session_id,
+            elapsed_ms = started.elapsed().as_millis(),
+            "ACP session/delete completed"
+        );
+        Ok(())
+    }
 }
 
 /// Map one streamed `session/update` notification to a neutral transcript turn.
@@ -960,6 +1033,32 @@ mod tests {
         assert_eq!(err.code, crate::AcpErrorCode::Busy);
         assert!(!slot_occupied(&service));
         assert!(!service.cancel.load(Ordering::SeqCst));
+    }
+
+    #[test]
+    fn delete_session_refuses_while_busy_without_side_effects() {
+        use std::sync::atomic::Ordering;
+
+        let service = AcpService::new();
+        service.busy.store(true, Ordering::SeqCst);
+        let err = service
+            .delete_session("sess-1".to_string())
+            .expect_err("busy delete must fail");
+        assert_eq!(err.code, crate::AcpErrorCode::Busy);
+        assert!(!slot_occupied(&service));
+        // Busy stays set: the holder is whoever set it, not us.
+        assert!(service.busy.load(Ordering::SeqCst));
+    }
+
+    #[test]
+    fn delete_session_rejects_blank_session_id() {
+        let service = AcpService::new();
+        let err = service
+            .delete_session("   ".to_string())
+            .expect_err("blank id must fail");
+        // `bad_request` carries a specific Chinese message on ProtocolError.
+        assert_eq!(err.code, crate::AcpErrorCode::ProtocolError);
+        assert!(err.message.contains("不能为空"));
     }
 
     /// Cancel must preempt a prompt blocked in `read_line`: the prompt loop

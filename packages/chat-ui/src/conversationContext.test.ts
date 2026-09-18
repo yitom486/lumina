@@ -135,6 +135,37 @@ describe("historyThreadRows", () => {
       "这集讲了什么",
     ]);
   });
+
+  it("marks only untitled own threads as empty candidates", () => {
+    const byId = (id: string) =>
+      historyThreadRows(
+        [
+          { sessionId: "mine-empty", cwd: "D:/m", title: null, updatedAt: null, kind: "chat" },
+          { sessionId: "mine-named", cwd: "D:/m", title: "【工具优先】xxx", updatedAt: null, kind: "chat" },
+          { sessionId: "alien-empty", cwd: "D:/m", title: null, updatedAt: null, kind: null },
+          { sessionId: "alien-blank", cwd: "D:/m", title: "   ", updatedAt: null, kind: null },
+        ],
+        {},
+      ).find((row) => row.sessionId === id);
+    // 自家无标题：空占位候选，可批量清理。
+    expect(byId("mine-empty")?.isEmptyCandidate).toBe(true);
+    // 有原生标题（哪怕是脚手架）：可能有过消息，不标。
+    expect(byId("mine-named")?.isEmptyCandidate).toBe(false);
+    // 外部无标题：无法判断，不碰。
+    expect(byId("alien-empty")?.isEmptyCandidate).toBe(false);
+    expect(byId("alien-blank")?.isEmptyCandidate).toBe(false);
+  });
+
+  it("never marks threads with seen content as empty", () => {
+    const [row] = historyThreadRows(
+      [
+        { sessionId: "s1", cwd: "D:/m", title: null, updatedAt: null, kind: "chat" },
+      ],
+      { s1: "用户首句" },
+    );
+    expect(row?.title).toBe("用户首句");
+    expect(row?.isEmptyCandidate).toBe(false);
+  });
 });
 
 describe("agentSessionListTrust", () => {

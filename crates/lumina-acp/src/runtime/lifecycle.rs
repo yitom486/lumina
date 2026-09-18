@@ -405,6 +405,14 @@ impl AcpService {
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
+
+        // Strip PyInstaller environment variables explicitly from inherited parent env
+        for (key, _) in std::env::vars() {
+            if key.starts_with("_PYI") || key.starts_with("_MEI") {
+                command.env_remove(&key);
+            }
+        }
+
         for (key, value) in &launch.env {
             command.env(key, value);
         }
@@ -441,7 +449,7 @@ impl AcpService {
         // spawn its Codex layers, so no descendant can outlive this session.
         let mut agent = AgentProcess::adopt(child);
 
-        // Drain stderr so the pipe never blocks the agent.
+        // Drain stderr so the pipe never blocks the agent, and detect OAuth URLs.
         if let Some(stderr) = agent.stderr() {
             thread::spawn(move || {
                 let mut buf = String::new();
@@ -453,6 +461,33 @@ impl AcpService {
                     let line = buf.trim();
                     if !line.is_empty() {
                         tracing::warn!(stderr = line, "ACP agent stderr");
+                        // Detect Google OAuth authentication link
+                        if line.contains("https://accounts.google.com/o/oauth2/") {
+                            if let Some(start) = line.find("https://accounts.google.com/") {
+                                let url = line[start..]
+                                    .split_whitespace()
+                                    .next()
+                                    .unwrap_or(&line[start..]);
+                                tracing::info!(
+                                    oauth_url = url,
+                                    "Detected Google OAuth URL, opening browser"
+                                );
+                                #[cfg(windows)]
+                                {
+                                    let _ = std::process::Command::new("rundll32")
+                                        .args(["url.dll,FileProtocolHandler", url])
+                                        .spawn();
+                                }
+                                #[cfg(target_os = "macos")]
+                                {
+                                    let _ = std::process::Command::new("open").arg(url).spawn();
+                                }
+                                #[cfg(target_os = "linux")]
+                                {
+                                    let _ = std::process::Command::new("xdg-open").arg(url).spawn();
+                                }
+                            }
+                        }
                     }
                     buf.clear();
                 }
@@ -556,6 +591,11 @@ impl AcpService {
                 if profile.kind == AgentKind::Codex {
                     return Err(AcpError::codex_auth_required(Some(&format!(
                         "authenticate failed: {msg}"
+                    ))));
+                }
+                if profile.kind == AgentKind::Antigravity {
+                    return Err(AcpError::protocol(Some(&format!(
+                        "Google 账号认证失败：{msg}（请检查网络代理与登录授权）"
                     ))));
                 }
                 return Err(AcpError::protocol(Some(&format!(

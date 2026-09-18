@@ -6,7 +6,7 @@ import { Button } from "@lumina/ui/button";
 import { useAcpProfilesStore } from "@lumina/chat-ui/acpProfilesStore";
 import { clientSettingsFromStore, useAcpSettingsStore } from "@lumina/chat-ui/acpSettingsStore";
 import type { AgentProfileStatus, ThinkingLevel } from "../types";
-import { acpSyncMcpCapabilities } from "../api";
+import { acpLoginAntigravity, acpSyncMcpCapabilities } from "../api";
 import { useAgentModelControls } from "../useAgentModelControls";
 import { ChatColumn } from "@lumina/chat-ui/components/ChatShell";
 
@@ -36,9 +36,14 @@ export function AgentSettingsPanel({
   const queryClient = useQueryClient();
   const [open, setOpen] = useState(false);
   const [customCommand, setCustomCommand] = useState("");
+  const [proxyPort, setProxyPort] = useState("7897");
+  const [loginLoading, setLoginLoading] = useState(false);
+  const [loginError, setLoginError] = useState<string | null>(null);
+  const [loginSuccess, setLoginSuccess] = useState<string | null>(null);
 
   const activeProfileId = useAcpProfilesStore((s) => s.activeProfileId);
   const setActiveProfileId = useAcpProfilesStore((s) => s.setActiveProfileId);
+  const profiles = useAcpProfilesStore((s) => s.profiles);
   const upsertProfile = useAcpProfilesStore((s) => s.upsertProfile);
   const thinkingLevel = useAcpSettingsStore((s) => s.thinkingLevel);
   const agentMode = useAcpSettingsStore((s) => s.agentMode);
@@ -61,11 +66,20 @@ export function AgentSettingsPanel({
     (profile) => profile.id === "custom",
   )?.command;
 
+  const antigravityProfile = profiles.find((profile) => profile.id === "antigravity");
+
   useEffect(() => {
     if (customProfileCommand !== undefined) {
       setCustomCommand(customProfileCommand);
     }
   }, [customProfileCommand]);
+
+  useEffect(() => {
+    const savedPort = antigravityProfile?.env?.ACP_PROXY_PORT;
+    if (savedPort) {
+      setProxyPort(savedPort);
+    }
+  }, [antigravityProfile?.env?.ACP_PROXY_PORT]);
 
   const profileList = status?.profiles ?? [];
   const active = profileList.find((profile) => profile.id === activeProfileId);
@@ -89,6 +103,39 @@ export function AgentSettingsPanel({
     });
     setActiveProfileId("custom");
     refreshStatus();
+  };
+
+  const handleAntigravityLogin = async () => {
+    setLoginLoading(true);
+    setLoginError(null);
+    setLoginSuccess(null);
+    try {
+      const portNumber = Number.parseInt(proxyPort, 10);
+      const validPort =
+        Number.isInteger(portNumber) && portNumber > 0 && portNumber <= 65535
+          ? portNumber
+          : 7897;
+      if (antigravityProfile) {
+        upsertProfile({
+          ...antigravityProfile,
+          env: {
+            ...antigravityProfile.env,
+            ACP_PROXY_PORT: String(validPort),
+          },
+        });
+      }
+      const msg = await acpLoginAntigravity(validPort);
+      setLoginSuccess(msg || "登录授权成功！");
+      refreshStatus();
+    } catch (err: unknown) {
+      setLoginError(
+        typeof err === "string"
+          ? err
+          : (err as { message?: string })?.message || "登录授权失败，请重试",
+      );
+    } finally {
+      setLoginLoading(false);
+    }
   };
 
   return (
@@ -141,6 +188,79 @@ export function AgentSettingsPanel({
             </div>
           ) : null}
 
+          {activeProfileId === "antigravity" ? (
+            <div className="space-y-2 rounded-md border border-border/60 bg-muted/20 p-2.5">
+              <Field label="HTTP 代理端口（默认 7897）">
+                <div className="flex gap-2">
+                  <input
+                    type="number"
+                    className="h-8 min-w-0 flex-1 rounded-md border border-border bg-background px-2 text-xs"
+                    placeholder="7897"
+                    value={proxyPort}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      setProxyPort(val);
+                      if (antigravityProfile) {
+                        upsertProfile({
+                          ...antigravityProfile,
+                          env: {
+                            ...antigravityProfile.env,
+                            ACP_PROXY_PORT: val.trim() || "7897",
+                          },
+                        });
+                        refreshStatus();
+                      }
+                    }}
+                  />
+                </div>
+                <p className="text-[10px] text-muted-foreground">
+                  Google 授权及 Gemini 接口走此 HTTP/SOCKS5 代理端口访问（Clash/v2ray/Sing-box 等，常见端口为 7897 或 7890）。
+                </p>
+              </Field>
+
+              <div className="space-y-1.5 pt-1">
+                <div className="flex items-center justify-between">
+                  <span className="text-[11px] font-medium text-foreground">Google 账号授权</span>
+                  <span className="text-[10px]">
+                    {status?.antigravityCredentialsFound ? (
+                      <span className="font-medium text-emerald-500">✓ 已授权</span>
+                    ) : (
+                      <span className="font-medium text-amber-500">! 未登录</span>
+                    )}
+                  </span>
+                </div>
+
+                <Button
+                  size="sm"
+                  variant={status?.antigravityCredentialsFound ? "outline" : "default"}
+                  className="h-8 w-full text-xs"
+                  disabled={loginLoading || controlsDisabled}
+                  onClick={() => {
+                    void handleAntigravityLogin();
+                  }}
+                >
+                  {loginLoading
+                    ? "正在等待浏览器授权中..."
+                    : status?.antigravityCredentialsFound
+                      ? "重新授权 Google 账号"
+                      : "登录 Google 账号"}
+                </Button>
+
+                {loginSuccess ? (
+                  <p className="text-[10px] leading-relaxed text-emerald-500">
+                    {loginSuccess}
+                  </p>
+                ) : null}
+
+                {loginError ? (
+                  <p className="text-[10px] leading-relaxed text-destructive">
+                    {loginError}
+                  </p>
+                ) : null}
+              </div>
+            </div>
+          ) : null}
+
           {canDiscover ? (
             <Button
               size="sm"
@@ -187,7 +307,7 @@ export function AgentSettingsPanel({
             </select>
           </Field>
 
-          <Field label="识图截图">
+          <Field label="视图截图">
             <label className="flex cursor-pointer items-center gap-2 text-xs text-foreground">
               <input
                 type="checkbox"
@@ -208,10 +328,10 @@ export function AgentSettingsPanel({
                   }
                 }}
               />
-              启用画面截图工具（需识图模型）
+              启用画面截图工具（需视图模型）
             </label>
             <p className="text-[10px] leading-relaxed text-muted-foreground">
-              以发送消息时的播放进度为锚点；默认单帧；前后秒数按约 1 帧/秒取样（单侧最多
+              以发送消息时的播放进度为锚点；默认单帧；前后秒数按约 1 帧/秒采样（单侧最多
               7 秒、共最多 15 帧）；640px JPEG；工具返回后本地即删。关闭后 MCP
               不再暴露截图工具；若 Agent 仍看不到变化，请点「新对话」。
             </p>

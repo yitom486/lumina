@@ -1,4 +1,4 @@
-import { History, RefreshCw } from "lucide-react";
+import { History, RefreshCw, Trash2 } from "lucide-react";
 
 import { Button, cn } from "@lumina/ui";
 
@@ -11,8 +11,10 @@ type Props = {
   switchBlocked: boolean;
   loading: boolean;
   onRefresh: () => void;
+  onPurgeEmpty: () => void;
   onClose: () => void;
   onSelect: (sessionId: string) => void;
+  onDelete: (sessionId: string) => void;
 };
 
 export function formatConversationTime(updatedAtMs: number): string {
@@ -37,9 +39,14 @@ export function ChatHistorySheet({
   switchBlocked,
   loading,
   onRefresh,
+  onPurgeEmpty,
   onClose,
   onSelect,
+  onDelete,
 }: Props) {
+  if (!open) return null;
+
+  const emptyCount = rows.filter((row) => row.isEmptyCandidate).length;
   if (!open) return null;
 
   return (
@@ -50,6 +57,17 @@ export function ChatHistorySheet({
           <span className="truncate">历史对话</span>
         </div>
         <div className="flex shrink-0 items-center gap-1">
+          {emptyCount > 0 ? (
+            <Button
+              size="sm"
+              variant="ghost"
+              className="h-7 px-2 text-[10px] text-muted-foreground hover:text-destructive"
+              disabled={loading || switchBlocked}
+              onClick={onPurgeEmpty}
+            >
+              清理空对话（{emptyCount}）
+            </Button>
+          ) : null}
           <Button
             size="sm"
             variant="ghost"
@@ -115,6 +133,16 @@ export function ChatHistorySheet({
                       </p>
                     ) : null}
                   </button>
+                  <Button
+                    size="icon"
+                    variant="ghost"
+                    className="size-7 shrink-0 text-muted-foreground hover:text-destructive"
+                    aria-label="删除对话"
+                    disabled={disabled}
+                    onClick={() => onDelete(row.sessionId)}
+                  >
+                    <Trash2 className="size-3.5" />
+                  </Button>
                 </div>
               </li>
             );

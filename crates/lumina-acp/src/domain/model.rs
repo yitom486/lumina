@@ -11,7 +11,40 @@ use serde::{Deserialize, Serialize};
 pub enum AgentKind {
     Codex,
     Claude,
+    Antigravity,
     Custom,
+}
+
+/// Optional per-profile behavior presets. Absent everywhere = fully generic
+/// ACP: plain `command + args` spawn, no env injection, first advertised auth
+/// method, no agent-side session cleanup. These keep host conveniences as
+/// profile *data* instead of `AgentKind` code branches.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum LauncherPreset {
+    /// codex-acp fallback chain: standalone adapter → dev tree → `bun x` → `bunx`.
+    #[serde(rename = "codex-acp")]
+    CodexAcp,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum EnvPreset {
+    /// Inject `CODEX_PATH` / `CODEX_HOME` / `TERM` and prepend the Codex bin dir.
+    #[serde(rename = "codex-cli")]
+    CodexCli,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum AuthPolicy {
+    /// Codex-style dynamic auth preference (ChatGPT login vs API key).
+    #[serde(rename = "codex-local")]
+    CodexLocal,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum SessionStoragePreset {
+    /// Sessions persist as `~/.codex/sessions` rollouts (pool-close cleanup).
+    #[serde(rename = "codex-rollouts")]
+    CodexRollouts,
 }
 
 /// Explicit Lumina-owned session purpose stored in ACP session metadata.
@@ -47,7 +80,7 @@ pub enum ResumeOutcome {
 }
 
 /// Per-profile availability snapshot for the frontend. Pure DTO:
-/// resolution itself lives in `agent::profile`.
+/// resolution itself lives in `agent::profile` technique.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AgentProfileStatus {
@@ -91,7 +124,7 @@ pub fn validate_prompt_images(images: &[PromptImage]) -> Result<(), crate::error
     for image in images {
         if !ALLOWED.contains(&image.mime_type.trim().to_ascii_lowercase().as_str()) {
             return Err(crate::error::AcpError::bad_request(
-                "图片格式不受支持，仅支持 PNG/JPEG/WebP/GIF",
+                "图片格式不支持，仅支持 PNG/JPEG/WebP/GIF",
             ));
         }
         if image.data.trim().is_empty() {
@@ -135,6 +168,10 @@ pub struct AcpStatus {
     pub codex_found: bool,
     #[serde(default)]
     pub codex_config_found: bool,
+    #[serde(default)]
+    pub antigravity_found: bool,
+    #[serde(default)]
+    pub antigravity_credentials_found: bool,
     pub active_profile_id: String,
     pub profiles: Vec<AgentProfileStatus>,
     pub cli_path: Option<String>,
@@ -168,6 +205,16 @@ pub struct AgentProfileInput {
     pub args: Vec<String>,
     #[serde(default)]
     pub env: HashMap<String, String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub launcher: Option<LauncherPreset>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub env_preset: Option<EnvPreset>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auth_policy: Option<AuthPolicy>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub auth_methods: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_storage: Option<SessionStoragePreset>,
 }
 
 /// A selectable string-valued ACP session configuration option.

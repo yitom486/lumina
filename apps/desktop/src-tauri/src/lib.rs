@@ -51,9 +51,9 @@ use std::time::Duration;
 use tracing_subscriber::{layer::SubscriberExt as _, util::SubscriberInitExt as _};
 
 use commands::acp::{
-    acp_cancel, acp_close, acp_connect, acp_list_agent_sessions, acp_load_session, acp_new_chat,
-    acp_prompt, acp_respond_permission, acp_set_session_model, acp_status, acp_switch_session,
-    acp_sync_mcp_capabilities,
+    acp_cancel, acp_close, acp_connect, acp_delete_session, acp_list_agent_sessions,
+    acp_load_session, acp_login_antigravity, acp_new_chat, acp_prompt, acp_respond_permission,
+    acp_set_session_model, acp_status, acp_switch_session, acp_sync_mcp_capabilities,
 };
 use commands::asr::{asr_install, asr_status, asr_transcribe};
 use commands::library::{
@@ -106,27 +106,20 @@ fn startup_ms() -> u128 {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    let _ = STARTUP_START.set(std::time::Instant::now());
-
-    if mcp::run_if_invoked() {
-        return;
-    }
+    STARTUP_START.get_or_init(std::time::Instant::now);
     init_tracing();
-    tracing::info!(elapsed_ms = startup_ms(), "startup: tracing ready");
+    tracing::info!(elapsed_ms = startup_ms(), "startup: tracing initialized");
 
     let app = match tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
-        .plugin(tauri_plugin_updater::Builder::new().build())
-        .on_window_event(|window, event| {
-            if matches!(event, tauri::WindowEvent::CloseRequested { .. }) {
-                tracing::info!(label = %window.label(), "native window close requested");
-                // A JavaScript close listener makes Tauri defer the platform
-                // close until that listener resolves. Always request the app
-                // exit here so a WebView-side listener cannot trap the native
-                // close button or Alt+F4.
-                window.app_handle().exit(0);
-            }
+        .on_page_load(|_webview, payload| {
+            tracing::info!(
+                elapsed_ms = startup_ms(),
+                url = %payload.url(),
+                event = ?payload.event(),
+                "startup: page load"
+            );
         })
         .manage(AppState::new())
         .invoke_handler(tauri::generate_handler![
@@ -203,6 +196,7 @@ pub fn run() {
             acp_connect,
             acp_list_agent_sessions,
             acp_load_session,
+            acp_delete_session,
             acp_new_chat,
             acp_switch_session,
             acp_sync_mcp_capabilities,
@@ -210,6 +204,7 @@ pub fn run() {
             acp_prompt,
             acp_cancel,
             acp_close,
+            acp_login_antigravity,
             notes_list,
             notes_preview_quotes,
             notes_get_frame,

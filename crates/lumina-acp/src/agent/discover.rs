@@ -213,6 +213,91 @@ pub fn find_bun() -> Option<PathBuf> {
     find_command(if cfg!(windows) { "bun.exe" } else { "bun" })
 }
 
+/// Locate directory for Antigravity settings and credentials (~/.gemini/antigravity-acp).
+pub fn antigravity_dir() -> Option<PathBuf> {
+    let home = std::env::var_os("USERPROFILE").or_else(|| std::env::var_os("HOME"))?;
+    Some(PathBuf::from(home).join(".gemini").join("antigravity-acp"))
+}
+
+/// Check if Google OAuth credentials or Gemini API key are stored.
+pub fn antigravity_credentials_present() -> bool {
+    if std::env::var("GEMINI_API_KEY").is_ok() {
+        return true;
+    }
+    let Some(dir) = antigravity_dir() else {
+        return false;
+    };
+    dir.join("acp_token.json").is_file() || dir.join("acp_business_token.json").is_file()
+}
+
+/// Locate the official Google agy_acp_server executable.
+pub fn find_antigravity() -> Option<PathBuf> {
+    if let Ok(override_path) = std::env::var("AGY_ACP_SERVER_PATH") {
+        let path = PathBuf::from(override_path);
+        if path.is_file() {
+            return Some(path);
+        }
+    }
+
+    let exe_name = if cfg!(windows) {
+        "agy_acp_server.exe"
+    } else {
+        "agy_acp_server.par"
+    };
+
+    // 1. Zed external agents cache (e.g. %LOCALAPPDATA%\Zed\external_agents\registry\antigravity-acp\v_*\agy_acp_server.exe)
+    #[cfg(windows)]
+    if let Some(local_app_data) = std::env::var_os("LOCALAPPDATA") {
+        let zed_reg = PathBuf::from(local_app_data)
+            .join("Zed")
+            .join("external_agents")
+            .join("registry")
+            .join("antigravity-acp");
+        if let Ok(entries) = std::fs::read_dir(&zed_reg) {
+            for entry in entries.flatten() {
+                let candidate = entry.path().join(exe_name);
+                if candidate.is_file() {
+                    return Some(candidate);
+                }
+            }
+        }
+    }
+    #[cfg(not(windows))]
+    if let Some(home) = std::env::var_os("HOME") {
+        let zed_reg = PathBuf::from(home)
+            .join(".local")
+            .join("share")
+            .join("zed")
+            .join("external_agents")
+            .join("registry")
+            .join("antigravity-acp");
+        if let Ok(entries) = std::fs::read_dir(&zed_reg) {
+            for entry in entries.flatten() {
+                let candidate = entry.path().join(exe_name);
+                if candidate.is_file() {
+                    return Some(candidate);
+                }
+            }
+        }
+    }
+
+    // 2. ~/.gemini/antigravity-acp/runtime/
+    if let Some(gemini_dir) = antigravity_dir() {
+        let candidate = gemini_dir.join("runtime").join(exe_name);
+        if candidate.is_file() {
+            return Some(candidate);
+        }
+    }
+
+    // 3. PATH
+    find_command(if cfg!(windows) {
+        "agy_acp_server.exe"
+    } else {
+        "agy_acp_server"
+    })
+    .or_else(|| find_command("agy_acp_server"))
+}
+
 /// Dev tree: `node_modules/@agentclientprotocol/codex-acp` (avoids flaky `bun x` on Windows).
 /// Monorepo 拆分后向上兼容查找，desktop 包优先（旧解析顺序）。
 pub fn find_dev_codex_acp_entry() -> Option<PathBuf> {
@@ -248,5 +333,8 @@ mod tests {
         let _ = codex_config_present();
         let _ = codex_home_dir();
         let _ = codex_fallback_candidates();
+        let _ = antigravity_dir();
+        let _ = antigravity_credentials_present();
+        let _ = find_antigravity();
     }
 }

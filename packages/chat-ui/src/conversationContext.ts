@@ -47,6 +47,12 @@ export type HistoryThreadRow = {
   sessionId: string;
   title: string;
   updatedAtMs: number;
+  /**
+   * 空占位候选：无原生标题 + 自家 kind 标记。Codex 建线程不起名，
+   * 名来自首条消息；我们的失败回退会凭空建出从没发过言的线程，
+   * 恰好就是这个形状。外部线程（无 kind）永不标——无法判断，不碰。
+   */
+  isEmptyCandidate: boolean;
 };
 
 /**
@@ -109,8 +115,8 @@ export function historyThreadRows(
         ? Date.parse(session.updatedAt)
         : Number.NaN;
       let title = titleOverrides?.[session.sessionId];
+      const nativeTitle = session.title?.trim();
       if (!title) {
-        const nativeTitle = session.title?.trim();
         if (nativeTitle && !isScaffoldTitle(nativeTitle)) {
           title = nativeTitle;
         } else if (nativeTitle) {
@@ -129,6 +135,11 @@ export function historyThreadRows(
         sessionId: session.sessionId,
         title,
         updatedAtMs: Number.isFinite(parsed) ? parsed : 0,
+        // 见过正文（override）的永不标空——只认原生证据。
+        isEmptyCandidate:
+          !nativeTitle &&
+          session.kind === "chat" &&
+          !titleOverrides?.[session.sessionId],
       };
     })
     .sort((a, b) => b.updatedAtMs - a.updatedAtMs);

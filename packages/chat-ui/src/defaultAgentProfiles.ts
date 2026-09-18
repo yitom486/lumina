@@ -12,6 +12,7 @@ function isWindowsPlatform(): boolean {
 export function defaultAgentProfiles(): AgentProfileInput[] {
   const bunx = isWindowsPlatform() ? "bunx.exe" : "bunx";
   const claude = isWindowsPlatform() ? "claude-agent-acp.exe" : "claude-agent-acp";
+  const antigravity = isWindowsPlatform() ? "agy_acp_server.exe" : "agy_acp_server";
   return [
     {
       id: "codex",
@@ -20,6 +21,14 @@ export function defaultAgentProfiles(): AgentProfileInput[] {
       command: bunx,
       args: [CODEX_ACP_PACKAGE],
       env: {},
+    },
+    {
+      id: "antigravity",
+      name: "Google Antigravity",
+      kind: "Antigravity",
+      command: antigravity,
+      args: [],
+      env: { ACP_PROXY_PORT: "7897" },
     },
     {
       id: "claude",

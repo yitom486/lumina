@@ -34,6 +34,7 @@ import {
   acpCancel,
   acpClose,
   acpConnect,
+  acpDeleteSession,
   acpNewChat,
   acpPrompt,
   acpSwitchSession,
@@ -1148,6 +1149,99 @@ export function AcpPanel() {
     }
   };
 
+  // 批量清理空占位：无原生标题 + 自家 kind（失败回退造的空线程）。
+  // 逐个真删（后端同样守 busy/在用）；单次确认——空占位零价值，
+  // 逐条确认纯属添堵；有内容的行不在此列，走行级删除键。
+  const purgeEmptyConversations = async () => {
+    const targets = historyRows
+      .filter((row) => row.isEmptyCandidate)
+      .map((row) => row.sessionId);
+    if (targets.length === 0) return;
+    if (busy || newChatMutation.isPending || switchSessionMutation.isPending) {
+      pushSystem("正在回答，请稍后再清理空对话");
+      return;
+    }
+    if (
+      !window.confirm(
+        `删除 ${targets.length} 个无标题的空占位对话吗？远端线程将被永久删除。`,
+      )
+    ) {
+      return;
+    }
+    const removed: string[] = [];
+    for (const target of targets) {
+      if (useAcpSessionStore.getState().savedSession?.sessionId === target) {
+        continue;
+      }
+      try {
+        await acpDeleteSession(target);
+        removed.push(target);
+      } catch (error) {
+        pushSystem(errorMessage(error));
+        break;
+      }
+    }
+    for (const sessionId of removed) {
+      void queryClient.removeQueries({
+        queryKey: acpQueryKeys.transcript(
+          activeProfileId,
+          sessionCwd ?? null,
+          sessionId,
+        ),
+      });
+    }
+    setTitleOverrides((prev) => {
+      if (!removed.some((id) => prev[id])) return prev;
+      const next = { ...prev };
+      for (const id of removed) delete next[id];
+      return next;
+    });
+    await queryClient.invalidateQueries({
+      queryKey: acpQueryKeys.sessionList(activeProfileId, sessionCwd ?? null),
+    });
+    if (removed.length > 0) {
+      pushSystem(`已清理 ${removed.length} 个空对话`);
+    }
+  };
+
+  // 真删除：远端线程永久消失。忙时不删（同根 stdin），正在使用的不删，
+  // 删前确认（误删不可恢复）。成功后清掉该线程的文本缓存并刷新列表。
+  const deleteHistoryConversation = async (sessionId: string) => {
+    const target = sessionId.trim();
+    if (!target) return;
+    if (busy || newChatMutation.isPending || switchSessionMutation.isPending) {
+      pushSystem("正在回答，请稍后再删除对话");
+      return;
+    }
+    if (useAcpSessionStore.getState().savedSession?.sessionId === target) {
+      pushSystem("不能删除正在使用的对话，先切换到其他对话");
+      return;
+    }
+    if (!window.confirm("删除该对话吗？远端线程将被永久删除。")) return;
+    try {
+      await acpDeleteSession(target);
+      void queryClient.removeQueries({
+        queryKey: acpQueryKeys.transcript(
+          activeProfileId,
+          sessionCwd ?? null,
+          target,
+        ),
+      });
+      await queryClient.invalidateQueries({
+        queryKey: acpQueryKeys.sessionList(activeProfileId, sessionCwd ?? null),
+      });
+      setTitleOverrides((prev) => {
+        if (!prev[target]) return prev;
+        const next = { ...prev };
+        delete next[target];
+        return next;
+      });
+      pushSystem("已删除该对话");
+    } catch (error) {
+      pushSystem(errorMessage(error));
+    }
+  };
+
   // 常驻会话真相：只反映后端最后一次 sessionSaved / 本地同线程续接，
   // 不依赖有没有人在等通知。恢复成功失败、是否新建，在这里一眼可见。
   const sessionResolutionText =
@@ -1219,6 +1313,8 @@ export function AcpPanel() {
           }
           onClose={() => handleHistoryOpenChange(false)}
           onSelect={(sessionId) => void loadConversation(sessionId)}
+          onDelete={(sessionId) => void deleteHistoryConversation(sessionId)}
+          onPurgeEmpty={() => void purgeEmptyConversations()}
         />
       </ChatColumn>
 

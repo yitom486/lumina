@@ -294,6 +294,12 @@ pub fn session_cancel_params(session_id: &str) -> Value {
     json!({ "sessionId": session_id })
 }
 
+/// `session/delete` params: only the thread id (adapter schema
+/// `zDeleteSessionRequest`: `sessionId` + optional `_meta`).
+pub fn session_delete_params(session_id: &str) -> Value {
+    json!({ "sessionId": session_id })
+}
+
 pub fn session_close_params(session_id: &str) -> Value {
     json!({ "sessionId": session_id })
 }
@@ -326,6 +332,7 @@ pub struct InitializeResult {
     pub supports_session_close: bool,
     pub supports_session_resume: bool,
     pub supports_session_list: bool,
+    pub supports_session_delete: bool,
     pub load_session: bool,
     pub prompt_image: bool,
 }
@@ -384,6 +391,9 @@ pub fn parse_initialize_result(value: &Value) -> InitializeResult {
     let supports_session_list =
         capability_present(result, "/agentCapabilities/sessionCapabilities/list");
 
+    let supports_session_delete =
+        capability_present(result, "/agentCapabilities/sessionCapabilities/delete");
+
     let load_session = result
         .pointer("/agentCapabilities/loadSession")
         .and_then(Value::as_bool)
@@ -401,6 +411,7 @@ pub fn parse_initialize_result(value: &Value) -> InitializeResult {
         supports_session_close,
         supports_session_resume,
         supports_session_list,
+        supports_session_delete,
         load_session,
         prompt_image,
     }
@@ -543,6 +554,34 @@ mod tests {
         });
         assert_eq!(extract_agent_text(&value), None);
         assert_eq!(parse_stop_reason(&value).as_deref(), Some("end_turn"));
+    }
+
+    #[test]
+    fn session_delete_params_carry_only_the_thread_id() {
+        assert_eq!(
+            session_delete_params("sess-1"),
+            json!({ "sessionId": "sess-1" })
+        );
+    }
+
+    #[test]
+    fn delete_capability_accepts_object_and_true_but_not_missing() {
+        for capability in [json!({}), json!(true)] {
+            let value = json!({
+                "result": {
+                    "agentCapabilities": {
+                        "sessionCapabilities": { "delete": capability }
+                    }
+                }
+            });
+            assert!(parse_initialize_result(&value).supports_session_delete);
+        }
+        let missing = json!({
+            "result": {
+                "agentCapabilities": { "sessionCapabilities": {} }
+            }
+        });
+        assert!(!parse_initialize_result(&missing).supports_session_delete);
     }
 
     #[test]
