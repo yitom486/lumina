@@ -733,7 +733,9 @@ fn model_selection(request: &ChapterSegmentationRequest) -> Option<AcpSessionMod
 #[cfg(test)]
 mod tests {
     use super::*;
-    use lumina_library::{Database, NewAgentAttempt, NewAgentTask, NewEpisode, NewSeries};
+    use lumina_library::{
+        Database, NewAgentAttempt, NewAgentTask, NewChapter, NewEpisode, NewSeries,
+    };
 
     #[test]
     fn coverage_is_bounded_and_deterministic() {
@@ -748,6 +750,115 @@ mod tests {
         assert_eq!(failure_status(1, 3), "validation_failure");
         assert_eq!(failure_status(2, 3), "validation_failure");
         assert_eq!(failure_status(3, 3), "failed");
+    }
+
+    #[test]
+    fn business_failure_exhausts_three_independent_attempts_without_publishing(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let database = Database::open_in_memory()?;
+        let task_key = "chapter-retry-state-machine";
+        let series_id = database.repository().insert_series(&NewSeries::new(
+            "series:retry-state-machine",
+            "Retry State Machine",
+            "test",
+        ))?;
+        let episode_id = database.repository().insert_episode(&NewEpisode::new(
+            series_id,
+            "episode:retry-state-machine",
+            "test",
+        ))?;
+        let mut task_input = NewAgentTask::new(task_key, "chapter_segmentation", "chapter.v1");
+        task_input.episode_id = Some(episode_id);
+        let task = database
+            .repository()
+            .get_or_create_agent_task(&task_input)?;
+        let chapter_id = database.repository().insert_chapter(&NewChapter::new(
+            episode_id,
+            "draft:opening",
+            0,
+            1_000,
+            "ai",
+        ))?;
+        database
+            .repository()
+            .ensure_agent_task_chapter_scope(task.id, episode_id, chapter_id)?;
+
+        let expected_task_statuses = ["validation_failure", "validation_failure", "failed"];
+        let mut attempt_ids = Vec::new();
+        for (index, expected_status) in expected_task_statuses.iter().enumerate() {
+            let attempt_number = i64::try_from(index + 1)?;
+            let claimed = database
+                .repository()
+                .claim_agent_task_by_key(task_key)?
+                .ok_or("retryable chapter task was not claimed")?;
+            assert_eq!(claimed.attempt_count, attempt_number);
+
+            let attempt_id = database
+                .repository()
+                .insert_agent_attempt(&NewAgentAttempt::new(
+                    claimed.id,
+                    attempt_number,
+                    "chapter_segmentation",
+                    "running",
+                    claimed.prompt_version.clone(),
+                    now_ms_for_command(),
+                ))?;
+            let error = finish_failed(
+                &database,
+                &claimed,
+                attempt_id,
+                WorkerFailure::business(
+                    "章节校验未通过，请重试。",
+                    format!("business validation failure on attempt {attempt_number}"),
+                ),
+            )
+            .expect_err("business failure must not be treated as success");
+            assert_eq!(error.code, "ChapterAnalysisFailed");
+
+            let persisted = database
+                .repository()
+                .get_agent_task(claimed.id)?
+                .ok_or("chapter retry task disappeared")?;
+            assert_eq!(persisted.status, *expected_status);
+            assert_eq!(persisted.attempt_count, attempt_number);
+            assert_eq!(persisted.output_json, None);
+
+            let attempt = database
+                .repository()
+                .get_agent_attempt(attempt_id)?
+                .ok_or("chapter attempt disappeared")?;
+            assert_eq!(attempt.attempt_number, attempt_number);
+            assert_eq!(attempt.status, "failed");
+            assert!(attempt
+                .validation_report
+                .as_deref()
+                .is_some_and(|report| report.contains("章节校验未通过")));
+            attempt_ids.push(attempt_id);
+
+            let chapters = database
+                .repository()
+                .list_chapters_by_agent_task(claimed.id, episode_id)?;
+            assert_eq!(chapters.len(), 1);
+            assert_eq!(chapters[0].id, chapter_id);
+            assert_eq!(chapters[0].status, "draft");
+        }
+
+        assert_eq!(attempt_ids.len(), 3);
+        assert!(attempt_ids.windows(2).all(|pair| pair[0] != pair[1]));
+        assert!(database
+            .repository()
+            .claim_agent_task_by_key(task_key)?
+            .is_none());
+
+        let final_task = database
+            .repository()
+            .get_agent_task(task.id)?
+            .ok_or("final chapter retry task disappeared")?;
+        assert_eq!(final_task.status, "failed");
+        assert_eq!(final_task.attempt_count, 3);
+        assert_eq!(final_task.max_attempts, 3);
+        assert_eq!(final_task.output_json, None);
+        Ok(())
     }
 
     #[test]
