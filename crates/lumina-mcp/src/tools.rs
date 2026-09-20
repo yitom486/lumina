@@ -5,6 +5,9 @@ use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+#[cfg(feature = "test-support")]
+const TEST_CAPTURE_FIXTURE_DIR_ENV: &str = "LUMINA_MCP_TEST_CAPTURE_FIXTURE_DIR";
+
 use base64::{engine::general_purpose::STANDARD, Engine as _};
 use serde::Serialize;
 use serde_json::{json, Value};
@@ -1404,8 +1407,7 @@ fn capture_chapter_evidence(context: &ChapterTaskContext, args: &Value) -> Resul
         .iter()
         .map(|time| *time as f64 / 1000.0)
         .collect::<Vec<_>>();
-    let paths = capture_frames(&media_path, &sample_times, &capture_root)
-        .map_err(|error| format!("章节画面采集失败: {error}"))?;
+    let paths = capture_chapter_evidence_frames(&media_path, &sample_times, &capture_root)?;
     if paths.len() != timestamps.len() {
         return Err("章节画面采集结果数量不一致".to_string());
     }
@@ -1462,6 +1464,47 @@ fn capture_chapter_evidence(context: &ChapterTaskContext, args: &Value) -> Resul
         }),
         &image_bytes,
     )
+}
+
+/// Test-only seam for the black-box MCP harness.
+///
+/// The normal path remains the project-local FFmpeg capture implementation.
+/// An explicit fixture directory lets a protocol-level test exercise the
+/// complete MCP/database path on hosts that do not carry the bundled FFmpeg;
+/// the environment variable is never set by the desktop application.
+fn capture_chapter_evidence_frames(
+    media_path: &Path,
+    sample_times: &[f64],
+    output_dir: &Path,
+) -> Result<Vec<PathBuf>, String> {
+    #[cfg(feature = "test-support")]
+    if let Some(fixture_dir) = std::env::var_os(TEST_CAPTURE_FIXTURE_DIR_ENV) {
+        let fixture_dir = PathBuf::from(fixture_dir);
+        fs::create_dir_all(output_dir)
+            .map_err(|error| format!("测试截图输出目录创建失败: {error}"))?;
+        let mut outputs = Vec::with_capacity(sample_times.len());
+        for (index, _) in sample_times.iter().enumerate() {
+            let candidate = fixture_dir.join(format!("frame-{index:02}.jpg"));
+            let fallback = fixture_dir.join("frame.jpg");
+            let source = if candidate.is_file() {
+                candidate
+            } else if fallback.is_file() {
+                fallback.clone()
+            } else {
+                return Err(format!(
+                    "测试截图 fixture 缺少 frame-{index:02}.jpg 或 frame.jpg"
+                ));
+            };
+            let output = output_dir.join(format!("frame-{index:02}.jpg"));
+            fs::copy(&source, &output)
+                .map_err(|error| format!("测试截图 fixture 复制失败: {error}"))?;
+            outputs.push(output);
+        }
+        return Ok(outputs);
+    }
+
+    capture_frames(media_path, sample_times, output_dir)
+        .map_err(|error| format!("章节画面采集失败: {error}"))
 }
 
 fn chapter_evidence_result(metadata: &Value, image_bytes: &[Vec<u8>]) -> Result<Value, String> {

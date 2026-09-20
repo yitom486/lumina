@@ -4,6 +4,14 @@ version = "0.3.0"
 description = "Lumina MCP server, snapshots, tools, and policies"
 edition = "2021"
 
+[features]
+test-support = []
+
+[[bin]]
+name = "lumina-mcp-stdio-test-server"
+path = "tests/bin/lumina_mcp_stdio_test_server.rs"
+required-features = ["test-support"]
+
 [dependencies]
 lumina-core.workspace = true
 lumina-library.workspace = true
