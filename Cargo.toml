@@ -27,3 +27,4 @@ lumina-mcp = { path = "crates/lumina-mcp" }
 lumina-media = { path = "crates/lumina-media" }
 lumina-subtitle = { path = "crates/lumina-subtitle" }
 lumina-asr = { path = "crates/lumina-asr" }
+rusqlite = { version = "0.32", features = ["bundled"] }

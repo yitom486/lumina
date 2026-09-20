@@ -24,6 +24,10 @@
       "types": "./src/components/ChatActivityFeed.tsx",
       "default": "./src/components/ChatActivityFeed.tsx"
     },
+    "./components/CompanionModeTabs": {
+      "types": "./src/components/CompanionModeTabs.tsx",
+      "default": "./src/components/CompanionModeTabs.tsx"
+    },
     "./components/ChatComposer": {
       "types": "./src/components/ChatComposer.tsx",
       "default": "./src/components/ChatComposer.tsx"
@@ -35,6 +39,34 @@
     "./components/ChatToggleButton": {
       "types": "./src/components/ChatToggleButton.tsx",
       "default": "./src/components/ChatToggleButton.tsx"
+    },
+    "./assistantBlocks": {
+      "types": "./src/assistantBlocks.ts",
+      "default": "./src/assistantBlocks.ts"
+    },
+    "./components/ActionChip": {
+      "types": "./src/components/ActionChip.tsx",
+      "default": "./src/components/ActionChip.tsx"
+    },
+    "./components/AgentTaskCard": {
+      "types": "./src/components/AgentTaskCard.tsx",
+      "default": "./src/components/AgentTaskCard.tsx"
+    },
+    "./components/QuestionCard": {
+      "types": "./src/components/QuestionCard.tsx",
+      "default": "./src/components/QuestionCard.tsx"
+    },
+    "./components/RichBlockRenderer": {
+      "types": "./src/components/RichBlockRenderer.tsx",
+      "default": "./src/components/RichBlockRenderer.tsx"
+    },
+    "./components/SpoilerGuard": {
+      "types": "./src/components/SpoilerGuard.tsx",
+      "default": "./src/components/SpoilerGuard.tsx"
+    },
+    "./components/WatchFeedCard": {
+      "types": "./src/components/WatchFeedCard.tsx",
+      "default": "./src/components/WatchFeedCard.tsx"
     }
   },
   "dependencies": {
@@ -46,5 +78,10 @@
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
     "zustand": "^5.0.15"
+  },
+  "devDependencies": {
+    "@types/react": "^19.1.8",
+    "@types/react-dom": "^19.1.6",
+    "vitest": "^3.2.7"
   }
 }
