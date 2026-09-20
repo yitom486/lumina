@@ -132,3 +132,16 @@ sequenceDiagram
     Sub-->>AI: 落盘成功
     AI-->>UI: 返回全新的 Transcript
 ```
+
+## 6. 版本化提示词仓库
+
+`lumina_ai::prompts` 是章节 Agent 和富内容任务的唯一专有 prompt 归属。它提供六个类型化
+任务 ID：`chapter_segment`、`chapter_recap`、`chapter_outlook`、`plot_summary`、
+`question_candidates` 和 `rewrite_content`。调用方通过 `PromptSlots` 传入媒体、章节、字幕
+窗口、截图引用、观看位置、源内容和用户指令等结构化动态上下文；React 不需要保存或拼接
+专有 prompt。
+
+初始 prompt 由 `PromptRepository::compose` 或 `PromptComposer::compose` 创建。校验失败时，
+调用 `ComposedPrompt::append_validation_report`，只取得当前 `ValidationReport` 对应的
+`ValidationDelta::message` 追加到仍存活的会话。每个 prompt 最多允许三次验证重试；超过上限
+会返回 `ValidationRetryError::RetryLimitExceeded`，不会重新发送初始 prompt 或完整上下文。

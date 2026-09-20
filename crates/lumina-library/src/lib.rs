@@ -5,6 +5,7 @@
 //! lives in the app adapter.
 
 pub mod credentials;
+mod database;
 mod error;
 mod glossary;
 mod metadata;
@@ -19,6 +20,14 @@ mod wikipedia;
 mod wikitext;
 
 pub use credentials::{CredentialKind, CredentialSaveInput, CredentialStatus};
+pub use database::{
+    AgentAttemptRecord, AgentTaskKeyMigration, AgentTaskRecord, ChapterAssetRecord, ChapterRecord,
+    ChapterRevisionRecord, Database, DatabaseError, DatabaseErrorCode, DatabaseResult,
+    EpisodeMigrationReport, EpisodeMigrationStatus, EpisodeRecord, LegacyEpisodeMigration,
+    NewAgentAttempt, NewAgentTask, NewChapter, NewChapterAsset, NewChapterRevision, NewEpisode,
+    NewQuestionCandidate, NewSeries, NewWatchFeedItem, QuestionCandidateRecord, Repository,
+    SeriesRecord, WatchFeedItemRecord, CURRENT_SCHEMA_VERSION,
+};
 pub use error::{LibraryError, LibraryErrorCode};
 pub use metadata::{
     episode_index_for_group, load_context_at_root, load_context_for_group,
