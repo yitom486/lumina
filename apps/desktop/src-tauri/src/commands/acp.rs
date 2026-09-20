@@ -1,5 +1,8 @@
 //! On-demand ACP commands. Never runs unless the frontend invokes them.
 
+use std::collections::{hash_map::Entry, HashMap, HashSet};
+use std::str::FromStr;
+
 use tauri::ipc::Channel;
 use tauri::{AppHandle, Manager, State};
 
@@ -12,6 +15,91 @@ use crate::mcp::OnlineMediaSnapshot;
 use crate::state::AppState;
 use lumina_acp::agent::workspace::resolve_session_cwd;
 use lumina_acp::AcpClientSettings;
+use lumina_ai::prompts::{
+    compose_prompt, EpisodeContext, MediaContext, PromptSlots, SpoilerBoundary, TaskId,
+    ViewingContext,
+};
+use lumina_library::{
+    ChapterAssetRecord, ChapterRecord, ChapterRevisionRecord, EpisodeRecord, MediaMetadataContext,
+    QuestionCandidateRecord, Repository, StoredMetadataKind, WatchFeedItemRecord,
+};
+
+/// Read-only business projection for the AI watch-feed tab.
+///
+/// The DTO intentionally contains only domain data.  It never exposes a
+/// SQLite connection, native resource handle, stderr, or a local asset path.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AcpWatchFeedResponse {
+    pub source: AcpWatchFeedSource,
+    pub items: Vec<AcpWatchFeedItem>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum AcpWatchFeedSource {
+    Sqlite,
+    Empty,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AcpWatchFeedItem {
+    pub id: i64,
+    pub episode_id: Option<i64>,
+    pub chapter_id: Option<i64>,
+    pub revision_id: Option<i64>,
+    pub task_id: Option<i64>,
+    pub item_type: String,
+    pub source: String,
+    pub content: String,
+    pub spoiler_level: String,
+    pub content_version: String,
+    pub published_at_ms: Option<i64>,
+    pub chapter: Option<AcpWatchFeedChapter>,
+    pub revision: Option<AcpWatchFeedRevision>,
+    pub question_candidate: Option<AcpWatchFeedQuestionCandidate>,
+    /// Opaque resource references. Local filesystem paths never cross this boundary.
+    pub screenshot_refs: Vec<String>,
+    pub cover_ref: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AcpWatchFeedChapter {
+    pub id: i64,
+    pub start_ms: i64,
+    pub end_ms: i64,
+    pub spoiler_level: String,
+    pub title: Option<String>,
+    pub mainline: Option<String>,
+    pub status: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AcpWatchFeedRevision {
+    pub id: i64,
+    pub revision_number: i64,
+    pub revision_type: String,
+    pub content: String,
+    pub source: String,
+    pub prompt_version: String,
+    pub validation_report: Option<String>,
+    pub status: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AcpWatchFeedQuestionCandidate {
+    pub id: i64,
+    pub question: String,
+    pub source: String,
+    pub spoiler_level: String,
+    pub batch_key: Option<String>,
+    pub is_user_defined: bool,
+    pub selected_at_ms: Option<i64>,
+}
 
 #[tauri::command]
 pub async fn acp_status(
@@ -26,6 +114,402 @@ pub async fn acp_status(
     })
     .await
     .map_err(|error| AcpError::internal(Some(&format!("acp status join: {error}"))))?
+}
+
+/// Read the durable watch-feed projection without touching the live ACP chat.
+#[tauri::command]
+pub async fn acp_watch_feed(app: AppHandle) -> Result<AcpWatchFeedResponse, AcpError> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let Some(state) = app.try_state::<AppState>() else {
+            return Err(AcpError::internal(Some("watch feed app state unavailable")));
+        };
+
+        let media_path = state
+            .with_player(|player| Ok(player.snapshot().current_file))
+            .map_err(|error| {
+                AcpError::internal(Some(&format!("watch feed player snapshot: {error}")))
+            })?;
+        let Some(media_path) = media_path.filter(|path| !path.trim().is_empty()) else {
+            return Ok(empty_watch_feed_response());
+        };
+
+        let library_context = match state.library.context_for_media(media_path.clone()) {
+            Ok(context) => context,
+            Err(error) => {
+                // Metadata is an identity enhancement, not a playback or chat
+                // prerequisite.  Keep the legacy path lookup available when a
+                // library index is absent, stale, or unreadable.
+                tracing::warn!(code = ?error.code, "watch feed library identity unavailable");
+                None
+            }
+        };
+        let identity_plan = watch_feed_identity_plan(&media_path, library_context.as_ref());
+
+        let database = super::chapter::open_database().map_err(|error| {
+            tracing::warn!(code = %error.code, details = ?error.details, "watch feed database unavailable");
+            AcpError::internal(Some("watch feed database unavailable"))
+        })?;
+        let repository = database.repository();
+        let episodes = resolve_watch_feed_episodes(&repository, &identity_plan)?;
+        let items = load_watch_feed_projection(&repository, &episodes)?;
+
+        if items.is_empty() {
+            return Ok(empty_watch_feed_response());
+        }
+
+        Ok(AcpWatchFeedResponse {
+            source: AcpWatchFeedSource::Sqlite,
+            items,
+        })
+    })
+    .await
+    .map_err(|error| AcpError::internal(Some(&format!("watch feed query join: {error}"))))?
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct WatchFeedIdentity {
+    series_stable_id: String,
+    episode_stable_id: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct WatchFeedIdentityPlan {
+    authoritative: Option<WatchFeedIdentity>,
+    legacy_series_stable_id: String,
+    legacy_episode_stable_id: String,
+}
+
+#[derive(Debug, Clone)]
+struct WatchFeedEpisodeSource {
+    episode: EpisodeRecord,
+}
+
+struct WatchFeedEpisodeProjection {
+    items: Vec<WatchFeedItemRecord>,
+    chapters_by_id: HashMap<i64, ChapterRecord>,
+    revisions_by_id: HashMap<i64, ChapterRevisionRecord>,
+    latest_revisions_by_chapter: HashMap<i64, ChapterRevisionRecord>,
+    question_candidates: Vec<QuestionCandidateRecord>,
+    assets_by_chapter: HashMap<i64, Vec<ChapterAssetRecord>>,
+}
+
+fn watch_feed_identity_plan(
+    media_path: &str,
+    context: Option<&MediaMetadataContext>,
+) -> WatchFeedIdentityPlan {
+    let authoritative = context.and_then(|context| {
+        let item = context.item.as_ref()?;
+        let valid_episode = context.group.kind == StoredMetadataKind::Series
+            && context.group.tmdb_id > 0
+            && item.kind == StoredMetadataKind::Episode
+            && item.tmdb_id > 0
+            && item
+                .series_tmdb_id
+                .map(|series_tmdb_id| series_tmdb_id == context.group.tmdb_id)
+                .unwrap_or(true)
+            && item.season.is_some_and(|season| season > 0)
+            && item.episode.is_some_and(|episode| episode > 0);
+        if !valid_episode {
+            return None;
+        }
+
+        let season = item.season?;
+        let episode = item.episode?;
+        Some(WatchFeedIdentity {
+            series_stable_id: format!("tmdb:tv:{}", context.group.tmdb_id),
+            episode_stable_id: format!("s{season:02}e{episode:02}"),
+        })
+    });
+
+    WatchFeedIdentityPlan {
+        authoritative,
+        legacy_series_stable_id: format!("media-series:{media_path}"),
+        legacy_episode_stable_id: media_path.to_string(),
+    }
+}
+
+fn resolve_watch_feed_episodes(
+    repository: &Repository,
+    plan: &WatchFeedIdentityPlan,
+) -> Result<Vec<WatchFeedEpisodeSource>, AcpError> {
+    let mut sources = Vec::with_capacity(2);
+
+    if let Some(identity) = &plan.authoritative {
+        let series = repository
+            .get_series_by_stable_id(&identity.series_stable_id)
+            .map_err(|error| watch_feed_database_error("read watch feed series", &error))?;
+        if let Some(series) = series {
+            if let Some(episode) = repository
+                .get_episode_by_stable_id(series.id, &identity.episode_stable_id)
+                .map_err(|error| watch_feed_database_error("read watch feed episode", &error))?
+            {
+                sources.push(WatchFeedEpisodeSource { episode });
+            }
+        }
+    }
+
+    let legacy_series = repository
+        .get_series_by_stable_id(&plan.legacy_series_stable_id)
+        .map_err(|error| watch_feed_database_error("read legacy watch feed series", &error))?;
+    if let Some(series) = legacy_series {
+        if let Some(episode) = repository
+            .get_episode_by_stable_id(series.id, &plan.legacy_episode_stable_id)
+            .map_err(|error| watch_feed_database_error("read legacy watch feed episode", &error))?
+        {
+            if sources.iter().all(|source| source.episode.id != episode.id) {
+                sources.push(WatchFeedEpisodeSource { episode });
+            }
+        }
+    }
+
+    Ok(sources)
+}
+
+fn load_watch_feed_episode_projection(
+    repository: &Repository,
+    episode_id: i64,
+) -> Result<WatchFeedEpisodeProjection, AcpError> {
+    let items = repository
+        .list_watch_feed_items_by_episode(episode_id)
+        .map_err(|error| watch_feed_database_error("list watch feed items", &error))?;
+    let chapters = repository
+        .list_chapters_by_episode(episode_id)
+        .map_err(|error| watch_feed_database_error("list watch feed chapters", &error))?;
+    let question_candidates = repository
+        .list_question_candidates_by_episode(episode_id)
+        .map_err(|error| watch_feed_database_error("list watch feed questions", &error))?;
+
+    let chapters_by_id: HashMap<_, _> = chapters
+        .into_iter()
+        .map(|chapter| (chapter.id, chapter))
+        .collect();
+    let mut revisions_by_id = HashMap::new();
+    let mut latest_revisions_by_chapter = HashMap::new();
+    let mut assets_by_chapter = HashMap::new();
+
+    for chapter in chapters_by_id.values() {
+        if let Some(revision) = repository
+            .get_latest_chapter_revision(chapter.id)
+            .map_err(|error| watch_feed_database_error("read latest chapter revision", &error))?
+        {
+            latest_revisions_by_chapter.insert(chapter.id, revision.clone());
+            revisions_by_id.insert(revision.id, revision);
+        }
+        let assets = repository
+            .list_chapter_assets_by_chapter(chapter.id)
+            .map_err(|error| watch_feed_database_error("list chapter assets", &error))?;
+        assets_by_chapter.insert(chapter.id, assets);
+    }
+
+    for item in &items {
+        if let Some(revision_id) = item.revision_id {
+            if let Entry::Vacant(entry) = revisions_by_id.entry(revision_id) {
+                if let Some(revision) = repository
+                    .get_chapter_revision(revision_id)
+                    .map_err(|error| watch_feed_database_error("read chapter revision", &error))?
+                {
+                    entry.insert(revision);
+                }
+            }
+        }
+    }
+
+    Ok(WatchFeedEpisodeProjection {
+        items,
+        chapters_by_id,
+        revisions_by_id,
+        latest_revisions_by_chapter,
+        question_candidates,
+        assets_by_chapter,
+    })
+}
+
+fn watch_feed_item_dedupe_key(item: &WatchFeedItemRecord) -> String {
+    if !item.dedupe_key.trim().is_empty() {
+        return format!("dedupe:{}", item.dedupe_key);
+    }
+    format!(
+        "fallback:{}:{}:{}:{}:{}:{}",
+        item.item_type,
+        item.chapter_id.unwrap_or_default(),
+        item.task_id.unwrap_or_default(),
+        item.content_version,
+        item.spoiler_level,
+        item.content
+    )
+}
+
+fn load_watch_feed_projection(
+    repository: &Repository,
+    sources: &[WatchFeedEpisodeSource],
+) -> Result<Vec<AcpWatchFeedItem>, AcpError> {
+    let projections = sources
+        .iter()
+        .map(|source| load_watch_feed_episode_projection(repository, source.episode.id))
+        .collect::<Result<Vec<_>, _>>()?;
+    let source_items = projections
+        .iter()
+        .map(|projection| projection.items.clone())
+        .collect::<Vec<_>>();
+    let selected = merge_watch_feed_item_records(&source_items);
+    let mut mapped = Vec::with_capacity(selected.len());
+
+    for (source_index, item) in selected {
+        let projection = &projections[source_index];
+        let chapter = item
+            .chapter_id
+            .and_then(|id| projection.chapters_by_id.get(&id));
+        let revision = item
+            .revision_id
+            .and_then(|id| projection.revisions_by_id.get(&id))
+            .or_else(|| {
+                item.chapter_id
+                    .and_then(|id| projection.latest_revisions_by_chapter.get(&id))
+            });
+        let question_candidate = projection.question_candidates.iter().find(|candidate| {
+            item.item_type == "question"
+                && candidate.episode_id == item.episode_id
+                && candidate.chapter_id == item.chapter_id
+                && candidate.task_id == item.task_id
+                && candidate.question == item.content
+        });
+        let assets = item
+            .chapter_id
+            .and_then(|id| projection.assets_by_chapter.get(&id))
+            .map(Vec::as_slice)
+            .unwrap_or_default();
+        let (screenshot_refs, cover_ref) = opaque_asset_refs(assets);
+        mapped.push(map_watch_feed_item(
+            &item,
+            chapter,
+            revision,
+            question_candidate,
+            screenshot_refs,
+            cover_ref,
+        ));
+    }
+
+    mapped.sort_by(|left, right| {
+        left.published_at_ms
+            .unwrap_or_default()
+            .cmp(&right.published_at_ms.unwrap_or_default())
+            .then_with(|| left.id.cmp(&right.id))
+    });
+    Ok(mapped)
+}
+
+/// Merge sources in caller order. The caller supplies authoritative data
+/// before legacy data, so the first equivalent row wins deterministically.
+fn merge_watch_feed_item_records(
+    sources: &[Vec<WatchFeedItemRecord>],
+) -> Vec<(usize, WatchFeedItemRecord)> {
+    let mut selected = Vec::new();
+    let mut seen_dedupe_keys = HashSet::new();
+    let mut seen_ids = HashSet::new();
+
+    for (source_index, source) in sources.iter().enumerate() {
+        for item in source {
+            if !seen_ids.insert(item.id)
+                || !seen_dedupe_keys.insert(watch_feed_item_dedupe_key(item))
+            {
+                continue;
+            }
+            selected.push((source_index, item.clone()));
+        }
+    }
+    selected
+}
+
+fn empty_watch_feed_response() -> AcpWatchFeedResponse {
+    AcpWatchFeedResponse {
+        source: AcpWatchFeedSource::Empty,
+        items: Vec::new(),
+    }
+}
+
+fn watch_feed_database_error(
+    operation: &'static str,
+    error: &lumina_library::DatabaseError,
+) -> AcpError {
+    tracing::warn!(
+        code = ?error.code,
+        details = ?error.details,
+        operation,
+        "watch feed database read failed"
+    );
+    AcpError::internal(Some(operation))
+}
+
+fn map_watch_feed_item(
+    item: &WatchFeedItemRecord,
+    chapter: Option<&ChapterRecord>,
+    revision: Option<&ChapterRevisionRecord>,
+    question_candidate: Option<&QuestionCandidateRecord>,
+    screenshot_refs: Vec<String>,
+    cover_ref: Option<String>,
+) -> AcpWatchFeedItem {
+    AcpWatchFeedItem {
+        id: item.id,
+        episode_id: item.episode_id,
+        chapter_id: item.chapter_id,
+        revision_id: item.revision_id,
+        task_id: item.task_id,
+        item_type: item.item_type.clone(),
+        source: item.source.clone(),
+        content: item.content.clone(),
+        spoiler_level: item.spoiler_level.clone(),
+        content_version: item.content_version.clone(),
+        published_at_ms: item.published_at_ms,
+        chapter: chapter.map(|chapter| AcpWatchFeedChapter {
+            id: chapter.id,
+            start_ms: chapter.start_ms,
+            end_ms: chapter.end_ms,
+            spoiler_level: chapter.spoiler_level.clone(),
+            title: chapter.title.clone(),
+            mainline: chapter.mainline.clone(),
+            status: chapter.status.clone(),
+        }),
+        revision: revision.map(|revision| AcpWatchFeedRevision {
+            id: revision.id,
+            revision_number: revision.revision_number,
+            revision_type: revision.revision_type.clone(),
+            content: revision.content.clone(),
+            source: revision.source.clone(),
+            prompt_version: revision.prompt_version.clone(),
+            validation_report: revision.validation_report.clone(),
+            status: revision.status.clone(),
+        }),
+        question_candidate: question_candidate.map(|candidate| AcpWatchFeedQuestionCandidate {
+            id: candidate.id,
+            question: candidate.question.clone(),
+            source: candidate.source.clone(),
+            spoiler_level: candidate.spoiler_level.clone(),
+            batch_key: candidate.batch_key.clone(),
+            is_user_defined: candidate.is_user_defined,
+            selected_at_ms: candidate.selected_at_ms,
+        }),
+        screenshot_refs,
+        cover_ref,
+    }
+}
+
+fn opaque_asset_refs(assets: &[ChapterAssetRecord]) -> (Vec<String>, Option<String>) {
+    let screenshot_refs = assets
+        .iter()
+        .filter(|asset| asset.asset_type.eq_ignore_ascii_case("screenshot"))
+        .map(opaque_asset_ref)
+        .collect();
+    let cover_ref = assets
+        .iter()
+        .find(|asset| asset.asset_type.eq_ignore_ascii_case("cover"))
+        .map(opaque_asset_ref);
+    (screenshot_refs, cover_ref)
+}
+
+/// Asset paths are native resources and never cross the Tauri business DTO.
+/// The ID is enough for a later resource bridge to resolve them safely.
+fn opaque_asset_ref(asset: &ChapterAssetRecord) -> String {
+    format!("chapter-asset:{}", asset.id)
 }
 
 #[tauri::command]
@@ -146,6 +630,7 @@ pub async fn acp_prompt(
     client_settings: Option<AcpClientSettings>,
     profiles: AgentProfilesHint,
     on_event: Channel<AcpEvent>,
+    task_id: Option<String>,
 ) -> Result<String, AcpError> {
     let acp = state.acp.clone();
     let library = state.library.clone();
@@ -227,8 +712,13 @@ pub async fn acp_prompt(
         adapter::write_prompt_snapshot(&session_cwd, &snapshot)?;
         let context = enrich_prompt_context(context, &snapshot, media_changed);
         let images = images.unwrap_or_default();
+        let prompt_text = task_id
+            .as_deref()
+            .map(|value| compose_task_prompt(value, text.as_str(), context.as_ref()))
+            .transpose()?
+            .unwrap_or(text);
         acp.prompt(
-            text,
+            prompt_text,
             cwd,
             profile_id,
             context,
@@ -245,6 +735,59 @@ pub async fn acp_prompt(
     })
     .await
     .map_err(|error| AcpError::internal(Some(&format!("acp prompt join: {error}"))))?
+}
+
+/// Compose a versioned shortcut task prompt without changing the ordinary chat
+/// path. The task prompt is sent through the existing ACP session; no new
+/// session, history entry or MCP evidence is created here.
+fn compose_task_prompt(
+    task_id: &str,
+    user_text: &str,
+    context: Option<&VideoPromptContext>,
+) -> Result<String, AcpError> {
+    let task_id = TaskId::from_str(task_id.trim())
+        .map_err(|_| AcpError::bad_request("快捷 AI 操作不受支持"))?;
+    let context = context
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| AcpError::bad_request("请先打开视频后再使用快捷 AI 操作"))?;
+    let media_path = context
+        .media_path
+        .as_deref()
+        .filter(|value| !value.trim().is_empty())
+        .ok_or_else(|| AcpError::bad_request("当前没有可分析的视频"))?;
+    let position_ms = context.position_ms.unwrap_or_default();
+    let slots = PromptSlots::default()
+        .with_media(MediaContext {
+            media_id: media_path.to_string(),
+            title: context.media_title.clone(),
+            duration_ms: context.duration_ms,
+        })
+        .with_episode(EpisodeContext {
+            series_id: None,
+            series_title: None,
+            season: context.season,
+            episode: context.episode,
+            title: context.episode_title.clone(),
+        })
+        .with_viewing(ViewingContext {
+            position_ms,
+            spoiler_boundary: SpoilerBoundary::CurrentPosition,
+        });
+    let slots = if task_id
+        .definition()
+        .dynamic_slots
+        .contains(&"user_instruction")
+        && !user_text.trim().is_empty()
+    {
+        slots.with_user_instruction(user_text.trim())
+    } else {
+        slots
+    };
+    compose_prompt(task_id, &slots)
+        .map(|prompt| prompt.initial_prompt().to_string())
+        .map_err(|error| {
+            AcpError::internal(Some(&format!("task prompt composition failed: {error}")))
+        })
 }
 
 /// Per-turn: progress always. Episode plot only when media/episode switched.
@@ -417,4 +960,313 @@ pub async fn acp_login_antigravity(proxy_port: Option<u16>) -> Result<String, Ac
         .map_err(|error| {
             AcpError::internal(Some(&format!("acp login antigravity join: {error}")))
         })?
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn video_context() -> VideoPromptContext {
+        VideoPromptContext {
+            media_path: Some("D:/media/episode-01.mp4".into()),
+            media_title: Some("第一集".into()),
+            position_ms: Some(42_000),
+            duration_ms: Some(600_000),
+            season: Some(1),
+            episode: Some(1),
+            episode_title: Some("开端".into()),
+            ..VideoPromptContext::default()
+        }
+    }
+
+    #[test]
+    fn task_route_uses_stable_id_and_current_position_boundary() {
+        let result =
+            compose_task_prompt("chapter_outlook", "请关注人物关系", Some(&video_context()));
+        let prompt = match result {
+            Ok(prompt) => prompt,
+            Err(error) => panic!("expected task prompt, got {error}"),
+        };
+
+        assert!(prompt.contains("Lumina task: chapter_outlook"));
+        assert!(prompt.contains("current_position"));
+        assert!(prompt.contains("请关注人物关系"));
+        assert!(prompt.contains("episode-01.mp4"));
+    }
+
+    #[test]
+    fn task_route_does_not_add_instruction_to_tasks_without_that_slot() {
+        let result = compose_task_prompt("plot_summary", "不要加入这段话", Some(&video_context()));
+        let prompt = match result {
+            Ok(prompt) => prompt,
+            Err(error) => panic!("expected task prompt, got {error}"),
+        };
+
+        assert!(!prompt.contains("不要加入这段话"));
+        assert!(prompt.contains("Lumina task: plot_summary"));
+    }
+
+    #[test]
+    fn task_route_rejects_unknown_or_contextless_tasks() {
+        let unknown = compose_task_prompt("not_a_task", "", Some(&video_context()));
+        assert_eq!(
+            unknown.as_ref().err().map(|error| error.message.as_str()),
+            Some("快捷 AI 操作不受支持")
+        );
+
+        let missing_context = compose_task_prompt("chapter_recap", "", None);
+        assert_eq!(
+            missing_context
+                .as_ref()
+                .err()
+                .map(|error| error.message.as_str()),
+            Some("请先打开视频后再使用快捷 AI 操作")
+        );
+    }
+
+    fn stored_metadata(
+        kind: StoredMetadataKind,
+        tmdb_id: u64,
+        series_tmdb_id: Option<u64>,
+        season: Option<u32>,
+        episode: Option<u32>,
+    ) -> lumina_library::StoredMetadata {
+        lumina_library::StoredMetadata {
+            schema_version: 2,
+            kind,
+            tmdb_id,
+            series_tmdb_id,
+            title: "测试媒体".into(),
+            original_title: None,
+            original_language: None,
+            title_zh: None,
+            overview: None,
+            year: None,
+            season,
+            episode,
+            genres: Vec::new(),
+            cast: Vec::new(),
+            creators: Vec::new(),
+            network: None,
+            status: None,
+            updated_at_ms: 1,
+        }
+    }
+
+    fn feed_item(id: i64, dedupe_key: &str, content: &str) -> WatchFeedItemRecord {
+        feed_item_in_scope(id, dedupe_key, content, None, Some(1))
+    }
+
+    fn feed_item_in_scope(
+        id: i64,
+        dedupe_key: &str,
+        content: &str,
+        chapter_id: Option<i64>,
+        task_id: Option<i64>,
+    ) -> WatchFeedItemRecord {
+        WatchFeedItemRecord {
+            id,
+            episode_id: Some(1),
+            chapter_id,
+            revision_id: None,
+            task_id,
+            item_type: "summary".into(),
+            source: "ai".into(),
+            content: content.into(),
+            spoiler_level: "current_chapter".into(),
+            content_version: "v1".into(),
+            dedupe_key: dedupe_key.into(),
+            published_at_ms: Some(id),
+            created_at_ms: id,
+        }
+    }
+
+    #[test]
+    fn watch_feed_identity_plan_prefers_valid_tmdb_episode_identity() {
+        let context = MediaMetadataContext {
+            media_path: "D:/media/episode-03.mp4".into(),
+            group: stored_metadata(StoredMetadataKind::Series, 1234, None, None, None),
+            item: Some(stored_metadata(
+                StoredMetadataKind::Episode,
+                5678,
+                Some(1234),
+                Some(2),
+                Some(3),
+            )),
+            wiki: None,
+            merged: None,
+        };
+
+        let plan = watch_feed_identity_plan(&context.media_path, Some(&context));
+        assert_eq!(
+            plan.authoritative,
+            Some(WatchFeedIdentity {
+                series_stable_id: "tmdb:tv:1234".into(),
+                episode_stable_id: "s02e03".into(),
+            })
+        );
+        assert_eq!(plan.legacy_episode_stable_id, "D:/media/episode-03.mp4");
+    }
+
+    #[test]
+    fn watch_feed_identity_plan_falls_back_when_library_context_is_incomplete() {
+        let context = MediaMetadataContext {
+            media_path: "D:/media/episode-03.mp4".into(),
+            group: stored_metadata(StoredMetadataKind::Series, 1234, None, None, None),
+            item: Some(stored_metadata(
+                StoredMetadataKind::Episode,
+                5678,
+                Some(9999),
+                Some(2),
+                Some(3),
+            )),
+            wiki: None,
+            merged: None,
+        };
+
+        let plan = watch_feed_identity_plan(&context.media_path, Some(&context));
+        assert!(plan.authoritative.is_none());
+        assert_eq!(
+            plan.legacy_series_stable_id,
+            "media-series:D:/media/episode-03.mp4"
+        );
+    }
+
+    #[test]
+    fn watch_feed_merge_is_deterministic_and_authoritative_first() {
+        let authoritative = vec![feed_item(10, "summary:1", "权威摘要")];
+        let legacy = vec![
+            feed_item(20, "summary:1", "旧摘要"),
+            feed_item(21, "question:1", "旧问题"),
+        ];
+
+        let first = merge_watch_feed_item_records(&[authoritative.clone(), legacy.clone()]);
+        let second = merge_watch_feed_item_records(&[authoritative, legacy]);
+
+        assert_eq!(first, second);
+        assert_eq!(
+            first
+                .iter()
+                .map(|(source, item)| (*source, item.id, item.content.as_str()))
+                .collect::<Vec<_>>(),
+            vec![(0, 10, "权威摘要"), (1, 21, "旧问题")]
+        );
+    }
+
+    #[test]
+    fn watch_feed_fallback_key_keeps_same_text_in_different_chapters_or_tasks() {
+        let same_text_different_chapter = feed_item_in_scope(30, "", "相同内容", Some(1), Some(7));
+        let same_text_different_task = feed_item_in_scope(31, "", "相同内容", Some(1), Some(8));
+        let same_text_different_chapter_again =
+            feed_item_in_scope(32, "", "相同内容", Some(2), Some(7));
+
+        let merged = merge_watch_feed_item_records(&[
+            vec![same_text_different_chapter],
+            vec![same_text_different_task, same_text_different_chapter_again],
+        ]);
+
+        assert_eq!(
+            merged.iter().map(|(_, item)| item.id).collect::<Vec<_>>(),
+            vec![30, 31, 32]
+        );
+    }
+
+    #[test]
+    fn watch_feed_dto_preserves_projection_links_and_spoiler_fields() {
+        let item = WatchFeedItemRecord {
+            id: 7,
+            episode_id: Some(2),
+            chapter_id: Some(3),
+            revision_id: Some(4),
+            task_id: Some(5),
+            item_type: "chapter".to_string(),
+            source: "ai".to_string(),
+            content: "章节主线".to_string(),
+            spoiler_level: "current_chapter".to_string(),
+            content_version: "v1".to_string(),
+            dedupe_key: "task:5:chapter-feed:1".to_string(),
+            published_at_ms: Some(100),
+            created_at_ms: 100,
+        };
+        let chapter = ChapterRecord {
+            id: 3,
+            episode_id: 2,
+            stable_id: "chapter-1".to_string(),
+            source: "ai".to_string(),
+            start_ms: 1_000,
+            end_ms: 2_000,
+            spoiler_level: "current_chapter".to_string(),
+            title: Some("初见".to_string()),
+            mainline: Some("主线".to_string()),
+            status: "ready".to_string(),
+            created_at_ms: 100,
+            updated_at_ms: 100,
+        };
+
+        let dto = map_watch_feed_item(
+            &item,
+            Some(&chapter),
+            None,
+            None,
+            vec!["opaque-frame-1".to_string()],
+            Some("opaque-cover-1".to_string()),
+        );
+
+        assert_eq!(dto.chapter_id, Some(3));
+        assert_eq!(dto.revision_id, Some(4));
+        assert_eq!(dto.spoiler_level, "current_chapter");
+        assert_eq!(
+            dto.chapter
+                .as_ref()
+                .and_then(|value| value.title.as_deref()),
+            Some("初见")
+        );
+        assert_eq!(dto.screenshot_refs, vec!["opaque-frame-1"]);
+        assert_eq!(dto.cover_ref.as_deref(), Some("opaque-cover-1"));
+    }
+
+    #[test]
+    fn watch_feed_asset_paths_become_opaque_resource_ids() {
+        let assets = vec![
+            ChapterAssetRecord {
+                id: 11,
+                chapter_id: 3,
+                asset_type: "screenshot".to_string(),
+                path: r"C:\private\frame.png".to_string(),
+                content_hash: "frame-hash".to_string(),
+                captured_at_ms: 1_000,
+                width: None,
+                height: None,
+                source: "ai".to_string(),
+                created_at_ms: 1_000,
+            },
+            ChapterAssetRecord {
+                id: 12,
+                chapter_id: 3,
+                asset_type: "cover".to_string(),
+                path: r"C:\private\cover.png".to_string(),
+                content_hash: "cover-hash".to_string(),
+                captured_at_ms: 1_100,
+                width: None,
+                height: None,
+                source: "ai".to_string(),
+                created_at_ms: 1_100,
+            },
+        ];
+
+        let (screenshots, cover) = opaque_asset_refs(&assets);
+        assert_eq!(screenshots, vec!["chapter-asset:11"]);
+        assert_eq!(cover.as_deref(), Some("chapter-asset:12"));
+        assert!(!screenshots
+            .iter()
+            .any(|reference| reference.contains("private")));
+        assert!(!cover.unwrap_or_default().contains("private"));
+    }
+
+    #[test]
+    fn empty_watch_feed_response_is_safe_and_explicit() {
+        let response = empty_watch_feed_response();
+        assert_eq!(response.source, AcpWatchFeedSource::Empty);
+        assert!(response.items.is_empty());
+    }
 }

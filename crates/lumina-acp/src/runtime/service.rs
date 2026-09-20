@@ -204,7 +204,7 @@ impl AcpService {
             let env = session_env()?;
             let workspace = resolve_session_cwd(cwd.as_deref())?;
             env.sync_snapshot(
-                &env.snapshot_path(&workspace),
+                &env.snapshot_path(&workspace, SessionKind::Chat),
                 client_settings.vision_capable,
             )
             .map_err(|error| AcpError::internal(Some(&error)))?;
@@ -674,10 +674,10 @@ impl AcpService {
             .and_then(|env| env.snapshot_vision_capable(&workspace))
             .unwrap_or(true);
         let env = session_env()?;
-        let snapshot_path = env.snapshot_path(&workspace);
+        let snapshot_path = env.snapshot_path(&workspace, SessionKind::Chat);
         env.sync_snapshot(&snapshot_path, vision_capable)
             .map_err(|error| AcpError::internal(Some(&error)))?;
-        let mcp_servers = env.mcp_servers(&snapshot_path, self.isolated_task());
+        let mcp_servers = env.mcp_servers(&snapshot_path, SessionKind::Chat);
 
         let mut guard = self
             .session

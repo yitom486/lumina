@@ -9,7 +9,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use lumina_acp::{AcpError, SessionEnvironment, VideoPromptContext};
+use lumina_acp::{AcpError, SessionEnvironment, SessionKind, VideoPromptContext};
 use lumina_core::{AgentConversation, AgentTaskError, IsolatedAgentTask};
 
 use crate::library::MediaLibraryService;
@@ -33,8 +33,11 @@ fn next_mcp_diagnostic_id() -> String {
 }
 
 impl SessionEnvironment for AppSessionEnvironment {
-    fn snapshot_path(&self, cwd: &Path) -> PathBuf {
-        snapshot_path_for_cwd(cwd)
+    fn snapshot_path(&self, cwd: &Path, kind: SessionKind) -> PathBuf {
+        match kind {
+            SessionKind::Chapter => cwd.join(".lumina").join("chapter-agent-context.json"),
+            SessionKind::Chat | SessionKind::Workshop => snapshot_path_for_cwd(cwd),
+        }
     }
 
     fn sync_snapshot(&self, snapshot_path: &Path, vision_capable: bool) -> Result<(), String> {
@@ -46,19 +49,13 @@ impl SessionEnvironment for AppSessionEnvironment {
         sync_snapshot_capabilities(snapshot_path, vision_capable)
     }
 
-    fn mcp_servers(&self, snapshot_path: &Path, isolated: bool) -> serde_json::Value {
-        // Chat selects `Chat`; isolated AI tasks select `NoTools` so the
-        // server lists nothing and never loads Chat snapshot state.
-        let profile = if isolated {
-            crate::mcp::McpToolProfile::NoTools
-        } else {
-            crate::mcp::McpToolProfile::Chat
-        };
+    fn mcp_servers(&self, snapshot_path: &Path, kind: SessionKind) -> serde_json::Value {
+        let profile = mcp_profile_for_session(kind);
         let diagnostic_id = next_mcp_diagnostic_id();
         tracing::info!(
             diagnostic_id = %diagnostic_id,
             profile = %profile.env_value(),
-            isolated,
+            session_kind = ?kind,
             snapshot = %snapshot_path.display(),
             "prepared Lumina MCP server environment"
         );
@@ -98,6 +95,34 @@ impl SessionEnvironment for AppSessionEnvironment {
     }
 }
 
+fn mcp_profile_for_session(kind: SessionKind) -> crate::mcp::McpToolProfile {
+    match kind {
+        SessionKind::Workshop => crate::mcp::McpToolProfile::NoTools,
+        SessionKind::Chat | SessionKind::Chapter => crate::mcp::McpToolProfile::Chat,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn session_kind_selects_explicit_mcp_profiles() {
+        assert_eq!(
+            mcp_profile_for_session(SessionKind::Chat),
+            crate::mcp::McpToolProfile::Chat
+        );
+        assert_eq!(
+            mcp_profile_for_session(SessionKind::Workshop),
+            crate::mcp::McpToolProfile::NoTools
+        );
+        assert_eq!(
+            mcp_profile_for_session(SessionKind::Chapter),
+            crate::mcp::McpToolProfile::Chat
+        );
+    }
+}
+
 /// Installed once at startup; `session/new|resume` wiring uses it.
 pub fn install_session_environment() -> bool {
     lumina_acp::set_default_environment(Arc::new(AppSessionEnvironment))
@@ -118,6 +143,7 @@ pub fn build_prompt_snapshot(
         position_ms: context.position_ms,
         duration_ms: context.duration_ms,
         subtitle_choice_id: context.subtitle_choice_id.clone(),
+        transcript_window_radius_sec: context.transcript_window_radius_sec,
     });
     let mut guard = snapshots
         .lock()

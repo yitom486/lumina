@@ -35,6 +35,11 @@ pub struct PromptAnchor {
     pub duration_ms: Option<u64>,
     pub sent_at_ms: u128,
     pub subtitle_choice_id: Option<String>,
+    /// Preferred default radius for the current chat transcript tool call.
+    /// Explicit MCP arguments always take precedence; omitted values retain
+    /// the historical 60-second default when this field is absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub transcript_window_radius_sec: Option<u64>,
 }
 
 /// Current-episode plot kept on disk for MCP; also inlined into the prompt
@@ -259,6 +264,7 @@ mod tests {
                 duration_ms: None,
                 sent_at_ms: 1,
                 subtitle_choice_id: Some("online:en".into()),
+                transcript_window_radius_sec: None,
             }),
             online: Some(OnlineMediaSnapshot {
                 media_id: "youtube:e2e".into(),
@@ -347,6 +353,7 @@ mod tests {
                 duration_ms: None,
                 sent_at_ms: 1,
                 subtitle_choice_id: Some("embedded:2".into()),
+                transcript_window_radius_sec: None,
             }),
             current_episode: Some(CurrentEpisodeLite {
                 season: Some(1),
@@ -382,5 +389,23 @@ mod tests {
         let loaded = read_snapshot(&path).expect("read");
         assert_eq!(loaded, snapshot);
         let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn legacy_anchor_without_transcript_preference_defaults_to_none() {
+        let legacy = serde_json::json!({
+            "mediaPath": "D:/videos/legacy.mkv",
+            "mediaTitle": null,
+            "libraryRoot": null,
+            "groupKey": null,
+            "season": null,
+            "episode": null,
+            "positionMs": 1000,
+            "durationMs": null,
+            "sentAtMs": 1,
+            "subtitleChoiceId": null
+        });
+        let anchor: PromptAnchor = serde_json::from_value(legacy).expect("legacy anchor");
+        assert_eq!(anchor.transcript_window_radius_sec, None);
     }
 }

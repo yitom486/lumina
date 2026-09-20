@@ -10,19 +10,19 @@ use std::sync::{Arc, OnceLock};
 
 use serde_json::Value;
 
+use crate::domain::model::SessionKind;
 use crate::error::AcpError;
 
 /// Generalized MCP/session surroundings, implemented once by the app.
 pub trait SessionEnvironment: Send + Sync + 'static {
     /// Snapshot file location for a session cwd.
-    fn snapshot_path(&self, cwd: &Path) -> PathBuf;
+    fn snapshot_path(&self, cwd: &Path, kind: SessionKind) -> PathBuf;
     /// Record session capabilities (e.g. vision) into the snapshot file.
     fn sync_snapshot(&self, snapshot_path: &Path, vision_capable: bool) -> Result<(), String>;
     /// Generalized MCP server spec for `session/new|resume`.
-    /// `isolated` marks short-lived tool-free tasks (translation/polishing):
-    /// the app advertises the `NoTools` profile so the server never serves
-    /// tools or loads Chat state. Chat sessions pass `false` (`Chat`).
-    fn mcp_servers(&self, snapshot_path: &Path, isolated: bool) -> Value;
+    /// Select the MCP server profile by the explicit session purpose. The
+    /// host owns the mapping from session kind to its tool policy.
+    fn mcp_servers(&self, snapshot_path: &Path, kind: SessionKind) -> Value;
     /// Vision flag previously recorded for a workspace, if any.
     fn snapshot_vision_capable(&self, workspace: &Path) -> Option<bool>;
 }

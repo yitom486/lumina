@@ -59,10 +59,12 @@ pub enum SessionStoragePreset {
 /// Explicit Lumina-owned session purpose stored in ACP session metadata.
 /// This must be passed by each creation path; it is never inferred from
 /// tool access or other mutable service state.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum SessionKind {
     Chat,
     Workshop,
+    Chapter,
 }
 
 impl SessionKind {
@@ -70,6 +72,7 @@ impl SessionKind {
         match self {
             Self::Chat => "chat",
             Self::Workshop => "workshop",
+            Self::Chapter => "chapter",
         }
     }
 }
@@ -382,5 +385,26 @@ mod tests {
         let too_many: Vec<PromptImage> = (0..5).map(|_| image("image/png", "aGVsbG8=")).collect();
         let capped = validate_prompt_images(&too_many).expect_err("fifth image rejected");
         assert!(capped.message.contains("4 张"));
+    }
+
+    #[test]
+    fn session_kind_serializes_to_stable_lowercase_strings() {
+        assert_eq!(
+            serde_json::to_string(&SessionKind::Chat).unwrap(),
+            "\"chat\""
+        );
+        assert_eq!(
+            serde_json::to_string(&SessionKind::Workshop).unwrap(),
+            "\"workshop\""
+        );
+        assert_eq!(
+            serde_json::to_string(&SessionKind::Chapter).unwrap(),
+            "\"chapter\""
+        );
+        assert_eq!(SessionKind::Chapter.as_str(), "chapter");
+        assert_eq!(
+            serde_json::from_str::<SessionKind>("\"chapter\"").unwrap(),
+            SessionKind::Chapter
+        );
     }
 }

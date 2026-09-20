@@ -1,6 +1,7 @@
 //! Tauri commands.
 pub mod acp;
 pub mod asr;
+pub mod chapter;
 pub mod library;
 pub mod media;
 pub mod notes;

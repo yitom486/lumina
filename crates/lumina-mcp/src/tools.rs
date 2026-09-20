@@ -194,7 +194,20 @@ fn episode_index(snapshot: &LuminaMcpSnapshot) -> Result<Value, String> {
 
 fn transcript_window(snapshot: &LuminaMcpSnapshot, args: &Value) -> Result<Value, String> {
     let anchor = require_anchor(snapshot)?;
-    let (before_sec, after_sec) = parse_window_args(args, 60, 60);
+    let preferred_radius_sec = anchor
+        .transcript_window_radius_sec
+        .and_then(|value| u32::try_from(value).ok())
+        .filter(|value| *value > 0)
+        .unwrap_or(60);
+    let (before_sec, after_sec) =
+        parse_window_args(args, preferred_radius_sec, preferred_radius_sec);
+    tracing::debug!(
+        anchor_ms = anchor.position_ms,
+        preference_radius_sec = ?anchor.transcript_window_radius_sec,
+        before_sec,
+        after_sec,
+        "resolved transcript window"
+    );
     let duration_ms = snapshot_duration_ms(snapshot);
     let center_ms = parse_time_center_ms(args, anchor.position_ms, duration_ms);
     let choice_id = resolve_subtitle_choice_id(args, anchor)?;
@@ -1158,6 +1171,7 @@ mod tests {
                 duration_ms: Some(60_000),
                 sent_at_ms: 0,
                 subtitle_choice_id: None,
+                transcript_window_radius_sec: None,
             }),
             ..LuminaMcpSnapshot::empty()
         }
@@ -1376,6 +1390,7 @@ mod tests {
                 duration_ms: None,
                 sent_at_ms: 7,
                 subtitle_choice_id: None,
+                transcript_window_radius_sec: None,
             }),
             capabilities: Some(AgentCapabilities {
                 vision_capable: true,
@@ -1514,6 +1529,7 @@ mod tests {
                 duration_ms: None,
                 sent_at_ms: 9,
                 subtitle_choice_id: None,
+                transcript_window_radius_sec: None,
             }),
             capabilities: Some(AgentCapabilities {
                 vision_capable: true,
@@ -1567,6 +1583,37 @@ mod tests {
     fn parse_radius_argument() {
         let (before, after) = parse_window_args(&json!({ "radiusSec": 3 }), 60, 60);
         assert_eq!((before, after), (3, 3));
+    }
+
+    #[test]
+    fn transcript_window_uses_anchor_preference_when_window_is_omitted() {
+        let mut snapshot = online_snapshot_with_transcript();
+        snapshot
+            .anchor
+            .as_mut()
+            .expect("anchor")
+            .transcript_window_radius_sec = Some(15);
+
+        let value = transcript_window(&snapshot, &json!({})).expect("preferred window");
+        let payload = tool_text_payload(&value);
+        assert_eq!(payload.get("beforeSec").and_then(Value::as_u64), Some(15));
+        assert_eq!(payload.get("afterSec").and_then(Value::as_u64), Some(15));
+    }
+
+    #[test]
+    fn transcript_window_explicit_args_override_anchor_preference() {
+        let mut snapshot = online_snapshot_with_transcript();
+        snapshot
+            .anchor
+            .as_mut()
+            .expect("anchor")
+            .transcript_window_radius_sec = Some(15);
+
+        let value =
+            transcript_window(&snapshot, &json!({ "radiusSec": 3 })).expect("explicit window");
+        let payload = tool_text_payload(&value);
+        assert_eq!(payload.get("beforeSec").and_then(Value::as_u64), Some(3));
+        assert_eq!(payload.get("afterSec").and_then(Value::as_u64), Some(3));
     }
 
     #[test]
@@ -1628,6 +1675,7 @@ mod tests {
             duration_ms: None,
             sent_at_ms: 1,
             subtitle_choice_id: None,
+            transcript_window_radius_sec: None,
         };
         assert_eq!(episode_transcript_default_center(&anchor, 1, 2), 88_000);
         assert_eq!(episode_transcript_default_center(&anchor, 1, 3), 0);
@@ -1689,6 +1737,7 @@ mod tests {
                 duration_ms: None,
                 sent_at_ms: 1,
                 subtitle_choice_id: Some("online:en".into()),
+                transcript_window_radius_sec: None,
             }),
             capabilities: Some(AgentCapabilities {
                 vision_capable: false,
@@ -1832,6 +1881,7 @@ mod tests {
                     duration_ms: None,
                     sent_at_ms: 1,
                     subtitle_choice_id: Some(stored.choice_id.clone()),
+                    transcript_window_radius_sec: None,
                 }),
                 ..LuminaMcpSnapshot::empty()
             };
@@ -2060,6 +2110,7 @@ mod tests {
                 duration_ms: None,
                 sent_at_ms: 11,
                 subtitle_choice_id: None,
+                transcript_window_radius_sec: None,
             }),
             capabilities: Some(AgentCapabilities {
                 vision_capable: false,
