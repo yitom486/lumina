@@ -12,10 +12,12 @@ describe("buildVideoPromptContext", () => {
       positionMs: 1500,
       durationMs: 60_000,
       subtitleChoiceId: "embedded:0",
+      transcriptWindowRadiusSec: 60,
     });
 
     expect(ctx?.mediaTitle).toBe("demo.mp4");
     expect(ctx?.subtitleChoiceId).toBe("embedded:0");
+    expect(ctx?.transcriptWindowRadiusSec).toBe(60);
   });
 
   it("uses resolved online title instead of the URL tail", () => {
@@ -36,6 +38,7 @@ describe("buildAnchoredVideoPromptContext", () => {
       positionMs: 9_000,
       durationMs: 60_000,
       subtitleChoiceId: "  embedded:0  ",
+      transcriptWindowRadiusSec: 60,
     });
 
     const anchored = buildAnchoredVideoPromptContext({
@@ -49,5 +52,6 @@ describe("buildAnchoredVideoPromptContext", () => {
     expect(anchored?.mediaTitle).toBe("Demo");
     expect(anchored?.durationMs).toBe(60_000);
     expect(anchored?.subtitleChoiceId).toBe("embedded:0");
+    expect(anchored?.transcriptWindowRadiusSec).toBe(60);
   });
 });

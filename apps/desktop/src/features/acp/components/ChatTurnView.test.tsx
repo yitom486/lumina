@@ -51,6 +51,88 @@ describe("ChatShell", () => {
 });
 
 describe("ChatTurnView", () => {
+  it("renders a complete structured answer through the rich block renderer", async () => {
+    render(
+      <ChatTurnView
+        turn={makeTurn({
+          id: "rich-1",
+          userText: "整理这段内容",
+          answer: JSON.stringify({
+            blocks: [
+              {
+                kind: "watch-feed-card",
+                title: "当前观察",
+                summary: "结构化输出",
+                spoilerLevel: "current",
+                actions: [],
+              },
+            ],
+          }),
+          status: "done",
+          showActivities: false,
+        })}
+      />,
+    );
+
+    expect(await screen.findByText("当前观察")).toBeInTheDocument();
+    expect(screen.getByText("结构化输出")).toBeInTheDocument();
+    expect(document.querySelector("[data-rich-blocks]")).toBeInTheDocument();
+  });
+
+  it("forwards rich card actions when an assistant action callback is provided", async () => {
+    const onAssistantAction = vi.fn();
+    render(
+      <ChatTurnView
+        turn={makeTurn({
+          id: "rich-action-1",
+          answer: JSON.stringify({
+            blocks: [
+              {
+                kind: "action-chip",
+                label: "跳转到这里",
+                action: { type: "seek", anchor: { startMs: 42_000 } },
+              },
+            ],
+          }),
+          status: "done",
+          showActivities: false,
+        })}
+        onAssistantAction={onAssistantAction}
+      />,
+    );
+
+    const action = await screen.findByRole("button", { name: "跳转到这里" });
+    expect(action).not.toBeDisabled();
+    fireEvent.click(action);
+    expect(onAssistantAction).toHaveBeenCalledWith({
+      type: "seek",
+      anchor: { startMs: 42_000 },
+    });
+  });
+
+  it("keeps rich card actions disabled without a callback", async () => {
+    render(
+      <ChatTurnView
+        turn={makeTurn({
+          id: "rich-action-2",
+          answer: JSON.stringify({
+            blocks: [
+              {
+                kind: "action-chip",
+                label: "安全操作",
+                action: { type: "ask", anchor: { startMs: 1_000 }, prompt: "解释" },
+              },
+            ],
+          }),
+          status: "done",
+          showActivities: false,
+        })}
+      />,
+    );
+
+    expect(await screen.findByRole("button", { name: "安全操作" })).toBeDisabled();
+  });
+
   it("keeps assistant bubble full column width while streaming", async () => {
     const { container } = render(
       <ChatTurnView

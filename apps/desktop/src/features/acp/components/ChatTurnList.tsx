@@ -1,5 +1,6 @@
 import { useEffect, useRef } from "react";
 
+import type { AssistantAction } from "@lumina/chat-ui/assistantBlocks";
 import type { ChatTurn } from "../types";
 import { ChatColumn } from "@lumina/chat-ui/components/ChatShell";
 import { ChatTurnView } from "./ChatTurnView";
@@ -17,6 +18,7 @@ type Props = {
   annotationWorkspace?: string | null;
   onDismissAnnotation?: (turnId: string) => void;
   onSaveAnnotation?: (turnId: string) => void;
+  onAssistantAction?: (action: AssistantAction) => void;
 };
 
 export function ChatTurnList({
@@ -27,6 +29,7 @@ export function ChatTurnList({
   annotationWorkspace,
   onDismissAnnotation,
   onSaveAnnotation,
+  onAssistantAction,
 }: Props) {
   const endRef = useRef<HTMLDivElement>(null);
 
@@ -53,6 +56,7 @@ export function ChatTurnList({
           annotationWorkspace={annotationWorkspace}
           onDismissAnnotation={onDismissAnnotation}
           onSaveAnnotation={onSaveAnnotation}
+          onAssistantAction={onAssistantAction}
         />
       ))}
       {notices.map((n) => (

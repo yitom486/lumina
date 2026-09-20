@@ -109,6 +109,7 @@ export type VideoPromptContext = {
   positionMs?: number | null;
   durationMs?: number | null;
   subtitleChoiceId?: string | null;
+  transcriptWindowRadiusSec?: number | null;
   season?: number | null;
   episode?: number | null;
   episodeTitle?: string | null;
@@ -117,6 +118,41 @@ export type VideoPromptContext = {
 
 export type PermissionMode = "auto" | "ask";
 export type ThinkingLevel = "hidden" | "minimal" | "verbose";
+
+export type TranscriptWindowPreset = "compact" | "standard" | "expanded";
+
+export const DEFAULT_TRANSCRIPT_WINDOW_PRESET: TranscriptWindowPreset =
+  "standard";
+
+export const TRANSCRIPT_WINDOW_PRESET_OPTIONS = [
+  { value: "compact", label: "紧凑", radiusSec: 15 },
+  { value: "standard", label: "标准", radiusSec: 30 },
+  { value: "expanded", label: "拓展", radiusSec: 60 },
+] as const satisfies ReadonlyArray<{
+  value: TranscriptWindowPreset;
+  label: string;
+  radiusSec: number;
+}>;
+
+export function transcriptWindowRadiusSec(
+  preset: TranscriptWindowPreset = DEFAULT_TRANSCRIPT_WINDOW_PRESET,
+): number {
+  return TRANSCRIPT_WINDOW_PRESET_OPTIONS.find((item) => item.value === preset)
+    ?.radiusSec ?? 30;
+}
+
+export function normalizeTranscriptWindowPreset(
+  value: unknown,
+): TranscriptWindowPreset {
+  switch (value) {
+    case "compact":
+    case "standard":
+    case "expanded":
+      return value;
+    default:
+      return DEFAULT_TRANSCRIPT_WINDOW_PRESET;
+  }
+}
 
 /** Agent warm-up state when the chat tab is open. */
 export type AcpConnectionState =
@@ -130,6 +166,7 @@ export type AcpClientSettings = {
   permissionMode: PermissionMode;
   thinkingLevel: ThinkingLevel;
   agentMode: string;
+  transcriptWindowPreset?: TranscriptWindowPreset;
   visionCapable?: boolean;
   modelId?: string | null;
   reasoningEffort?: string | null;

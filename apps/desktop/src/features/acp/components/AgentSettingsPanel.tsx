@@ -4,7 +4,14 @@ import { useQueryClient } from "@tanstack/react-query";
 import { Button } from "@lumina/ui/button";
 
 import { useAcpProfilesStore } from "@lumina/chat-ui/acpProfilesStore";
-import { clientSettingsFromStore, useAcpSettingsStore } from "@lumina/chat-ui/acpSettingsStore";
+import {
+  clientSettingsFromStore,
+  useAcpSettingsStore,
+} from "@lumina/chat-ui/acpSettingsStore";
+import {
+  TRANSCRIPT_WINDOW_PRESET_OPTIONS,
+  type TranscriptWindowPreset,
+} from "@lumina/chat-ui/types";
 import type { AgentProfileStatus, ThinkingLevel } from "../types";
 import { acpLoginAntigravity, acpSyncMcpCapabilities } from "../api";
 import { useAgentModelControls } from "../useAgentModelControls";
@@ -48,6 +55,9 @@ export function AgentSettingsPanel({
   const thinkingLevel = useAcpSettingsStore((s) => s.thinkingLevel);
   const agentMode = useAcpSettingsStore((s) => s.agentMode);
   const visionCapable = useAcpSettingsStore((s) => s.visionCapable);
+  const transcriptWindowPreset = useAcpSettingsStore(
+    (s) => s.transcriptWindowPreset,
+  );
   const patchSettings = useAcpSettingsStore((s) => s.patchSettings);
 
   const {
@@ -308,6 +318,28 @@ export function AgentSettingsPanel({
               <option value="minimal">流式时显示，完成后收起</option>
               <option value="verbose">始终保留思考/工具轨迹</option>
             </select>
+          </Field>
+
+          <Field label="台词上下文窗口">
+            <select
+              className={selectClassName}
+              value={transcriptWindowPreset}
+              disabled={controlsDisabled}
+              onChange={(e) =>
+                patchSettings({
+                  transcriptWindowPreset: e.target.value as TranscriptWindowPreset,
+                })
+              }
+            >
+              {TRANSCRIPT_WINDOW_PRESET_OPTIONS.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}（前后各 {option.radiusSec} 秒）
+                </option>
+              ))}
+            </select>
+            <p className="text-[10px] leading-relaxed text-muted-foreground">
+              下一轮提问时建议 Agent 读取当前播放点前后的台词范围。
+            </p>
           </Field>
 
           <Field label="视图截图">

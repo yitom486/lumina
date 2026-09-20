@@ -17,8 +17,8 @@ export function FullscreenTopChrome() {
         aria-hidden
       />
       <div className="absolute inset-x-0 top-0 flex h-12 items-start justify-end px-3 pt-2">
-        <div className="flex items-center gap-0.5 rounded-md border border-white/15 bg-black/60 p-0.5 opacity-0 shadow-lg backdrop-blur-md transition-opacity duration-200 group-hover:opacity-100 focus-within:opacity-100">
-          <ChatToggleButton className="text-foreground hover:bg-white/10" />
+        <div className="flex items-center gap-0.5 rounded-md border border-player-control/50 bg-player-surface/60 p-0.5 opacity-0 shadow-lg backdrop-blur-md transition-opacity duration-200 group-hover:opacity-100 focus-within:opacity-100">
+          <ChatToggleButton className="text-player-control-foreground hover:bg-player-control-hover/60" />
           <FullscreenToggleButton />
         </div>
       </div>

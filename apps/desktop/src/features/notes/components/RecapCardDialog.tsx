@@ -109,7 +109,7 @@ export function RecapCardDialog({ note, mediaPath, open, onClose }: Props) {
     <div
       role="dialog"
       aria-label="打卡卡片"
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-surface-overlay/70 p-4"
       onClick={onClose}
     >
       <div

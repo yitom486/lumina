@@ -1,7 +1,11 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 
-import { loadLatestAnnotationProposal, dismissAnnotationProposal } from "@/features/notes/api";
+import {
+  createNote,
+  loadLatestAnnotationProposal,
+  dismissAnnotationProposal,
+} from "@/features/notes/api";
 import {
   shouldFetchAnnotationProposal,
   shouldRescanTurnForProposal,
@@ -20,6 +24,7 @@ import {
 } from "@/features/notes/annotationTurnState";
 import { usePlayerStore } from "@/features/player";
 import { errorMessage } from "@/lib/format";
+import { notesKey } from "@lumina/query-keys";
 
 import "../chat-motion.css";
 
@@ -40,7 +45,7 @@ import {
   acpSwitchSession,
   getAcpStatus,
 } from "../api";
-import type { PromptImageInput } from "../api";
+import type { AcpTaskId, PromptImageInput } from "../api";
 import {
   PASTED_IMAGE_LIMIT,
   pastedImageId,
@@ -71,6 +76,7 @@ import {
   type HistoryThreadRow,
 } from "@lumina/chat-ui/conversationContext";
 import { useChatUiStore } from "@lumina/chat-ui/chatUiStore";
+import type { AssistantAction } from "@lumina/chat-ui/assistantBlocks";
 import { buildAnchoredVideoPromptContext } from "../context";
 import { mapLoadedTranscript } from "../conversationTranscript";
 import { workspaceCwdFromMedia } from "@lumina/player-ui/cwd";
@@ -100,9 +106,74 @@ import { ChatHistorySheet } from "@lumina/chat-ui/components/ChatHistorySheet";
 import { ChatComposerBar, type ChatComposerBarHandle } from "./ChatComposerBar";
 import { ChatShell } from "@lumina/chat-ui/components/ChatShell";
 import { ChatColumn } from "@lumina/chat-ui/components/ChatShell";
+import {
+  CompanionModeTabs,
+  type CompanionMode,
+} from "@lumina/chat-ui/components/CompanionModeTabs";
 import { ChatToolbar } from "./ChatToolbar";
 import { ChatTurnList } from "./ChatTurnList";
+import {
+  COMPANION_TASK_LABELS,
+  type CompanionTaskId,
+} from "./CompanionQuickActions";
 import { PermissionPrompt } from "./PermissionPrompt";
+import { WatchFeedView } from "./WatchFeedView";
+
+type AssistantActionHandlerDeps = {
+  mediaPath: string | null;
+  currentTimeMs: number;
+  busy: boolean;
+  seek: (positionMs: number) => Promise<void>;
+  askAbout: (anchorMs: number, prompt: string) => void;
+  saveNote: (input: {
+    mediaPath: string;
+    positionMs: number;
+    body: string;
+  }) => Promise<void>;
+  notify: (message: string) => void;
+};
+
+export async function handleAssistantAction(
+  action: AssistantAction,
+  deps: AssistantActionHandlerDeps,
+): Promise<void> {
+  try {
+    if (deps.busy) {
+      deps.notify("当前回合进行中，请稍后重试");
+      return;
+    }
+    if (!deps.mediaPath) {
+      deps.notify("请先打开视频");
+      return;
+    }
+
+    switch (action.type) {
+      case "seek":
+        await deps.seek(action.anchor.startMs);
+        return;
+      case "ask":
+        if (typeof action.anchor.startMs !== "number") {
+          deps.notify("该操作缺少时间锚点");
+          return;
+        }
+        deps.askAbout(action.anchor.startMs, action.prompt);
+        return;
+      case "save-note":
+        await deps.saveNote({
+          mediaPath: deps.mediaPath,
+          positionMs:
+            typeof action.anchor.startMs === "number"
+              ? action.anchor.startMs
+              : deps.currentTimeMs,
+          body: action.content,
+        });
+        deps.notify("已保存为笔记");
+        return;
+    }
+  } catch (cause) {
+    deps.notify(errorMessage(cause));
+  }
+}
 
 /** Kept mounted in ChatDock after first open; hide ≠ unmount. */
 function firstUserTextOf(turns: ChatTurn[]): string | null {
@@ -273,6 +344,7 @@ export function AcpPanel() {
     seedAnchorPositionMs(askAboutRequest.anchorMs);
     handleDraftChange(askAboutRequest.text);
     setDraft(askAboutRequest.text);
+    setCompanionMode("chat");
     useAskAboutStore.getState().consume();
     useChatUiStore.getState().openChat();
     window.setTimeout(() => composerRef.current?.focusInput(), 0);
@@ -323,6 +395,8 @@ export function AcpPanel() {
   const [sessionBanner, setSessionBanner] = useState<string | null>(null);
   // 读历史时从头看（false），现问现答时跟到底（true）。
   const [stickToEnd, setStickToEnd] = useState(true);
+  const [companionMode, setCompanionMode] =
+    useState<CompanionMode>("watch-feed");
 
   const handleSessionSaved = (
     event: Extract<AcpEvent, { type: "sessionSaved" }>,
@@ -836,10 +910,12 @@ export function AcpPanel() {
       text,
       anchorPositionMs,
       images,
+      taskId,
     }: {
       text: string;
       anchorPositionMs: number;
       images: ChatImageAttachment[];
+      taskId?: AcpTaskId;
     }) => {
       busyRef.current = true;
       setBusy(true);
@@ -877,6 +953,7 @@ export function AcpPanel() {
             images: promptImages,
             savedSession: session.savedSession,
             clientSettings: settings,
+            taskId,
             profiles: profilesHintFromStore(
               profileState.activeProfileId,
               profileState.profiles,
@@ -914,6 +991,52 @@ export function AcpPanel() {
       window.setTimeout(() => composerRef.current?.focusInput(), 120);
     },
   });
+
+  const selectCompanionTask = (taskId: CompanionTaskId) => {
+    if (
+      !currentFile ||
+      !available ||
+      connectionState !== "connected" ||
+      composerBusy ||
+      busyRef.current ||
+      runMutation.isPending
+    ) {
+      return;
+    }
+
+    const anchorPositionMs = consumeAnchorPositionMs();
+    setStickToEnd(true);
+    runMutation.mutate({
+      text: COMPANION_TASK_LABELS[taskId],
+      taskId,
+      anchorPositionMs,
+      images: [],
+    });
+  };
+
+  const onAssistantAction = (action: AssistantAction) => {
+    const live = usePlayerStore.getState();
+    void handleAssistantAction(action, {
+      mediaPath: live.currentFile,
+      currentTimeMs: live.currentTimeMs,
+      busy: composerBusy,
+      seek: (positionMs) => usePlayerStore.getState().seek(positionMs),
+      askAbout: (anchorMs, prompt) =>
+        useAskAboutStore.getState().askAbout(anchorMs, prompt),
+      saveNote: async ({ mediaPath, positionMs, body }) => {
+        await createNote({
+          mediaPath,
+          positionMs,
+          body,
+          includeQuotes: false,
+        });
+        await queryClient.invalidateQueries({
+          queryKey: notesKey(mediaPath),
+        });
+      },
+      notify: pushSystem,
+    });
+  };
 
   const launchNextQueuedPrompt = () => {
     if (
@@ -1295,6 +1418,12 @@ export function AcpPanel() {
 
   return (
     <ChatShell data-chat-shell={listKey}>
+      <ChatColumn className="shrink-0 border-b border-border pb-2 pt-2">
+        <CompanionModeTabs
+          value={companionMode}
+          onChange={setCompanionMode}
+        />
+      </ChatColumn>
       <ChatColumn className="sticky top-0 z-20 shrink-0 bg-card">
         <ChatToolbar
           agentLabel={agentLabel}
@@ -1351,14 +1480,36 @@ export function AcpPanel() {
             {sessionBanner}
           </p>
         ) : null}
-        <ChatTurnList
-          turns={turns}
-          notices={notices}
-          followEnd={stickToEnd}
-          annotationWorkspace={sessionCwd}
-          onDismissAnnotation={handleDismissAnnotation}
-          onSaveAnnotation={handleSaveAnnotation}
-        />
+        {companionMode === "watch-feed" ? (
+          <WatchFeedView
+            turns={turns}
+            notices={notices}
+            followEnd={stickToEnd}
+            annotationWorkspace={sessionCwd}
+            onDismissAnnotation={handleDismissAnnotation}
+            onSaveAnnotation={handleSaveAnnotation}
+            onSelectTask={selectCompanionTask}
+            onAssistantAction={onAssistantAction}
+            quickActionsDisabled={
+              !currentFile ||
+              !available ||
+              connectionState !== "connected" ||
+              composerBusy
+            }
+          />
+        ) : (
+          <div id="companion-panel-chat" role="tabpanel" aria-label="自由聊天">
+            <ChatTurnList
+              turns={turns}
+              notices={notices}
+              followEnd={stickToEnd}
+              annotationWorkspace={sessionCwd}
+              onDismissAnnotation={handleDismissAnnotation}
+              onSaveAnnotation={handleSaveAnnotation}
+              onAssistantAction={onAssistantAction}
+            />
+          </div>
+        )}
       </div>
 
       {pendingPermission ? (

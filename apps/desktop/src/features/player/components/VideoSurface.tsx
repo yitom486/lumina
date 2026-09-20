@@ -20,7 +20,7 @@ export function VideoSurface() {
   return (
     <div
       ref={surfaceRef}
-      className="relative min-h-0 flex-1 bg-black"
+      className="relative min-h-0 flex-1 bg-player-surface"
       aria-label="Native video surface"
     >
       {showEmpty ? (
@@ -28,7 +28,7 @@ export function VideoSurface() {
           type="button"
           disabled={busy}
           onClick={() => void openFile()}
-          className="absolute inset-0 flex flex-col items-center justify-center gap-4 text-muted-foreground transition-colors hover:bg-white/5 hover:text-foreground disabled:opacity-60"
+          className="absolute inset-0 flex flex-col items-center justify-center gap-4 text-muted-foreground transition-colors hover:bg-player-control-hover/40 hover:text-foreground disabled:opacity-60"
         >
           <FolderOpen className="size-24 stroke-[1.25]" aria-hidden />
           <div className="px-6 text-center">

@@ -37,7 +37,7 @@ export function ResumeChip() {
         className={cn(
           "pointer-events-auto flex max-w-full items-center gap-2 rounded-md border px-2.5 py-1 text-xs shadow-md",
           cinema
-            ? "border-white/15 bg-black/85 text-foreground backdrop-blur-sm"
+            ? "border-player-control/50 bg-player-surface/85 text-player-control-foreground backdrop-blur-sm"
             : "border-border/80 bg-muted/95 text-secondary-foreground",
         )}
       >

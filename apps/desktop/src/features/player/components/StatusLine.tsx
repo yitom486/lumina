@@ -13,7 +13,7 @@ export function StatusLine() {
         {status} · {statusMessage}
       </p>
       {error ? (
-        <p className="truncate text-red-600">{formatPlayerError(error)}</p>
+        <p className="truncate text-destructive">{formatPlayerError(error)}</p>
       ) : null}
     </div>
   );

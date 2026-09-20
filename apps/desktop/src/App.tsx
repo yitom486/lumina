@@ -19,6 +19,8 @@
 import { PanelErrorBoundary } from "@/components/PanelErrorBoundary";
 import { AppShell } from "@/layouts/AppShell";
 import { FullscreenTopChrome } from "@/layouts/FullscreenTopChrome";
+import { WorkspacePanelFrame } from "@/layouts/WorkspacePanelFrame";
+import { WorkspaceRail, type WorkspaceRailItem } from "@/layouts/WorkspaceRail";
 import { ChatDock } from "@/features/acp/components/ChatDock";
 import { useChatUiStore } from "@lumina/chat-ui/chatUiStore";
 import { ChaptersPanel } from "@/features/chapters";
@@ -43,14 +45,22 @@ import { TranscriptPanel } from "@/features/transcript";
 import { OnlineSourcePanel } from "@/features/ytdl/components/OnlineSourcePanel";
 import { TooltipProvider } from "@lumina/ui/tooltip";
 import { cn } from "@lumina/ui/utils";
+import {
+  FileText,
+  Globe2,
+  Layers3,
+  Library,
+  ListVideo,
+  StickyNote,
+} from "lucide-react";
 
-const TABS: { id: SidebarTab; label: string }[] = [
-  { id: "playlist", label: "列表" },
-  { id: "transcript", label: "文稿" },
-  { id: "notes", label: "笔记" },
-  { id: "chapters", label: "章节" },
-  { id: "library", label: "媒体库" },
-  { id: "online", label: "在线" },
+const TABS: readonly WorkspaceRailItem[] = [
+  { id: "playlist", label: "选集列表", icon: ListVideo },
+  { id: "transcript", label: "文稿", icon: FileText },
+  { id: "notes", label: "笔记", icon: StickyNote },
+  { id: "chapters", label: "章节", icon: Layers3 },
+  { id: "library", label: "媒体库", icon: Library },
+  { id: "online", label: "在线资源", icon: Globe2 },
 ];
 
 function SidebarTabPanel({ tab }: { tab: SidebarTab }) {
@@ -105,12 +115,22 @@ export default function App() {
   const chatOpen = useChatUiStore((s) => s.chatOpen);
   const activeTab = TABS.find((tab) => tab.id === sidebarTab);
 
+  const ActiveTabIcon = activeTab?.icon;
+
   return (
     <TooltipProvider delayDuration={400}>
       {/* delayDuration 是转出配置：vendor TooltipProvider 故意不定默认值。 */}
       <AppShell>
         <div className="relative flex min-h-0 flex-1 flex-col overflow-hidden">
           <div className="flex min-h-0 flex-1 overflow-hidden">
+            {!fullscreen ? (
+              <WorkspaceRail
+                items={TABS}
+                activeTab={sidebarTab}
+                onSelect={setSidebarTab}
+              />
+            ) : null}
+
             <PanelErrorBoundary
               scope="playback"
               panelLabel="播放区域"
@@ -129,24 +149,12 @@ export default function App() {
             </PanelErrorBoundary>
 
             {!fullscreen && !chatOpen ? (
-              <aside className="relative z-10 flex w-[380px] shrink-0 flex-col border-l border-border bg-card">
-                <div className="relative z-30 flex shrink-0 flex-wrap gap-1 border-b border-border px-2 py-1.5">
-                  {TABS.map((tab) => (
-                    <button
-                      key={tab.id}
-                      type="button"
-                      className={cn(
-                        "rounded-md px-2.5 py-1 text-xs",
-                        sidebarTab === tab.id
-                          ? "bg-accent text-accent-foreground"
-                          : "text-muted-foreground hover:bg-muted",
-                      )}
-                      onClick={() => setSidebarTab(tab.id)}
-                    >
-                      {tab.label}
-                    </button>
-                  ))}
-                </div>
+              <WorkspacePanelFrame
+                title={activeTab?.label ?? "工作区"}
+                subtitle="与播放器并行的阅读面板"
+                icon={ActiveTabIcon ? <ActiveTabIcon className="size-3.5" /> : null}
+                className="w-[min(100vw,380px)]"
+              >
                 <PanelErrorBoundary
                   scope={`sidebar:${sidebarTab}`}
                   resetKey={sidebarTab}
@@ -155,7 +163,7 @@ export default function App() {
                 >
                   <SidebarTabPanel tab={sidebarTab} />
                 </PanelErrorBoundary>
-              </aside>
+              </WorkspacePanelFrame>
             ) : null}
 
             <ChatDock />

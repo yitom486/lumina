@@ -2,6 +2,7 @@ import { useEffect } from "react";
 import { Sparkles, X } from "lucide-react";
 
 import { PanelErrorBoundary } from "@/components/PanelErrorBoundary";
+import { WorkspacePanelFrame } from "@/layouts/WorkspacePanelFrame";
 import { Button } from "@lumina/ui/button";
 import { cn } from "@lumina/ui/utils";
 
@@ -32,31 +33,32 @@ export function ChatDock() {
   return (
     <aside
       aria-hidden={!chatOpen}
+      inert={!chatOpen}
       className={cn(
-        "relative z-10 flex min-h-0 shrink-0 flex-col overflow-hidden bg-card",
+        "relative z-10 flex min-h-0 shrink-0 flex-col overflow-hidden",
         "transition-[width,border-color] duration-200 ease-out",
         chatOpen
-          ? "w-[min(100vw,420px)] border-l border-border"
+          ? "w-[min(100vw,380px)] border-l border-border"
           : "w-0 pointer-events-none border-l-0",
       )}
     >
-      <div className="flex min-h-0 w-[min(100vw,420px)] flex-1 flex-col">
-        <div className="flex h-10 shrink-0 items-center justify-between border-b border-border px-3">
-          <div className="flex min-w-0 items-center gap-1.5 text-xs font-medium">
-            <Sparkles className="size-3.5 shrink-0 text-amber-400/90" />
-            <span className="truncate">AI 对话</span>
-          </div>
+      <WorkspacePanelFrame
+        title="AI 对话"
+        icon={<Sparkles className="size-3.5" />}
+        className="h-full w-[min(100vw,380px)] border-l-0"
+        actions={
           <Button
             type="button"
             variant="ghost"
-            size="icon" className="size-8"
+            size="icon"
+            className="size-8"
             aria-label="收起对话"
             onClick={closeChat}
           >
             <X className="size-4" />
           </Button>
-        </div>
-
+        }
+      >
         <PanelErrorBoundary
           scope="chat-dock"
           panelLabel="对话"
@@ -64,7 +66,7 @@ export function ChatDock() {
         >
           <AcpPanel />
         </PanelErrorBoundary>
-      </div>
+      </WorkspacePanelFrame>
     </aside>
   );
 }

@@ -5,6 +5,8 @@ import { ytdlResolveKey } from "@lumina/query-keys";
 import { usePlayerStore } from "@/features/player";
 import { useTrackStore } from "@/features/player/trackStore";
 import { getCachedYtdlResolve } from "@/features/ytdl";
+import { useAcpSettingsStore } from "@lumina/chat-ui/acpSettingsStore";
+import { transcriptWindowRadiusSec } from "@lumina/chat-ui/types";
 
 import { buildVideoPromptContext } from "./context";
 import type { VideoPromptContext } from "./types";
@@ -16,6 +18,9 @@ export function useVideoPromptContext(): VideoPromptContext | undefined {
   const positionMs = usePlayerStore((s) => s.currentTimeMs);
   const durationMs = usePlayerStore((s) => s.durationMs);
   const subtitleChoiceId = useTrackStore((s) => s.subtitleChoiceId);
+  const transcriptWindowPreset = useAcpSettingsStore(
+    (s) => s.transcriptWindowPreset,
+  );
 
   const mediaReady =
     Boolean(path) &&
@@ -38,6 +43,9 @@ export function useVideoPromptContext(): VideoPromptContext | undefined {
         positionMs,
         durationMs: durationMs || onlineQuery.data?.durationMs || undefined,
         subtitleChoiceId,
+        transcriptWindowRadiusSec: transcriptWindowRadiusSec(
+          transcriptWindowPreset,
+        ),
       }),
     [
       path,
@@ -46,6 +54,7 @@ export function useVideoPromptContext(): VideoPromptContext | undefined {
       positionMs,
       durationMs,
       subtitleChoiceId,
+      transcriptWindowPreset,
     ],
   );
 }

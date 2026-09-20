@@ -34,7 +34,7 @@ export function TransportControls() {
     !busy && playlistIndex >= 0 && playlistIndex < playlist.length - 1;
 
   return (
-    <div className="flex items-center gap-1">
+    <div className="flex items-center gap-0.5">
       <Button
         type="button"
         variant="secondary"
@@ -62,7 +62,8 @@ export function TransportControls() {
       <Button
         type="button"
         variant="default"
-        size="icon" className="size-8"
+        size="icon"
+        className="size-10 rounded-full bg-playback-accent text-playback-accent-foreground shadow-sm hover:bg-playback-accent/90 focus-visible:ring-playback-accent"
         onClick={() => void togglePlayPause()}
         disabled={!canToggle}
         aria-label={playing ? "暂停" : "播放"}

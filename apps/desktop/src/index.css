@@ -3,6 +3,8 @@
 
 @theme inline {
   --font-sans: "Segoe UI", system-ui, sans-serif;
+
+  /* shadcn/Radix semantic palette */
   --color-background: var(--background);
   --color-foreground: var(--foreground);
   --color-card: var(--card);
@@ -21,10 +23,51 @@
   --color-accent: var(--accent);
   --color-accent-foreground: var(--accent-foreground);
   --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+
+  /* Lumina product semantics */
+  --color-surface: var(--surface);
+  --color-surface-foreground: var(--surface-foreground);
+  --color-surface-subtle: var(--surface-subtle);
+  --color-surface-elevated: var(--surface-elevated);
+  --color-surface-overlay: var(--surface-overlay);
+  --color-player-surface: var(--player-surface);
+  --color-player-chrome: var(--player-chrome);
+  --color-player-control: var(--player-control);
+  --color-player-control-foreground: var(--player-control-foreground);
+  --color-player-control-hover: var(--player-control-hover);
+  --color-playback-accent: var(--playback-accent);
+  --color-playback-accent-foreground: var(--playback-accent-foreground);
+  --color-ai: var(--ai);
+  --color-ai-foreground: var(--ai-foreground);
+  --color-ai-muted: var(--ai-muted);
+  --color-success: var(--success);
+  --color-success-foreground: var(--success-foreground);
+  --color-warning: var(--warning);
+  --color-warning-foreground: var(--warning-foreground);
+  --color-info: var(--info);
+  --color-info-foreground: var(--info-foreground);
 }
 
-:root {
-  /* Cinema dark shell for desktop player */
+/* Dark is the product default; .dark and data-theme make the mapping explicit
+   for a future theme switch without changing the current desktop appearance. */
+:root,
+[data-theme="dark"],
+.dark {
+  /* Core surfaces and content */
   --background: #121417;
   --foreground: #e8eaed;
   --card: #1a1d22;
@@ -43,8 +86,112 @@
   --accent: #2c323c;
   --accent-foreground: #e8eaed;
   --destructive: #e35d5d;
-  font-family: var(--font-sans);
+  --destructive-foreground: #fff4f2;
+
+  /* Data visualization and navigation */
+  --chart-1: #7aa2f7;
+  --chart-2: #5cc8b4;
+  --chart-3: #e7b75e;
+  --chart-4: #d989b5;
+  --chart-5: #8aa4d8;
+  --sidebar: #16191e;
+  --sidebar-foreground: #e8eaed;
+  --sidebar-primary: #e8eaed;
+  --sidebar-primary-foreground: #121417;
+  --sidebar-accent: #252a32;
+  --sidebar-accent-foreground: #e8eaed;
+  --sidebar-border: #2a2f38;
+  --sidebar-ring: #7a8494;
+
+  /* Lumina product surfaces */
+  --surface: #121417;
+  --surface-foreground: #e8eaed;
+  --surface-subtle: #22262c;
+  --surface-elevated: #1a1d22;
+  --surface-overlay: #1e2228;
+  --player-surface: #050608;
+  --player-chrome: #121417;
+  --player-control: #262b33;
+  --player-control-foreground: #e8eaed;
+  --player-control-hover: #2c323c;
+  --playback-accent: #e4a34b;
+  --playback-accent-foreground: #251709;
+  --ai: #6b8cce;
+  --ai-foreground: #eef4ff;
+  --ai-muted: #263244;
+  --success: #58b98a;
+  --success-foreground: #081c12;
+  --warning: #e4b768;
+  --warning-foreground: #2a1d08;
+  --info: #6fb9df;
+  --info-foreground: #071d29;
   color-scheme: dark;
+}
+
+/* Opt-in light mapping. The player-specific tokens stay dark because the
+   native media surface is an independent visual surface. */
+[data-theme="light"],
+.light {
+  --background: #f5f7fa;
+  --foreground: #1b2028;
+  --card: #ffffff;
+  --card-foreground: #1b2028;
+  --popover: #ffffff;
+  --popover-foreground: #1b2028;
+  --border: #d8dee8;
+  --input: #c5cedb;
+  --ring: #5f718a;
+  --muted: #edf1f6;
+  --muted-foreground: #5f6b7a;
+  --primary: #1f2937;
+  --primary-foreground: #f8fafc;
+  --secondary: #e6ebf2;
+  --secondary-foreground: #263142;
+  --accent: #dcecf3;
+  --accent-foreground: #163c4e;
+  --destructive: #c43d4b;
+  --destructive-foreground: #fff5f5;
+
+  --chart-1: #3566c2;
+  --chart-2: #23866e;
+  --chart-3: #a86c16;
+  --chart-4: #a64f82;
+  --chart-5: #5877b2;
+  --sidebar: #eef2f7;
+  --sidebar-foreground: #1b2028;
+  --sidebar-primary: #1f2937;
+  --sidebar-primary-foreground: #f8fafc;
+  --sidebar-accent: #dce4ee;
+  --sidebar-accent-foreground: #263142;
+  --sidebar-border: #d8dee8;
+  --sidebar-ring: #5f718a;
+
+  --surface: #f5f7fa;
+  --surface-foreground: #1b2028;
+  --surface-subtle: #edf1f6;
+  --surface-elevated: #ffffff;
+  --surface-overlay: #ffffff;
+  --player-surface: #050608;
+  --player-chrome: #121417;
+  --player-control: #262b33;
+  --player-control-foreground: #e8eaed;
+  --player-control-hover: #2c323c;
+  --playback-accent: #c87818;
+  --playback-accent-foreground: #fff8ec;
+  --ai: #3d78aa;
+  --ai-foreground: #f2f8ff;
+  --ai-muted: #e5f0fa;
+  --success: #2f8f63;
+  --success-foreground: #f3fff8;
+  --warning: #a86c16;
+  --warning-foreground: #fff8eb;
+  --info: #2c779b;
+  --info-foreground: #f0fbff;
+  color-scheme: light;
+}
+
+:root {
+  font-family: var(--font-sans);
 }
 
 html,

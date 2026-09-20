@@ -10,6 +10,9 @@ import { notesKey } from "@lumina/query-keys";
 import { usePlayerStore } from "@/features/player";
 
 import { waitingLabel, hasActiveToolActivity } from "@lumina/chat-ui/activityStatus";
+import type { AssistantAction } from "@lumina/chat-ui/assistantBlocks";
+import { parseAssistantBlocksText } from "@lumina/chat-ui/assistantBlocks";
+import { RichBlockRenderer } from "@lumina/chat-ui/components/RichBlockRenderer";
 import type { ChatTurn } from "../types";
 import { ChatActivityFeed } from "@lumina/chat-ui/components/ChatActivityFeed";
 import { ChatColumn } from "@lumina/chat-ui/components/ChatShell";
@@ -26,6 +29,7 @@ type Props = {
   annotationWorkspace?: string | null;
   onDismissAnnotation?: (turnId: string) => void;
   onSaveAnnotation?: (turnId: string, proposalId?: string) => void;
+  onAssistantAction?: (action: AssistantAction) => void;
 };
 
 /**
@@ -43,7 +47,7 @@ function SaveAnswerNote({ turn }: { turn: ChatTurn }) {
   if (turn.status !== "done" || !turn.answer.trim()) return null;
   if (saved) {
     return (
-      <p className="mt-2 text-[11px] text-emerald-600 dark:text-emerald-400">
+      <p className="mt-2 text-[11px] text-success">
         已保存为批注
       </p>
     );
@@ -93,7 +97,7 @@ function ConfirmSaveNote({
       </span>
       <button
         type="button"
-        className="font-medium text-sky-400 hover:text-sky-300 disabled:opacity-50"
+        className="font-medium text-info hover:text-info-foreground disabled:opacity-50"
         disabled={busy}
         onClick={() => {
           void (async () => {
@@ -144,6 +148,7 @@ export function ChatTurnView({
   annotationWorkspace,
   onDismissAnnotation,
   onSaveAnnotation,
+  onAssistantAction,
 }: Props) {
   const [toolsOpen, setToolsOpen] = useState(false);
   const isError = turn.status === "error";
@@ -157,6 +162,10 @@ export function ChatTurnView({
   const toolCount = turn.activities.filter((item) => item.kind === "tool").length;
   const showActivityFeed =
     turn.activities.length > 0 && (turn.showActivities || toolsOpen);
+  const structuredAnswer =
+    !isError && visibleAnswer
+      ? parseAssistantBlocksText(visibleAnswer, { streaming: isStreaming })
+      : null;
 
   return (
     <ChatColumn className="space-y-2">
@@ -212,6 +221,18 @@ export function ChatTurnView({
           {visibleAnswer ? (
             isError ? (
               visibleAnswer
+            ) : structuredAnswer?.blocks.length ? (
+              <Suspense
+                fallback={
+                  <span className="whitespace-pre-wrap">{visibleAnswer}</span>
+                }
+              >
+                <RichBlockRenderer
+                  blocks={structuredAnswer.blocks}
+                  onAction={onAssistantAction}
+                  renderMarkdown={(markdown) => <ChatMarkdown content={markdown} />}
+                />
+              </Suspense>
             ) : (
               <Suspense
                 fallback={
@@ -241,7 +262,7 @@ export function ChatTurnView({
         <SaveAnswerNote turn={turn} />
 
         {turn.annotationProposalSaved ? (
-          <div className="mt-2 rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-[12px] text-emerald-800 dark:text-emerald-300">
+          <div className="mt-2 rounded-lg border border-success/30 bg-success/10 px-3 py-2 text-[12px] text-success-foreground">
             批注已写入笔记库
           </div>
         ) : turn.annotationProposal && annotationWorkspace ? (
