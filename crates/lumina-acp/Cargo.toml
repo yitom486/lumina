@@ -4,6 +4,14 @@ version = "0.3.0"
 description = "Optional generic ACP client for Lumina"
 edition = "2021"
 
+[features]
+test-support = []
+
+[[bin]]
+name = "lumina-acp-test-mock-agent"
+path = "tests/bin/lumina_acp_test_mock_agent.rs"
+required-features = ["test-support"]
+
 [dependencies]
 lumina-core.workspace = true
 serde = { version = "1", features = ["derive"] }
