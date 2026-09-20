@@ -1051,21 +1051,18 @@ const LUMINA_CONTEXT_PREFIXES: [&str; 20] = [
 fn sanitize_loaded_user_text(text: &str) -> Option<String> {
     let kept = text
         .lines()
-        .filter_map(|line| {
+        .filter(|line| {
             let trimmed = line.trim();
-            if trimmed.is_empty()
+            !(trimmed.is_empty()
                 || LUMINA_PROMPT_MARKERS
                     .iter()
                     .any(|marker| trimmed.starts_with(marker))
                 || LUMINA_CONTEXT_PREFIXES
                     .iter()
                     .any(|prefix| trimmed.starts_with(prefix))
-                || trimmed.contains("file://")
-            {
-                return None;
-            }
-            Some(line)
+                || trimmed.contains("file://"))
         })
+        .map(|line| line.to_string())
         .collect::<Vec<_>>()
         .join("\n")
         .trim()
