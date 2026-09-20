@@ -3,32 +3,25 @@
 //! Prompt rules and output validation remain in `lumina-ai`; ACP remains a
 //! generic isolated client. This module only orchestrates the desktop inputs.
 
-use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 use lumina_acp::agent::workspace::resolve_session_cwd;
 use lumina_acp::jobs::isolated::ChapterSession;
 use lumina_acp::{AcpError, AcpErrorCode, AcpSessionModelSelection};
-use lumina_ai::chapter::{
-    validate_chapter_output, ChapterAgentOutput, ChapterOutput, ChapterValidationContext,
-    EvidenceReference,
-};
 use lumina_ai::prompts::{
     compose_prompt, EpisodeContext, MediaContext, PromptSlots, SpoilerBoundary, TaskId,
-    TranscriptWindow, ValidationIssue, ValidationReport, ViewingContext, MAX_VALIDATION_RETRIES,
+    TranscriptWindow, ValidationReport, ViewingContext,
 };
 use lumina_ai::{build_screenshot_reference, build_transcript_windows, ScreenshotMetadata};
 use lumina_library::{
     AgentTaskRecord, Database, DatabaseError, DatabaseErrorCode, DatabaseResult,
-    LegacyEpisodeMigration, NewAgentAttempt, NewChapter, NewChapterAsset, NewChapterRevision,
-    NewEpisode, NewQuestionCandidate, NewSeries, NewWatchFeedItem, Repository,
+    LegacyEpisodeMigration, NewAgentAttempt, NewEpisode, NewSeries, Repository,
 };
 use lumina_media::frame_capture::{
     capture_frames, detect_scene_times, select_keyframes, DEFAULT_SCENE_THRESHOLD,
 };
 use lumina_media::MediaInspector;
 use lumina_subtitle::{SubtitleService, Transcript};
-use sha2::{Digest, Sha256};
 
 use super::{
     now_ms_for_command, open_database, ChapterCommandError, ChapterEpisodeIdentity,
@@ -84,17 +77,6 @@ impl WorkerFailure {
         }
     }
 
-    fn validation(report: ValidationReport, retry_count: i64) -> Self {
-        Self {
-            code: "ValidationFailed",
-            message: "章节分段结果未通过校验，请再次尝试。",
-            details: serde_json::to_string(&report)
-                .unwrap_or_else(|_| "validation report encoding failed".to_string()),
-            validation_report: Some(report),
-            retry_count,
-        }
-    }
-
     fn persisted_report(&self) -> String {
         let persisted = PersistedChapterFailure {
             code: self.code.to_string(),
@@ -123,11 +105,17 @@ struct EvidenceBundle {
 
 #[derive(Debug)]
 struct AttemptResult {
-    output: ChapterAgentOutput,
-    evidence: EvidenceBundle,
+    /// The final assistant text is diagnostic data only. The scoped chapter
+    /// session never parses it; durable task state is authoritative.
+    assistant_response: String,
+}
+
+#[derive(Debug)]
+struct AttemptScope {
     media_path: PathBuf,
     duration_ms: u64,
-    validation_retry_count: i64,
+    episode_id: i64,
+    database_path: PathBuf,
 }
 
 /// Execute one claimed task. Concurrent callers for the same task key are
@@ -155,67 +143,96 @@ pub(super) fn run(request: ChapterSegmentationRequest) -> Result<(), ChapterComm
         ))
         .map_err(ChapterCommandError::storage)?;
 
-    match execute_attempt(&request, &task) {
-        Ok(result) => {
-            let output_json = serde_json::to_string(&result.output).map_err(|error| {
-                WorkerFailure::business("章节分段结果保存失败，请重试", error.to_string())
-            });
-            match output_json {
-                Ok(output_json) => {
-                    match database.transaction(|repository| {
-                        let episode_id = ensure_episode(
-                            repository,
-                            &request,
-                            &result.media_path,
-                            result.duration_ms,
-                        )?;
-                        project_output(
-                            repository,
-                            &task,
-                            episode_id,
-                            &result.output,
-                            &result.evidence,
-                            request
-                                .spoiler_boundary
-                                .unwrap_or(SpoilerBoundary::FullMedia),
-                        )?;
-                        if !repository.update_agent_task_scope(task.id, Some(episode_id), None)? {
-                            return Err(persistence_error("agent task disappeared"));
-                        }
-                        if !repository.complete_agent_task(
-                            task.id,
-                            "succeeded",
-                            task.attempt_count,
-                            result.validation_retry_count,
-                            None,
-                            &output_json,
-                        )? {
-                            return Err(persistence_error("agent task could not be completed"));
-                        }
-                        repository.update_agent_attempt_status(
-                            attempt_id,
-                            "succeeded",
-                            None,
-                            now_ms_for_command(),
-                        )?;
-                        Ok(())
-                    }) {
-                        Ok(()) => Ok(()),
-                        Err(error) => finish_failed(
-                            &database,
-                            &task,
-                            attempt_id,
-                            WorkerFailure::business(
-                                "章节结果写入失败，请重试",
-                                error.details.clone().unwrap_or(error.message),
-                            ),
-                        ),
-                    }
-                }
-                Err(error) => finish_failed(&database, &task, attempt_id, error),
-            }
-        }
+    let scope = match establish_attempt_scope(&mut database, &request, &task) {
+        Ok(scope) => scope,
+        Err(error) => return finish_failed(&database, &task, attempt_id, error),
+    };
+
+    match execute_attempt(&request, &task, attempt_id, &scope) {
+        Ok(result) => settle_attempt(&mut database, &task, attempt_id, result),
         Err(error) => finish_failed(&database, &task, attempt_id, error),
+    }
+}
+
+/// Establish the complete task scope before the ACP process is spawned.
+/// Episode creation and task linking are both idempotent repository operations
+/// and occur in one transaction so the chapter snapshot never points at a
+/// half-created episode/task pair.
+fn establish_attempt_scope(
+    database: &mut Database,
+    request: &ChapterSegmentationRequest,
+    task: &AgentTaskRecord,
+) -> Result<AttemptScope, WorkerFailure> {
+    let media_path = local_media_path(request)?;
+    let media_info = MediaInspector::inspect(&media_path).map_err(|error| {
+        WorkerFailure::business("无法读取媒体信息，请检查媒体文件", error.to_string())
+    })?;
+    let duration_ms = media_info
+        .duration_ms
+        .filter(|duration| *duration > 0)
+        .ok_or_else(|| {
+            WorkerFailure::business(
+                "无法读取媒体时长，暂时不能生成章节",
+                "media duration missing",
+            )
+        })?;
+    let episode_id = database
+        .transaction(|repository| {
+            let episode_id = ensure_episode(repository, request, &media_path, duration_ms)?;
+            if !repository.update_agent_task_scope(task.id, Some(episode_id), None)? {
+                return Err(persistence_error(
+                    "agent task disappeared while establishing scope",
+                ));
+            }
+            Ok(episode_id)
+        })
+        .map_err(|error| {
+            WorkerFailure::business("章节任务范围初始化失败，请重试", error.message)
+        })?;
+    let database_path = super::database_path().map_err(|error| {
+        WorkerFailure::business(
+            "章节任务范围初始化失败，请重试",
+            error.details.unwrap_or(error.message),
+        )
+    })?;
+    Ok(AttemptScope {
+        media_path,
+        duration_ms,
+        episode_id,
+        database_path,
+    })
+}
+
+fn settle_attempt(
+    database: &mut Database,
+    task: &AgentTaskRecord,
+    attempt_id: i64,
+    result: AttemptResult,
+) -> Result<(), ChapterCommandError> {
+    // Keep the response available for diagnostics, but never use assistant
+    // text as a completion signal for a scoped Batch G tool session.
+    let _assistant_response = result.assistant_response;
+    let persisted = database
+        .repository()
+        .get_agent_task(task.id)
+        .map_err(ChapterCommandError::storage)?
+        .ok_or_else(|| {
+            ChapterCommandError::internal("chapter task disappeared after Agent session")
+        })?;
+
+    match persisted.status.as_str() {
+        // The finalize tool owns publication and the terminal task/attempt
+        // update.  Do not infer success from the assistant response.
+        "succeeded" => Ok(()),
+        _ => finish_failed(
+            database,
+            task,
+            attempt_id,
+            WorkerFailure::business(
+                "章节 Agent 未完成章节写入，请再次尝试。",
+                "scoped chapter session ended without durable finalize",
+            ),
+        ),
     }
 }
 
@@ -374,234 +391,8 @@ fn find_legacy_episode_for_migration(
         .map(|episode| episode.map(|episode| episode.id))
 }
 
-fn project_output(
-    repository: &Repository<'_>,
-    task: &AgentTaskRecord,
-    episode_id: i64,
-    output: &ChapterAgentOutput,
-    evidence: &EvidenceBundle,
-    boundary: SpoilerBoundary,
-) -> DatabaseResult<()> {
-    let spoiler_level = spoiler_level(boundary);
-    for chapter in &output.chapters {
-        persist_chapter(
-            repository,
-            task,
-            episode_id,
-            chapter,
-            evidence,
-            spoiler_level,
-        )?;
-    }
-
-    if let Some(recap) = output.recap.as_deref().and_then(non_empty) {
-        insert_feed_item(
-            repository,
-            episode_id,
-            None,
-            None,
-            task.id,
-            FeedItemInput {
-                item_type: "recap",
-                content: &recap,
-                spoiler_level,
-                dedupe_key: &format!("task:{}:recap", task.id),
-                content_version: &task.prompt_version,
-            },
-        )?;
-    }
-    if let Some(outlook) = output.outlook.as_deref().and_then(non_empty) {
-        insert_feed_item(
-            repository,
-            episode_id,
-            None,
-            None,
-            task.id,
-            FeedItemInput {
-                item_type: "outlook",
-                content: &outlook,
-                spoiler_level,
-                dedupe_key: &format!("task:{}:outlook", task.id),
-                content_version: &task.prompt_version,
-            },
-        )?;
-    }
-    for (index, point) in output
-        .watch_points
-        .as_deref()
-        .unwrap_or_default()
-        .iter()
-        .filter_map(|point| non_empty(point))
-        .enumerate()
-    {
-        insert_feed_item(
-            repository,
-            episode_id,
-            None,
-            None,
-            task.id,
-            FeedItemInput {
-                item_type: "watch_point",
-                content: &point,
-                spoiler_level,
-                dedupe_key: &format!("task:{}:watch-point:{index}", task.id),
-                content_version: &task.prompt_version,
-            },
-        )?;
-    }
-    for (index, question) in output
-        .questions
-        .as_deref()
-        .unwrap_or_default()
-        .iter()
-        .filter_map(|question| non_empty(question))
-        .enumerate()
-    {
-        let fingerprint = format!("task:{}:question:{index}", task.id);
-        let mut candidate =
-            NewQuestionCandidate::new(&question, "ai", spoiler_level, fingerprint.clone());
-        candidate.episode_id = Some(episode_id);
-        candidate.task_id = Some(task.id);
-        candidate.batch_key = Some(task.task_key.clone());
-        repository.insert_question_candidate(&candidate)?;
-        insert_feed_item(
-            repository,
-            episode_id,
-            None,
-            None,
-            task.id,
-            FeedItemInput {
-                item_type: "question",
-                content: &question,
-                spoiler_level,
-                dedupe_key: &format!("task:{}:question-feed:{index}", task.id),
-                content_version: &task.prompt_version,
-            },
-        )?;
-    }
-    Ok(())
-}
-
-fn persist_chapter(
-    repository: &Repository<'_>,
-    task: &AgentTaskRecord,
-    episode_id: i64,
-    chapter: &ChapterOutput,
-    evidence: &EvidenceBundle,
-    spoiler_level: &str,
-) -> DatabaseResult<i64> {
-    let mut input = NewChapter::new(
-        episode_id,
-        chapter.id.clone(),
-        i64_from_ms(chapter.start_ms)?,
-        i64_from_ms(chapter.end_ms)?,
-        "ai",
-    );
-    input.spoiler_level = spoiler_level.to_string();
-    input.title = Some(chapter.title.trim().to_string());
-    input.mainline = Some(chapter.mainline.trim().to_string());
-    input.status = "ready".to_string();
-    let chapter_id = repository.insert_chapter(&input)?;
-
-    let revision_content = serde_json::to_string(chapter)
-        .map_err(|error| persistence_error(format!("serialize chapter revision: {error}")))?;
-    let mut revision = NewChapterRevision::new(
-        chapter_id,
-        1,
-        "generated",
-        revision_content,
-        "ai",
-        task.prompt_version.clone(),
-    );
-    revision.status = "accepted".to_string();
-    let revision_id = repository.insert_chapter_revision(&revision)?;
-
-    let mut screenshot_ids = BTreeSet::new();
-    for reference in &chapter.evidence {
-        let EvidenceReference::Screenshot { asset_id } = reference else {
-            continue;
-        };
-        if !screenshot_ids.insert(asset_id.clone()) {
-            continue;
-        }
-        let Some(screenshot) = evidence
-            .screenshots
-            .iter()
-            .find(|screenshot| screenshot.asset_id == *asset_id)
-        else {
-            continue;
-        };
-        let mut asset = NewChapterAsset::new(
-            chapter_id,
-            "screenshot",
-            screenshot.resource_ref.clone(),
-            screenshot_content_hash(&screenshot.resource_ref),
-            i64_from_ms(screenshot.timestamp_ms)?,
-            "ai",
-        );
-        asset.width = None;
-        asset.height = None;
-        repository.insert_chapter_asset(&asset)?;
-    }
-
-    if let Some(mainline) = non_empty(chapter.mainline.as_str()) {
-        insert_feed_item(
-            repository,
-            episode_id,
-            Some(chapter_id),
-            Some(revision_id),
-            task.id,
-            FeedItemInput {
-                item_type: "chapter",
-                content: &mainline,
-                spoiler_level,
-                dedupe_key: &format!("task:{}:chapter-feed:{}", task.id, chapter.id),
-                content_version: &task.prompt_version,
-            },
-        )?;
-    }
-    Ok(chapter_id)
-}
-
-struct FeedItemInput<'a> {
-    item_type: &'a str,
-    content: &'a str,
-    spoiler_level: &'a str,
-    dedupe_key: &'a str,
-    content_version: &'a str,
-}
-
-fn insert_feed_item(
-    repository: &Repository<'_>,
-    episode_id: i64,
-    chapter_id: Option<i64>,
-    revision_id: Option<i64>,
-    task_id: i64,
-    input: FeedItemInput<'_>,
-) -> DatabaseResult<i64> {
-    let mut item = NewWatchFeedItem::new(
-        input.item_type,
-        "ai",
-        input.content,
-        input.spoiler_level,
-        input.content_version,
-        input.dedupe_key,
-    );
-    item.episode_id = Some(episode_id);
-    item.chapter_id = chapter_id;
-    item.revision_id = revision_id;
-    item.task_id = Some(task_id);
-    item.published_at_ms = Some(now_ms_for_command());
-    repository.insert_watch_feed_item(&item)
-}
-
 fn i64_from_ms(value: u64) -> DatabaseResult<i64> {
     i64::try_from(value).map_err(|_| persistence_error("timestamp exceeds SQLite range"))
-}
-
-fn non_empty(value: &str) -> Option<String> {
-    let value = value.trim();
-    (!value.is_empty()).then(|| value.to_string())
 }
 
 fn spoiler_level(boundary: SpoilerBoundary) -> &'static str {
@@ -612,58 +403,55 @@ fn spoiler_level(boundary: SpoilerBoundary) -> &'static str {
     }
 }
 
-fn screenshot_content_hash(path: &str) -> String {
-    let bytes = match std::fs::read(path) {
-        Ok(bytes) => bytes,
-        Err(error) => {
-            tracing::warn!(path, details = %error, "chapter screenshot could not be read for hashing");
-            path.as_bytes().to_vec()
-        }
-    };
-    format!("{:x}", Sha256::digest(bytes))
-}
-
 fn execute_attempt(
     request: &ChapterSegmentationRequest,
     task: &AgentTaskRecord,
+    attempt_id: i64,
+    scope: &AttemptScope,
 ) -> Result<AttemptResult, WorkerFailure> {
-    let media_path = local_media_path(request)?;
-    let media_info = MediaInspector::inspect(&media_path).map_err(|error| {
-        WorkerFailure::business("无法读取媒体信息，请检查媒体文件", error.to_string())
-    })?;
-    let duration_ms = media_info
-        .duration_ms
-        .filter(|duration| *duration > 0)
-        .ok_or_else(|| {
-            WorkerFailure::business(
-                "无法读取媒体时长，暂时不能生成章节",
-                "media duration missing",
-            )
-        })?;
-
-    let evidence = collect_evidence(request, task, &media_path, duration_ms)?;
-    if evidence.transcript_windows.is_empty() && evidence.screenshots.is_empty() {
-        return Err(WorkerFailure::business(
-            "未找到可用于章节分析的字幕或画面证据",
-            "evidence bundle is empty",
-        ));
-    }
-
     let boundary = request
         .spoiler_boundary
         .unwrap_or(SpoilerBoundary::FullMedia);
-    let position_ms = request.position_ms.unwrap_or(duration_ms).min(duration_ms);
+    let position_ms = request
+        .position_ms
+        .unwrap_or(scope.duration_ms)
+        .min(scope.duration_ms);
+    let cwd = resolve_session_cwd(Some(&request.media_path)).map_err(|error| {
+        WorkerFailure::business("章节 Agent 工作区不可用，请重试", error.to_string())
+    })?;
+    crate::acp::adapter::write_chapter_task_snapshot(
+        &cwd,
+        &scope.media_path,
+        position_ms,
+        scope.duration_ms,
+        request.subtitle_choice_id.as_deref(),
+        crate::mcp::ChapterTaskContext {
+            task_id: task.id,
+            attempt_id,
+            episode_id: scope.episode_id,
+            database_path: scope.database_path.to_string_lossy().into_owned(),
+            media_path: scope.media_path.to_string_lossy().into_owned(),
+            duration_ms: scope.duration_ms,
+            spoiler_boundary: spoiler_level(boundary).to_string(),
+            prompt_version: task.prompt_version.clone(),
+        },
+    )
+    .map_err(WorkerFailure::agent_unavailable)?;
+
+    // Prewarming is only a prompt optimization.  The isolated session has
+    // task-scoped MCP read/write tools and must still start when both local
+    // prewarm paths are unavailable.
+    let evidence = collect_evidence(request, task, &scope.media_path, scope.duration_ms)?;
+
     let slots = build_prompt_slots(
         request,
-        &media_path,
-        duration_ms,
+        &scope.media_path,
+        scope.duration_ms,
         position_ms,
         boundary,
         &evidence,
     );
-    let validation_context =
-        build_validation_context(duration_ms, position_ms, boundary, &evidence);
-    let mut composed = compose_prompt(TaskId::ChapterSegment, &slots).map_err(|error| {
+    let composed = compose_prompt(TaskId::ChapterSegment, &slots).map_err(|error| {
         WorkerFailure::business("章节分析提示词准备失败，请重试", error.to_string())
     })?;
 
@@ -676,9 +464,6 @@ fn execute_attempt(
         .profiles
         .clone()
         .ok_or_else(|| WorkerFailure::agent_not_configured("missing profiles"))?;
-    let cwd = resolve_session_cwd(Some(&request.media_path)).map_err(|error| {
-        WorkerFailure::business("章节 Agent 工作区不可用，请重试", error.to_string())
-    })?;
     let session = ChapterSession::new(
         Some(cwd.to_string_lossy().into_owned()),
         profile_id.to_string(),
@@ -687,55 +472,12 @@ fn execute_attempt(
         Some(format!("chapter-{}", task.id)),
     );
 
-    let mut response = session
+    let response = session
         .prompt(composed.initial_prompt())
         .map_err(WorkerFailure::agent_unavailable)?;
-    let mut retry_count = 0_i64;
-
-    loop {
-        let parsed = match parse_chapter_output(&response) {
-            Ok(output) => output,
-            Err(report) => {
-                if retry_count >= i64::from(MAX_VALIDATION_RETRIES) {
-                    return Err(WorkerFailure::validation(report, retry_count));
-                }
-                let delta = composed
-                    .append_validation_report(report.clone())
-                    .map_err(|_| WorkerFailure::validation(report.clone(), retry_count))?;
-                retry_count += 1;
-                response = session
-                    .prompt(delta.message)
-                    .map_err(WorkerFailure::agent_unavailable)?;
-                continue;
-            }
-        };
-
-        let report = validate_chapter_output(&parsed, &validation_context);
-        if report.is_valid() {
-            return Ok(AttemptResult {
-                output: parsed,
-                evidence,
-                media_path,
-                duration_ms,
-                validation_retry_count: retry_count,
-            });
-        }
-        if retry_count >= i64::from(MAX_VALIDATION_RETRIES) {
-            return Err(WorkerFailure::validation(
-                report.hard_error_report().clone(),
-                retry_count,
-            ));
-        }
-        let delta = composed
-            .append_validation_report(report.hard_error_report().clone())
-            .map_err(|_| {
-                WorkerFailure::validation(report.hard_error_report().clone(), retry_count)
-            })?;
-        retry_count += 1;
-        response = session
-            .prompt(delta.message)
-            .map_err(WorkerFailure::agent_unavailable)?;
-    }
+    Ok(AttemptResult {
+        assistant_response: response,
+    })
 }
 
 fn local_media_path(request: &ChapterSegmentationRequest) -> Result<PathBuf, WorkerFailure> {
@@ -763,14 +505,38 @@ fn collect_evidence(
     media_path: &Path,
     duration_ms: u64,
 ) -> Result<EvidenceBundle, WorkerFailure> {
-    let transcript = load_transcript(request, media_path)?;
-    let transcript_windows = transcript
-        .as_ref()
-        .map(|value| build_transcript_windows(&value.cues, TRANSCRIPT_WINDOW_WIDTH_MS))
-        .transpose()
-        .map_err(|error| WorkerFailure::business("字幕证据准备失败，请重试", error.to_string()))?
-        .unwrap_or_default();
-    let screenshots = collect_screenshots(task, media_path, duration_ms)?;
+    let transcript_windows = match load_transcript(request, media_path) {
+        Ok(Some(transcript)) => {
+            match build_transcript_windows(&transcript.cues, TRANSCRIPT_WINDOW_WIDTH_MS) {
+                Ok(windows) => windows,
+                Err(error) => {
+                    tracing::warn!(
+                        details = %error,
+                        "chapter worker could not build transcript evidence"
+                    );
+                    Vec::new()
+                }
+            }
+        }
+        Ok(None) => Vec::new(),
+        Err(error) => {
+            tracing::warn!(
+                details = %error.details,
+                "chapter worker subtitle prewarm failed; agent may use MCP transcript tools"
+            );
+            Vec::new()
+        }
+    };
+    let screenshots = match collect_screenshots(task, media_path, duration_ms) {
+        Ok(screenshots) => screenshots,
+        Err(error) => {
+            tracing::warn!(
+                details = %error.details,
+                "chapter worker screenshot prewarm failed; agent may use MCP capture"
+            );
+            Vec::new()
+        }
+    };
     Ok(EvidenceBundle {
         transcript_windows,
         screenshots,
@@ -781,6 +547,22 @@ fn load_transcript(
     request: &ChapterSegmentationRequest,
     media_path: &Path,
 ) -> Result<Option<Transcript>, WorkerFailure> {
+    if let Some(choice_id) = request
+        .subtitle_choice_id
+        .as_deref()
+        .filter(|value| !value.trim().is_empty())
+    {
+        if lumina_ytdl::provider::parse_cache_choice(choice_id).is_some() {
+            return lumina_ytdl::provider::load_cached_choice(
+                &media_path.to_string_lossy(),
+                choice_id,
+            )
+            .map(Some)
+            .map_err(|error| {
+                WorkerFailure::business("字幕证据准备失败，请重试", error.to_string())
+            });
+        }
+    }
     let choices = match SubtitleService::list_choices(media_path) {
         Ok(choices) => choices,
         Err(error) => {
@@ -821,7 +603,11 @@ fn collect_screenshots(
     let root = media_path.parent().unwrap_or_else(|| Path::new("."));
     let output_dir = root
         .join(".lumina")
-        .join("tmp")
+        // Chapter evidence is referenced by the prompt and persisted as a
+        // chapter asset. Keep it outside MCP's ephemeral tmp directory:
+        // ACP snapshot synchronization clears `.lumina/tmp` before the
+        // chapter session starts.
+        .join("chapter-evidence")
         .join(format!("chapter-capture-{}", task.id));
     let paths = capture_frames(media_path, &selected, &output_dir)
         .map_err(|error| WorkerFailure::business("画面证据准备失败，请重试", error.to_string()))?;
@@ -928,25 +714,6 @@ fn build_prompt_slots(
     slots
 }
 
-fn build_validation_context(
-    duration_ms: u64,
-    position_ms: u64,
-    boundary: SpoilerBoundary,
-    evidence: &EvidenceBundle,
-) -> ChapterValidationContext {
-    let mut context = ChapterValidationContext::new(duration_ms).with_viewing(ViewingContext {
-        position_ms,
-        spoiler_boundary: boundary,
-    });
-    for window in &evidence.transcript_windows {
-        context = context.with_transcript_window(window.clone());
-    }
-    for screenshot in &evidence.screenshots {
-        context = context.with_screenshot(screenshot.clone());
-    }
-    context
-}
-
 fn model_selection(request: &ChapterSegmentationRequest) -> Option<AcpSessionModelSelection> {
     let model_id = request.model_id.as_deref()?.trim();
     if model_id.is_empty() {
@@ -963,49 +730,10 @@ fn model_selection(request: &ChapterSegmentationRequest) -> Option<AcpSessionMod
     })
 }
 
-fn parse_chapter_output(raw: &str) -> Result<ChapterAgentOutput, ValidationReport> {
-    let trimmed = raw.trim();
-    let candidate = trimmed
-        .strip_prefix("```json")
-        .and_then(|value| value.strip_suffix("```"))
-        .or_else(|| {
-            trimmed
-                .strip_prefix("```")
-                .and_then(|value| value.strip_suffix("```"))
-        })
-        .map(str::trim)
-        .unwrap_or(trimmed);
-    serde_json::from_str(candidate).map_err(|_| {
-        ValidationReport::single(
-            ValidationIssue::new(
-                "invalid_structured_output",
-                "output",
-                "The Agent response could not be parsed as the chapter output contract.",
-                "valid JSON matching chapter_segment.v1",
-                "Return only the structured chapter result as JSON.",
-            )
-            .with_actual_value_summary("non-JSON or malformed JSON response"),
-        )
-    })
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use lumina_library::{Database, NewEpisode, NewSeries};
-
-    #[test]
-    fn parses_plain_json_and_json_fence() {
-        assert!(parse_chapter_output(r#"{"chapters":[]}"#).is_ok());
-        assert!(parse_chapter_output("```json\n{\"chapters\":[]}\n```").is_ok());
-    }
-
-    #[test]
-    fn malformed_output_becomes_business_validation_report() {
-        let report = parse_chapter_output("not json").expect_err("must fail");
-        assert_eq!(report.issues[0].error_code, "invalid_structured_output");
-        assert!(!report.issues[0].reason.contains("stderr"));
-    }
+    use lumina_library::{Database, NewAgentAttempt, NewAgentTask, NewEpisode, NewSeries};
 
     #[test]
     fn coverage_is_bounded_and_deterministic() {
@@ -1030,6 +758,82 @@ mod tests {
         assert!(report.contains("尚未配置可用的 AI Agent"));
         assert!(!report.contains("private agent details"));
         assert!(!report.contains("stderr"));
+    }
+
+    fn running_test_task(
+        database: &mut Database,
+        task_key: &str,
+    ) -> Result<(AgentTaskRecord, i64), Box<dyn std::error::Error>> {
+        let repository = database.repository();
+        let input = NewAgentTask::new(task_key, "chapter_segmentation", "chapter.v1");
+        let created = repository.get_or_create_agent_task(&input)?;
+        let task = repository
+            .claim_agent_task_by_key(&created.task_key)?
+            .ok_or("test task was not claimable")?;
+        let attempt_id = repository.insert_agent_attempt(&NewAgentAttempt::new(
+            task.id,
+            task.attempt_count,
+            "chapter_segmentation",
+            "running",
+            task.prompt_version.clone(),
+            now_ms_for_command(),
+        ))?;
+        Ok((task, attempt_id))
+    }
+
+    #[test]
+    fn non_json_assistant_final_succeeds_after_durable_finalize(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let mut database = Database::open_in_memory()?;
+        let (task, attempt_id) = running_test_task(&mut database, "scoped-finalized")?;
+        assert!(database.repository().complete_agent_task(
+            task.id,
+            "succeeded",
+            task.attempt_count,
+            0,
+            None,
+            r#"{"finalizedBy":"chapter_tool"}"#,
+        )?);
+
+        let result = settle_attempt(
+            &mut database,
+            &task,
+            attempt_id,
+            AttemptResult {
+                assistant_response: "Done — the chapter tools finalized the task.".to_string(),
+            },
+        );
+        assert!(result.is_ok(), "durable finalize should determine success");
+        Ok(())
+    }
+
+    #[test]
+    fn non_json_assistant_final_without_finalize_fails_as_scoped_completion(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let mut database = Database::open_in_memory()?;
+        let (task, attempt_id) = running_test_task(&mut database, "scoped-unfinalized")?;
+
+        let error = settle_attempt(
+            &mut database,
+            &task,
+            attempt_id,
+            AttemptResult {
+                assistant_response: "I completed the chapters.".to_string(),
+            },
+        )
+        .expect_err("assistant text must not complete a scoped task");
+        assert_eq!(error.message, "章节 Agent 未完成章节写入，请再次尝试。");
+        let persisted = database
+            .repository()
+            .get_agent_task(task.id)?
+            .ok_or("test task disappeared")?;
+        assert_eq!(persisted.status, "validation_failure");
+        let report = persisted
+            .validation_report
+            .ok_or("scoped completion failure was not persisted")?;
+        assert!(report.contains("章节 Agent 未完成章节写入，请再次尝试"));
+        assert!(!report.contains("I completed the chapters"));
+        Ok(())
     }
 
     #[test]

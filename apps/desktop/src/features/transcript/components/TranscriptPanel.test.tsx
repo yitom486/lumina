@@ -8,6 +8,7 @@ import { useAskAboutStore } from "@lumina/chat-ui/askAboutStore";
 import { useChatUiStore } from "@lumina/chat-ui/chatUiStore";
 
 import { TranscriptPanel } from "./TranscriptPanel";
+import { SubtitleWorkshopPanel } from "./SubtitleWorkshopPanel";
 import { useFollowStore } from "@lumina/transcript-ui";
 
 vi.mock("@tauri-apps/api/core", () => ({
@@ -32,6 +33,17 @@ function renderPanel() {
   return render(
     <QueryClientProvider client={client}>
       <TranscriptPanel />
+    </QueryClientProvider>,
+  );
+}
+
+function renderWorkshopPanel() {
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
+  return render(
+    <QueryClientProvider client={client}>
+      <SubtitleWorkshopPanel />
     </QueryClientProvider>,
   );
 }
@@ -451,7 +463,7 @@ describe("TranscriptPanel downloaded subtitles", () => {
       currentTimeMs: 500,
     });
     useTrackStore.setState({ subtitleChoiceId: null });
-    renderPanel();
+    renderWorkshopPanel();
     await waitFor(() => {
       expect(screen.getByText("搜索字幕")).toBeInTheDocument();
     });
@@ -495,7 +507,7 @@ describe("TranscriptPanel downloaded subtitles", () => {
       currentTimeMs: 500,
     });
     useTrackStore.setState({ subtitleChoiceId: null });
-    renderPanel();
+    renderWorkshopPanel();
     await waitFor(() => {
       expect(screen.getByText("搜索字幕")).toBeInTheDocument();
     });
@@ -544,7 +556,7 @@ describe("TranscriptPanel downloaded subtitles", () => {
       currentTimeMs: 500,
     });
     useTrackStore.setState({ subtitleChoiceId: "cache:subdl:en" });
-    renderPanel();
+    renderWorkshopPanel();
     await waitFor(() => {
       expect(screen.getByText("校对字幕")).toBeInTheDocument();
       expect(
@@ -572,7 +584,7 @@ describe("TranscriptPanel downloaded subtitles", () => {
       currentTimeMs: 500,
     });
     useTrackStore.setState({ subtitleChoiceId: null });
-    renderPanel();
+    renderWorkshopPanel();
     await waitFor(() => {
       expect(
         screen.getByLabelText("Title to search subtitles for"),
@@ -620,7 +632,7 @@ describe("TranscriptPanel downloaded subtitles", () => {
     // 看门狗 interval 必须在 fake 时钟下创建，否则 advance 够不到它。
     vi.useFakeTimers();
     try {
-      renderPanel();
+      renderWorkshopPanel();
       let enabled = false;
       for (let i = 0; i < 50 && !enabled; i++) {
         await act(async () => {
@@ -660,7 +672,7 @@ describe("TranscriptPanel downloaded subtitles", () => {
       currentTimeMs: 500,
     });
     useTrackStore.setState({ subtitleChoiceId: null });
-    renderPanel();
+    renderWorkshopPanel();
     await waitFor(() => {
       expect(screen.getByText("搜索字幕")).toBeInTheDocument();
     });
@@ -670,7 +682,7 @@ describe("TranscriptPanel downloaded subtitles", () => {
     });
     fireEvent.click(screen.getByText("下载"));
     await waitFor(() => {
-      expect(screen.getByText("downloaded two")).toBeInTheDocument();
+      expect(invokeCommands()).toContain("player_set_subtitle");
     });
     const commands = invokeCommands();
     expect(commands).toContain("subtitle_download_candidate");

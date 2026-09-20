@@ -175,7 +175,24 @@ pub struct ChapterSegmentationSnapshot {
     pub retry_action: Option<String>,
     pub agent_configured: bool,
     pub output_json: Option<String>,
+    pub draft_chapters: Vec<ChapterDraftSnapshot>,
     pub created_at_ms: i64,
+    pub updated_at_ms: i64,
+}
+
+/// Small, durable chapter-task projection for the chapters panel.  It is
+/// intentionally independent from the legacy task output JSON so an outline
+/// can be rendered before the Agent session has finished.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ChapterDraftSnapshot {
+    pub id: i64,
+    pub stable_id: String,
+    pub start_ms: i64,
+    pub end_ms: i64,
+    pub title: Option<String>,
+    pub mainline: Option<String>,
+    pub status: String,
     pub updated_at_ms: i64,
 }
 
@@ -287,10 +304,12 @@ fn create_or_load_task(
         .get_or_create_agent_task(&input)
         .map_err(ChapterCommandError::storage)?;
     let task = normalize_retryable_failed_task(&database, task)?;
+    let drafts = draft_chapters_for_task(&database, &task)?;
     Ok(snapshot_from_task(
         task,
         request.worker_ready(),
         request.episode_identity.as_ref(),
+        drafts,
     ))
 }
 
@@ -305,13 +324,55 @@ fn load_task(
         .get_agent_task_by_key(&task_key)
         .map_err(ChapterCommandError::storage)?;
     task.map(|task| {
-        snapshot_from_task(
+        let drafts = draft_chapters_for_task(&database, &task)?;
+        Ok(snapshot_from_task(
             task,
             request.worker_ready(),
             request.episode_identity.as_ref(),
-        )
+            drafts,
+        ))
     })
+    .transpose()?
     .ok_or_else(ChapterCommandError::not_found)
+}
+
+fn draft_chapters_for_task(
+    database: &Database,
+    task: &AgentTaskRecord,
+) -> Result<Vec<ChapterDraftSnapshot>, ChapterCommandError> {
+    let Some(episode_id) = task.episode_id else {
+        return Ok(Vec::new());
+    };
+    database
+        .repository()
+        .list_chapters_by_agent_task(task.id, episode_id)
+        .map(|chapters| {
+            chapters
+                .into_iter()
+                .map(|chapter| ChapterDraftSnapshot {
+                    id: chapter.id,
+                    stable_id: chapter.stable_id,
+                    start_ms: chapter.start_ms,
+                    end_ms: chapter.end_ms,
+                    title: chapter.title,
+                    mainline: chapter.mainline,
+                    status: project_chapter_status(&chapter.status, &task.status).to_string(),
+                    updated_at_ms: chapter.updated_at_ms,
+                })
+                .collect()
+        })
+        .map_err(ChapterCommandError::storage)
+}
+
+fn project_chapter_status(chapter_status: &str, task_status: &str) -> &'static str {
+    match chapter_status {
+        "waiting_evidence" | "awaiting_evidence" | "draft" => "waiting_evidence",
+        "analyzing" | "analysis" | "in_progress" => "analyzing",
+        "generated" | "ready" | "published" | "accepted" => "generated",
+        "validation_failed" | "validation_failure" => "validation_failed",
+        _ if matches!(task_status, "validation_failure" | "failed") => "validation_failed",
+        _ => "analyzing",
+    }
 }
 
 fn normalize_retryable_failed_task(
@@ -437,6 +498,7 @@ fn snapshot_from_task(
     task: AgentTaskRecord,
     agent_configured: bool,
     episode_identity: Option<&ChapterEpisodeIdentity>,
+    draft_chapters: Vec<ChapterDraftSnapshot>,
 ) -> ChapterSegmentationSnapshot {
     let failure = if matches!(task.status.as_str(), "validation_failure" | "failed") {
         task.validation_report
@@ -495,6 +557,7 @@ fn snapshot_from_task(
         retry_action,
         agent_configured,
         output_json: task.output_json,
+        draft_chapters,
         created_at_ms: task.created_at_ms,
         updated_at_ms: task.updated_at_ms,
     }
@@ -687,7 +750,7 @@ mod tests {
             status: status.to_string(),
             session_id: None,
             prompt_version: "1.0".to_string(),
-            output_contract_version: Some("chapter_segment.v1".to_string()),
+            output_contract_version: Some("chapter_tool_workflow.v1".to_string()),
             attempt_count,
             retry_count: 3,
             max_attempts,
@@ -700,8 +763,12 @@ mod tests {
 
     #[test]
     fn snapshot_serializes_safe_failure_projection_and_retry_budget() {
-        let snapshot =
-            snapshot_from_task(task_with_failure("validation_failure", 1, 3), true, None);
+        let snapshot = snapshot_from_task(
+            task_with_failure("validation_failure", 1, 3),
+            true,
+            None,
+            vec![],
+        );
         let value = serde_json::to_value(snapshot).expect("snapshot should serialize");
 
         assert_eq!(
@@ -726,7 +793,7 @@ mod tests {
         assert!(value.get("validationReport").is_none());
         assert!(!value.to_string().contains("raw details"));
 
-        let terminal = snapshot_from_task(task_with_failure("failed", 3, 3), true, None);
+        let terminal = snapshot_from_task(task_with_failure("failed", 3, 3), true, None, vec![]);
         assert!(!terminal.can_retry);
         assert_eq!(terminal.retry_action, None);
     }

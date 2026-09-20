@@ -6,9 +6,9 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 
+use crate::load_subtitle_choice;
 use crate::model::NoteQuote;
 use crate::quotes::{resolve_quotes, QuoteResolveInput};
-use lumina_subtitle::SubtitleService;
 
 pub const LATEST_PROPOSAL_FILE: &str = "latest-annotation-proposal.json";
 
@@ -147,8 +147,7 @@ fn resolve_proposal_quotes(
     let Some(choice_id) = subtitle_choice_id.filter(|id| !id.trim().is_empty()) else {
         return Vec::new();
     };
-    let transcript = match SubtitleService::load_choice(std::path::Path::new(media_path), choice_id)
-    {
+    let transcript = match load_subtitle_choice(std::path::Path::new(media_path), choice_id) {
         Ok(transcript) => transcript,
         Err(error) => {
             tracing::warn!(%error, "failed to load subtitle for annotation proposal");

@@ -1,4 +1,5 @@
 import { Channel, invoke } from "@tauri-apps/api/core";
+import type { ChatShortcutTaskId } from "@lumina/chat-ui";
 
 import type {
   AcpClientSettings,
@@ -62,11 +63,7 @@ export type PromptImageInput = {
 };
 
 /** Stable task identifiers owned by the versioned Rust prompt repository. */
-export type AcpTaskId =
-  | "chapter_recap"
-  | "chapter_outlook"
-  | "question_candidates"
-  | "plot_summary";
+export type AcpTaskId = ChatShortcutTaskId;
 
 export function acpLoadSession(options: {
   profileId: string;

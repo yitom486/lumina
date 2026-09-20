@@ -10,10 +10,15 @@ import { notesKey } from "@lumina/query-keys";
 import { usePlayerStore } from "@/features/player";
 
 import { waitingLabel, hasActiveToolActivity } from "@lumina/chat-ui/activityStatus";
+import {
+  presentChatActivities,
+  type ChatPresentationMode,
+} from "@lumina/chat-ui/presentationPolicy";
 import type { AssistantAction } from "@lumina/chat-ui/assistantBlocks";
 import { parseAssistantBlocksText } from "@lumina/chat-ui/assistantBlocks";
 import { RichBlockRenderer } from "@lumina/chat-ui/components/RichBlockRenderer";
 import type { ChatTurn } from "../types";
+import { adaptShortcutOutput } from "../shortcutOutput";
 import { ChatActivityFeed } from "@lumina/chat-ui/components/ChatActivityFeed";
 import { ChatColumn } from "@lumina/chat-ui/components/ChatShell";
 import { ChatWaitingDots } from "@lumina/chat-ui/components/ChatWaitingDots";
@@ -30,7 +35,13 @@ type Props = {
   onDismissAnnotation?: (turnId: string) => void;
   onSaveAnnotation?: (turnId: string, proposalId?: string) => void;
   onAssistantAction?: (action: AssistantAction) => void;
+  /** Tests may choose a mode; production derives it once from the Vite build. */
+  presentationMode?: ChatPresentationMode;
 };
+
+const BUILD_PRESENTATION_MODE: ChatPresentationMode = import.meta.env.DEV
+  ? "development"
+  : "release";
 
 /**
  * P6-M3: save any done answer as a note (two-step inline confirm, no dialog
@@ -149,6 +160,7 @@ export function ChatTurnView({
   onDismissAnnotation,
   onSaveAnnotation,
   onAssistantAction,
+  presentationMode = BUILD_PRESENTATION_MODE,
 }: Props) {
   const [toolsOpen, setToolsOpen] = useState(false);
   const isError = turn.status === "error";
@@ -159,13 +171,31 @@ export function ChatTurnView({
   const waitingForText = isStreaming && !visibleAnswer.trim();
   const showWaitingDots =
     waitingForText && !(turn.showActivities && turn.activities.length > 0);
-  const toolCount = turn.activities.filter((item) => item.kind === "tool").length;
+  const visibleActivities = presentChatActivities(
+    turn.activities,
+    presentationMode,
+  );
+  const toolCount = visibleActivities.filter((item) => item.kind === "tool").length;
   const showActivityFeed =
-    turn.activities.length > 0 && (turn.showActivities || toolsOpen);
-  const structuredAnswer =
-    !isError && visibleAnswer
-      ? parseAssistantBlocksText(visibleAnswer, { streaming: isStreaming })
+    visibleActivities.length > 0 &&
+    (isStreaming || (presentationMode === "development" && toolsOpen));
+  const shortcutOutput =
+    !isError && visibleAnswer && turn.shortcutTaskId
+      ? adaptShortcutOutput(turn.shortcutTaskId, visibleAnswer, {
+          streaming: isStreaming,
+        })
       : null;
+  const structuredAnswer =
+    shortcutOutput?.blocks.length
+      ? shortcutOutput
+      : !isError && visibleAnswer && !shortcutOutput
+        ? parseAssistantBlocksText(visibleAnswer, { streaming: isStreaming })
+        : null;
+  const answerText = shortcutOutput?.fallbackText ?? visibleAnswer;
+  const releaseLiveLabel =
+    presentationMode === "release"
+      ? visibleActivities.find((item) => item.kind === "tool")?.title
+      : undefined;
 
   return (
     <ChatColumn className="space-y-2">
@@ -188,23 +218,28 @@ export function ChatTurnView({
       </div>
 
       <div className="w-full">
-        {toolCount > 0 && !showActivityFeed ? (
+        {presentationMode === "development" &&
+        visibleActivities.length > 0 &&
+        !showActivityFeed ? (
           <button
             type="button"
             className="mb-2 text-[11px] text-muted-foreground hover:text-foreground"
             onClick={() => setToolsOpen(true)}
           >
-            查看工具执行（{toolCount}）
+            {toolCount > 0
+              ? `查看本轮调试记录（${toolCount} 个工具）`
+              : "查看本轮调试记录"}
           </button>
         ) : null}
 
         {showActivityFeed ? (
           <ChatActivityFeed
-            activities={turn.activities}
+            activities={visibleActivities}
             streaming={isStreaming}
-            collapsible={!isStreaming && !turn.showActivities}
+            collapsible={!isStreaming}
+            liveLabel={releaseLiveLabel}
             onRequestCollapse={
-              !turn.showActivities ? () => setToolsOpen(false) : undefined
+              !isStreaming ? () => setToolsOpen(false) : undefined
             }
           />
         ) : null}
@@ -218,13 +253,13 @@ export function ChatTurnView({
           )}
           data-turn-id={turn.id}
         >
-          {visibleAnswer ? (
+          {answerText ? (
             isError ? (
-              visibleAnswer
+              answerText
             ) : structuredAnswer?.blocks.length ? (
               <Suspense
                 fallback={
-                  <span className="whitespace-pre-wrap">{visibleAnswer}</span>
+                  <span className="whitespace-pre-wrap">{answerText}</span>
                 }
               >
                 <RichBlockRenderer
@@ -236,10 +271,10 @@ export function ChatTurnView({
             ) : (
               <Suspense
                 fallback={
-                  <span className="whitespace-pre-wrap">{visibleAnswer}</span>
+                  <span className="whitespace-pre-wrap">{answerText}</span>
                 }
               >
-                <ChatMarkdown content={visibleAnswer} />
+                <ChatMarkdown content={answerText} />
               </Suspense>
             )
           ) : showWaitingDots ? (
@@ -247,7 +282,7 @@ export function ChatTurnView({
           ) : waitingForText ? null : (
             ""
           )}
-          {visibleAnswer && isStreaming ? (
+          {answerText && isStreaming ? (
             <span className="chat-stream-caret ml-0.5 inline-block text-muted-foreground">
               ▍
             </span>

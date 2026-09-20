@@ -17,9 +17,11 @@ use super::tools::{subtitle_workshop_enabled, video_annotations_enabled, vision_
 // module keeps the MCP-side re-export so existing `policy::TOOL_*` paths and
 // `tools/list` order stay byte-identical.
 pub use lumina_core::tool_contract::{
-    TOOL_AUDIO_MARKS, TOOL_CAPTURE_FRAMES, TOOL_ENTITY_TIMELINE, TOOL_EPISODE_INDEX,
-    TOOL_EPISODE_TRANSCRIPT, TOOL_LIBRARY_CONTEXT, TOOL_PLAYBACK_CONTEXT, TOOL_PROPOSE_ANNOTATION,
-    TOOL_SEEK_PLAYBACK, TOOL_SUBTITLE_CUES, TOOL_TRANSCRIPT_WINDOW, TOOL_WRITE_SUBTITLE_TRACK,
+    TOOL_AUDIO_MARKS, TOOL_CAPTURE_CHAPTER_EVIDENCE, TOOL_CAPTURE_FRAMES,
+    TOOL_CREATE_CHAPTER_OUTLINE, TOOL_ENTITY_TIMELINE, TOOL_EPISODE_INDEX, TOOL_EPISODE_TRANSCRIPT,
+    TOOL_FINALIZE_CHAPTER_TASK, TOOL_LIBRARY_CONTEXT, TOOL_PLAYBACK_CONTEXT,
+    TOOL_PROPOSE_ANNOTATION, TOOL_SEEK_PLAYBACK, TOOL_SUBTITLE_CUES, TOOL_TRANSCRIPT_WINDOW,
+    TOOL_UPDATE_CHAPTER_DRAFT, TOOL_WRITE_SUBTITLE_TRACK,
 };
 
 /// Env var carrying the profile into the MCP server process.
@@ -73,6 +75,14 @@ pub fn allowed_tool_names(
     profile: McpToolProfile,
     snapshot: &LuminaMcpSnapshot,
 ) -> Vec<&'static str> {
+    allowed_tool_names_for_chapter_task(profile, snapshot, false)
+}
+
+pub fn allowed_tool_names_for_chapter_task(
+    profile: McpToolProfile,
+    snapshot: &LuminaMcpSnapshot,
+    chapter_task_enabled: bool,
+) -> Vec<&'static str> {
     match profile {
         McpToolProfile::MetadataResolver | McpToolProfile::NoTools => Vec::new(),
         McpToolProfile::SubtitleWorkshop => {
@@ -99,6 +109,12 @@ pub fn allowed_tool_names(
             if video_annotations_enabled(snapshot) {
                 tools.push(TOOL_PROPOSE_ANNOTATION);
             }
+            if chapter_task_enabled {
+                tools.push(TOOL_CREATE_CHAPTER_OUTLINE);
+                tools.push(TOOL_CAPTURE_CHAPTER_EVIDENCE);
+                tools.push(TOOL_UPDATE_CHAPTER_DRAFT);
+                tools.push(TOOL_FINALIZE_CHAPTER_TASK);
+            }
             tools
         }
     }
@@ -112,15 +128,30 @@ fn is_known_tool(name: &str) -> bool {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ToolPolicy {
     pub profile: McpToolProfile,
+    pub chapter_task_enabled: bool,
 }
 
 impl ToolPolicy {
     pub fn new(profile: McpToolProfile) -> Self {
-        Self { profile }
+        Self {
+            profile,
+            chapter_task_enabled: false,
+        }
+    }
+
+    pub fn for_chapter_task(profile: McpToolProfile) -> Self {
+        Self {
+            profile,
+            chapter_task_enabled: true,
+        }
     }
 
     pub fn tools(&self, snapshot: &LuminaMcpSnapshot) -> Vec<&'static str> {
-        allowed_tool_names(self.profile, snapshot)
+        if self.chapter_task_enabled {
+            allowed_tool_names_for_chapter_task(self.profile, snapshot, true)
+        } else {
+            allowed_tool_names(self.profile, snapshot)
+        }
     }
 
     /// Authorize one `tools/call`. Unknown names keep the historical
@@ -203,6 +234,22 @@ mod tests {
         assert!(names.contains(&TOOL_SUBTITLE_CUES));
         assert!(names.contains(&TOOL_WRITE_SUBTITLE_TRACK));
         assert!(names.contains(&TOOL_CAPTURE_FRAMES));
+    }
+
+    #[test]
+    fn chapter_tools_require_the_explicit_task_scope() {
+        let snapshot = snapshot_with(true, true, true);
+        let ordinary = allowed_tool_names(McpToolProfile::Chat, &snapshot);
+        assert!(!ordinary.contains(&TOOL_CREATE_CHAPTER_OUTLINE));
+        let scoped = allowed_tool_names_for_chapter_task(McpToolProfile::Chat, &snapshot, true);
+        assert!(scoped.contains(&TOOL_CREATE_CHAPTER_OUTLINE));
+        assert!(scoped.contains(&TOOL_CAPTURE_CHAPTER_EVIDENCE));
+        assert!(scoped.contains(&TOOL_UPDATE_CHAPTER_DRAFT));
+        assert!(scoped.contains(&TOOL_FINALIZE_CHAPTER_TASK));
+        assert!(
+            allowed_tool_names_for_chapter_task(McpToolProfile::NoTools, &snapshot, true)
+                .is_empty()
+        );
     }
 
     #[test]

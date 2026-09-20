@@ -243,6 +243,13 @@ export type ChatImageAttachment = {
 
 export type ChatMessageStatus = "streaming" | "done" | "error";
 
+/** Versioned companion shortcuts whose output may have a rich projection. */
+export type ChatShortcutTaskId =
+  | "chapter_recap"
+  | "chapter_outlook"
+  | "question_candidates"
+  | "plot_summary";
+
 export type ChatTurn = {
   id: string;
   userText: string;
@@ -254,6 +261,8 @@ export type ChatTurn = {
   images?: ChatImageAttachment[];
   /** Question anchor (frozen at keystroke); used for note saving. Absent on old turns. */
   anchorMs?: number | null;
+  /** Local identity for a companion shortcut; absent on ordinary chat turns. */
+  shortcutTaskId?: ChatShortcutTaskId;
   /** Pre-tool agent stream; sealed when a tool call starts. */
   agentDraft?: string;
   /** Sealed agent segments before tool calls (not shown in UI). */

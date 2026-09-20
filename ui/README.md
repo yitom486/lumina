@@ -29,6 +29,9 @@
 - `ChatMarkdown` 继续负责叙述性内容：标题、段落、列表、表格、代码块、GFM、数学公式和可信引用。
 - AI 的交互内容不允许直接输出任意 HTML、React 代码或未经校验的组件名称。
 - 结构化结果先归一化为受限的 `AssistantBlock`，再由 `RichBlockRenderer` 按白名单渲染。
+- 版本化快捷任务的本地 `ChatTurn` 必须保留任务 ID；`chapter_recap.v1`、
+  `chapter_outlook.v1`、`plot_summary.v1` 和 `question_candidates.v1` 只能通过任务专属的
+  白名单适配器进入 `AssistantBlock`，未知或损坏结果显示业务兜底，不把原始 JSON 交给渲染器。
 - 第一批富组件建议包括：关键点提示、字幕引用、时间线、章节列表、保存为笔记、跳转播放、继续追问。
 - 所有可操作组件必须携带来源时间或章节锚点；点击「跳转播放」只调用播放器 seek，不直接改变 HWND 生命周期。
 - 流式输出时先渲染 Markdown 文本，结构化组件在 JSON block 完整后再显示，避免半截卡片闪烁。

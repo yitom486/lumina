@@ -78,6 +78,23 @@ pub struct AgentCapabilities {
     pub video_annotations_enabled: bool,
 }
 
+/// Task-scoped context for the Chapter Agent. It is serialized as the
+/// optional `chapterTask` sidecar field so existing chat snapshot literals and
+/// readers remain source-compatible while chapter sessions gain a strict
+/// database/media scope.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ChapterTaskContext {
+    pub task_id: i64,
+    pub attempt_id: i64,
+    pub episode_id: i64,
+    pub database_path: String,
+    pub media_path: String,
+    pub duration_ms: u64,
+    pub spoiler_boundary: String,
+    pub prompt_version: String,
+}
+
 fn default_video_annotations_enabled() -> bool {
     true
 }
@@ -161,12 +178,64 @@ pub fn write_snapshot(path: &Path, snapshot: &LuminaMcpSnapshot) -> Result<(), S
     fs::write(path, payload).map_err(|error| format!("write snapshot: {error}"))
 }
 
+pub fn write_chapter_task_snapshot(
+    path: &Path,
+    snapshot: &LuminaMcpSnapshot,
+    chapter_task: &ChapterTaskContext,
+) -> Result<(), String> {
+    let mut value =
+        serde_json::to_value(snapshot).map_err(|error| format!("encode snapshot: {error}"))?;
+    let object = value
+        .as_object_mut()
+        .ok_or_else(|| "snapshot must encode as an object".to_string())?;
+    object.insert(
+        "chapterTask".to_string(),
+        serde_json::to_value(chapter_task)
+            .map_err(|error| format!("encode chapter task: {error}"))?,
+    );
+    let payload = serde_json::to_string_pretty(&value)
+        .map_err(|error| format!("encode chapter task snapshot: {error}"))?;
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|error| format!("create snapshot dir: {error}"))?;
+    }
+    if let Some(cwd) = path.parent().and_then(|p| p.parent()) {
+        cleanup_ephemeral_tmp(cwd);
+    }
+    fs::write(path, payload).map_err(|error| format!("write chapter task snapshot: {error}"))
+}
+
+pub fn read_chapter_task_context(path: &Path) -> Result<Option<ChapterTaskContext>, String> {
+    let raw = fs::read_to_string(path).map_err(|error| format!("read snapshot: {error}"))?;
+    let value: serde_json::Value =
+        serde_json::from_str(&raw).map_err(|error| format!("parse snapshot: {error}"))?;
+    let Some(chapter_task) = value.get("chapterTask") else {
+        return Ok(None);
+    };
+    serde_json::from_value(chapter_task.clone())
+        .map(Some)
+        .map_err(|error| format!("parse chapter task snapshot: {error}"))
+}
+
 pub fn read_snapshot(path: &Path) -> Result<LuminaMcpSnapshot, String> {
     let raw = fs::read_to_string(path).map_err(|error| format!("read snapshot: {error}"))?;
     serde_json::from_str(&raw).map_err(|error| format!("parse snapshot: {error}"))
 }
 
+fn is_chapter_snapshot_path(path: &Path) -> bool {
+    path.file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| name == "chapter-agent-context.json")
+}
+
 pub fn sync_snapshot_capabilities(path: &Path, vision_capable: bool) -> Result<(), String> {
+    // Chapter scope is intentionally a sidecar so existing chat snapshot
+    // literals remain compatible. Preserve it only on the dedicated chapter
+    // path; a normal chat snapshot must never inherit stale task scope.
+    let chapter_task = if is_chapter_snapshot_path(path) && path.is_file() {
+        read_chapter_task_context(path)?
+    } else {
+        None
+    };
     let mut snapshot = if path.is_file() {
         read_snapshot(path).unwrap_or_else(|_| LuminaMcpSnapshot::empty())
     } else {
@@ -178,7 +247,10 @@ pub fn sync_snapshot_capabilities(path: &Path, vision_capable: bool) -> Result<(
         video_annotations_enabled: true,
     });
     snapshot.updated_at_ms = now_ms();
-    write_snapshot(path, &snapshot)
+    match chapter_task {
+        Some(chapter_task) => write_chapter_task_snapshot(path, &snapshot, &chapter_task),
+        None => write_snapshot(path, &snapshot),
+    }
 }
 
 pub fn resolve_snapshot_path() -> Option<PathBuf> {
@@ -388,6 +460,110 @@ mod tests {
         write_snapshot(&path, &snapshot).expect("write");
         let loaded = read_snapshot(&path).expect("read");
         assert_eq!(loaded, snapshot);
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn chapter_task_snapshot_roundtrips_as_a_scoped_sidecar() {
+        let dir =
+            std::env::temp_dir().join(format!("lumina-chapter-snapshot-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).expect("temp dir");
+        let path = dir.join("chapter-agent-context.json");
+        let context = ChapterTaskContext {
+            task_id: 7,
+            attempt_id: 3,
+            episode_id: 11,
+            database_path: r"C:\data\lumina.sqlite3".into(),
+            media_path: r"C:\videos\episode.mkv".into(),
+            duration_ms: 90_000,
+            spoiler_boundary: "episode".into(),
+            prompt_version: "chapter-v1".into(),
+        };
+        write_chapter_task_snapshot(&path, &LuminaMcpSnapshot::empty(), &context)
+            .expect("write chapter snapshot");
+        assert_eq!(
+            read_chapter_task_context(&path).expect("read context"),
+            Some(context)
+        );
+        assert_eq!(
+            read_snapshot(&path)
+                .expect("read regular snapshot")
+                .schema_version,
+            SNAPSHOT_SCHEMA_VERSION
+        );
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn syncing_chapter_snapshot_preserves_task_scope() {
+        let dir = std::env::temp_dir().join(format!(
+            "lumina-chapter-sync-{}-{}",
+            std::process::id(),
+            now_ms()
+        ));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).expect("temp dir");
+        let path = dir.join("chapter-agent-context.json");
+        let context = ChapterTaskContext {
+            task_id: 21,
+            attempt_id: 22,
+            episode_id: 23,
+            database_path: r"C:\data\lumina.sqlite3".into(),
+            media_path: r"C:\videos\episode.mkv".into(),
+            duration_ms: 120_000,
+            spoiler_boundary: "episode".into(),
+            prompt_version: "chapter-v1".into(),
+        };
+
+        write_chapter_task_snapshot(&path, &LuminaMcpSnapshot::empty(), &context)
+            .expect("write chapter snapshot");
+        sync_snapshot_capabilities(&path, true).expect("sync chapter snapshot");
+
+        assert_eq!(
+            read_chapter_task_context(&path).expect("read chapter scope"),
+            Some(context)
+        );
+        assert_eq!(
+            read_snapshot(&path)
+                .expect("read synced snapshot")
+                .capabilities
+                .expect("capabilities")
+                .vision_capable,
+            true
+        );
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn syncing_ordinary_snapshot_drops_stale_chapter_scope() {
+        let dir = std::env::temp_dir().join(format!(
+            "lumina-chat-sync-{}-{}",
+            std::process::id(),
+            now_ms()
+        ));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).expect("temp dir");
+        let path = dir.join("agent-context.json");
+        let context = ChapterTaskContext {
+            task_id: 31,
+            attempt_id: 32,
+            episode_id: 33,
+            database_path: r"C:\data\lumina.sqlite3".into(),
+            media_path: r"C:\videos\episode.mkv".into(),
+            duration_ms: 120_000,
+            spoiler_boundary: "episode".into(),
+            prompt_version: "chapter-v1".into(),
+        };
+
+        write_chapter_task_snapshot(&path, &LuminaMcpSnapshot::empty(), &context)
+            .expect("write stale snapshot");
+        sync_snapshot_capabilities(&path, false).expect("sync ordinary snapshot");
+
+        assert_eq!(
+            read_chapter_task_context(&path).expect("read ordinary scope"),
+            None
+        );
         let _ = fs::remove_dir_all(dir);
     }
 

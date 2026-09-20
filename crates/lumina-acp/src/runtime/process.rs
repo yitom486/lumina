@@ -281,7 +281,26 @@ mod tests {
         match output {
             Ok(output) => {
                 let text = String::from_utf8_lossy(&output.stdout);
-                text.contains(&format!("\"{pid}\","))
+                if text.contains(&format!("\"{pid}\",")) {
+                    return true;
+                }
+                let script = format!(
+                    "if (Get-Process -Id {pid} -ErrorAction SilentlyContinue) {{ exit 0 }} else {{ exit 1 }}"
+                );
+                command("powershell")
+                    .args([
+                        "-NoProfile",
+                        "-NonInteractive",
+                        "-ExecutionPolicy",
+                        "Bypass",
+                        "-Command",
+                        &script,
+                    ])
+                    .stdout(Stdio::null())
+                    .stderr(Stdio::null())
+                    .status()
+                    .map(|status| status.success())
+                    .unwrap_or(true)
             }
             Err(_) => true,
         }

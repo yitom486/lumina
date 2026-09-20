@@ -79,6 +79,78 @@ describe("ChatTurnView", () => {
     expect(document.querySelector("[data-rich-blocks]")).toBeInTheDocument();
   });
 
+  it("renders the raw plot summary shortcut contract as a rich card", async () => {
+    render(
+      <ChatTurnView
+        turn={makeTurn({
+          id: "plot-summary-1",
+          userText: "剧情梳理",
+          shortcutTaskId: "plot_summary",
+          answer: JSON.stringify({
+            version: "plot_summary.v1",
+            scope: { label: "当前观看范围" },
+            summary: "主角在车站重新确认了调查方向。",
+            evidence: ["字幕：我们必须回到车站。"],
+          }),
+          status: "done",
+          showActivities: false,
+        })}
+      />,
+    );
+
+    expect(
+      await screen.findByRole("heading", { name: "剧情梳理" }),
+    ).toBeInTheDocument();
+    expect(screen.getByText("主角在车站重新确认了调查方向。")).toBeInTheDocument();
+    expect(screen.getByText("字幕：我们必须回到车站。")).toBeInTheDocument();
+    expect(screen.queryByText(/plot_summary\.v1/)).not.toBeInTheDocument();
+    expect(document.querySelector("[data-rich-blocks]")).toBeInTheDocument();
+  });
+
+  it("renders another quick task contract without falling back to raw JSON", async () => {
+    render(
+      <ChatTurnView
+        turn={makeTurn({
+          id: "chapter-outlook-1",
+          userText: "后续看点",
+          shortcutTaskId: "chapter_outlook",
+          answer: JSON.stringify({
+            version: "chapter_outlook.v1",
+            items: [{ title: "留意车站里的反应" }],
+          }),
+          status: "done",
+          showActivities: false,
+        })}
+      />,
+    );
+
+    expect(
+      await screen.findByRole("heading", { name: "后续看点" }),
+    ).toBeInTheDocument();
+    expect(screen.getByText("留意车站里的反应")).toBeInTheDocument();
+    expect(screen.queryByText(/chapter_outlook\.v1/)).not.toBeInTheDocument();
+  });
+
+  it("uses a readable fallback when a shortcut contract is malformed", async () => {
+    render(
+      <ChatTurnView
+        turn={makeTurn({
+          id: "plot-summary-bad",
+          userText: "剧情梳理",
+          shortcutTaskId: "plot_summary",
+          answer: '{"version":"plot_summary.v1"}',
+          status: "done",
+          showActivities: false,
+        })}
+      />,
+    );
+
+    expect(
+      await screen.findByText("剧情梳理结果暂时无法展示，请稍后重试。"),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/plot_summary\.v1/)).not.toBeInTheDocument();
+  });
+
   it("forwards rich card actions when an assistant action callback is provided", async () => {
     const onAssistantAction = vi.fn();
     render(
@@ -166,7 +238,7 @@ describe("ChatTurnView", () => {
     expect(container.textContent).not.toContain("▍");
   });
 
-  it("shows tool activity feed during streaming", () => {
+  it("shows a safe development trace during streaming", () => {
     render(
       <ChatTurnView
         turn={makeTurn({
@@ -176,19 +248,21 @@ describe("ChatTurnView", () => {
               id: "tool-1",
               kind: "tool",
               toolCallId: "1",
-              title: "Read file",
+              title: "lumina_get_transcript_window",
               status: "running",
+              text: '{"path":"C:\\\\private\\\\video.mkv"}',
             },
           ],
           showActivities: true,
         })}
       />,
     );
-    expect(screen.getByText("Read file")).toBeInTheDocument();
+    expect(screen.getByText("工具：lumina_get_transcript_window")).toBeInTheDocument();
+    expect(screen.queryByText(/private\\\\video/)).not.toBeInTheDocument();
     expect(screen.getByText("工具执行中")).toBeInTheDocument();
   });
 
-  it("shows failed tool detail in Chinese", () => {
+  it("does not show raw failed tool detail in the debug trace", () => {
     render(
       <ChatTurnView
         turn={makeTurn({
@@ -198,9 +272,9 @@ describe("ChatTurnView", () => {
               id: "tool-1",
               kind: "tool",
               toolCallId: "1",
-              title: "读取播放上下文",
+              title: "lumina_get_playback_context",
               status: "failed",
-              text: "无法读取当前播放上下文",
+              text: "stderr: C:\\private\\tool.exe failed",
             },
           ],
           showActivities: true,
@@ -208,7 +282,8 @@ describe("ChatTurnView", () => {
       />,
     );
     expect(screen.getByText("失败")).toBeInTheDocument();
-    expect(screen.getByText("无法读取当前播放上下文")).toBeInTheDocument();
+    expect(screen.getByText("执行未完成")).toBeInTheDocument();
+    expect(screen.queryByText(/private\\tool/)).not.toBeInTheDocument();
   });
 
   it("offers expanding tool history after minimal finish", () => {
@@ -230,7 +305,7 @@ describe("ChatTurnView", () => {
       ],
     };
     render(<ChatTurnView turn={turn} />);
-    expect(screen.getByText("查看工具执行（1）")).toBeInTheDocument();
+    expect(screen.getByText("查看本轮调试记录（1 个工具）")).toBeInTheDocument();
     expect(screen.queryByText("读取库信息")).not.toBeInTheDocument();
   });
 

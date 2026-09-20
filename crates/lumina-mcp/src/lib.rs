@@ -13,10 +13,10 @@ mod tools;
 pub use build::{McpPromptContext, PromptSnapshotState, SnapshotBuildResult};
 pub use policy::{tool_profile_from_env, McpToolProfile, ToolPolicy, TOOL_PROFILE_ENV};
 pub use snapshot::{
-    read_snapshot, snapshot_path_for_cwd, sync_snapshot_capabilities, write_snapshot,
-    AgentCapabilities, CurrentEpisodeLite, LuminaMcpSnapshot, OnlineMediaSnapshot, PromptAnchor,
-    SessionPolicy, CONTEXT_FILE_ENV, LIBRARY_WARM_EVERY, SNAPSHOT_RELATIVE_PATH,
-    SNAPSHOT_SCHEMA_VERSION,
+    read_chapter_task_context, read_snapshot, snapshot_path_for_cwd, sync_snapshot_capabilities,
+    write_chapter_task_snapshot, write_snapshot, AgentCapabilities, ChapterTaskContext,
+    CurrentEpisodeLite, LuminaMcpSnapshot, OnlineMediaSnapshot, PromptAnchor, SessionPolicy,
+    CONTEXT_FILE_ENV, LIBRARY_WARM_EVERY, SNAPSHOT_RELATIVE_PATH, SNAPSHOT_SCHEMA_VERSION,
 };
 
 use std::path::Path;

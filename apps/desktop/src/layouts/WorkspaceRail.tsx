@@ -40,9 +40,9 @@ export function WorkspaceRail({
   return (
     <nav
       aria-label="工作区导航"
-      className="relative z-10 flex w-12 shrink-0 flex-col items-center border-r border-border bg-card/80 px-1.5 py-2"
+      className="relative z-10 flex w-[5.75rem] shrink-0 flex-col items-center border-r border-border bg-surface-elevated px-2 py-3 max-[700px]:w-14 max-[700px]:px-1.5"
     >
-      <div className="flex flex-col items-center gap-1">
+      <div className="flex w-full flex-col items-center gap-1.5">
         {items.map(({ id, label, icon: Icon }) => {
           const selected = activeTab === id;
           return (
@@ -51,21 +51,24 @@ export function WorkspaceRail({
                 <Button
                   type="button"
                   variant="ghost"
-                  size="icon"
+                  size="default"
                   className={cn(
-                    "size-9 rounded-md",
+                    "group flex h-14 w-full flex-col gap-1 rounded-lg px-1 py-2 text-[10px] font-medium leading-tight transition-[background-color,color,box-shadow] max-[700px]:size-10 max-[700px]:gap-0 max-[700px]:rounded-md",
                     selected
-                      ? "bg-accent text-accent-foreground hover:bg-accent"
-                      : "text-muted-foreground hover:bg-muted hover:text-foreground",
+                      ? "border-l-2 border-ai bg-ai-muted text-ai shadow-sm hover:bg-ai-muted"
+                      : "border-l-2 border-transparent text-muted-foreground hover:bg-surface-subtle hover:text-foreground",
                   )}
                   aria-label={label}
                   aria-pressed={selected}
+                  aria-current={selected ? "page" : undefined}
+                  data-active={selected ? "true" : "false"}
                   onClick={() => {
                     closeChat();
                     onSelect(id);
                   }}
                 >
-                  <Icon className="size-4" />
+                  <Icon className="size-5 shrink-0 transition-transform group-hover:scale-105 max-[700px]:size-4" />
+                  <span className="max-[700px]:sr-only">{label}</span>
                 </Button>
               </TooltipTrigger>
               <TooltipContent side="right">{label}</TooltipContent>
@@ -74,24 +77,27 @@ export function WorkspaceRail({
         })}
       </div>
 
-      <div className="mt-auto border-t border-border/70 pt-2">
+      <div className="mt-auto w-full border-t border-border/70 pt-3">
         <Tooltip>
           <TooltipTrigger asChild>
             <Button
               type="button"
               variant="ghost"
-              size="icon"
+              size="default"
               className={cn(
-                "size-9 rounded-md",
+                "group flex h-14 w-full flex-col gap-1 rounded-lg px-1 py-2 text-[10px] font-medium leading-tight max-[700px]:size-10 max-[700px]:gap-0 max-[700px]:rounded-md",
                 chatOpen
-                  ? "bg-accent text-accent-foreground hover:bg-accent"
-                  : "text-muted-foreground hover:bg-muted hover:text-foreground",
+                  ? "border-l-2 border-ai bg-ai-muted text-ai hover:bg-ai-muted"
+                  : "border-l-2 border-transparent text-muted-foreground hover:bg-surface-subtle hover:text-foreground",
               )}
               aria-label={chatOpen ? "收起 AI 对话" : "打开 AI 对话"}
               aria-pressed={chatOpen}
+              aria-current={chatOpen ? "page" : undefined}
+              data-active={chatOpen ? "true" : "false"}
               onClick={toggleChat}
             >
-              <Sparkles className="size-4" />
+              <Sparkles className="size-5 shrink-0 transition-transform group-hover:scale-105 max-[700px]:size-4" />
+              <span className="max-[700px]:sr-only">AI 对话</span>
             </Button>
           </TooltipTrigger>
           <TooltipContent side="right">

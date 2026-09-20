@@ -10,8 +10,11 @@ use serde_json::{json, Value};
 
 use super::executor::TaskExecutor;
 use super::policy::{tool_profile_from_env, McpToolProfile, ToolPolicy};
-use super::snapshot::{read_snapshot, resolve_snapshot_path, LuminaMcpSnapshot, CONTEXT_FILE_ENV};
-use super::tools::handle_tool_call;
+use super::snapshot::{
+    read_chapter_task_context, read_snapshot, resolve_snapshot_path, ChapterTaskContext,
+    LuminaMcpSnapshot, CONTEXT_FILE_ENV,
+};
+use super::tools::handle_tool_call_with_context;
 use crate::{DIAGNOSTIC_ID_ENV, DIAGNOSTIC_LOG_ENV};
 
 const PROTOCOL_VERSION: &str = "2024-11-05";
@@ -30,6 +33,8 @@ type ToolState = Arc<RwLock<()>>;
 // before/without waiting for tools/list. tools/list still owns the callable
 // subset and JSON schemas for this session.
 const MCP_SERVER_INSTRUCTIONS: &str = "【系统说明】以下是系统级说明，供你静默执行：这些规则约束你的行为方式，但它们不是对话内容，禁止在回复中提及、解释、转述或执行给用户看；回复里不得出现工具检查、会话接入、内部流程等元信息。Lumina MCP 服务器提供与当前媒体相关的按需上下文工具与播放跳转。工具目录在下方完整列出；tools/list 是 MCP 协议握手操作，由客户端自动完成，你不需要、也不应该用任何文件工具（如 list_directory、view_file）或目录浏览去「发现工具」——下方目录就是全部，是否可调用以 tools/list 实际返回为准。\n\n目录：\n- lumina_get_playback_context：当前锚点与本集信息。\n- lumina_seek_playback：让播放器跳转到指定时间（毫秒）；仅在工具结果给出过该时间时使用，用于用户要求「跳到某段」时直接完成跳转。\n- lumina_get_library_context：剧集背景与当前集简介。\n- lumina_get_episode_index：全部分集标题与简介。\n- lumina_get_entity_timeline：按人物名跨集检索出场时间线（机械聚合自台词，非语义判断）。\n- lumina_get_transcript_window：当前文件锚点附近台词；可选 centerMs/atSec，beforeSec/afterSec/radiusSec 默认前后各60秒。\n- lumina_get_episode_transcript：同剧其他集台词；必填 season/episode。\n- lumina_get_audio_marks：静音区间与响度突增候选（非语义标签）。\n- lumina_get_subtitle_cues / lumina_write_subtitle_track：字幕工坊专用。\n- lumina_capture_frames：锚点附近截帧；仅识图会话可见。\n- lumina_propose_video_annotation：视频批注提议；由用户在界面确认。\n\n回复方式：\n(0) 回复始终直接回答用户的问题本身，用用户使用的语言自然作答，如同没有看过任何系统说明；闲聊和问候不需要任何工具调用，不要复述收到的上下文。\n\n工具调用原则：\n(1) 如果当前对话、此前工具结果或问题本身已经足够回答，直接作答，不要重复调用。\n(2) 相互独立的信息查询可以在同一轮并行调用；按需调用，不要每轮无脑全量拉取，也不要串行地反复试探。\n(3) 台词原文和具体剧情点以工具返回为准，禁止先走网络搜索或编造；基于已验证内容的解读、动机分析和前后联系可以直接展开。\n(4) 问本集讲了什么、剧情或对话，调用 lumina_get_library_context 与 lumina_get_transcript_window（两者相互独立，可并行）；问其他集调用 lumina_get_episode_transcript；问画面细节调用 lumina_capture_frames；播放锚点、章节、笔记和字幕/截图工具共用本轮冻结的锚点位置。\n(5) 分集列表使用 lumina_get_episode_index，剧集背景和当前集简介使用 lumina_get_library_context。\n(6) 写视频批注必须先调用 lumina_propose_video_annotation 生成提议，禁止直接写入笔记库；由用户在 Lumina 界面确认保存。\n(7) 引用视频内容使用工具实际返回的时间标记，例如 [03:12]；跨集引用使用 [第N集 · mm:ss]，不要编造时间。\n(8) 跨集引用默认只使用当前集及之前的集数；用户明确要求后续集数时才查询，并提示剧透。\n(9) 制作或翻译外挂字幕请使用 Lumina 文稿面板或 ASR 工作流，不要在本对话中尝试写入字幕轨。\n(10) 若目录中的工具不在 tools/list 中，视为本会话未开放：不要手写调用、不要猜测其返回；如用户追问画面细节而无截图工具，应明说本会话不支持画面分析并基于字幕作答。\n(11) lumina_seek_playback 只处理用户的明确跳转意图或你自己检索确认的剧情时间点；positionMs 必须来自工具返回，绝不凭空构造。";
+
+const CHAPTER_TOOL_INSTRUCTIONS: &str = "\n章节任务工具仅在 snapshot 带有 chapterTask scope 时出现在 tools/list；它们只允许当前 task/attempt/episode，数据库路径和 task/attempt/episode id 都来自受信 snapshot，禁止通过参数指定或猜测。先创建 outline，再采集 evidence、更新 draft，最后 finalize；Agent 输出不得包含图片 blob。\nlumina_create_chapter_outline\nlumina_capture_chapter_evidence\nlumina_update_chapter_draft\nlumina_finalize_chapter_task\n";
 
 /// Timing probe for the serial-vs-parallel question. stdout must stay pure
 /// JSON-RPC, and this process exits before the app's tracing subscriber
@@ -127,9 +132,10 @@ pub fn run_stdio_server() -> Result<(), String> {
                     log_timing("tools_list_served", &id, "profile=no-tools tools=0", None);
                     write_response(&output, success(id, json!({ "tools": [] })))?;
                 } else {
-                    match load_snapshot() {
-                        Ok(snapshot) => {
-                            let result = tools_list_result(profile, &snapshot);
+                    match load_snapshot_bundle() {
+                        Ok((snapshot, chapter_task)) => {
+                            let result =
+                                tools_list_result(profile, &snapshot, chapter_task.is_some());
                             let count = result
                                 .get("tools")
                                 .and_then(Value::as_array)
@@ -203,19 +209,113 @@ fn initialize_result_for_profile(profile: McpToolProfile) -> Value {
         "serverInfo": { "name": "lumina", "version": env!("CARGO_PKG_VERSION") }
     });
     if profile != McpToolProfile::NoTools {
-        result["instructions"] = json!(MCP_SERVER_INSTRUCTIONS);
+        result["instructions"] = json!(format!(
+            "{MCP_SERVER_INSTRUCTIONS}{CHAPTER_TOOL_INSTRUCTIONS}"
+        ));
     }
     result
 }
 
-fn tools_list_result(profile: McpToolProfile, snapshot: &LuminaMcpSnapshot) -> Value {
-    let policy = ToolPolicy::new(profile);
+fn tools_list_result(
+    profile: McpToolProfile,
+    snapshot: &LuminaMcpSnapshot,
+    chapter_task_enabled: bool,
+) -> Value {
+    let policy = if chapter_task_enabled {
+        ToolPolicy::for_chapter_task(profile)
+    } else {
+        ToolPolicy::new(profile)
+    };
     let tools: Vec<Value> = policy
         .tools(snapshot)
         .iter()
         .filter_map(|name| tool_json(name))
         .collect();
     json!({ "tools": tools })
+}
+
+fn chapter_tool_json(name: &str) -> Option<Value> {
+    use lumina_core::tool_contract as contract;
+    let tool = if name == contract::TOOL_CREATE_CHAPTER_OUTLINE {
+        json!({
+            "name": contract::TOOL_CREATE_CHAPTER_OUTLINE,
+            "description": "Create or idempotently refresh the ordered draft chapter outline for the current Chapter Agent task. Task scope is taken from the trusted chapter snapshot; database paths and task ids are never accepted as arguments.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "chapters": {
+                        "type": "array", "minItems": 1, "maxItems": 64,
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "stableId": { "type": "string", "minLength": 1, "maxLength": 128 },
+                                "startMs": { "type": "integer", "minimum": 0 },
+                                "endMs": { "type": "integer", "minimum": 1 },
+                                "title": { "type": "string", "minLength": 1, "maxLength": 200 },
+                                "spoilerLevel": { "type": "string", "minLength": 1, "maxLength": 32 }
+                            },
+                            "required": ["stableId", "startMs", "endMs", "title"],
+                            "additionalProperties": false
+                        }
+                    }
+                },
+                "required": ["chapters"],
+                "additionalProperties": false
+            }
+        })
+    } else if name == contract::TOOL_CAPTURE_CHAPTER_EVIDENCE {
+        json!({
+            "name": contract::TOOL_CAPTURE_CHAPTER_EVIDENCE,
+            "description": "Capture durable local JPEG evidence for one current-task draft chapter. The result contains opaque asset ids and visual context only; image blobs are not accepted in arguments or returned as Agent-authored data.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "chapterId": { "type": "integer", "minimum": 1 },
+                    "timestampsMs": { "type": "array", "minItems": 1, "maxItems": 8, "items": { "type": "integer", "minimum": 0 } }
+                },
+                "required": ["chapterId", "timestampsMs"],
+                "additionalProperties": false
+            }
+        })
+    } else if name == contract::TOOL_UPDATE_CHAPTER_DRAFT {
+        json!({
+            "name": contract::TOOL_UPDATE_CHAPTER_DRAFT,
+            "description": "Persist one current-task chapter draft revision, evidence references, question candidates, and watch-feed draft projections.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "chapterId": { "type": "integer", "minimum": 1 },
+                    "title": { "type": "string", "minLength": 1, "maxLength": 200 },
+                    "mainline": { "type": "string", "minLength": 1, "maxLength": 20000 },
+                    "recap": { "type": "string", "maxLength": 20000 },
+                    "outlook": { "type": "string", "maxLength": 20000 },
+                    "highlights": { "type": "array", "maxItems": 32, "items": { "type": "string", "minLength": 1, "maxLength": 1000 } },
+                    "questions": { "type": "array", "maxItems": 32, "items": { "type": "string", "minLength": 1, "maxLength": 1000 } },
+                    "evidenceAssetIds": { "type": "array", "minItems": 1, "maxItems": 16, "items": { "type": "integer", "minimum": 1 } },
+                    "draftKey": { "type": "string", "minLength": 1, "maxLength": 128 }
+                },
+                "required": ["chapterId", "mainline", "evidenceAssetIds", "draftKey"],
+                "additionalProperties": false
+            }
+        })
+    } else if name == contract::TOOL_FINALIZE_CHAPTER_TASK {
+        json!({
+            "name": contract::TOOL_FINALIZE_CHAPTER_TASK,
+            "description": "Atomically validate and publish all chapters, revisions, and feed drafts belonging to the current Chapter Agent task.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                },
+                "required": [],
+                "additionalProperties": false
+            }
+        })
+    } else {
+        return None;
+    };
+    let mut tool = tool;
+    tool["annotations"] = json!({ "readOnlyHint": false });
+    Some(tool)
 }
 
 /// Tool JSON schemas keyed by the canonical directory in `lumina-core`.
@@ -247,6 +347,10 @@ fn tool_read_only_hint(name: &str) -> bool {
     )
 }
 fn tool_json(name: &str) -> Option<Value> {
+    chapter_tool_json(name).or_else(|| legacy_tool_json(name))
+}
+
+fn legacy_tool_json(name: &str) -> Option<Value> {
     use lumina_core::tool_contract as contract;
     if name == contract::TOOL_ENTITY_TIMELINE {
         let mut tool = json!({
@@ -459,6 +563,7 @@ fn tool_json(name: &str) -> Option<Value> {
 fn handle_tool_call_request(
     profile: McpToolProfile,
     snapshot: &LuminaMcpSnapshot,
+    chapter_task: Option<&ChapterTaskContext>,
     params: &Value,
 ) -> Result<Value, String> {
     let name = params
@@ -467,12 +572,17 @@ fn handle_tool_call_request(
         .ok_or_else(|| "tools/call missing name".to_string())?;
     // Policy runs before dispatch: a hand-written name for an unauthorized
     // tool is rejected instead of executed.
-    ToolPolicy::new(profile).check(snapshot, name)?;
+    let policy = if chapter_task.is_some() {
+        ToolPolicy::for_chapter_task(profile)
+    } else {
+        ToolPolicy::new(profile)
+    };
+    policy.check(snapshot, name)?;
     let args = params
         .get("arguments")
         .cloned()
         .unwrap_or_else(|| json!({}));
-    handle_tool_call(snapshot, name, &args)
+    handle_tool_call_with_context(snapshot, chapter_task, name, &args)
 }
 
 fn execute_tool_call(
@@ -531,11 +641,11 @@ fn dispatch_tool_call(profile: McpToolProfile, params: &Value) -> Result<Value, 
         return Ok(tool_error_result(&denied));
     }
 
-    let snapshot = load_snapshot().map_err(|message| {
+    let (snapshot, chapter_task) = load_snapshot_bundle().map_err(|message| {
         tracing::warn!(reason = %message, "lumina MCP snapshot unavailable");
         message
     })?;
-    match handle_tool_call_request(profile, &snapshot, params) {
+    match handle_tool_call_request(profile, &snapshot, chapter_task.as_ref(), params) {
         Ok(result) => Ok(result),
         Err(message) => {
             tracing::warn!(
@@ -643,10 +753,12 @@ fn tool_error_result(message: &str) -> Value {
     })
 }
 
-fn load_snapshot() -> Result<LuminaMcpSnapshot, String> {
+fn load_snapshot_bundle() -> Result<(LuminaMcpSnapshot, Option<ChapterTaskContext>), String> {
     let path = resolve_snapshot_path()
         .ok_or_else(|| "LUMINA_MCP_CONTEXT_FILE or cwd unavailable".to_string())?;
-    read_snapshot(&path)
+    let snapshot = read_snapshot(&path)?;
+    let chapter_task = read_chapter_task_context(&path)?;
+    Ok((snapshot, chapter_task))
 }
 
 fn success(id: Value, result: Value) -> Value {
@@ -664,7 +776,10 @@ fn error(id: Value, code: i64, message: &str) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::snapshot::{AgentCapabilities, LuminaMcpSnapshot, SNAPSHOT_SCHEMA_VERSION};
+    use crate::snapshot::{
+        sync_snapshot_capabilities, write_chapter_task_snapshot, AgentCapabilities,
+        ChapterTaskContext, LuminaMcpSnapshot, SNAPSHOT_SCHEMA_VERSION,
+    };
 
     #[test]
     fn tool_list_matches_canonical_contract() {
@@ -684,13 +799,42 @@ mod tests {
                 .and_then(Value::as_bool)
                 .expect("annotations.readOnlyHint must be present");
             let expected_read_only = *name != contract::TOOL_WRITE_SUBTITLE_TRACK
-                && *name != contract::TOOL_SEEK_PLAYBACK;
+                && *name != contract::TOOL_SEEK_PLAYBACK
+                && *name != contract::TOOL_CREATE_CHAPTER_OUTLINE
+                && *name != contract::TOOL_CAPTURE_CHAPTER_EVIDENCE
+                && *name != contract::TOOL_UPDATE_CHAPTER_DRAFT
+                && *name != contract::TOOL_FINALIZE_CHAPTER_TASK;
             assert_eq!(
                 read_only, expected_read_only,
                 "readOnlyHint wrong for {name}"
             );
         }
         assert!(tool_json("lumina_do_anything").is_none());
+        for name in [
+            contract::TOOL_CREATE_CHAPTER_OUTLINE,
+            contract::TOOL_CAPTURE_CHAPTER_EVIDENCE,
+            contract::TOOL_UPDATE_CHAPTER_DRAFT,
+            contract::TOOL_FINALIZE_CHAPTER_TASK,
+        ] {
+            let schema = tool_json(name).expect("chapter tool schema");
+            let properties = schema
+                .pointer("/inputSchema/properties")
+                .and_then(Value::as_object)
+                .expect("chapter tool properties");
+            for scope_key in ["taskId", "attemptId", "episodeId"] {
+                assert!(
+                    !properties.contains_key(scope_key),
+                    "chapter tool must derive {scope_key} from snapshot: {name}"
+                );
+            }
+            let required = schema
+                .pointer("/inputSchema/required")
+                .and_then(Value::as_array)
+                .expect("chapter tool required list");
+            for scope_key in ["taskId", "attemptId", "episodeId"] {
+                assert!(!required.iter().any(|value| value == scope_key));
+            }
+        }
         // Schema bounds mirror the canonical numeric contract.
         let window = tool_json(contract::TOOL_TRANSCRIPT_WINDOW).expect("window schema");
         let props = window
@@ -750,6 +894,12 @@ mod tests {
                             ..LuminaMcpSnapshot::empty()
                         };
                         super::super::policy::allowed_tool_names(McpToolProfile::Chat, &gated)
+                            .contains(name)
+                            || super::super::policy::allowed_tool_names_for_chapter_task(
+                                McpToolProfile::Chat,
+                                &gated,
+                                true,
+                            )
                             .contains(name)
                     },
                 "contract tool must be reachable via policy: {name}"
@@ -823,7 +973,7 @@ mod tests {
             online: None,
             updated_at_ms: 0,
         };
-        let tools = tools_list_result(McpToolProfile::Chat, &snapshot)
+        let tools = tools_list_result(McpToolProfile::Chat, &snapshot, false)
             .get("tools")
             .and_then(Value::as_array)
             .cloned()
@@ -843,6 +993,70 @@ mod tests {
     }
 
     #[test]
+    fn chapter_snapshot_sync_keeps_scope_for_tools_list() {
+        use lumina_core::tool_contract as contract;
+
+        let dir = std::env::temp_dir().join(format!(
+            "lumina-mcp-tools-list-chapter-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map(|duration| duration.as_nanos())
+                .unwrap_or_default()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        let path = dir.join("chapter-agent-context.json");
+        let context = ChapterTaskContext {
+            task_id: 41,
+            attempt_id: 42,
+            episode_id: 43,
+            database_path: r"C:\data\lumina.sqlite3".into(),
+            media_path: r"C:\videos\episode.mkv".into(),
+            duration_ms: 90_000,
+            spoiler_boundary: "episode".into(),
+            prompt_version: "chapter-v1".into(),
+        };
+
+        write_chapter_task_snapshot(&path, &LuminaMcpSnapshot::empty(), &context)
+            .expect("write chapter snapshot");
+        sync_snapshot_capabilities(&path, true).expect("sync chapter snapshot");
+        let snapshot = read_snapshot(&path).expect("read synced snapshot");
+        let chapter_task = read_chapter_task_context(&path)
+            .expect("read synced chapter scope")
+            .expect("chapter scope survives sync");
+        assert_eq!(chapter_task, context);
+
+        let chapter_tools = tools_list_result(McpToolProfile::Chat, &snapshot, true);
+        let names: Vec<_> = chapter_tools
+            .get("tools")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(|tool| tool.get("name").and_then(Value::as_str))
+            .collect();
+        for name in [
+            contract::TOOL_CREATE_CHAPTER_OUTLINE,
+            contract::TOOL_CAPTURE_CHAPTER_EVIDENCE,
+            contract::TOOL_UPDATE_CHAPTER_DRAFT,
+            contract::TOOL_FINALIZE_CHAPTER_TASK,
+        ] {
+            assert!(names.contains(&name), "chapter tool missing: {name}");
+        }
+
+        let ordinary_tools = tools_list_result(McpToolProfile::Chat, &snapshot, false);
+        let ordinary_names: Vec<_> = ordinary_tools
+            .get("tools")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(|tool| tool.get("name").and_then(Value::as_str))
+            .collect();
+        assert!(!ordinary_names.contains(&contract::TOOL_CREATE_CHAPTER_OUTLINE));
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
     fn tools_list_includes_workshop_tools_when_enabled() {
         let snapshot = LuminaMcpSnapshot {
             schema_version: SNAPSHOT_SCHEMA_VERSION,
@@ -858,7 +1072,7 @@ mod tests {
             online: None,
             updated_at_ms: 0,
         };
-        let tools = tools_list_result(McpToolProfile::Chat, &snapshot)
+        let tools = tools_list_result(McpToolProfile::Chat, &snapshot, false)
             .get("tools")
             .and_then(Value::as_array)
             .cloned()
@@ -887,7 +1101,7 @@ mod tests {
             online: None,
             updated_at_ms: 0,
         };
-        let tools = tools_list_result(McpToolProfile::Chat, &snapshot)
+        let tools = tools_list_result(McpToolProfile::Chat, &snapshot, false)
             .get("tools")
             .and_then(Value::as_array)
             .cloned()
@@ -917,7 +1131,7 @@ mod tests {
     }
 
     fn list_names(profile: McpToolProfile, snapshot: &LuminaMcpSnapshot) -> Vec<String> {
-        tools_list_result(profile, snapshot)
+        tools_list_result(profile, snapshot, false)
             .get("tools")
             .and_then(Value::as_array)
             .cloned()
@@ -953,6 +1167,7 @@ mod tests {
         let denied = handle_tool_call_request(
             McpToolProfile::NoTools,
             &snapshot,
+            None,
             &json!({"name": "lumina_get_transcript_window"}),
         )
         .expect_err("no-tools denies core tool");
@@ -961,6 +1176,7 @@ mod tests {
         let unknown = handle_tool_call_request(
             McpToolProfile::Chat,
             &snapshot,
+            None,
             &json!({"name": "lumina_do_anything"}),
         )
         .expect_err("unknown tool");
@@ -980,6 +1196,7 @@ mod tests {
         let denied = handle_tool_call_request(
             McpToolProfile::Chat,
             &snapshot,
+            None,
             &json!({"name": "lumina_capture_frames"}),
         )
         .expect_err("vision-gated call denied");
@@ -987,6 +1204,7 @@ mod tests {
         let denied = handle_tool_call_request(
             McpToolProfile::Chat,
             &snapshot,
+            None,
             &json!({"name": "lumina_write_subtitle_track"}),
         )
         .expect_err("workshop-gated call denied");

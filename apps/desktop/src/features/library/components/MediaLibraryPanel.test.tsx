@@ -3,6 +3,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/re
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { useLibrarySettingsStore } from "../settingsStore";
+import { LibrarySettingsPanel } from "./LibrarySettingsPanel";
 import { MediaLibraryPanel } from "./MediaLibraryPanel";
 
 vi.mock("@tauri-apps/api/core", () => ({
@@ -34,6 +35,17 @@ const PREVIEW = {
 };
 
 function renderPanel() {
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
+  return render(
+    <QueryClientProvider client={client}>
+      <LibrarySettingsPanel />
+    </QueryClientProvider>,
+  );
+}
+
+function renderWorkspace() {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
@@ -207,5 +219,15 @@ describe("MediaLibraryPanel pending groups", () => {
         vi.mocked(invoke).mock.calls.some(([cmd]) => cmd === "library_apply_tmdb_match"),
       ).toBe(true);
     });
+  });
+});
+
+describe("MediaLibraryPanel workspace", () => {
+  it("keeps library operations out of the presentation-only workspace", () => {
+    renderWorkspace();
+    expect(screen.getByText("影视库")).toBeInTheDocument();
+    expect(screen.queryByText("选择目录")).not.toBeInTheDocument();
+    expect(screen.queryByText("启动扫描")).not.toBeInTheDocument();
+    expect(screen.queryByText("智能匹配设置")).not.toBeInTheDocument();
   });
 });

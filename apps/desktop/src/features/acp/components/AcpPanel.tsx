@@ -925,6 +925,7 @@ export function AcpPanel() {
       const turn: ChatTurn = {
         ...createTurn(idSeq, text, anchorPositionMs),
         ...(images.length > 0 ? { images: [...images] } : null),
+        ...(taskId ? { shortcutTaskId: taskId } : null),
       };
       setTurns((prev) => [...prev, turn]);
 

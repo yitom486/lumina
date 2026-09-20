@@ -23,6 +23,7 @@ import { ChatToggleButton } from "@lumina/chat-ui/components/ChatToggleButton";
 import { usePlayerStore, useUiStore } from "@/features/player";
 import { errorMessage } from "@/lib/format";
 import { revealLogDir } from "@/lib/system";
+import luminaLogo from "../../src-tauri/icons/lumina-cat-source.png";
 
 const RELEASES_URL = "https://github.com/yitom486/lumina-app/releases";
 
@@ -162,13 +163,26 @@ export function AppShell({ children }: AppShellProps) {
   return (
     <div className="relative flex h-svh flex-col overflow-hidden bg-background text-foreground">
       {!fullscreen ? (
-        <header className="flex h-10 shrink-0 items-center gap-3 border-b border-border bg-card px-3">
-          <div className="flex min-w-0 items-baseline gap-2">
-            <p className="text-sm font-semibold tracking-tight">Lumina</p>
-            <p className="hidden text-xs text-muted-foreground sm:inline">
-              AI Video Reader
-            </p>
+        <header
+          aria-label="应用标题栏"
+          className="flex h-14 shrink-0 items-center gap-3 border-b border-border bg-surface-elevated px-3 shadow-sm"
+        >
+          <div className="flex min-w-0 shrink-0 items-center gap-2.5">
+            <img
+              src={luminaLogo}
+              alt="Lumina"
+              className="size-9 rounded-xl border border-ai/40 object-cover shadow-sm"
+            />
+            <div className="flex min-w-0 items-baseline gap-2">
+              <p className="text-base font-semibold tracking-tight text-surface-foreground">
+                Lumina
+              </p>
+              <p className="hidden text-xs text-muted-foreground sm:inline">
+                AI Video Reader
+              </p>
+            </div>
           </div>
+          <div aria-hidden="true" className="h-6 w-px shrink-0 bg-border" />
           <div className="flex min-w-0 flex-1 items-center justify-center gap-2 text-xs text-muted-foreground">
             <span className="truncate" title={fileLabel ?? undefined}>
               {fileLabel ?? "未打开文件"}

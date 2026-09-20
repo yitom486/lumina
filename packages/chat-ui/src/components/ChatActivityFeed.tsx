@@ -18,6 +18,7 @@ type Props = {
   streaming?: boolean;
   collapsible?: boolean;
   onRequestCollapse?: () => void;
+  liveLabel?: string;
 };
 
 export function ChatActivityFeed({
@@ -25,6 +26,7 @@ export function ChatActivityFeed({
   streaming,
   collapsible,
   onRequestCollapse,
+  liveLabel,
 }: Props) {
   if (activities.length === 0) return null;
 
@@ -57,7 +59,7 @@ export function ChatActivityFeed({
           collapsible={Boolean(collapsible && !live && item.kind === "tool")}
         />
       ))}
-      {live ? (
+      {live && !liveLabel ? (
         <ChatWaitingDots
           label={toolsActive ? "工具执行中" : waitingLabel(activities)}
           className="pt-0.5"
@@ -81,7 +83,7 @@ function ActivityRow({
       <div className="text-muted-foreground">
         <span className="inline-flex items-center gap-1.5 font-medium text-foreground/80">
           {live ? <span className="chat-tool-orbit" aria-hidden /> : null}
-          思考
+          {item.title ?? "思考"}
         </span>
         <p className="mt-0.5 line-clamp-6 whitespace-pre-wrap break-words">
           {item.text?.trim() || "…"}
@@ -95,7 +97,7 @@ function ActivityRow({
       <div>
         <span className="inline-flex items-center gap-1.5 font-medium text-foreground/80">
           {live ? <span className="chat-tool-orbit" aria-hidden /> : null}
-          计划
+          {item.title ?? "计划"}
         </span>
         <pre className="mt-0.5 max-h-32 overflow-auto whitespace-pre-wrap break-words font-sans text-muted-foreground">
           {item.text}
@@ -137,7 +139,7 @@ function ToolActivityRow({
         "flex items-start gap-2 rounded-md px-1 py-1",
         live && running && "chat-tool-row-active",
         failed && "bg-destructive/5",
-        succeeded && !failed && "bg-emerald-500/5",
+        succeeded && !failed && "bg-success/5",
       )}
     >
       {live && running ? (
@@ -166,7 +168,7 @@ function ToolActivityRow({
                 className={cn(
                   "text-[10px]",
                   failed && "text-destructive",
-                  succeeded && "text-emerald-600 dark:text-emerald-400",
+                  succeeded && "text-success",
                   !failed && !succeeded && "text-muted-foreground",
                 )}
               >
@@ -206,7 +208,7 @@ function ToolActivityRow({
           </pre>
         ) : null}
 
-        {!collapsible && item.text && !failed && !detailOpen ? (
+        {!collapsible && item.text && !failed && !detailOpen && !summary ? (
           <p className="mt-0.5 line-clamp-4 whitespace-pre-wrap break-words text-[10px] leading-relaxed text-muted-foreground">
             {parsedDetail ?? item.text}
           </p>
@@ -217,17 +219,17 @@ function ToolActivityRow({
 }
 
 function toolStatusColor(status?: string, running?: boolean): string {
-  if (running) return "bg-amber-400 animate-pulse";
+  if (running) return "bg-warning animate-pulse";
   switch (status) {
     case "completed":
     case "success":
-      return "bg-emerald-500";
+      return "bg-success";
     case "failed":
     case "error":
       return "bg-destructive";
     case "in_progress":
     case "running":
-      return "bg-amber-500 animate-pulse";
+      return "bg-warning animate-pulse";
     default:
       return "bg-muted-foreground/60";
   }

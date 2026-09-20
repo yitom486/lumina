@@ -9,7 +9,63 @@ import { OnlineSourceSettings } from "@/features/ytdl/components/OnlineSourceSet
 import { usePlayerStore } from "@/features/player";
 import { getCachedYtdlResolve } from "../api";
 
-export function OnlineSourcePanel() {
+export type OnlineSourcePanelView = "workspace" | "settings";
+
+export function OnlineSourcePanel({
+  view = "workspace",
+}: {
+  view?: OnlineSourcePanelView;
+}) {
+  return view === "settings" ? (
+    <OnlineSettingsContent />
+  ) : (
+    <OnlineWorkspaceContent />
+  );
+}
+
+function OnlineWorkspaceContent() {
+  const busy = usePlayerStore((s) => s.busy);
+  const statusMessage = usePlayerStore((s) => s.statusMessage);
+  const status = usePlayerStore((s) => s.status);
+  const currentFile = usePlayerStore((s) => s.currentFile);
+  const sourceKind = usePlayerStore((s) => s.sourceKind);
+
+  const playingRemote =
+    sourceKind === "remote" && Boolean(currentFile) && status !== "Error";
+  const mediaQuery = useQuery({
+    queryKey: ytdlResolveKey(currentFile),
+    queryFn: () => getCachedYtdlResolve(currentFile as string),
+    enabled: playingRemote,
+    staleTime: Infinity,
+  });
+
+  return (
+    <section className="flex min-h-0 flex-1 flex-col overflow-y-auto p-3 text-xs">
+      <h2 className="text-sm font-medium">在线资源</h2>
+      <p className="mt-1 text-muted-foreground">
+        在线 URL、下载和解析配置已集中到设置；此处只显示当前真实在线媒体状态。
+      </p>
+      {playingRemote ? (
+        <div className="mt-3 space-y-1 rounded-md border border-border/70 bg-muted/20 p-3 text-muted-foreground">
+          <p className="truncate">当前在线源：{currentFile}</p>
+          {mediaQuery.data ? (
+            <p>
+              {mediaQuery.data.title ?? "在线视频"} · {mediaQuery.data.chapters.length} 个章节 · {mediaQuery.data.subtitles.length} 条字幕轨道
+            </p>
+          ) : (
+            <p>{busy ? "正在读取在线媒体信息…" : statusMessage ?? "在线媒体已打开"}</p>
+          )}
+        </div>
+      ) : (
+        <p className="mt-3 text-muted-foreground">
+          尚未打开在线媒体；请在设置的「在线资源」中输入 URL。
+        </p>
+      )}
+    </section>
+  );
+}
+
+function OnlineSettingsContent() {
   const busy = usePlayerStore((s) => s.busy);
   const openUrl = usePlayerStore((s) => s.openUrl);
   const statusMessage = usePlayerStore((s) => s.statusMessage);
@@ -26,7 +82,6 @@ export function OnlineSourcePanel() {
     if (!canSubmit || busy) return;
     const submitted = url.trim();
     await openUrl(submitted);
-    // Keep URL on failure so the user can retry after installing / cookies.
     if (usePlayerStore.getState().status !== "Error") {
       setUrl("");
     }

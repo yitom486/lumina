@@ -21,6 +21,7 @@ export * from "./components/composerFocus";
 export * from "./components/ChatWaitingDots";
 export * from "./components/ChatShell";
 export * from "./components/ChatActivityFeed";
+export * from "./presentationPolicy";
 export * from "./components/CompanionModeTabs";
 export * from "./components/ChatComposer";
 export * from "./components/ChatHistorySheet";

@@ -5,27 +5,37 @@
  *   ├─ header (+ ChatToggleButton: ★ + chat, parallel chrome)
  *   └─ main
  *      ├─ row
- *      │   ├─ column (min-w-0 flex-1)
+ *      │   ├─ player column (min-w-0 flex-1; omitted from the normal DOM flow while Settings is active)
  *      │   │   ├─ VideoSurface  ← ONLY this rect maps to libmpv HWND
  *      │   │   └─ PlayerBar     ← HTML only (transport / seek / volume)
  *      │   │   (fullscreen: pt-12 top strip + hover chrome above HWND)
- *      │   └─ aside (sidebar)   ← playlist / transcript / notes / chapters / online
+ *      │   ├─ SettingsWorkspaceFrame ← Settings replaces the player workspace when non-fullscreen
+ *      │   ├─ aside (sidebar)   ← playlist / transcript / notes / chapters / library
  *      │   └─ ChatDock           ← layout sibling; never overlays the HWND
  *
  * Never put upward-opening menus or center dialogs on PlayerBar — HWND always
- * paints above WebView. Online URL entry lives in the sidebar「在线」tab.
+ * paints above WebView. Online resource settings live under Settings.
  */
+
+import { useEffect, useState } from "react";
 
 import { PanelErrorBoundary } from "@/components/PanelErrorBoundary";
 import { AppShell } from "@/layouts/AppShell";
 import { FullscreenTopChrome } from "@/layouts/FullscreenTopChrome";
 import { WorkspacePanelFrame } from "@/layouts/WorkspacePanelFrame";
 import { WorkspaceRail, type WorkspaceRailItem } from "@/layouts/WorkspaceRail";
+import {
+  SettingsWorkspaceFrame,
+} from "@/layouts/SettingsWorkspaceFrame";
 import { ChatDock } from "@/features/acp/components/ChatDock";
 import { useChatUiStore } from "@lumina/chat-ui/chatUiStore";
 import { ChaptersPanel } from "@/features/chapters";
 import { MediaInfoPanel } from "@/features/media";
 import { MediaLibraryPanel, useLibraryPlaybackRootSync } from "@/features/library";
+import {
+  SettingsContent,
+  type SettingsCategoryId,
+} from "@/features/settings";
 import { NotesPanel } from "@/features/notes";
 import {
   PlayerBar,
@@ -42,26 +52,39 @@ import {
   VideoSurface,
 } from "@/features/player";
 import { TranscriptPanel } from "@/features/transcript";
-import { OnlineSourcePanel } from "@/features/ytdl/components/OnlineSourcePanel";
 import { TooltipProvider } from "@lumina/ui/tooltip";
 import { cn } from "@lumina/ui/utils";
 import {
   FileText,
-  Globe2,
   Layers3,
   Library,
   ListVideo,
+  Settings,
   StickyNote,
 } from "lucide-react";
 
-const TABS: readonly WorkspaceRailItem[] = [
+export const WORKSPACE_RAIL_ITEMS: readonly WorkspaceRailItem[] = [
   { id: "playlist", label: "选集列表", icon: ListVideo },
   { id: "transcript", label: "文稿", icon: FileText },
   { id: "notes", label: "笔记", icon: StickyNote },
   { id: "chapters", label: "章节", icon: Layers3 },
   { id: "library", label: "媒体库", icon: Library },
-  { id: "online", label: "在线资源", icon: Globe2 },
+  { id: "settings", label: "设置", icon: Settings },
 ];
+
+export function isSettingsWorkspace(
+  fullscreen: boolean,
+  sidebarTab: SidebarTab,
+): boolean {
+  return !fullscreen && sidebarTab === "settings";
+}
+
+export function shouldRenderPlayerWorkspace(
+  fullscreen: boolean,
+  sidebarTab: SidebarTab,
+): boolean {
+  return !isSettingsWorkspace(fullscreen, sidebarTab);
+}
 
 function SidebarTabPanel({ tab }: { tab: SidebarTab }) {
   switch (tab) {
@@ -94,7 +117,9 @@ function SidebarTabPanel({ tab }: { tab: SidebarTab }) {
     case "library":
       return <MediaLibraryPanel />;
     case "online":
-      return <OnlineSourcePanel />;
+      return null;
+    case "settings":
+      return null;
     default:
       return null;
   }
@@ -113,9 +138,18 @@ export default function App() {
   const sidebarTab = useUiStore((s) => s.sidebarTab);
   const setSidebarTab = useUiStore((s) => s.setSidebarTab);
   const chatOpen = useChatUiStore((s) => s.chatOpen);
-  const activeTab = TABS.find((tab) => tab.id === sidebarTab);
+  const closeChat = useChatUiStore((s) => s.closeChat);
+  const [settingsCategory, setSettingsCategory] =
+    useState<SettingsCategoryId>("playback");
+  const settingsWorkspace = isSettingsWorkspace(fullscreen, sidebarTab);
+  const playerWorkspace = shouldRenderPlayerWorkspace(fullscreen, sidebarTab);
+  const activeTab = WORKSPACE_RAIL_ITEMS.find((tab) => tab.id === sidebarTab);
 
   const ActiveTabIcon = activeTab?.icon;
+
+  useEffect(() => {
+    if (settingsWorkspace) closeChat();
+  }, [closeChat, settingsWorkspace]);
 
   return (
     <TooltipProvider delayDuration={400}>
@@ -125,30 +159,47 @@ export default function App() {
           <div className="flex min-h-0 flex-1 overflow-hidden">
             {!fullscreen ? (
               <WorkspaceRail
-                items={TABS}
+                items={WORKSPACE_RAIL_ITEMS}
                 activeTab={sidebarTab}
                 onSelect={setSidebarTab}
               />
             ) : null}
 
-            <PanelErrorBoundary
-              scope="playback"
-              panelLabel="播放区域"
-              className="relative z-0 flex min-h-0 min-w-0 flex-1 flex-col"
-            >
-              <div
-                className={cn(
-                  "relative flex min-h-0 min-w-0 flex-1 flex-col",
-                  fullscreen && "pt-12",
-                )}
+            {playerWorkspace ? (
+              <PanelErrorBoundary
+                scope="playback"
+                panelLabel="播放区域"
+                className="relative z-0 flex min-h-0 min-w-0 flex-1 flex-col"
               >
-                {fullscreen ? <FullscreenTopChrome /> : null}
+                <div
+                  className={cn(
+                    "relative flex min-h-0 min-w-0 flex-1 flex-col",
+                    fullscreen && "pt-12",
+                  )}
+                >
+                  {fullscreen ? <FullscreenTopChrome /> : null}
+                  <VideoSurface />
+                  <PlayerBar />
+                </div>
+              </PanelErrorBoundary>
+            ) : (
+              <div className="hidden" aria-hidden="true">
+                {/* The hook still reports a deterministic 0×0 HWND rectangle. */}
                 <VideoSurface />
-                <PlayerBar />
               </div>
-            </PanelErrorBoundary>
+            )}
 
-            {!fullscreen && !chatOpen ? (
+            {settingsWorkspace ? (
+              <SettingsWorkspaceFrame
+                activeCategory={settingsCategory}
+                onCategoryChange={setSettingsCategory}
+                renderContent={(category) => (
+                  <SettingsContent category={category} />
+                )}
+              />
+            ) : null}
+
+            {!fullscreen && !chatOpen && !settingsWorkspace ? (
               <WorkspacePanelFrame
                 title={activeTab?.label ?? "工作区"}
                 subtitle="与播放器并行的阅读面板"
@@ -166,7 +217,12 @@ export default function App() {
               </WorkspacePanelFrame>
             ) : null}
 
-            <ChatDock />
+            <div
+              className={cn("contents", settingsWorkspace && "hidden")}
+              aria-hidden={settingsWorkspace || undefined}
+            >
+              <ChatDock />
+            </div>
           </div>
         </div>
       </AppShell>

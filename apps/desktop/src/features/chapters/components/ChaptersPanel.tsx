@@ -6,7 +6,8 @@ import { ytdlResolveKey } from "@lumina/query-keys";
 import { getCachedYtdlResolve } from "@/features/ytdl";
 import { formatTime } from "@/lib/format";
 import type { MediaChapter } from "@lumina/contracts";
-import { parseGeneratedChapters } from "../api";
+import { parseDraftChapters } from "../api";
+import type { ChapterDraftSnapshot } from "../api";
 import { useChapterSegmentation } from "../hooks/useChapterSegmentation";
 
 export type AiSegmentationStatus =
@@ -70,6 +71,16 @@ export function ChaptersPanel({
       return <div className="p-3 text-xs text-muted-foreground">正在读取在线章节…</div>;
     }
     if (onlineChapters.length === 0) {
+      const draftChapters = parseDraftChapters(segmentation.snapshot);
+      if (draftChapters.length > 0) {
+        return (
+          <ChapterDraftList
+            chapters={draftChapters}
+            positionMs={positionMs}
+            seek={seek}
+          />
+        );
+      }
       return (
         <EmptyChaptersState
           onStartAiSegmentation={startSegmentation}
@@ -103,12 +114,12 @@ export function ChaptersPanel({
   }
 
   const chapters = data?.chapters ?? [];
-  const generatedChapters = parseGeneratedChapters(segmentation.snapshot);
+  const draftChapters = parseDraftChapters(segmentation.snapshot);
   if (chapters.length === 0) {
-    if (generatedChapters.length > 0) {
+    if (draftChapters.length > 0) {
       return (
-        <ChapterList
-          chapters={generatedChapters}
+        <ChapterDraftList
+          chapters={draftChapters}
           positionMs={positionMs}
           seek={seek}
         />
@@ -279,4 +290,62 @@ function ChapterList({
       })}
     </div>
   );
+}
+
+function ChapterDraftList({
+  chapters,
+  positionMs,
+  seek,
+}: {
+  chapters: ChapterDraftSnapshot[];
+  positionMs: number;
+  seek: (ms: number) => unknown;
+}) {
+  return (
+    <div className="min-h-0 flex-1 space-y-2 overflow-auto p-3">
+      <div className="text-xs text-muted-foreground">
+        AI 章节草稿 · 已从任务大纲持久化
+      </div>
+      {chapters.map((chapter, index) => {
+        const active = positionMs >= chapter.startMs && positionMs < chapter.endMs;
+        return (
+          <button
+            key={`${chapter.id}-${chapter.updatedAtMs}`}
+            type="button"
+            className={
+              active
+                ? "flex w-full items-start gap-2 rounded-md bg-accent px-2 py-1.5 text-left text-xs"
+                : "flex w-full items-start gap-2 rounded-md px-2 py-1.5 text-left text-xs hover:bg-muted"
+            }
+            onClick={() => void seek(chapter.startMs)}
+          >
+            <span className="shrink-0 font-mono text-primary">
+              {formatTime(chapter.startMs)}
+            </span>
+            <span className="min-w-0 flex-1 space-y-0.5">
+              <span className="block">
+                {chapter.title?.trim() || `章节 ${index + 1}`}
+              </span>
+              <span className="block text-[11px] text-muted-foreground">
+                {chapterDraftStatusLabel(chapter.status)}
+              </span>
+            </span>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+function chapterDraftStatusLabel(status: ChapterDraftSnapshot["status"]): string {
+  switch (status) {
+    case "waiting_evidence":
+      return "等待取证";
+    case "analyzing":
+      return "分析中";
+    case "generated":
+      return "已生成";
+    case "validation_failed":
+      return "校验失败";
+  }
 }

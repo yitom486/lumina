@@ -43,6 +43,23 @@ export type ChapterSegmentationRequest = {
 
 export type ChapterRetryAction = "retry" | "configure_agent";
 
+export type ChapterDraftStatus =
+  | "waiting_evidence"
+  | "analyzing"
+  | "generated"
+  | "validation_failed";
+
+export type ChapterDraftSnapshot = {
+  id: number;
+  stableId: string;
+  startMs: number;
+  endMs: number;
+  title: string | null;
+  mainline: string | null;
+  status: ChapterDraftStatus;
+  updatedAtMs: number;
+};
+
 export type ChapterSegmentationSnapshot = {
   id: number;
   taskKey: string;
@@ -64,6 +81,7 @@ export type ChapterSegmentationSnapshot = {
   retryAction: ChapterRetryAction | null;
   agentConfigured: boolean;
   outputJson: string | null;
+  draftChapters: ChapterDraftSnapshot[];
   createdAtMs: number;
   updatedAtMs: number;
 };
@@ -122,7 +140,20 @@ export type ChapterCommandError = {
   details?: unknown;
 };
 
-/** Parse only the validated chapter projection returned by the backend. */
+/**
+ * Read the durable chapter outline projection.  The outline is available
+ * while the task is still running; it does not depend on assistant output.
+ */
+export function parseDraftChapters(
+  snapshot: ChapterSegmentationSnapshot | undefined,
+): ChapterDraftSnapshot[] {
+  return snapshot?.draftChapters ?? [];
+}
+
+/**
+ * Legacy compatibility parser.  The chapters panel no longer uses this
+ * outputJson path; it remains only for old persisted tasks during migration.
+ */
 export function parseGeneratedChapters(
   snapshot: ChapterSegmentationSnapshot | undefined,
 ): MediaChapter[] {

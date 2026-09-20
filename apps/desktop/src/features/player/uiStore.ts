@@ -12,7 +12,8 @@ export type SidebarTab =
   | "notes"
   | "chapters"
   | "library"
-  | "online";
+  | "online"
+  | "settings";
 
 type UiState = {
   fullscreen: boolean;

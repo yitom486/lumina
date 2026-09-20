@@ -75,4 +75,29 @@ describe("WorkspaceRail", () => {
       "true",
     );
   });
+
+  it("exposes the active workspace as the current page and keeps labels visible", () => {
+    render(
+      <TooltipProvider>
+        <WorkspaceRail
+          items={[
+            { id: "transcript", label: "文稿", icon: FileText },
+            { id: "settings", label: "设置", icon: FileText },
+          ]}
+          activeTab="settings"
+          onSelect={() => {}}
+        />
+      </TooltipProvider>,
+    );
+
+    expect(screen.getByRole("button", { name: "设置" })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
+    expect(screen.getByRole("button", { name: "设置" })).toHaveAttribute(
+      "data-active",
+      "true",
+    );
+    expect(screen.getByText("设置")).toBeInTheDocument();
+  });
 });

@@ -63,7 +63,14 @@ function isProofreadSnapshot(snapshot: WorkshopJobSnapshot): boolean {
   );
 }
 
-export function TranscriptPanel() {
+export type TranscriptPanelView = "reading" | "workshop";
+
+export function TranscriptPanel({
+  view = "reading",
+}: {
+  view?: TranscriptPanelView;
+}) {
+  const workshopOnly = view === "workshop";
   const queryClient = useQueryClient();
   const path = usePlayerStore((s) => s.currentFile);
   const status = usePlayerStore((s) => s.status);
@@ -650,7 +657,7 @@ export function TranscriptPanel() {
     }
   }
 
-  if (!mediaReady) {
+  if (!mediaReady && !workshopOnly) {
     return (
       <section className="flex min-h-0 flex-1 flex-col px-3 py-3 text-sm text-muted-foreground">
         <p className="mt-1 text-xs leading-relaxed">
@@ -715,6 +722,8 @@ export function TranscriptPanel() {
   return (
     <section className="flex min-h-0 flex-1 flex-col overflow-y-auto">
       <div className="flex shrink-0 flex-col gap-2 border-b border-border px-3 py-2">
+        {!workshopOnly ? (
+          <>
         <div className="flex items-center justify-between gap-2">
           <p className="text-sm font-medium">文稿</p>
           <div className="flex items-center gap-1">
@@ -788,7 +797,12 @@ export function TranscriptPanel() {
           </select>
         </label>
 
-        {!isRemotePath ? (
+          </>
+        ) : null}
+
+        {workshopOnly ? (
+          <>
+        {mediaReady && !isRemotePath ? (
           <OnlineSubtitleSection
             mediaPath={path as string}
             audioLanguage={audioLanguage}
@@ -796,7 +810,6 @@ export function TranscriptPanel() {
             onDownloaded={(downloadedId) => void handleDownloadedSubtitle(downloadedId)}
           />
         ) : null}
-
         <div className="flex flex-wrap items-end gap-2">
           <label className="flex min-w-[7rem] flex-1 flex-col gap-1 text-xs">
             <span className="text-muted-foreground">ASR 范围</span>
@@ -1135,9 +1148,11 @@ export function TranscriptPanel() {
               : ""}
           </p>
         ) : null}
+          </>
+        ) : null}
       </div>
 
-      {listCollapsed ? (
+      {!workshopOnly && (listCollapsed ? (
         <button
           type="button"
           className="mx-2 mt-1 shrink-0 rounded-md border border-border/50 px-2 py-1.5 text-left text-xs text-muted-foreground"
@@ -1274,7 +1289,7 @@ export function TranscriptPanel() {
           ) : null}
         </div>
       </ScrollArea>
-      )}
+      ))}
     </section>
   );
 }

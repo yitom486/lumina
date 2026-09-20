@@ -5,6 +5,7 @@ import { invoke } from "@tauri-apps/api/core";
 import {
   chapterEpisodeIdentityFromLibraryContext,
   getChapterSegmentationStatus,
+  parseDraftChapters,
   parseGeneratedChapters,
   startChapterSegmentation,
   type ChapterSegmentationSnapshot,
@@ -30,7 +31,7 @@ const snapshot: ChapterSegmentationSnapshot = {
   status: "pending",
   sessionId: null,
   promptVersion: "1.0",
-  outputContractVersion: "chapter_segment.v1",
+  outputContractVersion: "chapter_tool_workflow.v1",
   attemptCount: 0,
   retryCount: 0,
   maxAttempts: 3,
@@ -41,6 +42,7 @@ const snapshot: ChapterSegmentationSnapshot = {
   retryAction: null,
   agentConfigured: true,
   outputJson: null,
+  draftChapters: [],
   createdAtMs: 1,
   updatedAtMs: 1,
 };
@@ -80,6 +82,28 @@ describe("chapter segmentation API", () => {
       }),
     ).toEqual([{ id: 1, title: "开场", startMs: 0, endMs: 1_200 }]);
     expect(parseGeneratedChapters(snapshot)).toEqual([]);
+  });
+
+  it("projects durable draft chapters before task success", () => {
+    const drafts = [
+      {
+        id: 12,
+        stableId: "chapter-01",
+        startMs: 0,
+        endMs: 30_000,
+        title: "开场",
+        mainline: null,
+        status: "waiting_evidence" as const,
+        updatedAtMs: 2,
+      },
+    ];
+    expect(
+      parseDraftChapters({
+        ...snapshot,
+        status: "running",
+        draftChapters: drafts,
+      }),
+    ).toEqual(drafts);
   });
 
   it("derives authoritative identity only from complete matched TV episode metadata", () => {

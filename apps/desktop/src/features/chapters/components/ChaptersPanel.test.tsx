@@ -26,7 +26,7 @@ const segmentationSnapshot = {
   status: "pending",
   sessionId: null,
   promptVersion: "1.0",
-  outputContractVersion: "chapter_segment.v1",
+  outputContractVersion: "chapter_tool_workflow.v1",
   attemptCount: 0,
   retryCount: 0,
   maxAttempts: 3,
@@ -36,6 +36,8 @@ const segmentationSnapshot = {
   canRetry: false,
   retryAction: null,
   agentConfigured: true,
+  outputJson: null,
+  draftChapters: [],
   createdAtMs: 1,
   updatedAtMs: 1,
 };
@@ -84,6 +86,41 @@ afterEach(() => {
 });
 
 describe("ChaptersPanel container chapters and AI entry", () => {
+  it("renders the durable outline skeleton while the task is still running", async () => {
+    const draftChapters = [
+      {
+        id: 12,
+        stableId: "chapter-01",
+        startMs: 0,
+        endMs: 30_000,
+        title: "开场",
+        mainline: null,
+        status: "waiting_evidence",
+        updatedAtMs: 2,
+      },
+    ];
+    vi.mocked(invoke).mockImplementation((cmd: string) => {
+      if (cmd === "media_inspect")
+        return Promise.resolve({ path: "C:\\v\\a.mp4", streams: [], chapters: [] });
+      if (cmd === "library_context_for_media") return Promise.resolve(null);
+      if (cmd === "chapter_segmentation_status")
+        return Promise.resolve({
+          ...segmentationSnapshot,
+          status: "running",
+          draftChapters,
+        });
+      return Promise.resolve(null);
+    });
+
+    renderPanel();
+
+    await waitFor(() => {
+      expect(screen.getByText("开场")).toBeInTheDocument();
+      expect(screen.getByText("等待取证")).toBeInTheDocument();
+    });
+    expect(screen.getByText(/AI 章节草稿/)).toBeInTheDocument();
+  });
+
   it("shows the no-chapter reminder and does not auto-start AI segmentation by default", async () => {
     const onStartAiSegmentation = vi.fn();
     renderPanel({ onStartAiSegmentation });

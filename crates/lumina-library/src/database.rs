@@ -14,7 +14,7 @@ use rusqlite::{params, Connection, OptionalExtension};
 use crate::model::{GroupResolution, LibraryIndex, MediaGroupKind, MetadataMediaType};
 
 /// The latest migration included in this crate.
-pub const CURRENT_SCHEMA_VERSION: u32 = 2;
+pub const CURRENT_SCHEMA_VERSION: u32 = 3;
 
 const BUSY_TIMEOUT: Duration = Duration::from_secs(5);
 
@@ -224,6 +224,33 @@ impl Database {
                         DatabaseErrorCode::MigrationFailed,
                         "应用数据存储初始化失败，请重试",
                         "record output migration",
+                        error,
+                    )
+                })?;
+        }
+
+        if current_version < 3 {
+            transaction
+                .execute_batch(MIGRATION_3_SQL)
+                .map_err(|error| {
+                    DatabaseError::sqlite(
+                        DatabaseErrorCode::MigrationFailed,
+                        "应用数据存储初始化失败，请重试",
+                        "add chapter task scope migration",
+                        error,
+                    )
+                })?;
+            transaction
+                .execute(
+                    "INSERT OR IGNORE INTO schema_migrations(version, applied_at_ms)
+                     VALUES (?1, ?2)",
+                    params![3_i64, now_ms()],
+                )
+                .map_err(|error| {
+                    DatabaseError::sqlite(
+                        DatabaseErrorCode::MigrationFailed,
+                        "应用数据存储初始化失败，请重试",
+                        "record chapter task scope migration",
                         error,
                     )
                 })?;
@@ -1041,6 +1068,220 @@ impl Repository<'_> {
             .map_err(|error| map_read_error("read chapters by episode", error))
     }
 
+    /// Return one chapter by its episode-local stable id.
+    pub fn get_chapter_by_stable_id(
+        &self,
+        episode_id: i64,
+        stable_id: &str,
+    ) -> DatabaseResult<Option<ChapterRecord>> {
+        require_text(stable_id, "章节标识不能为空")?;
+        self.connection
+            .query_row(
+                "SELECT id, episode_id, stable_id, source, start_ms, end_ms,
+                        spoiler_level, title, mainline, status, created_at_ms, updated_at_ms
+                 FROM episode_chapters
+                 WHERE episode_id = ?1 AND stable_id = ?2",
+                params![episode_id, stable_id],
+                map_chapter_row,
+            )
+            .optional()
+            .map_err(|error| map_read_error("read chapter by stable id", error))
+    }
+
+    /// Assert and record the task-to-chapter relationship used by Chapter
+    /// Agent tools.  The relationship is separate from `agent_tasks.chapter_id`
+    /// because one outline task may own more than one chapter.
+    pub fn ensure_agent_task_chapter_scope(
+        &self,
+        task_id: i64,
+        episode_id: i64,
+        chapter_id: i64,
+    ) -> DatabaseResult<()> {
+        let task = self
+            .get_agent_task(task_id)?
+            .ok_or_else(|| DatabaseError::invalid_input("章节任务不存在"))?;
+        if !task.task_type.starts_with("chapter") || task.episode_id != Some(episode_id) {
+            return Err(DatabaseError::invalid_input("章节任务与集数不匹配"));
+        }
+        let chapter = self
+            .get_chapter(chapter_id)?
+            .ok_or_else(|| DatabaseError::invalid_input("章节不存在"))?;
+        if chapter.episode_id != episode_id {
+            return Err(DatabaseError::invalid_input("章节不属于当前集数"));
+        }
+
+        let other_task = self
+            .connection
+            .query_row(
+                "SELECT task_id FROM agent_task_chapters
+                 WHERE chapter_id = ?1 AND task_id <> ?2
+                 LIMIT 1",
+                params![chapter_id, task_id],
+                |row| row.get::<_, i64>(0),
+            )
+            .optional()
+            .map_err(|error| map_read_error("read chapter task ownership", error))?;
+        if other_task.is_some() {
+            return Err(DatabaseError::invalid_input("章节已属于其他章节任务"));
+        }
+
+        self.connection
+            .execute(
+                "INSERT OR IGNORE INTO agent_task_chapters(task_id, chapter_id, created_at_ms)
+                 VALUES (?1, ?2, ?3)",
+                params![task_id, chapter_id, now_ms()],
+            )
+            .map(|_| ())
+            .map_err(|error| map_write_error("link chapter task scope", error))
+    }
+
+    pub fn list_chapters_by_agent_task(
+        &self,
+        task_id: i64,
+        episode_id: i64,
+    ) -> DatabaseResult<Vec<ChapterRecord>> {
+        let mut statement = self
+            .connection
+            .prepare(
+                "SELECT c.id, c.episode_id, c.stable_id, c.source, c.start_ms, c.end_ms,
+                        c.spoiler_level, c.title, c.mainline, c.status,
+                        c.created_at_ms, c.updated_at_ms
+                 FROM episode_chapters c
+                 INNER JOIN agent_task_chapters tc ON tc.chapter_id = c.id
+                 WHERE tc.task_id = ?1 AND c.episode_id = ?2
+                 ORDER BY c.start_ms ASC, c.end_ms ASC, c.id ASC",
+            )
+            .map_err(|error| map_read_error("prepare chapters by agent task", error))?;
+        let rows = statement
+            .query_map(params![task_id, episode_id], map_chapter_row)
+            .map_err(|error| map_read_error("list chapters by agent task", error))?;
+        rows.collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(|error| map_read_error("read chapters by agent task", error))
+    }
+
+    /// Replace the draft chapter set owned by a task. Chapters omitted by a
+    /// newer outline are removed only while still draft; published rows are
+    /// protected so a retry cannot silently rewrite history.
+    pub fn replace_agent_task_chapter_outline(
+        &self,
+        task_id: i64,
+        episode_id: i64,
+        keep_chapter_ids: &[i64],
+    ) -> DatabaseResult<()> {
+        let chapters = self.list_chapters_by_agent_task(task_id, episode_id)?;
+        for chapter in chapters {
+            if keep_chapter_ids.contains(&chapter.id) {
+                continue;
+            }
+            if matches!(chapter.status.as_str(), "ready" | "published" | "accepted") {
+                return Err(DatabaseError::invalid_input("已发布章节不能从大纲中移除"));
+            }
+            self.connection
+                .execute(
+                    "DELETE FROM episode_chapters
+                     WHERE id = ?1 AND episode_id = ?2 AND status = 'draft'",
+                    params![chapter.id, episode_id],
+                )
+                .map_err(|error| map_write_error("remove stale draft chapter", error))?;
+        }
+        Ok(())
+    }
+
+    /// Idempotently create or update a draft outline row and attach it to the
+    /// task.  Published chapters cannot be rewritten by an outline retry.
+    pub fn upsert_draft_chapter_for_agent_task(
+        &self,
+        task_id: i64,
+        episode_id: i64,
+        input: &NewChapter,
+    ) -> DatabaseResult<ChapterRecord> {
+        if input.episode_id != episode_id {
+            return Err(DatabaseError::invalid_input("章节不属于当前集数"));
+        }
+        validate_time_bounds(input.start_ms, input.end_ms)?;
+        require_text(&input.stable_id, "章节标识不能为空")?;
+        require_text(&input.source, "章节来源不能为空")?;
+        require_text(&input.spoiler_level, "章节剧透等级不能为空")?;
+        let existing = self.get_chapter_by_stable_id(episode_id, &input.stable_id)?;
+        let chapter_id = if let Some(chapter) = existing {
+            self.ensure_agent_task_chapter_scope(task_id, episode_id, chapter.id)?;
+            if matches!(chapter.status.as_str(), "ready" | "published" | "accepted") {
+                return Err(DatabaseError::invalid_input("已发布章节不能被大纲重写"));
+            }
+            self.connection
+                .execute(
+                    "UPDATE episode_chapters
+                     SET source = ?1, start_ms = ?2, end_ms = ?3, spoiler_level = ?4,
+                         title = ?5, status = 'draft', updated_at_ms = ?6
+                     WHERE id = ?7",
+                    params![
+                        input.source,
+                        input.start_ms,
+                        input.end_ms,
+                        input.spoiler_level,
+                        input.title,
+                        now_ms(),
+                        chapter.id,
+                    ],
+                )
+                .map_err(|error| map_write_error("update draft chapter outline", error))?;
+            chapter.id
+        } else {
+            let chapter_id = self.insert_chapter(input)?;
+            self.ensure_agent_task_chapter_scope(task_id, episode_id, chapter_id)?;
+            chapter_id
+        };
+        self.get_chapter(chapter_id)?.ok_or_else(|| {
+            DatabaseError::new(
+                DatabaseErrorCode::QueryFailed,
+                "应用数据存储读取失败，请重试",
+                Some("chapter disappeared after outline upsert".to_string()),
+            )
+        })
+    }
+
+    pub fn update_draft_chapter_for_agent_task(
+        &self,
+        task_id: i64,
+        episode_id: i64,
+        chapter_id: i64,
+        title: Option<&str>,
+        mainline: Option<&str>,
+    ) -> DatabaseResult<ChapterRecord> {
+        self.ensure_agent_task_chapter_scope(task_id, episode_id, chapter_id)?;
+        if title.is_none() && mainline.is_none() {
+            return Err(DatabaseError::invalid_input("章节草稿至少需要一个字段"));
+        }
+        if let Some(value) = title {
+            require_text(value, "章节标题不能为空")?;
+        }
+        if let Some(value) = mainline {
+            require_text(value, "章节主线不能为空")?;
+        }
+        let chapter = self
+            .get_chapter(chapter_id)?
+            .ok_or_else(|| DatabaseError::invalid_input("章节不存在"))?;
+        if matches!(chapter.status.as_str(), "ready" | "published" | "accepted") {
+            return Err(DatabaseError::invalid_input("已发布章节不能被草稿更新"));
+        }
+        self.connection
+            .execute(
+                "UPDATE episode_chapters
+                 SET title = COALESCE(?1, title), mainline = COALESCE(?2, mainline),
+                     status = 'draft', updated_at_ms = ?3
+                 WHERE id = ?4",
+                params![title, mainline, now_ms(), chapter_id],
+            )
+            .map_err(|error| map_write_error("update draft chapter", error))?;
+        self.get_chapter(chapter_id)?.ok_or_else(|| {
+            DatabaseError::new(
+                DatabaseErrorCode::QueryFailed,
+                "应用数据存储读取失败，请重试",
+                Some("chapter disappeared after draft update".to_string()),
+            )
+        })
+    }
+
     pub fn insert_chapter_asset(&self, input: &NewChapterAsset) -> DatabaseResult<i64> {
         require_text(&input.asset_type, "章节资源类型不能为空")?;
         require_text(&input.path, "章节资源路径不能为空")?;
@@ -1079,6 +1320,48 @@ impl Repository<'_> {
             )
             .optional()
             .map_err(|error| map_read_error("read chapter asset", error))
+    }
+
+    pub fn insert_chapter_asset_for_agent_task(
+        &self,
+        task_id: i64,
+        episode_id: i64,
+        input: &NewChapterAsset,
+    ) -> DatabaseResult<ChapterAssetRecord> {
+        self.ensure_agent_task_chapter_scope(task_id, episode_id, input.chapter_id)?;
+        require_text(&input.asset_type, "章节资源类型不能为空")?;
+        require_text(&input.path, "章节资源路径不能为空")?;
+        require_text(&input.content_hash, "章节资源哈希不能为空")?;
+        require_text(&input.source, "章节资源来源不能为空")?;
+        self.connection
+            .execute(
+                "INSERT OR IGNORE INTO chapter_assets(
+                    chapter_id, asset_type, path, content_hash, captured_at_ms,
+                    width, height, source, created_at_ms
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+                params![
+                    input.chapter_id,
+                    input.asset_type,
+                    input.path,
+                    input.content_hash,
+                    input.captured_at_ms,
+                    input.width,
+                    input.height,
+                    input.source,
+                    now_ms(),
+                ],
+            )
+            .map_err(|error| map_write_error("insert chapter asset for task", error))?;
+        self.connection
+            .query_row(
+                "SELECT id, chapter_id, asset_type, path, content_hash, captured_at_ms,
+                        width, height, source, created_at_ms
+                 FROM chapter_assets
+                 WHERE chapter_id = ?1 AND content_hash = ?2",
+                params![input.chapter_id, input.content_hash],
+                map_chapter_asset_row,
+            )
+            .map_err(|error| map_read_error("read chapter asset after idempotent insert", error))
     }
 
     /// Read chapter assets without exposing their local paths to callers.
@@ -1164,6 +1447,63 @@ impl Repository<'_> {
             )
             .optional()
             .map_err(|error| map_read_error("read latest chapter revision", error))
+    }
+
+    pub fn insert_draft_revision_for_agent_task(
+        &self,
+        task_id: i64,
+        episode_id: i64,
+        input: &NewChapterRevision,
+    ) -> DatabaseResult<ChapterRevisionRecord> {
+        self.ensure_agent_task_chapter_scope(task_id, episode_id, input.chapter_id)?;
+        let existing = self
+            .connection
+            .query_row(
+                "SELECT id, chapter_id, revision_number, revision_type, content, source,
+                        prompt_version, validation_report, status, created_at_ms
+                 FROM chapter_revisions
+                 WHERE chapter_id = ?1 AND revision_type = ?2
+                 ORDER BY id DESC LIMIT 1",
+                params![input.chapter_id, input.revision_type],
+                map_chapter_revision_row,
+            )
+            .optional()
+            .map_err(|error| map_read_error("read stable draft revision", error))?;
+        if let Some(existing) = existing {
+            if existing.status == "accepted" {
+                return Err(DatabaseError::invalid_input("已发布章节版本不能被重试覆盖"));
+            }
+            self.connection
+                .execute(
+                    "UPDATE chapter_revisions
+                     SET content = ?1, source = ?2, prompt_version = ?3,
+                         validation_report = ?4, status = 'draft'
+                     WHERE id = ?5",
+                    params![
+                        input.content,
+                        input.source,
+                        input.prompt_version,
+                        input.validation_report,
+                        existing.id,
+                    ],
+                )
+                .map_err(|error| map_write_error("update stable draft revision", error))?;
+            return self.get_chapter_revision(existing.id)?.ok_or_else(|| {
+                DatabaseError::new(
+                    DatabaseErrorCode::QueryFailed,
+                    "应用数据存储读取失败，请重试",
+                    Some("stable draft revision disappeared after update".to_string()),
+                )
+            });
+        }
+        let revision_id = self.insert_chapter_revision(input)?;
+        self.get_chapter_revision(revision_id)?.ok_or_else(|| {
+            DatabaseError::new(
+                DatabaseErrorCode::QueryFailed,
+                "应用数据存储读取失败，请重试",
+                Some("revision disappeared after draft insert".to_string()),
+            )
+        })
     }
 
     pub fn insert_agent_task(&self, input: &NewAgentTask) -> DatabaseResult<i64> {
@@ -1605,6 +1945,89 @@ impl Repository<'_> {
             .map_err(|error| map_read_error("read question candidates", error))
     }
 
+    pub fn insert_question_candidate_for_agent_task(
+        &self,
+        task_id: i64,
+        episode_id: i64,
+        input: &NewQuestionCandidate,
+    ) -> DatabaseResult<QuestionCandidateRecord> {
+        let chapter_id = input
+            .chapter_id
+            .ok_or_else(|| DatabaseError::invalid_input("问题候选必须关联章节"))?;
+        self.ensure_agent_task_chapter_scope(task_id, episode_id, chapter_id)?;
+        if input.episode_id != Some(episode_id) || input.task_id != Some(task_id) {
+            return Err(DatabaseError::invalid_input("问题候选超出章节任务范围"));
+        }
+        require_text(&input.dedupe_fingerprint, "问题候选指纹不能为空")?;
+        self.connection
+            .execute(
+                "INSERT INTO question_candidates(
+                    episode_id, chapter_id, task_id, question, source, spoiler_level,
+                    batch_key, dedupe_fingerprint, is_user_defined, selected_at_ms, created_at_ms
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
+                 ON CONFLICT(dedupe_fingerprint) DO UPDATE SET
+                    episode_id = excluded.episode_id,
+                    chapter_id = excluded.chapter_id,
+                    task_id = excluded.task_id,
+                    question = excluded.question,
+                    source = excluded.source,
+                    spoiler_level = excluded.spoiler_level,
+                    batch_key = excluded.batch_key,
+                    is_user_defined = excluded.is_user_defined,
+                    selected_at_ms = excluded.selected_at_ms",
+                params![
+                    input.episode_id,
+                    input.chapter_id,
+                    input.task_id,
+                    input.question,
+                    input.source,
+                    input.spoiler_level,
+                    input.batch_key,
+                    input.dedupe_fingerprint,
+                    input.is_user_defined,
+                    input.selected_at_ms,
+                    now_ms(),
+                ],
+            )
+            .map_err(|error| map_write_error("insert question candidate for task", error))?;
+        self.connection
+            .query_row(
+                "SELECT id, episode_id, chapter_id, task_id, question, source, spoiler_level,
+                        batch_key, dedupe_fingerprint, is_user_defined, selected_at_ms, created_at_ms
+                 FROM question_candidates WHERE dedupe_fingerprint = ?1",
+                params![input.dedupe_fingerprint],
+                map_question_candidate_row,
+            )
+            .map_err(|error| map_read_error("read question candidate after idempotent insert", error))
+    }
+
+    pub fn remove_stale_draft_questions_for_agent_task(
+        &self,
+        task_id: i64,
+        episode_id: i64,
+        chapter_id: i64,
+        batch_key: &str,
+        keep_fingerprints: &[String],
+    ) -> DatabaseResult<()> {
+        let candidates = self.list_question_candidates_by_episode(episode_id)?;
+        for candidate in candidates {
+            if candidate.task_id == Some(task_id)
+                && candidate.chapter_id == Some(chapter_id)
+                && candidate.batch_key.as_deref() == Some(batch_key)
+                && candidate.selected_at_ms.is_none()
+                && !keep_fingerprints.contains(&candidate.dedupe_fingerprint)
+            {
+                self.connection
+                    .execute(
+                        "DELETE FROM question_candidates WHERE id = ?1",
+                        params![candidate.id],
+                    )
+                    .map_err(|error| map_write_error("remove stale draft question", error))?;
+            }
+        }
+        Ok(())
+    }
+
     pub fn insert_watch_feed_item(&self, input: &NewWatchFeedItem) -> DatabaseResult<i64> {
         require_text(&input.item_type, "信息流项目类型不能为空")?;
         require_text(&input.source, "信息流项目来源不能为空")?;
@@ -1670,6 +2093,221 @@ impl Repository<'_> {
             .map_err(|error| map_read_error("list watch feed items", error))?;
         rows.collect::<rusqlite::Result<Vec<_>>>()
             .map_err(|error| map_read_error("read watch feed items", error))
+    }
+
+    pub fn insert_draft_feed_item_for_agent_task(
+        &self,
+        task_id: i64,
+        episode_id: i64,
+        input: &NewWatchFeedItem,
+    ) -> DatabaseResult<WatchFeedItemRecord> {
+        let chapter_id = input
+            .chapter_id
+            .ok_or_else(|| DatabaseError::invalid_input("章节信息流必须关联章节"))?;
+        self.ensure_agent_task_chapter_scope(task_id, episode_id, chapter_id)?;
+        if input.episode_id != Some(episode_id) || input.task_id != Some(task_id) {
+            return Err(DatabaseError::invalid_input("信息流草稿超出章节任务范围"));
+        }
+        let existing = self
+            .connection
+            .query_row(
+                "SELECT id, episode_id, chapter_id, revision_id, task_id, item_type, source,
+                        content, spoiler_level, content_version, dedupe_key, published_at_ms, created_at_ms
+                 FROM watch_feed_items WHERE dedupe_key = ?1",
+                params![input.dedupe_key],
+                map_watch_feed_item_row,
+            )
+            .optional()
+            .map_err(|error| map_read_error("read stable draft feed item", error))?;
+        if existing
+            .as_ref()
+            .is_some_and(|item| item.published_at_ms.is_some())
+        {
+            return Err(DatabaseError::invalid_input(
+                "已发布信息流不能被草稿重试覆盖",
+            ));
+        }
+        if existing.is_some() {
+            self.connection
+                .execute(
+                    "UPDATE watch_feed_items
+                     SET episode_id = ?1, chapter_id = ?2, revision_id = ?3,
+                         task_id = ?4, item_type = ?5, source = ?6, content = ?7,
+                         spoiler_level = ?8, content_version = ?9, published_at_ms = NULL
+                     WHERE dedupe_key = ?10",
+                    params![
+                        input.episode_id,
+                        input.chapter_id,
+                        input.revision_id,
+                        input.task_id,
+                        input.item_type,
+                        input.source,
+                        input.content,
+                        input.spoiler_level,
+                        input.content_version,
+                        input.dedupe_key,
+                    ],
+                )
+                .map(|_| ())
+                .map_err(|error| map_write_error("update draft feed item", error))?;
+        } else {
+            self.connection
+                .execute(
+                    "INSERT INTO watch_feed_items(
+                        episode_id, chapter_id, revision_id, task_id, item_type, source,
+                        content, spoiler_level, content_version, dedupe_key, published_at_ms, created_at_ms
+                     ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+                    params![
+                        input.episode_id,
+                        input.chapter_id,
+                        input.revision_id,
+                        input.task_id,
+                        input.item_type,
+                        input.source,
+                        input.content,
+                        input.spoiler_level,
+                        input.content_version,
+                        input.dedupe_key,
+                        input.published_at_ms,
+                        now_ms(),
+                    ],
+                )
+                .map(|_| ())
+                .map_err(|error| map_write_error("insert draft feed item for task", error))?;
+        }
+        self.connection
+            .query_row(
+                "SELECT id, episode_id, chapter_id, revision_id, task_id, item_type, source,
+                        content, spoiler_level, content_version, dedupe_key, published_at_ms, created_at_ms
+                 FROM watch_feed_items WHERE dedupe_key = ?1",
+                params![input.dedupe_key],
+                map_watch_feed_item_row,
+            )
+            .map_err(|error| map_read_error("read feed item after idempotent insert", error))
+    }
+
+    pub fn remove_stale_draft_feed_items_for_agent_task(
+        &self,
+        task_id: i64,
+        episode_id: i64,
+        chapter_id: i64,
+        draft_key: &str,
+        keep_item_types: &[String],
+    ) -> DatabaseResult<()> {
+        let prefix = format!("chapter-feed:{task_id}:{chapter_id}:{draft_key}:");
+        let items = self.list_watch_feed_items_by_episode(episode_id)?;
+        for item in items {
+            if item.task_id == Some(task_id)
+                && item.chapter_id == Some(chapter_id)
+                && item.dedupe_key.starts_with(&prefix)
+                && item.published_at_ms.is_none()
+                && !keep_item_types.contains(&item.item_type)
+            {
+                self.connection
+                    .execute(
+                        "DELETE FROM watch_feed_items WHERE id = ?1",
+                        params![item.id],
+                    )
+                    .map_err(|error| map_write_error("remove stale draft feed item", error))?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Validate and atomically publish every chapter owned by the task.  The
+    /// caller must invoke this inside `Database::transaction`.
+    pub fn publish_agent_chapter_task(
+        &self,
+        task_id: i64,
+        attempt_id: i64,
+        episode_id: i64,
+        duration_ms: i64,
+        output_json: &str,
+    ) -> DatabaseResult<Vec<ChapterRecord>> {
+        if duration_ms <= 0 {
+            return Err(DatabaseError::invalid_input("媒体时长必须大于零"));
+        }
+        let task = self
+            .get_agent_task(task_id)?
+            .ok_or_else(|| DatabaseError::invalid_input("章节任务不存在"))?;
+        if !task.task_type.starts_with("chapter") || task.episode_id != Some(episode_id) {
+            return Err(DatabaseError::invalid_input("章节任务与集数不匹配"));
+        }
+        let attempt = self
+            .get_agent_attempt(attempt_id)?
+            .ok_or_else(|| DatabaseError::invalid_input("章节任务尝试不存在"))?;
+        if attempt.task_id != task_id {
+            return Err(DatabaseError::invalid_input("任务尝试不属于当前章节任务"));
+        }
+        require_text(output_json, "章节任务输出不能为空")?;
+
+        let chapters = self.list_chapters_by_agent_task(task_id, episode_id)?;
+        if chapters.is_empty() {
+            return Err(DatabaseError::invalid_input("章节任务尚未创建章节大纲"));
+        }
+        let mut previous_end = 0_i64;
+        for chapter in &chapters {
+            if chapter.start_ms < previous_end || chapter.end_ms > duration_ms {
+                return Err(DatabaseError::invalid_input("章节时间范围无效或互相重叠"));
+            }
+            if chapter
+                .title
+                .as_deref()
+                .is_none_or(|value| value.trim().is_empty())
+                || chapter
+                    .mainline
+                    .as_deref()
+                    .is_none_or(|value| value.trim().is_empty())
+            {
+                return Err(DatabaseError::invalid_input("章节草稿缺少标题或主线"));
+            }
+            if self.list_chapter_assets_by_chapter(chapter.id)?.is_empty() {
+                return Err(DatabaseError::invalid_input("章节草稿缺少画面证据"));
+            }
+            if self.get_latest_chapter_revision(chapter.id)?.is_none() {
+                return Err(DatabaseError::invalid_input("章节草稿缺少版本记录"));
+            }
+            previous_end = chapter.end_ms;
+        }
+
+        self.connection
+            .execute(
+                "UPDATE episode_chapters
+                 SET status = 'ready', updated_at_ms = ?1
+                 WHERE id IN (SELECT chapter_id FROM agent_task_chapters WHERE task_id = ?2)
+                   AND episode_id = ?3",
+                params![now_ms(), task_id, episode_id],
+            )
+            .map_err(|error| map_write_error("publish chapter rows", error))?;
+        self.connection
+            .execute(
+                "UPDATE chapter_revisions SET status = 'accepted'
+                 WHERE chapter_id IN (SELECT chapter_id FROM agent_task_chapters WHERE task_id = ?1)",
+                params![task_id],
+            )
+            .map_err(|error| map_write_error("publish chapter revisions", error))?;
+        self.connection
+            .execute(
+                "UPDATE watch_feed_items
+                 SET published_at_ms = COALESCE(published_at_ms, ?1)
+                 WHERE task_id = ?2 AND episode_id = ?3",
+                params![now_ms(), task_id, episode_id],
+            )
+            .map_err(|error| map_write_error("publish chapter feed", error))?;
+        if !self.complete_agent_task(
+            task_id,
+            "succeeded",
+            task.attempt_count,
+            task.retry_count,
+            None,
+            output_json,
+        )? {
+            return Err(DatabaseError::invalid_input("章节任务状态更新失败"));
+        }
+        if !self.update_agent_attempt_status(attempt_id, "succeeded", None, now_ms())? {
+            return Err(DatabaseError::invalid_input("章节任务尝试状态更新失败"));
+        }
+        self.list_chapters_by_agent_task(task_id, episode_id)
     }
 
     pub fn set_app_setting(&self, key: &str, value_json: &str) -> DatabaseResult<()> {
@@ -2598,7 +3236,22 @@ CREATE INDEX IF NOT EXISTS idx_questions_chapter ON question_candidates(chapter_
 CREATE INDEX IF NOT EXISTS idx_feed_episode_published ON watch_feed_items(episode_id, published_at_ms);
 "#;
 
+const MIGRATION_3_SQL: &str = r#"
+CREATE TABLE IF NOT EXISTS agent_task_chapters (
+    task_id INTEGER NOT NULL,
+    chapter_id INTEGER NOT NULL,
+    created_at_ms INTEGER NOT NULL,
+    PRIMARY KEY (task_id, chapter_id),
+    FOREIGN KEY (task_id) REFERENCES agent_tasks(id) ON DELETE CASCADE,
+    FOREIGN KEY (chapter_id) REFERENCES episode_chapters(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_agent_task_chapters_chapter
+    ON agent_task_chapters(chapter_id, task_id);
+"#;
+
 #[cfg(test)]
+#[allow(clippy::drop_non_drop)]
 mod tests {
     use super::*;
     use crate::model::{IndexedMediaFile, MediaGroup};
@@ -2639,6 +3292,7 @@ mod tests {
             "chapter_revisions",
             "agent_tasks",
             "agent_attempts",
+            "agent_task_chapters",
             "question_candidates",
             "watch_feed_items",
             "app_settings",
@@ -2875,6 +3529,155 @@ mod tests {
         assert_eq!((task.attempt_count, task.retry_count), (2, 1));
         assert_eq!(task.max_attempts, 3);
         assert_eq!(task.validation_report.as_deref(), Some("missing title"));
+    }
+
+    #[test]
+    fn chapter_task_scope_is_idempotent_and_rejects_cross_task_reuse() {
+        let mut database = value_or_panic(Database::open_in_memory());
+        let repository = database.repository();
+        let series_id = value_or_panic(repository.insert_series(&NewSeries::new(
+            "series-scope",
+            "Scope",
+            "local",
+        )));
+        let episode_id = value_or_panic(repository.insert_episode(&NewEpisode::new(
+            series_id,
+            "episode-scope",
+            "local",
+        )));
+        let mut task_input =
+            NewAgentTask::new("chapter-scope-1", "chapter_generation", "prompt-v1");
+        task_input.episode_id = Some(episode_id);
+        task_input.status = "running".into();
+        let task_id = value_or_panic(repository.insert_agent_task(&task_input));
+        let attempt_id = value_or_panic(repository.insert_agent_attempt(&NewAgentAttempt::new(
+            task_id,
+            1,
+            "initial",
+            "running",
+            "prompt-v1",
+            1,
+        )));
+        assert!(attempt_id > 0);
+        drop(repository);
+
+        let mut chapter = NewChapter::new(episode_id, "outline-1", 0, 1_000, "chapter_agent_mcp");
+        chapter.title = Some("Opening".into());
+        let first = value_or_panic(database.transaction(|repo| {
+            repo.upsert_draft_chapter_for_agent_task(task_id, episode_id, &chapter)
+        }));
+        let second = value_or_panic(database.transaction(|repo| {
+            repo.upsert_draft_chapter_for_agent_task(task_id, episode_id, &chapter)
+        }));
+        assert_eq!(first.id, second.id);
+        assert_eq!(
+            value_or_panic(
+                database
+                    .repository()
+                    .list_chapters_by_agent_task(task_id, episode_id)
+            )
+            .len(),
+            1
+        );
+
+        let mut replacement_input =
+            NewChapter::new(episode_id, "outline-2", 1_000, 2_000, "chapter_agent_mcp");
+        replacement_input.title = Some("Replacement".into());
+        let replacement = value_or_panic(database.transaction(|repo| {
+            let replacement =
+                repo.upsert_draft_chapter_for_agent_task(task_id, episode_id, &replacement_input)?;
+            repo.replace_agent_task_chapter_outline(task_id, episode_id, &[replacement.id])?;
+            Ok(replacement)
+        }));
+        assert!(value_or_panic(database.repository().get_chapter(first.id)).is_none());
+        assert_eq!(
+            value_or_panic(
+                database
+                    .repository()
+                    .list_chapters_by_agent_task(task_id, episode_id)
+            )
+            .iter()
+            .map(|chapter| chapter.id)
+            .collect::<Vec<_>>(),
+            vec![replacement.id]
+        );
+
+        let _asset = value_or_panic(database.transaction(|repo| {
+            repo.insert_chapter_asset_for_agent_task(
+                task_id,
+                episode_id,
+                &NewChapterAsset::new(
+                    replacement.id,
+                    "jpeg_frame",
+                    "chapter-assets/frame.jpg",
+                    "hash-1",
+                    1_200,
+                    "chapter_agent_mcp",
+                ),
+            )
+        }));
+        let mut first_revision_input = NewChapterRevision::new(
+            replacement.id,
+            1,
+            "chapter_draft:retry-key",
+            "old draft",
+            "chapter_agent_mcp",
+            "prompt-v1",
+        );
+        let first_revision = value_or_panic(database.transaction(|repo| {
+            repo.insert_draft_revision_for_agent_task(task_id, episode_id, &first_revision_input)
+        }));
+        first_revision_input.validation_report = Some("updated".into());
+        first_revision_input.content = "new draft".into();
+        first_revision_input.revision_number = 2;
+        let second_revision = value_or_panic(database.transaction(|repo| {
+            repo.insert_draft_revision_for_agent_task(task_id, episode_id, &first_revision_input)
+        }));
+        assert_eq!(first_revision.id, second_revision.id);
+        assert_eq!(second_revision.content, "new draft");
+
+        let mut first_feed = NewWatchFeedItem::new(
+            "mainline",
+            "chapter_agent_mcp",
+            "old feed",
+            "episode",
+            "prompt-v1",
+            "chapter-feed:retry-key",
+        );
+        first_feed.episode_id = Some(episode_id);
+        first_feed.chapter_id = Some(replacement.id);
+        first_feed.revision_id = Some(first_revision.id);
+        first_feed.task_id = Some(task_id);
+        let first_feed_record = value_or_panic(database.transaction(|repo| {
+            repo.insert_draft_feed_item_for_agent_task(task_id, episode_id, &first_feed)
+        }));
+        let mut second_feed = first_feed.clone();
+        second_feed.content = "new feed".into();
+        second_feed.revision_id = Some(second_revision.id);
+        let second_feed_record = value_or_panic(database.transaction(|repo| {
+            repo.insert_draft_feed_item_for_agent_task(task_id, episode_id, &second_feed)
+        }));
+        assert_eq!(first_feed_record.id, second_feed_record.id);
+        assert_eq!(
+            value_or_panic(
+                database
+                    .repository()
+                    .list_watch_feed_items_by_episode(episode_id)
+            )
+            .into_iter()
+            .find(|item| item.dedupe_key == "chapter-feed:retry-key")
+            .map(|item| item.content),
+            Some("new feed".into())
+        );
+
+        let mut other = NewAgentTask::new("chapter-scope-2", "chapter_generation", "prompt-v1");
+        other.episode_id = Some(episode_id);
+        other.status = "running".into();
+        let other_id = value_or_panic(database.repository().insert_agent_task(&other));
+        let result = database.transaction(|repo| {
+            repo.upsert_draft_chapter_for_agent_task(other_id, episode_id, &replacement_input)
+        });
+        assert!(result.is_err());
     }
 
     #[test]
