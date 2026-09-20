@@ -404,7 +404,16 @@ impl AcpService {
                         );
                         return Err(AcpError::cancelled());
                     }
-                    break;
+                    Self::log_workshop_exit(
+                        attempt_label,
+                        Some(pid),
+                        "eof",
+                        None,
+                        collector.chunk_count(),
+                    );
+                    return Err(AcpError::protocol(Some(
+                        "ACP stdout closed while waiting for session/prompt",
+                    )));
                 }
                 crate::runtime::io::ReadOne::Response { id, value } if id == prompt_id => {
                     if let Some(msg) = is_error_response(&value) {
@@ -453,33 +462,6 @@ impl AcpService {
                 crate::runtime::io::ReadOne::Response { .. } => continue,
             }
         }
-
-        if self.cancel.load(Ordering::SeqCst) {
-            let _ = guard.take();
-            self.clear_cancel_writer();
-            Self::log_workshop_exit(
-                attempt_label,
-                Some(pid),
-                "cancelled",
-                None,
-                collector.chunk_count(),
-            );
-            return Err(AcpError::cancelled());
-        }
-        let chunks = collector.chunk_count();
-        let final_text = collector.finish();
-        if final_text.trim().is_empty() {
-            Self::log_workshop_exit(
-                attempt_label,
-                Some(pid),
-                "no-output",
-                Some("end_turn"),
-                chunks,
-            );
-            return self.empty_reply_outcome(&empty_reply_hint, Some("end_turn".into()));
-        }
-        Self::log_workshop_exit(attempt_label, Some(pid), "ok", Some("end_turn"), chunks);
-        Ok((final_text, Some("end_turn".into())))
     }
 
     /// Isolated AI tasks (translation/polishing) run tool-free: no MCP tools,

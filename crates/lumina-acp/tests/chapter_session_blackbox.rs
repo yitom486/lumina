@@ -6,7 +6,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use lumina_acp::jobs::isolated::ChapterSession;
 use lumina_acp::{
-    AgentKind, AgentProfileInput, AgentProfilesHint, SessionEnvironment, SessionKind,
+    AcpErrorCode, AgentKind, AgentProfileInput, AgentProfilesHint, SessionEnvironment, SessionKind,
 };
 use serde_json::{json, Value};
 
@@ -120,10 +120,13 @@ fn chapter_session_recovers_after_stdio_eof_on_a_fresh_spawn(
         Some("h-4-transport-recovery".into()),
     );
 
-    let first_reply = session.prompt("第一次 prompt：模拟传输中断")?;
-    assert!(first_reply.contains("未解析到文本回复"));
-    assert!(!first_reply.contains("mock-agent"));
-    assert!(!first_reply.contains("stderr"));
+    let first_error = session
+        .prompt("第一次 prompt：模拟传输中断")
+        .expect_err("the first mock spawn must close stdout during prompt");
+    assert_eq!(first_error.code, AcpErrorCode::ProtocolError);
+    assert_eq!(first_error.message, "与 Agent 通信失败");
+    assert!(!first_error.message.contains("mock-agent"));
+    assert!(!first_error.message.contains("stderr"));
     assert_eq!(fs::read_to_string(&state_path)?.trim(), "1");
 
     let recovered = session.prompt("第二次 prompt：验证恢复")?;
