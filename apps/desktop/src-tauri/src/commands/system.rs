@@ -9,6 +9,9 @@ use serde::Serialize;
 const CRASH_MARKER_FILE: &str = "last-session.json";
 static PREVIOUS_UNCLEAN_EXIT: OnceLock<bool> = OnceLock::new();
 static CRASH_PHASE: AtomicU8 = AtomicU8::new(0);
+#[cfg(windows)]
+static NATIVE_EXCEPTION_CAPTURED: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -157,6 +160,13 @@ unsafe extern "system" fn native_exception_filter(
 ) -> i32 {
     use windows::Win32::System::Threading::GetCurrentThreadId;
 
+    // An exception raised while writing the marker must not recursively enter
+    // this handler. The process is already terminating, so the second pass
+    // only needs to continue the normal Windows exception search.
+    if NATIVE_EXCEPTION_CAPTURED.swap(true, Ordering::AcqRel) {
+        return 0;
+    }
+
     let (exception_code, fault_address) = if exception_info.is_null() {
         (None, None)
     } else {
@@ -171,14 +181,10 @@ unsafe extern "system" fn native_exception_filter(
         }
     };
     let thread_id = Some(GetCurrentThreadId());
-    write_marker(false, exception_code.clone(), fault_address, thread_id);
-    tracing::error!(
-        exception_code = ?exception_code,
-        fault_address = ?fault_address,
-        thread_id = ?thread_id,
-        phase = phase_name(CRASH_PHASE.load(Ordering::Relaxed)),
-        "native exception captured before process termination"
-    );
+    write_marker(false, exception_code, fault_address, thread_id);
+    // Do not call tracing here: an unhandled native exception can interrupt a
+    // logger lock or allocator. The marker is the crash-context record; the
+    // next startup projects it as a safe business notice.
     0
 }
 
