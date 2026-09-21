@@ -140,14 +140,31 @@ fn fixture(scenario: &str) -> Fixture {
     ));
     fs::create_dir_all(&root).unwrap_or_else(|error| panic!("fixture root: {error}"));
     let database_path = root.join("chapters.sqlite3");
-    let media_path = root.join("deterministic-media.input");
-    let snapshot_path = root.join("chapter-agent-context.json");
+    let media_path = root.join("Fixture.Show.S01E01.mp4");
+    let second_media_path = root.join("Fixture.Show.S01E02.mp4");
+    let snapshot_path = root.join(".lumina").join("chapter-agent-context.json");
     let capture_dir = root.join("fixed-frames");
     fs::write(&media_path, b"deterministic test media input")
         .unwrap_or_else(|error| panic!("media fixture: {error}"));
+    fs::write(
+        &second_media_path,
+        b"deterministic test media input episode two",
+    )
+    .unwrap_or_else(|error| panic!("second media fixture: {error}"));
+    write_subtitle_fixture(
+        &media_path,
+        "固定字幕：门在雨夜打开。",
+        "固定字幕：固定角色决定继续调查。",
+    );
+    write_subtitle_fixture(
+        &second_media_path,
+        "固定字幕：固定角色在图书馆出现。",
+        "固定字幕：调查进入下一阶段。",
+    );
     fs::create_dir_all(&capture_dir).unwrap_or_else(|error| panic!("capture fixture: {error}"));
     fs::write(capture_dir.join("frame.jpg"), FRAME_JPEG)
         .unwrap_or_else(|error| panic!("JPEG fixture: {error}"));
+    write_library_fixture(&root, &media_path, &second_media_path);
 
     let (task_id, attempt_id, episode_id, foreign_chapter_id) = {
         let database = Database::open(&database_path)
@@ -286,6 +303,138 @@ fn fixture(scenario: &str) -> Fixture {
     }
 }
 
+const FIXTURE_GROUP_KEY: &str = "fixture-series";
+
+fn write_subtitle_fixture(media_path: &Path, first: &str, second: &str) {
+    let subtitle_path = media_path.with_extension("srt");
+    let contents = format!(
+        "1\n00:00:00,500 --> 00:00:01,500\n{first}\n\n2\n00:00:02,000 --> 00:00:03,000\n{second}\n"
+    );
+    fs::write(subtitle_path, contents).unwrap_or_else(|error| panic!("subtitle fixture: {error}"));
+}
+
+fn write_library_fixture(root: &Path, first_media: &Path, second_media: &Path) {
+    let lumina_dir = root.join(".lumina");
+    let groups_dir = lumina_dir.join("groups");
+    fs::create_dir_all(&groups_dir).unwrap_or_else(|error| panic!("library fixture: {error}"));
+    let first_relative = first_media
+        .strip_prefix(root)
+        .unwrap_or_else(|error| panic!("first media relative path: {error}"))
+        .to_string_lossy()
+        .replace('\\', "/");
+    let second_relative = second_media
+        .strip_prefix(root)
+        .unwrap_or_else(|error| panic!("second media relative path: {error}"))
+        .to_string_lossy()
+        .replace('\\', "/");
+    let index = json!({
+        "schemaVersion": 1,
+        "root": root.to_string_lossy(),
+        "updatedAtMs": 1,
+        "files": [
+            {
+                "relativePath": first_relative,
+                "fileName": first_media.file_name().unwrap().to_string_lossy(),
+                "sizeBytes": 1,
+                "modifiedAtMs": 1,
+                "groupKey": FIXTURE_GROUP_KEY,
+                "season": 1,
+                "episode": 1
+            },
+            {
+                "relativePath": second_relative,
+                "fileName": second_media.file_name().unwrap().to_string_lossy(),
+                "sizeBytes": 1,
+                "modifiedAtMs": 1,
+                "groupKey": FIXTURE_GROUP_KEY,
+                "season": 1,
+                "episode": 2
+            }
+        ],
+        "groups": [{
+            "key": FIXTURE_GROUP_KEY,
+            "displayName": "Fixture series",
+            "kind": "series",
+            "files": [first_relative, second_relative],
+            "resolution": { "state": "matched", "tmdbId": 1, "mediaType": "tv" }
+        }]
+    });
+    fs::write(
+        lumina_dir.join("index.json"),
+        serde_json::to_string_pretty(&index)
+            .unwrap_or_else(|error| panic!("encode library index: {error}")),
+    )
+    .unwrap_or_else(|error| panic!("write library index: {error}"));
+
+    let group_dir = groups_dir.join(format!(
+        "{FIXTURE_GROUP_KEY}-{:08x}",
+        fixture_group_hash(FIXTURE_GROUP_KEY)
+    ));
+    fs::create_dir_all(&group_dir).unwrap_or_else(|error| panic!("metadata fixture: {error}"));
+    let metadata =
+        |kind: &str, title: &str, season: Option<u32>, episode: Option<u32>, overview: &str| {
+            json!({
+                "schemaVersion": 2,
+                "kind": kind,
+                "tmdbId": 1,
+                "seriesTmdbId": 1,
+                "title": title,
+                "originalTitle": null,
+                "originalLanguage": "zh",
+                "titleZh": title,
+                "overview": overview,
+                "year": 2026,
+                "season": season,
+                "episode": episode,
+                "genres": ["drama"],
+                "cast": [],
+                "creators": ["Fixture creator"],
+                "network": null,
+                "status": "ended",
+                "updatedAtMs": 1
+            })
+        };
+    for (file_name, value) in [
+        (
+            "series.json",
+            metadata("series", "Fixture series", None, None, "Fixture overview"),
+        ),
+        (
+            "S01E01.json",
+            metadata(
+                "episode",
+                "Fixture episode one",
+                Some(1),
+                Some(1),
+                "Episode one",
+            ),
+        ),
+        (
+            "S01E02.json",
+            metadata(
+                "episode",
+                "Fixture episode two",
+                Some(1),
+                Some(2),
+                "Episode two",
+            ),
+        ),
+    ] {
+        fs::write(
+            group_dir.join(file_name),
+            serde_json::to_string_pretty(&value)
+                .unwrap_or_else(|error| panic!("encode metadata: {error}")),
+        )
+        .unwrap_or_else(|error| panic!("write metadata: {error}"));
+    }
+}
+
+fn fixture_group_hash(value: &str) -> u32 {
+    value.bytes().fold(0x811c9dc5, |hash, byte| {
+        (hash ^ u32::from(byte)).wrapping_mul(0x01000193)
+    })
+}
+
 struct McpDriver {
     child: Child,
     stdin: ChildStdin,
@@ -296,12 +445,16 @@ struct McpDriver {
 
 impl McpDriver {
     fn spawn(fixture: &Fixture, log: &mut JsonlLog) -> Self {
+        Self::spawn_with_profile(fixture, log, "chat")
+    }
+
+    fn spawn_with_profile(fixture: &Fixture, log: &mut JsonlLog, profile: &str) -> Self {
         let diagnostic_path = fixture.root.join("lumina-mcp-diagnostic.log");
         let mut command = Command::new(env!("CARGO_BIN_EXE_lumina-mcp-stdio-test-server"));
         command
             .arg("--lumina-mcp")
             .env("LUMINA_MCP_CONTEXT_FILE", &fixture.snapshot_path)
-            .env("LUMINA_MCP_TOOL_PROFILE", "chat")
+            .env("LUMINA_MCP_TOOL_PROFILE", profile)
             .env(CAPTURE_FIXTURE_ENV, &fixture.capture_dir)
             .env(SERVER_DIAGNOSTIC_ENV, &diagnostic_path)
             .stdin(Stdio::piped())
@@ -378,7 +531,7 @@ impl McpDriver {
         response
     }
 
-    fn initialize_and_list(&mut self, log: &mut JsonlLog) -> Value {
+    fn initialize(&mut self, log: &mut JsonlLog) -> Value {
         let initialize = self.request(
             "initialize",
             json!({
@@ -395,7 +548,11 @@ impl McpDriver {
             "initialize failed: {initialize}"
         );
         self.notify("notifications/initialized", json!({}), "initialized", log);
-        let listed = self.request("tools/list", json!({}), "tools_list", None, log);
+        self.request("tools/list", json!({}), "tools_list", None, log)
+    }
+
+    fn initialize_and_list(&mut self, log: &mut JsonlLog) -> Value {
+        let listed = self.initialize(log);
         let tools = listed["result"]["tools"]
             .as_array()
             .unwrap_or_else(|| panic!("tools/list failed: {listed}"));
@@ -451,6 +608,26 @@ impl McpDriver {
         );
         response["result"].clone()
     }
+}
+
+fn enable_test_capabilities(fixture: &Fixture) {
+    let raw = fs::read_to_string(&fixture.snapshot_path)
+        .unwrap_or_else(|error| panic!("read snapshot for capabilities: {error}"));
+    let mut snapshot: Value = serde_json::from_str(&raw)
+        .unwrap_or_else(|error| panic!("decode snapshot for capabilities: {error}"));
+    let capabilities = snapshot
+        .get_mut("capabilities")
+        .and_then(Value::as_object_mut)
+        .unwrap_or_else(|| panic!("snapshot capabilities missing"));
+    capabilities.insert("visionCapable".to_owned(), json!(true));
+    capabilities.insert("subtitleWorkshopEnabled".to_owned(), json!(true));
+    capabilities.insert("videoAnnotationsEnabled".to_owned(), json!(true));
+    fs::write(
+        &fixture.snapshot_path,
+        serde_json::to_string_pretty(&snapshot)
+            .unwrap_or_else(|error| panic!("encode capabilities snapshot: {error}")),
+    )
+    .unwrap_or_else(|error| panic!("write capabilities snapshot: {error}"));
 }
 
 impl Drop for McpDriver {
@@ -794,4 +971,314 @@ fn chapter_mcp_stdio_rejects_foreign_scope_and_unauthorized_tool() {
             .len(),
         0
     );
+}
+
+#[test]
+fn mcp_stdio_blackbox_exercises_non_chapter_tool_matrix() {
+    let fixture = fixture("core-tools");
+    enable_test_capabilities(&fixture);
+
+    let mut chat_log = JsonlLog::new(
+        &fixture.root,
+        "core_tools_chat",
+        fixture.context.task_id,
+        fixture.context.attempt_id,
+    );
+    let mut chat = McpDriver::spawn(&fixture, &mut chat_log);
+    let listed = chat.initialize_and_list(&mut chat_log);
+    let listed_names: Vec<&str> = listed["result"]["tools"]
+        .as_array()
+        .unwrap_or_else(|| panic!("chat tools/list payload: {listed}"))
+        .iter()
+        .filter_map(|tool| tool["name"].as_str())
+        .collect();
+    for expected in [
+        "lumina_get_playback_context",
+        "lumina_get_transcript_window",
+        "lumina_capture_frames",
+        "lumina_propose_video_annotation",
+        "lumina_seek_playback",
+    ] {
+        assert!(
+            listed_names.contains(&expected),
+            "chat tools/list omitted {expected}: {listed_names:?}"
+        );
+    }
+
+    let playback = chat.call(
+        "lumina_get_playback_context",
+        json!({}),
+        "playback_context",
+        &mut chat_log,
+    );
+    assert!(
+        !is_tool_error(&playback),
+        "playback context failed: {playback}"
+    );
+    assert_eq!(
+        text_payload(&playback)["anchor"]["positionMs"],
+        json!(2_000)
+    );
+
+    let transcript = chat.call(
+        "lumina_get_transcript_window",
+        json!({ "centerMs": 2_000, "radiusSec": 1 }),
+        "transcript_window",
+        &mut chat_log,
+    );
+    assert!(
+        !is_tool_error(&transcript),
+        "transcript window failed: {transcript}"
+    );
+    let transcript_payload = text_payload(&transcript);
+    assert_eq!(transcript_payload["centerMs"], json!(2_000));
+    assert!(transcript_payload["lines"]
+        .as_array()
+        .is_some_and(|lines| lines
+            .iter()
+            .any(|line| { line["text"] == "固定字幕：两人决定继续调查。" })));
+
+    let frames = chat.call(
+        "lumina_capture_frames",
+        json!({ "centerMs": 2_000 }),
+        "capture_frames",
+        &mut chat_log,
+    );
+    assert!(!is_tool_error(&frames), "capture frames failed: {frames}");
+    let frame_blocks = frames["content"]
+        .as_array()
+        .unwrap_or_else(|| panic!("capture frame content missing: {frames}"));
+    assert!(frame_blocks.iter().any(|block| {
+        block["type"] == "image"
+            && block["mimeType"] == "image/jpeg"
+            && block["data"]
+                .as_str()
+                .is_some_and(|data| data.starts_with("/9j/"))
+    }));
+
+    let annotation = chat.call(
+        "lumina_propose_video_annotation",
+        json!({ "body": "两人决定继续调查。", "positionMs": 2_000 }),
+        "annotation_proposal",
+        &mut chat_log,
+    );
+    assert!(
+        !is_tool_error(&annotation),
+        "annotation proposal failed: {annotation}"
+    );
+    assert_eq!(
+        text_payload(&annotation)["status"],
+        json!("pending_confirmation")
+    );
+
+    let control_path = fixture.root.join(".lumina").join("mcp-control.json");
+    let result_path = fixture.root.join(".lumina").join("mcp-control-result.json");
+    let host = std::thread::spawn(move || {
+        let deadline = Instant::now() + Duration::from_secs(3);
+        loop {
+            if let Ok(raw) = fs::read_to_string(&control_path) {
+                let request: Value = serde_json::from_str(&raw)
+                    .unwrap_or_else(|error| panic!("decode seek control: {error}"));
+                let response = json!({
+                    "nonce": request["nonce"],
+                    "status": "ok",
+                    "landedPositionMs": request["positionMs"],
+                });
+                fs::write(
+                    &result_path,
+                    serde_json::to_string(&response)
+                        .unwrap_or_else(|error| panic!("encode seek result: {error}")),
+                )
+                .unwrap_or_else(|error| panic!("write seek result: {error}"));
+                return;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "seek control request not observed"
+            );
+            std::thread::sleep(Duration::from_millis(20));
+        }
+    });
+    let seek = chat.call(
+        "lumina_seek_playback",
+        json!({ "positionMs": 7_000, "reason": "blackbox test" }),
+        "seek_playback",
+        &mut chat_log,
+    );
+    host.join()
+        .unwrap_or_else(|_| panic!("seek host thread failed"));
+    assert!(!is_tool_error(&seek), "seek failed: {seek}");
+    assert_eq!(text_payload(&seek)["landedPositionMs"], json!(7_000));
+
+    let library = chat.call(
+        "lumina_get_library_context",
+        json!({}),
+        "library_context",
+        &mut chat_log,
+    );
+    assert!(
+        !is_tool_error(&library),
+        "library context failed: {library}"
+    );
+    assert_eq!(
+        text_payload(&library)["series"]["title"],
+        json!("Fixture series")
+    );
+
+    let episode_index = chat.call(
+        "lumina_get_episode_index",
+        json!({}),
+        "episode_index",
+        &mut chat_log,
+    );
+    assert!(
+        !is_tool_error(&episode_index),
+        "episode index failed: {episode_index}"
+    );
+    assert_eq!(
+        text_payload(&episode_index)["episodes"]
+            .as_array()
+            .map(Vec::len),
+        Some(2)
+    );
+
+    let local_choice = format!(
+        "sidecar:{}",
+        fixture
+            .root
+            .join("Fixture.Show.S01E01.srt")
+            .to_string_lossy()
+    );
+    let episode_transcript = chat.call(
+        "lumina_get_episode_transcript",
+        json!({
+            "season": 1,
+            "episode": 1,
+            "subtitleChoiceId": local_choice,
+            "centerMs": 2_000,
+            "radiusSec": 1
+        }),
+        "episode_transcript",
+        &mut chat_log,
+    );
+    assert!(
+        !is_tool_error(&episode_transcript),
+        "episode transcript failed: {episode_transcript}"
+    );
+    assert_eq!(text_payload(&episode_transcript)["season"], json!(1));
+    assert!(text_payload(&episode_transcript)["lines"]
+        .as_array()
+        .is_some_and(|lines| lines
+            .iter()
+            .any(|line| line["text"] == "固定字幕：固定角色决定继续调查。")));
+
+    let entity_timeline = chat.call(
+        "lumina_get_entity_timeline",
+        json!({
+            "names": ["固定角色"],
+            "subtitleChoiceId": format!(
+                "sidecar:{}",
+                fixture
+                    .root
+                    .join("Fixture.Show.S01E01.srt")
+                    .to_string_lossy()
+            )
+        }),
+        "entity_timeline",
+        &mut chat_log,
+    );
+    assert!(
+        !is_tool_error(&entity_timeline),
+        "entity timeline failed: {entity_timeline}"
+    );
+    let entity_payload = text_payload(&entity_timeline);
+    assert_eq!(entity_payload["derived"], json!(true));
+    // A local sidecar choice ID is path-scoped.  The tool must still return a
+    // successful, honest result for the current episode and report the other
+    // episode as skipped rather than inventing cross-episode subtitle data.
+    assert_eq!(entity_payload["entities"][0]["episodeCount"], json!(1));
+    assert_eq!(
+        entity_payload["skippedEpisodes"].as_array().map(Vec::len),
+        Some(1)
+    );
+
+    for (tool, arguments) in [
+        (
+            "lumina_get_episode_transcript",
+            json!({ "season": 0, "episode": 1 }),
+        ),
+        ("lumina_get_audio_marks", json!({ "radiusSec": 1 })),
+        ("lumina_get_entity_timeline", json!({ "names": [] })),
+    ] {
+        let result = chat.call(tool, arguments, "bounded_business_error", &mut chat_log);
+        assert!(
+            is_tool_error(&result),
+            "{tool} unexpectedly succeeded for invalid fixture input: {result}"
+        );
+        let message = result["content"][0]["text"].as_str().unwrap_or("");
+        assert!(
+            !message.is_empty(),
+            "{tool} returned an empty business error"
+        );
+        assert!(!message.contains("serde"));
+        assert!(!message.contains("stack backtrace"));
+    }
+    chat_log.final_status(chat.turn, "completed", None);
+    assert_jsonl_contract(&chat_log, "completed");
+    drop(chat);
+
+    let mut subtitle_log = JsonlLog::new(
+        &fixture.root,
+        "core_tools_subtitle",
+        fixture.context.task_id,
+        fixture.context.attempt_id,
+    );
+    let mut workshop =
+        McpDriver::spawn_with_profile(&fixture, &mut subtitle_log, "subtitle-workshop");
+    let workshop_list = workshop.initialize(&mut subtitle_log);
+    let workshop_names: Vec<&str> = workshop_list["result"]["tools"]
+        .as_array()
+        .unwrap_or_else(|| panic!("subtitle tools/list payload: {workshop_list}"))
+        .iter()
+        .filter_map(|tool| tool["name"].as_str())
+        .collect();
+    assert_eq!(
+        workshop_names,
+        vec!["lumina_get_subtitle_cues", "lumina_write_subtitle_track"]
+    );
+
+    let cues = workshop.call(
+        "lumina_get_subtitle_cues",
+        json!({ "limit": 1 }),
+        "subtitle_cues",
+        &mut subtitle_log,
+    );
+    assert!(!is_tool_error(&cues), "subtitle cues failed: {cues}");
+    let cues_payload = text_payload(&cues);
+    assert_eq!(cues_payload["total"], json!(2));
+    assert_eq!(cues_payload["cues"].as_array().map(Vec::len), Some(1));
+    assert_eq!(cues_payload["hasMore"], json!(true));
+
+    let written = workshop.call(
+        "lumina_write_subtitle_track",
+        json!({
+            "lang": "en",
+            "cues": [{ "startMs": 500, "endMs": 1_500, "text": "The door opens." }]
+        }),
+        "subtitle_write",
+        &mut subtitle_log,
+    );
+    assert!(!is_tool_error(&written), "subtitle write failed: {written}");
+    let written_payload = text_payload(&written);
+    let written_path = PathBuf::from(
+        written_payload["path"]
+            .as_str()
+            .unwrap_or_else(|| panic!("subtitle path missing: {written}")),
+    );
+    assert!(written_path.is_file(), "subtitle sidecar was not written");
+    assert!(fs::read_to_string(written_path)
+        .unwrap_or_else(|error| panic!("read subtitle sidecar: {error}"))
+        .contains("The door opens."));
+    subtitle_log.final_status(workshop.turn, "completed", None);
+    assert_jsonl_contract(&subtitle_log, "completed");
 }

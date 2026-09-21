@@ -610,7 +610,7 @@ fn capture_frame_tool(snapshot: &LuminaMcpSnapshot, args: &Value) -> Result<Valu
     };
     let cwd = snapshot_cwd()?;
     let output_dir = ephemeral_tmp_dir(&cwd).join(format!("capture-{}", anchor.sent_at_ms));
-    let frames = capture_frames(&media_path, &sample_times, &output_dir)
+    let frames = capture_frames_with_test_seam(&media_path, &sample_times, &output_dir)
         .map_err(|_| "无法获取当前画面".to_string())?;
 
     let mut content = Vec::new();
@@ -1472,7 +1472,7 @@ fn capture_chapter_evidence(context: &ChapterTaskContext, args: &Value) -> Resul
 /// An explicit fixture directory lets a protocol-level test exercise the
 /// complete MCP/database path on hosts that do not carry the bundled FFmpeg;
 /// the environment variable is never set by the desktop application.
-fn capture_chapter_evidence_frames(
+fn capture_frames_with_test_seam(
     media_path: &Path,
     sample_times: &[f64],
     output_dir: &Path,
@@ -1505,6 +1505,14 @@ fn capture_chapter_evidence_frames(
 
     capture_frames(media_path, sample_times, output_dir)
         .map_err(|error| format!("章节画面采集失败: {error}"))
+}
+
+fn capture_chapter_evidence_frames(
+    media_path: &Path,
+    sample_times: &[f64],
+    output_dir: &Path,
+) -> Result<Vec<PathBuf>, String> {
+    capture_frames_with_test_seam(media_path, sample_times, output_dir)
 }
 
 fn chapter_evidence_result(metadata: &Value, image_bytes: &[Vec<u8>]) -> Result<Value, String> {
