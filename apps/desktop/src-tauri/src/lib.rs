@@ -87,7 +87,9 @@ use commands::subtitle::{
     subtitle_search_online, subtitle_set_provider_key, subtitle_translate_track,
     subtitle_validate_provider_key, subtitle_workshop_status,
 };
-use commands::system::system_log_dir;
+use commands::system::{
+    mark_clean_shutdown, set_crash_phase, system_log_dir, system_startup_notice,
+};
 use commands::ytdl::{
     ytdl_cached_resolve, ytdl_cookie_status, ytdl_install, ytdl_list_browser_profiles,
     ytdl_resolve, ytdl_set_cookies, ytdl_status, ytdl_test_cookies,
@@ -144,6 +146,7 @@ pub fn run() {
             media_list_siblings,
             media_tool_status,
             system_log_dir,
+            system_startup_notice,
             subtitle_list_choices,
             subtitle_load_choice,
             subtitle_export_sidecar,
@@ -311,6 +314,7 @@ fn init_tracing() {
         .with(stdout_layer)
         .with(file_layer)
         .try_init();
+    commands::system::initialize_crash_diagnostics();
     std::panic::set_hook(Box::new(|info| {
         tracing::error!(panic = %info, "application panicked");
     }));
@@ -318,6 +322,7 @@ fn init_tracing() {
 }
 
 fn attach_native_surface(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
+    set_crash_phase("player_attach");
     register_surface_app(app.handle().clone());
 
     let window = app
@@ -353,6 +358,7 @@ fn attach_native_surface(app: &mut tauri::App) -> Result<(), Box<dyn std::error:
 fn shutdown_backend(app: &tauri::AppHandle) {
     if let Some(state) = app.try_state::<AppState>() {
         tracing::info!("backend shutdown started");
+        set_crash_phase("shutdown");
         state.mark_shutdown();
         state.acp.request_cancel();
         state.acp.close_session_for_shutdown();
@@ -363,6 +369,7 @@ fn shutdown_backend(app: &tauri::AppHandle) {
             Ok(())
         });
         tracing::info!("backend shutdown finished");
+        mark_clean_shutdown();
         // The native video surface is a child of the Tauri window and is
         // destroyed with its parent on the UI thread. Do not explicitly drop
         // it from this background shutdown worker: Win32 requires a window to

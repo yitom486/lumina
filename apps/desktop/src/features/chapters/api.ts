@@ -58,6 +58,32 @@ export type ChapterDraftSnapshot = {
   mainline: string | null;
   status: ChapterDraftStatus;
   updatedAtMs: number;
+  detail?: ChapterDetailSnapshot | null;
+};
+
+export type ChapterDetailSnapshot = {
+  recap: string | null;
+  watchPoints: string[];
+  mainline: string | null;
+  outlook: string | null;
+  questions: string[];
+  draftKey: string | null;
+  evidenceAssetRefs: string[];
+  coverAssetRef: string | null;
+  assets: ChapterAssetSnapshot[];
+  revisionNumber: number | null;
+  revisionStatus: string | null;
+  source: string | null;
+  promptVersion: string | null;
+  contentVersion: string | null;
+};
+
+export type ChapterAssetSnapshot = {
+  resourceRef: string;
+  kind: "cover" | "screenshot" | "image";
+  width: number | null;
+  height: number | null;
+  capturedAtMs: number;
 };
 
 export type ChapterSegmentationSnapshot = {

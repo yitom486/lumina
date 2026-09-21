@@ -9,6 +9,8 @@ export {
 } from "./api";
 export type {
   ChapterCommandError,
+  ChapterAssetSnapshot,
+  ChapterDetailSnapshot,
   ChapterDraftSnapshot,
   ChapterDraftStatus,
   ChapterProgressEvent,

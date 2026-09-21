@@ -7,8 +7,9 @@ use std::path::PathBuf;
 
 use lumina_acp::AgentProfilesHint;
 use lumina_ai::prompts::{SpoilerBoundary, TaskId, ValidationReport};
-use lumina_library::{AgentTaskRecord, Database, DatabaseError, NewAgentTask};
+use lumina_library::{AgentTaskRecord, ChapterRecord, Database, DatabaseError, NewAgentTask};
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use tauri::AppHandle;
 
 #[path = "chapter_worker.rs"]
@@ -215,6 +216,41 @@ pub struct ChapterDraftSnapshot {
     pub mainline: Option<String>,
     pub status: String,
     pub updated_at_ms: i64,
+    pub detail: Option<ChapterDetailSnapshot>,
+}
+
+/// Stable, user-facing projection of the chapter content stored across the
+/// latest revision, feed items, question candidates, and chapter assets.
+/// Paths and raw JSON deliberately never cross this Tauri boundary.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ChapterDetailSnapshot {
+    pub recap: Option<String>,
+    pub watch_points: Vec<String>,
+    pub mainline: Option<String>,
+    pub outlook: Option<String>,
+    pub questions: Vec<String>,
+    pub draft_key: Option<String>,
+    pub evidence_asset_refs: Vec<String>,
+    pub cover_asset_ref: Option<String>,
+    pub assets: Vec<ChapterAssetSnapshot>,
+    pub revision_number: Option<i64>,
+    pub revision_status: Option<String>,
+    pub source: Option<String>,
+    pub prompt_version: Option<String>,
+    pub content_version: Option<String>,
+}
+
+/// Opaque resource reference for a chapter image.  The local asset path stays
+/// inside the Rust repository and is intentionally not part of this DTO.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ChapterAssetSnapshot {
+    pub resource_ref: String,
+    pub kind: String,
+    pub width: Option<i64>,
+    pub height: Option<i64>,
+    pub captured_at_ms: i64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -366,25 +402,238 @@ fn draft_chapters_for_task(
     let Some(episode_id) = task.episode_id else {
         return Ok(Vec::new());
     };
-    database
+    let chapters = database
         .repository()
         .list_chapters_by_agent_task(task.id, episode_id)
-        .map(|chapters| {
-            chapters
-                .into_iter()
-                .map(|chapter| ChapterDraftSnapshot {
-                    id: chapter.id,
-                    stable_id: chapter.stable_id,
-                    start_ms: chapter.start_ms,
-                    end_ms: chapter.end_ms,
-                    title: chapter.title,
-                    mainline: chapter.mainline,
-                    status: project_chapter_status(&chapter.status, &task.status).to_string(),
-                    updated_at_ms: chapter.updated_at_ms,
-                })
-                .collect()
+        .map_err(ChapterCommandError::storage)?;
+    chapters
+        .into_iter()
+        .map(|chapter| {
+            let detail = project_chapter_detail(database, &chapter)?;
+            Ok(ChapterDraftSnapshot {
+                id: chapter.id,
+                stable_id: chapter.stable_id,
+                start_ms: chapter.start_ms,
+                end_ms: chapter.end_ms,
+                title: chapter.title,
+                mainline: chapter.mainline,
+                status: project_chapter_status(&chapter.status, &task.status).to_string(),
+                updated_at_ms: chapter.updated_at_ms,
+                detail,
+            })
         })
-        .map_err(ChapterCommandError::storage)
+        .collect()
+}
+
+#[derive(Debug, Default)]
+struct ParsedChapterContent {
+    recap: Option<String>,
+    outlook: Option<String>,
+    mainline: Option<String>,
+    watch_points: Vec<String>,
+    questions: Vec<String>,
+    evidence_asset_ids: Vec<i64>,
+    draft_key: Option<String>,
+}
+
+fn project_chapter_detail(
+    database: &Database,
+    chapter: &ChapterRecord,
+) -> Result<Option<ChapterDetailSnapshot>, ChapterCommandError> {
+    let repository = database.repository();
+    let revision = repository
+        .get_latest_chapter_revision(chapter.id)
+        .map_err(ChapterCommandError::storage)?;
+    let parsed = revision
+        .as_ref()
+        .map(|value| parse_chapter_revision_content(&value.content, &value.revision_type))
+        .unwrap_or_default();
+    let assets = repository
+        .list_chapter_assets_by_chapter(chapter.id)
+        .map_err(ChapterCommandError::storage)?;
+    let feed_items = repository
+        .list_watch_feed_items_by_episode(chapter.episode_id)
+        .map_err(ChapterCommandError::storage)?
+        .into_iter()
+        .filter(|item| item.chapter_id == Some(chapter.id))
+        .collect::<Vec<_>>();
+    let candidates = repository
+        .list_question_candidates_by_chapter(chapter.id)
+        .map_err(ChapterCommandError::storage)?;
+
+    let mut recap = parsed.recap;
+    let mut outlook = parsed.outlook;
+    let mut mainline = chapter.mainline.clone().or(parsed.mainline);
+    let mut watch_points = parsed.watch_points;
+    let mut content_version = None;
+    for item in &feed_items {
+        content_version.get_or_insert_with(|| item.content_version.clone());
+        match item.item_type.trim().to_ascii_lowercase().as_str() {
+            "recap" => set_if_missing(&mut recap, non_empty_text(&item.content)),
+            "outlook" => set_if_missing(&mut outlook, non_empty_text(&item.content)),
+            "mainline" | "chapter" => set_if_missing(&mut mainline, non_empty_text(&item.content)),
+            "highlights" | "watch_points" if watch_points.is_empty() => {
+                watch_points = parse_string_list(&item.content);
+            }
+            _ => {}
+        }
+    }
+
+    let mut questions = candidates
+        .into_iter()
+        .filter_map(|candidate| non_empty_text(&candidate.question))
+        .collect::<Vec<_>>();
+    if questions.is_empty() {
+        questions = parsed.questions;
+    }
+    dedupe_strings(&mut watch_points);
+    dedupe_strings(&mut questions);
+
+    let asset_snapshots = assets
+        .iter()
+        .map(|asset| ChapterAssetSnapshot {
+            resource_ref: opaque_asset_ref(asset.id),
+            kind: normalized_asset_kind(&asset.asset_type).to_string(),
+            width: asset.width,
+            height: asset.height,
+            captured_at_ms: asset.captured_at_ms,
+        })
+        .collect::<Vec<_>>();
+    let evidence_asset_refs = parsed
+        .evidence_asset_ids
+        .iter()
+        .filter_map(|id| assets.iter().find(|asset| asset.id == *id))
+        .map(|asset| opaque_asset_ref(asset.id))
+        .collect::<Vec<_>>();
+    let evidence_asset_refs = if evidence_asset_refs.is_empty() {
+        asset_snapshots
+            .iter()
+            .map(|asset| asset.resource_ref.clone())
+            .collect()
+    } else {
+        evidence_asset_refs
+    };
+    let cover_asset_ref = asset_snapshots
+        .iter()
+        .find(|asset| asset.kind == "cover")
+        .or_else(|| {
+            asset_snapshots
+                .iter()
+                .find(|asset| asset.kind == "screenshot")
+        })
+        .map(|asset| asset.resource_ref.clone());
+
+    Ok(Some(ChapterDetailSnapshot {
+        recap,
+        watch_points,
+        mainline,
+        outlook,
+        questions,
+        draft_key: parsed.draft_key,
+        evidence_asset_refs,
+        cover_asset_ref,
+        assets: asset_snapshots,
+        revision_number: revision.as_ref().map(|value| value.revision_number),
+        revision_status: revision.as_ref().map(|value| value.status.clone()),
+        source: revision.as_ref().map(|value| value.source.clone()),
+        prompt_version: revision.as_ref().map(|value| value.prompt_version.clone()),
+        content_version,
+    }))
+}
+
+fn parse_chapter_revision_content(content: &str, revision_type: &str) -> ParsedChapterContent {
+    let Ok(value) = serde_json::from_str::<Value>(content) else {
+        return ParsedChapterContent {
+            draft_key: revision_type
+                .strip_prefix("chapter_draft:")
+                .and_then(non_empty_text),
+            ..ParsedChapterContent::default()
+        };
+    };
+    let Some(object) = value.as_object() else {
+        return ParsedChapterContent::default();
+    };
+    let highlights = parse_value_string_list(object.get("highlights"));
+    let watch_points = if highlights.is_empty() {
+        parse_value_string_list(object.get("watch_points"))
+    } else {
+        highlights
+    };
+    ParsedChapterContent {
+        recap: object.get("recap").and_then(value_text),
+        outlook: object.get("outlook").and_then(value_text),
+        mainline: object.get("mainline").and_then(value_text),
+        watch_points,
+        questions: parse_value_string_list(object.get("questions")),
+        evidence_asset_ids: object
+            .get("evidenceAssetIds")
+            .or_else(|| object.get("evidence_asset_ids"))
+            .and_then(Value::as_array)
+            .map(|values| {
+                values
+                    .iter()
+                    .filter_map(Value::as_i64)
+                    .filter(|id| *id > 0)
+                    .collect()
+            })
+            .unwrap_or_default(),
+        draft_key: object
+            .get("draftKey")
+            .or_else(|| object.get("draft_key"))
+            .and_then(value_text)
+            .or_else(|| {
+                revision_type
+                    .strip_prefix("chapter_draft:")
+                    .and_then(non_empty_text)
+            }),
+    }
+}
+
+fn parse_value_string_list(value: Option<&Value>) -> Vec<String> {
+    value
+        .and_then(Value::as_array)
+        .map(|values| values.iter().filter_map(value_text).collect())
+        .unwrap_or_default()
+}
+
+fn parse_string_list(value: &str) -> Vec<String> {
+    serde_json::from_str::<Value>(value)
+        .ok()
+        .as_ref()
+        .map(|value| parse_value_string_list(Some(value)))
+        .unwrap_or_else(|| non_empty_text(value).into_iter().collect())
+}
+
+fn value_text(value: &Value) -> Option<String> {
+    value.as_str().and_then(non_empty_text)
+}
+
+fn non_empty_text(value: &str) -> Option<String> {
+    let trimmed = value.trim();
+    (!trimmed.is_empty()).then(|| trimmed.to_string())
+}
+
+fn set_if_missing(target: &mut Option<String>, value: Option<String>) {
+    if target.is_none() {
+        *target = value;
+    }
+}
+
+fn dedupe_strings(values: &mut Vec<String>) {
+    let mut seen = std::collections::HashSet::new();
+    values.retain(|value| seen.insert(value.clone()));
+}
+
+fn opaque_asset_ref(id: i64) -> String {
+    format!("chapter-asset:{id}")
+}
+
+fn normalized_asset_kind(asset_type: &str) -> &'static str {
+    match asset_type.trim().to_ascii_lowercase().as_str() {
+        "cover" => "cover",
+        "screenshot" | "jpeg_frame" | "frame" => "screenshot",
+        _ => "image",
+    }
 }
 
 fn project_chapter_status(chapter_status: &str, task_status: &str) -> &'static str {
@@ -1031,5 +1280,41 @@ mod tests {
             value.get("kind").and_then(|value| value.as_str()),
             Some("legacy")
         );
+    }
+
+    #[test]
+    fn chapter_revision_projection_accepts_legacy_and_current_field_names() {
+        let parsed = parse_chapter_revision_content(
+            r#"{
+                "mainline":"主线",
+                "recap":"前情",
+                "outlook":"后续",
+                "highlights":["重点一"],
+                "questions":["问题一"],
+                "evidence_asset_ids":[7,0,-1],
+                "draft_key":"chapter-1"
+            }"#,
+            "chapter_draft:legacy-key",
+        );
+
+        assert_eq!(parsed.mainline.as_deref(), Some("主线"));
+        assert_eq!(parsed.recap.as_deref(), Some("前情"));
+        assert_eq!(parsed.outlook.as_deref(), Some("后续"));
+        assert_eq!(parsed.watch_points, vec!["重点一"]);
+        assert_eq!(parsed.questions, vec!["问题一"]);
+        assert_eq!(parsed.evidence_asset_ids, vec![7]);
+        assert_eq!(parsed.draft_key.as_deref(), Some("chapter-1"));
+
+        let legacy = parse_chapter_revision_content("not-json", "chapter_draft:legacy-key");
+        assert_eq!(legacy.draft_key.as_deref(), Some("legacy-key"));
+        assert!(legacy.mainline.is_none());
+    }
+
+    #[test]
+    fn chapter_asset_projection_normalizes_captured_frame_types() {
+        assert_eq!(normalized_asset_kind("jpeg_frame"), "screenshot");
+        assert_eq!(normalized_asset_kind("screenshot"), "screenshot");
+        assert_eq!(normalized_asset_kind("cover"), "cover");
+        assert_eq!(normalized_asset_kind("other"), "image");
     }
 }

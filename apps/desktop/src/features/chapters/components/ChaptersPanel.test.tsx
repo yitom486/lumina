@@ -121,6 +121,58 @@ describe("ChaptersPanel container chapters and AI entry", () => {
     expect(screen.getByText(/AI 章节草稿/)).toBeInTheDocument();
   });
 
+  it("renders persisted chapter detail fields after selecting a draft", async () => {
+    const draftChapters = [
+      {
+        id: 12,
+        stableId: "chapter-01",
+        startMs: 0,
+        endMs: 30_000,
+        title: "开场",
+        mainline: "两人重新见面并确认了新的约定。",
+        status: "generated",
+        updatedAtMs: 2,
+        detail: {
+          recap: "上一章两人暂时分开。",
+          watchPoints: ["留意两人的语气变化"],
+          mainline: "两人重新见面并确认了新的约定。",
+          outlook: "下一段将进入新的合作。",
+          questions: ["这次约定会带来什么变化？"],
+          draftKey: "chapter-01",
+          evidenceAssetRefs: ["chapter-asset:7"],
+          coverAssetRef: "chapter-asset:7",
+          assets: [],
+          revisionNumber: 2,
+          revisionStatus: "accepted",
+          source: "agent",
+          promptVersion: "chapter-segment.v1",
+          contentVersion: "watch-feed.v1",
+        },
+      },
+    ];
+    vi.mocked(invoke).mockImplementation((cmd: string) => {
+      if (cmd === "media_inspect")
+        return Promise.resolve({ path: "C:\\v\\a.mp4", streams: [], chapters: [] });
+      if (cmd === "chapter_segmentation_status")
+        return Promise.resolve({ ...segmentationSnapshot, status: "running", draftChapters });
+      return Promise.resolve(null);
+    });
+
+    renderPanel();
+
+    await waitFor(() => {
+      expect(screen.getByText("前情提要")).toBeInTheDocument();
+      expect(screen.getByText("上一章两人暂时分开。")).toBeInTheDocument();
+    });
+    expect(screen.getByText("本章不剧透的观看重点")).toBeInTheDocument();
+    expect(screen.getByText("留意两人的语气变化")).toBeInTheDocument();
+    expect(screen.getByText("本章剧情")).toBeInTheDocument();
+    expect(screen.getByText("后续看点")).toBeInTheDocument();
+    expect(screen.getByText("可以留意的问题")).toBeInTheDocument();
+    expect(screen.getByText("含代表画面")).toBeInTheDocument();
+    expect(screen.queryByText(/chapter-asset:7|chapter-segment|watch-feed/i)).not.toBeInTheDocument();
+  });
+
   it("shows the no-chapter reminder and does not auto-start AI segmentation by default", async () => {
     const onStartAiSegmentation = vi.fn();
     renderPanel({ onStartAiSegmentation });

@@ -22,7 +22,7 @@ import {
 import { ChatToggleButton } from "@lumina/chat-ui/components/ChatToggleButton";
 import { usePlayerStore, useUiStore } from "@/features/player";
 import { errorMessage } from "@/lib/format";
-import { revealLogDir } from "@/lib/system";
+import { getStartupNotice, revealLogDir, type SystemStartupNotice } from "@/lib/system";
 import luminaLogo from "../../src-tauri/icons/lumina-cat-source.png";
 
 const RELEASES_URL = "https://github.com/yitom486/lumina-app/releases";
@@ -149,6 +149,7 @@ export function AboutButton() {
 
 /** Desktop app chrome: slim title bar + main content. */
 export function AppShell({ children }: AppShellProps) {
+  const [startupNotice, setStartupNotice] = useState<SystemStartupNotice | null>(null);
   const fullscreen = useUiStore((s) => s.fullscreen);
   const fileLabel = usePlayerStore((s) => {
     if (!s.currentFile) return null;
@@ -160,8 +161,38 @@ export function AppShell({ children }: AppShellProps) {
   const playlist = usePlayerStore((s) => s.playlist);
   const playlistIndex = usePlayerStore((s) => s.playlistIndex);
 
+  useEffect(() => {
+    let cancelled = false;
+    void getStartupNotice()
+      .then((notice) => {
+        if (!cancelled) setStartupNotice(notice);
+      })
+      .catch(() => {
+        if (!cancelled) setStartupNotice(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   return (
     <div className="relative flex h-svh flex-col overflow-hidden bg-background text-foreground">
+      {startupNotice ? (
+        <div
+          role="status"
+          className="absolute inset-x-3 top-3 z-50 flex items-center justify-between gap-3 rounded-lg border border-border bg-card px-3 py-2 text-xs shadow-lg"
+        >
+          <span className="text-muted-foreground">{startupNotice.message}</span>
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            onClick={() => setStartupNotice(null)}
+          >
+            知道了
+          </Button>
+        </div>
+      ) : null}
       {!fullscreen ? (
         <header
           aria-label="应用标题栏"

@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { getLogDir, revealLogDir } from "./system";
+import { getLogDir, getStartupNotice, revealLogDir } from "./system";
 
 vi.mock("@tauri-apps/api/core", () => ({
   invoke: vi.fn(),
@@ -23,5 +23,20 @@ describe("system log export", () => {
 
     expect(invoke).toHaveBeenCalledWith("system_log_dir");
     expect(revealItemInDir).toHaveBeenCalledWith("C:\\logs");
+  });
+
+  it("reads a safe startup recovery notice", async () => {
+    vi.mocked(invoke).mockResolvedValue({
+      code: "NativePlaybackCrashed",
+      message: "上次播放进程异常退出。",
+      canRetry: true,
+    });
+
+    await expect(getStartupNotice()).resolves.toEqual({
+      code: "NativePlaybackCrashed",
+      message: "上次播放进程异常退出。",
+      canRetry: true,
+    });
+    expect(invoke).toHaveBeenCalledWith("system_startup_notice");
   });
 });

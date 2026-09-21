@@ -1,4 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
+import { useState } from "react";
 
 import { useMediaInfoQuery } from "@/features/media";
 import { usePlayerStore } from "@/features/player";
@@ -7,7 +8,7 @@ import { getCachedYtdlResolve } from "@/features/ytdl";
 import { formatTime } from "@/lib/format";
 import type { MediaChapter } from "@lumina/contracts";
 import { parseDraftChapters } from "../api";
-import type { ChapterDraftSnapshot } from "../api";
+import type { ChapterDetailSnapshot, ChapterDraftSnapshot } from "../api";
 import { useChapterSegmentation } from "../hooks/useChapterSegmentation";
 
 export type AiSegmentationStatus =
@@ -310,6 +311,12 @@ function ChapterDraftList({
   seek: (ms: number) => unknown;
   progressMessage?: string | null;
 }) {
+  const [selectedChapterId, setSelectedChapterId] = useState<number | null>(
+    chapters[0]?.id ?? null,
+  );
+  const selectedChapter =
+    chapters.find((chapter) => chapter.id === selectedChapterId) ?? chapters[0];
+
   return (
     <div className="min-h-0 flex-1 space-y-2 overflow-auto p-3">
       <div className="text-xs text-muted-foreground">
@@ -331,7 +338,11 @@ function ChapterDraftList({
                 ? "flex w-full items-start gap-2 rounded-md bg-accent px-2 py-1.5 text-left text-xs"
                 : "flex w-full items-start gap-2 rounded-md px-2 py-1.5 text-left text-xs hover:bg-muted"
             }
-            onClick={() => void seek(chapter.startMs)}
+            aria-pressed={selectedChapter?.id === chapter.id}
+            onClick={() => {
+              setSelectedChapterId(chapter.id);
+              void seek(chapter.startMs);
+            }}
           >
             <span className="shrink-0 font-mono text-primary">
               {formatTime(chapter.startMs)}
@@ -347,6 +358,110 @@ function ChapterDraftList({
           </button>
         );
       })}
+      {selectedChapter ? (
+        <ChapterDetailView detail={selectedChapter.detail} />
+      ) : null}
+    </div>
+  );
+}
+
+function ChapterDetailView({
+  detail,
+}: {
+  detail?: ChapterDetailSnapshot | null;
+}) {
+  if (!detail) {
+    return (
+      <section className="space-y-1 rounded-lg border border-border bg-card p-3 text-xs">
+        <h3 className="font-medium text-foreground">章节详情</h3>
+        <p className="text-muted-foreground">详情尚未生成，当前仅显示章节大纲。</p>
+      </section>
+    );
+  }
+
+  const evidenceCount = detail.evidenceAssetRefs.length;
+  const metadata = [
+    detail.revisionNumber ? `第 ${detail.revisionNumber} 版` : null,
+    detail.revisionStatus === "accepted" ? "已通过校验" : null,
+    evidenceCount > 0 ? `${evidenceCount} 个画面证据` : null,
+  ].filter(Boolean);
+
+  return (
+    <section className="space-y-3 rounded-lg border border-border bg-card p-3 text-xs">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <h3 className="font-medium text-foreground">章节详情</h3>
+          <p className="mt-1 text-[11px] text-muted-foreground">
+            {metadata.length > 0 ? metadata.join(" · ") : "来自已保存的章节内容"}
+          </p>
+        </div>
+        {detail.coverAssetRef ? (
+          <span className="rounded-full bg-muted px-2 py-1 text-[11px] text-muted-foreground">
+            含代表画面
+          </span>
+        ) : null}
+      </div>
+
+      <ChapterDetailSection title="前情提要" value={detail.recap} empty="暂无前情提要" />
+      <ChapterDetailList
+        title="本章不剧透的观看重点"
+        values={detail.watchPoints}
+        empty="暂无观看重点"
+      />
+      <ChapterDetailSection title="本章剧情" value={detail.mainline} empty="暂无剧情详情" />
+      <ChapterDetailSection title="后续看点" value={detail.outlook} empty="暂无后续看点" />
+      <ChapterDetailList
+        title="可以留意的问题"
+        values={detail.questions}
+        empty="暂无问题候选"
+      />
+    </section>
+  );
+}
+
+function ChapterDetailSection({
+  title,
+  value,
+  empty,
+}: {
+  title: string;
+  value: string | null;
+  empty: string;
+}) {
+  return (
+    <div className="space-y-1">
+      <h4 className="font-medium text-foreground">{title}</h4>
+      <p className="whitespace-pre-wrap leading-5 text-muted-foreground">{value?.trim() || empty}</p>
+    </div>
+  );
+}
+
+function ChapterDetailList({
+  title,
+  values,
+  empty,
+}: {
+  title: string;
+  values: string[];
+  empty: string;
+}) {
+  return (
+    <div className="space-y-1">
+      <h4 className="font-medium text-foreground">{title}</h4>
+      {values.length > 0 ? (
+        <ul className="space-y-1 text-muted-foreground">
+          {values.map((value, index) => (
+            <li key={`${value}-${index}`} className="flex gap-2 leading-5">
+              <span className="text-primary" aria-hidden="true">
+                ·
+              </span>
+              <span>{value}</span>
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <p className="text-muted-foreground">{empty}</p>
+      )}
     </div>
   );
 }

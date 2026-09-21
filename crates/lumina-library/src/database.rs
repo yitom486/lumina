@@ -1945,6 +1945,31 @@ impl Repository<'_> {
             .map_err(|error| map_read_error("read question candidates", error))
     }
 
+    /// Read question candidates for one chapter without requiring callers to
+    /// load and filter the entire episode projection.  The chapter detail
+    /// boundary uses this method to keep the UI projection episode-scoped and
+    /// chapter-specific while preserving the existing schema.
+    pub fn list_question_candidates_by_chapter(
+        &self,
+        chapter_id: i64,
+    ) -> DatabaseResult<Vec<QuestionCandidateRecord>> {
+        let mut statement = self
+            .connection
+            .prepare(
+                "SELECT id, episode_id, chapter_id, task_id, question, source, spoiler_level,
+                        batch_key, dedupe_fingerprint, is_user_defined, selected_at_ms, created_at_ms
+                 FROM question_candidates
+                 WHERE chapter_id = ?1
+                 ORDER BY created_at_ms ASC, id ASC",
+            )
+            .map_err(|error| map_read_error("prepare question candidates by chapter", error))?;
+        let rows = statement
+            .query_map(params![chapter_id], map_question_candidate_row)
+            .map_err(|error| map_read_error("list question candidates by chapter", error))?;
+        rows.collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(|error| map_read_error("read question candidates by chapter", error))
+    }
+
     pub fn insert_question_candidate_for_agent_task(
         &self,
         task_id: i64,
@@ -3880,6 +3905,14 @@ mod tests {
         assert_eq!(
             value_or_panic(repository.list_question_candidates_by_episode(episode_id)).len(),
             1
+        );
+        assert_eq!(
+            value_or_panic(repository.list_question_candidates_by_chapter(chapter_id)).len(),
+            1
+        );
+        assert!(
+            value_or_panic(repository.list_question_candidates_by_chapter(second_chapter_id))
+                .is_empty()
         );
         let assets = value_or_panic(repository.list_chapter_assets_by_chapter(chapter_id));
         assert_eq!(assets.len(), 2);
