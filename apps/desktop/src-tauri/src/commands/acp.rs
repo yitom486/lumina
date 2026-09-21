@@ -16,9 +16,10 @@ use crate::state::AppState;
 use lumina_acp::agent::workspace::resolve_session_cwd;
 use lumina_acp::AcpClientSettings;
 use lumina_ai::prompts::{
-    compose_prompt, EpisodeContext, MediaContext, PromptRepository, PromptSlots, SpoilerBoundary,
-    TaskId, ViewingContext,
+    compose_prompt, ComposedPrompt, EpisodeContext, MediaContext, PromptRepository, PromptSlots,
+    SpoilerBoundary, TaskId, ViewingContext,
 };
+use lumina_ai::validate_task_output;
 use lumina_library::{
     ChapterAssetRecord, ChapterRecord, ChapterRevisionRecord, EpisodeRecord, MediaMetadataContext,
     QuestionCandidateRecord, Repository, StoredMetadataKind, WatchFeedItemRecord,
@@ -712,26 +713,68 @@ pub async fn acp_prompt(
         adapter::write_prompt_snapshot(&session_cwd, &snapshot)?;
         let context = enrich_prompt_context(context, &snapshot, media_changed);
         let images = images.unwrap_or_default();
-        let prompt_text = task_id
-            .as_deref()
-            .map(|value| compose_task_prompt(value, text.as_str(), context.as_ref()))
-            .transpose()?
-            .unwrap_or(text);
-        acp.prompt(
-            prompt_text,
-            cwd,
-            profile_id,
-            context,
-            images,
-            saved_session,
-            settings,
-            profiles,
-            |event| {
-                if let Err(error) = on_event.send(event) {
-                    tracing::warn!(%error, "failed to send ACP event");
-                }
-            },
-        )
+        if let Some(task_id) = task_id.as_deref() {
+            let composed = compose_task_composed(task_id, text.as_str(), context.as_ref())?;
+            let shortcut_task = composed.task_id();
+            if task_needs_validation(shortcut_task) {
+                // Validated shortcuts reuse the live ACP session: every sender
+                // call forwards all ACP events to the frontend. Intermediate
+                // Finished events use overwrite semantics downstream, so the
+                // final Finished wins without filtering here.
+                let initial = composed.initial_prompt().to_string();
+                let mut sender = |retry_text: &str| {
+                    acp.prompt(
+                        retry_text,
+                        cwd.clone(),
+                        profile_id.clone(),
+                        context.clone(),
+                        images.clone(),
+                        saved_session.clone(),
+                        settings.clone(),
+                        profiles.clone(),
+                        |event| {
+                            if let Err(error) = on_event.send(event) {
+                                tracing::warn!(%error, "failed to send ACP event");
+                            }
+                        },
+                    )
+                };
+                run_shortcut_with_validation(shortcut_task, composed, initial, &mut sender)
+            } else {
+                let prompt_text = composed.initial_prompt().to_string();
+                acp.prompt(
+                    prompt_text,
+                    cwd,
+                    profile_id,
+                    context,
+                    images,
+                    saved_session,
+                    settings,
+                    profiles,
+                    |event| {
+                        if let Err(error) = on_event.send(event) {
+                            tracing::warn!(%error, "failed to send ACP event");
+                        }
+                    },
+                )
+            }
+        } else {
+            acp.prompt(
+                text,
+                cwd,
+                profile_id,
+                context,
+                images,
+                saved_session,
+                settings,
+                profiles,
+                |event| {
+                    if let Err(error) = on_event.send(event) {
+                        tracing::warn!(%error, "failed to send ACP event");
+                    }
+                },
+            )
+        }
     })
     .await
     .map_err(|error| AcpError::internal(Some(&format!("acp prompt join: {error}"))))?
@@ -740,11 +783,27 @@ pub async fn acp_prompt(
 /// Compose a versioned shortcut task prompt without changing the ordinary chat
 /// path. The task prompt is sent through the existing ACP session; no new
 /// session, history entry or MCP evidence is created here.
+/// String wrapper behind [`compose_task_composed`], kept for tests.
+#[cfg(test)]
 fn compose_task_prompt(
     task_id: &str,
     user_text: &str,
     context: Option<&VideoPromptContext>,
 ) -> Result<String, AcpError> {
+    compose_task_composed(task_id, user_text, context)
+        .map(|prompt| prompt.initial_prompt().to_string())
+}
+
+/// Reusable [`ComposedPrompt`] behind [`compose_task_prompt`].
+///
+/// Validation and error messages are identical to the original string helper;
+/// the composed form additionally carries the validation-retry state used by
+/// [`run_shortcut_with_validation`].
+fn compose_task_composed(
+    task_id: &str,
+    user_text: &str,
+    context: Option<&VideoPromptContext>,
+) -> Result<ComposedPrompt, AcpError> {
     let task_id = TaskId::from_str(task_id.trim())
         .map_err(|_| AcpError::bad_request("快捷 AI 操作不受支持"))?;
     let context = context
@@ -783,11 +842,56 @@ fn compose_task_prompt(
     } else {
         slots
     };
-    compose_prompt(task_id, &slots)
-        .map(|prompt| prompt.initial_prompt().to_string())
-        .map_err(|error| {
-            AcpError::internal(Some(&format!("task prompt composition failed: {error}")))
-        })
+    compose_prompt(task_id, &slots).map_err(|error| {
+        AcpError::internal(Some(&format!("task prompt composition failed: {error}")))
+    })
+}
+
+/// Whether a shortcut task owns a JSON validator.
+///
+/// Mirrors the `None` arm of [`validate_task_output`]: tasks without a JSON
+/// contract skip validation and pass the reply through on the original path.
+fn task_needs_validation(task_id: TaskId) -> bool {
+    matches!(
+        task_id,
+        TaskId::ChapterRecap
+            | TaskId::ChapterOutlook
+            | TaskId::PlotSummary
+            | TaskId::QuestionCandidates
+    )
+}
+
+/// Shortcut validation-retry loop for tasks with a JSON validator.
+///
+/// Sends `initial_prompt` first, then validates each reply with
+/// [`validate_task_output`]. An empty report returns the reply; otherwise the
+/// report is appended as an incremental correction message and only
+/// `delta.message` is sent next. When the retry budget is exhausted the last
+/// reply is returned for graceful frontend degradation. Sender errors
+/// (cancel/transport failures) propagate immediately without retry.
+fn run_shortcut_with_validation(
+    task_id: TaskId,
+    mut composed: ComposedPrompt,
+    initial_prompt: String,
+    sender: &mut dyn FnMut(&str) -> Result<String, AcpError>,
+) -> Result<String, AcpError> {
+    let mut current = initial_prompt;
+    loop {
+        let reply = sender(current.as_str())?;
+        let report = match validate_task_output(task_id, reply.as_str()) {
+            Some(report) => report,
+            None => return Ok(reply),
+        };
+        if report.is_empty() {
+            return Ok(reply);
+        }
+        match composed.append_validation_report(report) {
+            Ok(delta) => {
+                current = delta.message.clone();
+            }
+            Err(_) => return Ok(reply),
+        }
+    }
 }
 
 /// Per-turn: progress always. Episode plot only when media/episode switched.
@@ -1066,6 +1170,124 @@ mod tests {
                 .map(|error| error.message.as_str()),
             Some("请先打开视频后再使用快捷 AI 操作")
         );
+    }
+
+    fn test_composed(task_id: TaskId) -> ComposedPrompt {
+        let slots = PromptSlots::default();
+        match compose_prompt(task_id, &slots) {
+            Ok(prompt) => prompt,
+            Err(error) => panic!("expected test prompt, got {error}"),
+        }
+    }
+
+    fn valid_recap_reply() -> String {
+        let version = TaskId::ChapterRecap.definition().output_contract_version;
+        format!(r#"{{"version": "{version}", "summary": "Grounded recap.", "evidence": []}}"#)
+    }
+
+    #[test]
+    fn shortcut_loop_returns_first_reply_when_valid() {
+        let composed = test_composed(TaskId::ChapterRecap);
+        let initial = composed.initial_prompt().to_string();
+        let expected = valid_recap_reply();
+        let mut calls = Vec::new();
+        let mut sender = |text: &str| -> Result<String, AcpError> {
+            calls.push(text.to_string());
+            Ok(expected.clone())
+        };
+        let result = match run_shortcut_with_validation(
+            TaskId::ChapterRecap,
+            composed,
+            initial.clone(),
+            &mut sender,
+        ) {
+            Ok(reply) => reply,
+            Err(error) => panic!("expected reply, got {error}"),
+        };
+        assert_eq!(result, expected);
+        assert_eq!(calls, vec![initial]);
+    }
+
+    #[test]
+    fn shortcut_loop_retries_with_incremental_delta() {
+        let composed = test_composed(TaskId::ChapterRecap);
+        let initial = composed.initial_prompt().to_string();
+        let fixed = valid_recap_reply();
+        let mut calls = Vec::new();
+        let mut first = true;
+        let mut sender = |text: &str| -> Result<String, AcpError> {
+            calls.push(text.to_string());
+            if first {
+                first = false;
+                Ok("not json at all".to_string())
+            } else {
+                Ok(fixed.clone())
+            }
+        };
+        let result = match run_shortcut_with_validation(
+            TaskId::ChapterRecap,
+            composed,
+            initial.clone(),
+            &mut sender,
+        ) {
+            Ok(reply) => reply,
+            Err(error) => panic!("expected retried reply, got {error}"),
+        };
+        assert_eq!(result, fixed);
+        assert_eq!(calls.len(), 2);
+        assert_eq!(calls[0], initial);
+        assert!(calls[1].contains("Validation retry"));
+        assert!(calls[1].contains("invalid_json"));
+        assert!(!calls[1].contains("Lumina task:"));
+    }
+
+    #[test]
+    fn shortcut_loop_returns_last_reply_when_budget_exhausted() {
+        let composed = test_composed(TaskId::ChapterRecap);
+        let initial = composed.initial_prompt().to_string();
+        let mut calls = Vec::new();
+        let mut sender = |text: &str| -> Result<String, AcpError> {
+            calls.push(text.to_string());
+            Ok("still not json".to_string())
+        };
+        let result = match run_shortcut_with_validation(
+            TaskId::ChapterRecap,
+            composed,
+            initial.clone(),
+            &mut sender,
+        ) {
+            Ok(reply) => reply,
+            Err(error) => panic!("budget exhaustion should return last reply, got {error}"),
+        };
+        assert_eq!(result, "still not json");
+        assert_eq!(calls.len(), 4);
+        assert_eq!(calls[0], initial);
+        for retry in calls.iter().skip(1) {
+            assert!(retry.contains("Validation retry"));
+            assert!(!retry.contains("Lumina task:"));
+        }
+    }
+
+    #[test]
+    fn shortcut_loop_propagates_sender_errors() {
+        let composed = test_composed(TaskId::ChapterRecap);
+        let initial = composed.initial_prompt().to_string();
+        let mut calls = Vec::new();
+        let mut sender = |text: &str| -> Result<String, AcpError> {
+            calls.push(text.to_string());
+            Err(AcpError::cancelled())
+        };
+        let error = match run_shortcut_with_validation(
+            TaskId::ChapterRecap,
+            composed,
+            initial,
+            &mut sender,
+        ) {
+            Ok(reply) => panic!("expected sender error, got reply {reply}"),
+            Err(error) => error,
+        };
+        assert_eq!(error.code, lumina_acp::AcpErrorCode::Cancelled);
+        assert_eq!(calls.len(), 1);
     }
 
     fn stored_metadata(

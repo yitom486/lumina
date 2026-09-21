@@ -19,11 +19,12 @@ pub use chapter::{
 pub use lumina_core::{AgentInvoker, AgentTaskError, IsolatedAgentTask};
 pub use shortcut::{
     validate_chapter_outlook_output, validate_chapter_recap_output, validate_plot_summary_output,
-    validate_question_candidates_output, BulletDetail, BulletItem, ChapterOutlookOutput,
-    ChapterRecapOutput, EvidenceDetail, EvidenceItem, PlotSummaryOutput, QuestionCandidatesOutput,
-    QuestionDetail, QuestionItem, ShortcutChapter, ShortcutScope, ShortcutSpoilerBoundary,
-    CHAPTER_OUTLOOK_CONTRACT_VERSION, CHAPTER_RECAP_CONTRACT_VERSION, MAX_SHORTCUT_ITEMS,
-    MAX_SHORTCUT_TEXT_LEN, PLOT_SUMMARY_CONTRACT_VERSION, QUESTION_CANDIDATES_CONTRACT_VERSION,
+    validate_question_candidates_output, validate_task_output, BulletDetail, BulletItem,
+    ChapterOutlookOutput, ChapterRecapOutput, EvidenceDetail, EvidenceItem, PlotSummaryOutput,
+    QuestionCandidatesOutput, QuestionDetail, QuestionItem, ShortcutChapter, ShortcutScope,
+    ShortcutSpoilerBoundary, CHAPTER_OUTLOOK_CONTRACT_VERSION, CHAPTER_RECAP_CONTRACT_VERSION,
+    MAX_SHORTCUT_ITEMS, MAX_SHORTCUT_TEXT_LEN, PLOT_SUMMARY_CONTRACT_VERSION,
+    QUESTION_CANDIDATES_CONTRACT_VERSION,
 };
 pub use translate::{
     proofread_cues, translate_and_export_track, translate_cues, ProgressUpdate, ReportedName,

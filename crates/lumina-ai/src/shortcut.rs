@@ -359,6 +359,81 @@ pub fn validate_question_candidates_output(output: &QuestionCandidatesOutput) ->
     ValidationReport::new(issues)
 }
 
+/// Dispatches raw agent text to the task's JSON validator.
+///
+/// The payload is stripped of a single Markdown ```json fence before
+/// deserialization. Returns `Some(report)` for tasks with a JSON output
+/// contract (`chapter_recap`, `chapter_outlook`, `plot_summary`,
+/// `question_candidates`): an empty report means the output passed, a
+/// non-empty report carries either structural issues or a single
+/// `invalid_json` issue at `$` when the text is not valid contract JSON.
+/// Returns `None` for tasks without a JSON validator (`chapter_segment`,
+/// `rewrite_content`), meaning the caller skips validation and passes the
+/// reply through.
+pub fn validate_task_output(task_id: TaskId, text: &str) -> Option<ValidationReport> {
+    let payload = strip_json_fence(text);
+    match task_id {
+        TaskId::ChapterRecap => match serde_json::from_str::<ChapterRecapOutput>(payload) {
+            Ok(output) => Some(validate_chapter_recap_output(&output)),
+            Err(_) => Some(invalid_json_report(CHAPTER_RECAP_CONTRACT_VERSION)),
+        },
+        TaskId::ChapterOutlook => match serde_json::from_str::<ChapterOutlookOutput>(payload) {
+            Ok(output) => Some(validate_chapter_outlook_output(&output)),
+            Err(_) => Some(invalid_json_report(CHAPTER_OUTLOOK_CONTRACT_VERSION)),
+        },
+        TaskId::PlotSummary => match serde_json::from_str::<PlotSummaryOutput>(payload) {
+            Ok(output) => Some(validate_plot_summary_output(&output)),
+            Err(_) => Some(invalid_json_report(PLOT_SUMMARY_CONTRACT_VERSION)),
+        },
+        TaskId::QuestionCandidates => {
+            match serde_json::from_str::<QuestionCandidatesOutput>(payload) {
+                Ok(output) => Some(validate_question_candidates_output(&output)),
+                Err(_) => Some(invalid_json_report(QUESTION_CANDIDATES_CONTRACT_VERSION)),
+            }
+        }
+        TaskId::ChapterSegment | TaskId::RewriteContent => None,
+    }
+}
+
+fn invalid_json_report(contract_version: &str) -> ValidationReport {
+    ValidationReport::single(ValidationIssue::new(
+        "invalid_json",
+        "$",
+        "The output is not valid JSON for the task contract.",
+        format!("valid JSON matching the {contract_version} output contract"),
+        format!(
+            "Return only valid JSON matching the {contract_version} output contract, without prose or code fences."
+        ),
+    ))
+}
+
+fn strip_json_fence(text: &str) -> &str {
+    let trimmed = text.trim();
+    let after_open = match trimmed.strip_prefix("```") {
+        Some(rest) => rest,
+        None => return trimmed,
+    };
+    let content_with_maybe_tag = match after_open.find('\n') {
+        Some(newline) => after_open.get(newline + 1..).unwrap_or_default(),
+        None => {
+            let inline = after_open.trim_start();
+            match inline.get(..4) {
+                Some(head) if head.eq_ignore_ascii_case("json") => {
+                    inline.get(4..).map(str::trim_start).unwrap_or_default()
+                }
+                _ => inline,
+            }
+        }
+    };
+    let without_close = match content_with_maybe_tag.rfind("```") {
+        Some(closing) => content_with_maybe_tag
+            .get(..closing)
+            .unwrap_or(content_with_maybe_tag),
+        None => content_with_maybe_tag,
+    };
+    without_close.trim()
+}
+
 fn check_version(actual: &str, expected: &str, issues: &mut Vec<ValidationIssue>) {
     if actual != expected {
         issues.push(issue(
@@ -903,5 +978,89 @@ mod tests {
             assert!(!item.expected.trim().is_empty());
             assert!(!item.repair_suggestion.trim().is_empty());
         }
+    }
+
+    fn invalid_json_code(report: Option<ValidationReport>) -> String {
+        match report {
+            Some(report) => {
+                assert_eq!(report.issues.len(), 1);
+                let issue = &report.issues[0];
+                assert_eq!(issue.field_path, "$");
+                issue.error_code.clone()
+            }
+            None => panic!("expected a validation report for illegal JSON"),
+        }
+    }
+
+    #[test]
+    fn dispatcher_rejects_illegal_json_for_recap() {
+        assert_eq!(
+            invalid_json_code(validate_task_output(
+                TaskId::ChapterRecap,
+                "not json at all"
+            )),
+            "invalid_json"
+        );
+    }
+
+    #[test]
+    fn dispatcher_rejects_illegal_json_for_outlook() {
+        assert_eq!(
+            invalid_json_code(validate_task_output(
+                TaskId::ChapterOutlook,
+                "{broken json,,,"
+            )),
+            "invalid_json"
+        );
+    }
+
+    #[test]
+    fn dispatcher_rejects_illegal_json_for_plot_summary() {
+        assert_eq!(
+            invalid_json_code(validate_task_output(TaskId::PlotSummary, "")),
+            "invalid_json"
+        );
+    }
+
+    #[test]
+    fn dispatcher_rejects_illegal_json_for_question_candidates() {
+        assert_eq!(
+            invalid_json_code(validate_task_output(
+                TaskId::QuestionCandidates,
+                "```json\nnot json\n```"
+            )),
+            "invalid_json"
+        );
+    }
+
+    #[test]
+    fn dispatcher_skips_tasks_without_json_validators() {
+        assert!(validate_task_output(TaskId::ChapterSegment, "anything").is_none());
+        assert!(validate_task_output(TaskId::RewriteContent, "{\"any\": 1}").is_none());
+    }
+
+    #[test]
+    fn dispatcher_accepts_fenced_valid_json() {
+        let json = format!(
+            r#"{{"version": "{version}", "summary": "Grounded recap.", "evidence": []}}"#,
+            version = CHAPTER_RECAP_CONTRACT_VERSION
+        );
+        let fenced = format!("```json\n{json}\n```");
+        let report = match validate_task_output(TaskId::ChapterRecap, &fenced) {
+            Some(report) => report,
+            None => panic!("recap should have a validator"),
+        };
+        assert!(report.is_empty());
+    }
+
+    #[test]
+    fn dispatcher_surfaces_structural_issues_not_invalid_json() {
+        let json = r#"{"version": "plot_summary.v999", "summary": "Grounded.", "evidence": []}"#
+            .to_string();
+        let report = match validate_task_output(TaskId::PlotSummary, &json) {
+            Some(report) => report,
+            None => panic!("plot summary should have a validator"),
+        };
+        assert!(has_code(&report, "contract_version_mismatch"));
     }
 }
