@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 
 use lumina_acp::agent::workspace::resolve_session_cwd;
 use lumina_acp::jobs::isolated::ChapterSession;
-use lumina_acp::{AcpError, AcpErrorCode, AcpSessionModelSelection};
+use lumina_acp::{AcpError, AcpErrorCode, AcpEvent, AcpSessionModelSelection};
 use lumina_ai::prompts::{
     compose_prompt, EpisodeContext, MediaContext, PromptSlots, SpoilerBoundary, TaskId,
     TranscriptWindow, ValidationReport, ViewingContext,
@@ -22,10 +22,12 @@ use lumina_media::frame_capture::{
 };
 use lumina_media::MediaInspector;
 use lumina_subtitle::{SubtitleService, Transcript};
+use tauri::{AppHandle, Emitter};
 
 use super::{
     now_ms_for_command, open_database, ChapterCommandError, ChapterEpisodeIdentity,
-    ChapterSegmentationRequest, PersistedChapterFailure,
+    ChapterProgressEvent, ChapterSegmentationRequest, PersistedChapterFailure,
+    CHAPTER_PROGRESS_EVENT,
 };
 
 const TRANSCRIPT_WINDOW_WIDTH_MS: u64 = 30_000;
@@ -118,9 +120,111 @@ struct AttemptScope {
     database_path: PathBuf,
 }
 
+/// A deliberately small, safe projection of ACP events for the chapters UI.
+/// It never forwards agent text, thoughts, tool arguments, file paths, or
+/// stderr. The durable task row remains the source of truth.
+struct ProgressEmitter {
+    app: Option<AppHandle>,
+    task_key: String,
+    task_id: i64,
+    attempt_id: i64,
+    attempt_count: i64,
+    max_attempts: i64,
+    sequence: i64,
+}
+
+impl ProgressEmitter {
+    fn new(app: Option<AppHandle>, task: &AgentTaskRecord, attempt_id: i64) -> Self {
+        Self {
+            app,
+            task_key: task.task_key.clone(),
+            task_id: task.id,
+            attempt_id,
+            attempt_count: task.attempt_count,
+            max_attempts: task.max_attempts,
+            sequence: 0,
+        }
+    }
+
+    fn emit(&mut self, phase: &str, message: &str, committed: bool) {
+        self.sequence = self.sequence.saturating_add(1);
+        let event = ChapterProgressEvent {
+            task_key: self.task_key.clone(),
+            task_id: self.task_id,
+            attempt_id: Some(self.attempt_id),
+            phase: phase.to_string(),
+            message: message.to_string(),
+            attempt_count: self.attempt_count,
+            max_attempts: self.max_attempts,
+            sequence: self.sequence,
+            committed,
+            updated_at_ms: now_ms_for_command(),
+        };
+        if let Some(app) = self.app.as_ref() {
+            if let Err(error) = app.emit(CHAPTER_PROGRESS_EVENT, &event) {
+                tracing::debug!(%error, "chapter progress emit failed");
+            }
+        }
+    }
+
+    fn on_acp_event(&mut self, event: AcpEvent) {
+        match event {
+            AcpEvent::Started => self.emit("agent_running", "正在执行章节 Agent", false),
+            AcpEvent::ToolCall { title, .. } => {
+                if let Some((phase, message)) = chapter_tool_progress(title.as_deref()) {
+                    self.emit(phase, message, false);
+                }
+            }
+            AcpEvent::ToolCallUpdate { title, status, .. } => {
+                if let Some((phase, message)) = chapter_tool_progress(title.as_deref()) {
+                    let committed = status.as_deref().is_some_and(is_completed_tool_status);
+                    self.emit(phase, message, committed);
+                }
+            }
+            AcpEvent::Finished { .. } => self.emit("checking_result", "正在确认章节结果", false),
+            AcpEvent::Failed { .. } => {
+                self.emit("agent_failed", "章节 Agent 执行失败，正在整理结果", false)
+            }
+            AcpEvent::Progress { .. }
+            | AcpEvent::AgentMessage { .. }
+            | AcpEvent::AgentThought { .. }
+            | AcpEvent::Plan { .. }
+            | AcpEvent::SessionSaved { .. }
+            | AcpEvent::PermissionRequest { .. }
+            | AcpEvent::PermissionResolved { .. } => {}
+        }
+    }
+}
+
+fn chapter_tool_progress(title: Option<&str>) -> Option<(&'static str, &'static str)> {
+    let title = title?.to_ascii_lowercase();
+    use lumina_core::tool_contract as contract;
+    if title.contains(contract::TOOL_CREATE_CHAPTER_OUTLINE) {
+        Some(("building_outline", "正在建立章节框架"))
+    } else if title.contains(contract::TOOL_CAPTURE_CHAPTER_EVIDENCE) {
+        Some(("capturing_evidence", "正在获取字幕与画面证据"))
+    } else if title.contains(contract::TOOL_UPDATE_CHAPTER_DRAFT) {
+        Some(("updating_draft", "正在补充章节内容"))
+    } else if title.contains(contract::TOOL_FINALIZE_CHAPTER_TASK) {
+        Some(("finalizing", "正在校验并保存章节"))
+    } else {
+        None
+    }
+}
+
+fn is_completed_tool_status(status: &str) -> bool {
+    matches!(
+        status.to_ascii_lowercase().as_str(),
+        "completed" | "complete" | "finished" | "succeeded" | "success"
+    )
+}
+
 /// Execute one claimed task. Concurrent callers for the same task key are
 /// safe because the SQLite claim is conditional and atomic.
-pub(super) fn run(request: ChapterSegmentationRequest) -> Result<(), ChapterCommandError> {
+pub(super) fn run(
+    request: ChapterSegmentationRequest,
+    app: Option<AppHandle>,
+) -> Result<(), ChapterCommandError> {
     let mut database = open_database()?;
     let task_key = super::task_key(&request);
     let Some(task) = database
@@ -142,15 +246,17 @@ pub(super) fn run(request: ChapterSegmentationRequest) -> Result<(), ChapterComm
             now_ms_for_command(),
         ))
         .map_err(ChapterCommandError::storage)?;
+    let mut progress = ProgressEmitter::new(app, &task, attempt_id);
+    progress.emit("running", "章节任务已保存，准备开始分析", true);
 
     let scope = match establish_attempt_scope(&mut database, &request, &task) {
         Ok(scope) => scope,
-        Err(error) => return finish_failed(&database, &task, attempt_id, error),
+        Err(error) => return finish_failed(&database, &task, attempt_id, &mut progress, error),
     };
 
-    match execute_attempt(&request, &task, attempt_id, &scope) {
-        Ok(result) => settle_attempt(&mut database, &task, attempt_id, result),
-        Err(error) => finish_failed(&database, &task, attempt_id, error),
+    match execute_attempt(&request, &task, attempt_id, &scope, &mut progress) {
+        Ok(result) => settle_attempt(&mut database, &task, attempt_id, result, &mut progress),
+        Err(error) => finish_failed(&database, &task, attempt_id, &mut progress, error),
     }
 }
 
@@ -208,6 +314,7 @@ fn settle_attempt(
     task: &AgentTaskRecord,
     attempt_id: i64,
     result: AttemptResult,
+    progress: &mut ProgressEmitter,
 ) -> Result<(), ChapterCommandError> {
     // Keep the response available for diagnostics, but never use assistant
     // text as a completion signal for a scoped Batch G tool session.
@@ -223,11 +330,15 @@ fn settle_attempt(
     match persisted.status.as_str() {
         // The finalize tool owns publication and the terminal task/attempt
         // update.  Do not infer success from the assistant response.
-        "succeeded" => Ok(()),
+        "succeeded" => {
+            progress.emit("succeeded", "章节已生成并保存", true);
+            Ok(())
+        }
         _ => finish_failed(
             database,
             task,
             attempt_id,
+            progress,
             WorkerFailure::business(
                 "章节 Agent 未完成章节写入，请再次尝试。",
                 "scoped chapter session ended without durable finalize",
@@ -240,6 +351,7 @@ fn finish_failed(
     database: &Database,
     task: &AgentTaskRecord,
     attempt_id: i64,
+    progress: &mut ProgressEmitter,
     failure: WorkerFailure,
 ) -> Result<(), ChapterCommandError> {
     let persisted_report = failure.persisted_report();
@@ -260,6 +372,19 @@ fn finish_failed(
         "failed",
         Some(&persisted_report),
     )?;
+    if task.attempt_count < task.max_attempts {
+        progress.emit(
+            "retrying",
+            &format!(
+                "本次尝试未通过校验，将准备第 {} / {} 次尝试",
+                task.attempt_count + 1,
+                task.max_attempts
+            ),
+            true,
+        );
+    } else {
+        progress.emit("failed", "章节分析失败，请检查资源后重试", true);
+    }
     Err(failure.into_command_error())
 }
 
@@ -408,6 +533,7 @@ fn execute_attempt(
     task: &AgentTaskRecord,
     attempt_id: i64,
     scope: &AttemptScope,
+    progress: &mut ProgressEmitter,
 ) -> Result<AttemptResult, WorkerFailure> {
     let boundary = request
         .spoiler_boundary
@@ -441,6 +567,7 @@ fn execute_attempt(
     // Prewarming is only a prompt optimization.  The isolated session has
     // task-scoped MCP read/write tools and must still start when both local
     // prewarm paths are unavailable.
+    progress.emit("preparing_evidence", "正在准备字幕与画面证据", false);
     let evidence = collect_evidence(request, task, &scope.media_path, scope.duration_ms)?;
 
     let slots = build_prompt_slots(
@@ -472,8 +599,11 @@ fn execute_attempt(
         Some(format!("chapter-{}", task.id)),
     );
 
+    progress.emit("agent_running", "正在执行章节 Agent", false);
     let response = session
-        .prompt(composed.initial_prompt())
+        .prompt_with_events(composed.initial_prompt(), |event| {
+            progress.on_acp_event(event)
+        })
         .map_err(WorkerFailure::agent_unavailable)?;
     Ok(AttemptResult {
         assistant_response: response,
@@ -753,6 +883,40 @@ mod tests {
     }
 
     #[test]
+    fn chapter_progress_maps_only_known_tools_and_safe_statuses() {
+        assert_eq!(
+            chapter_tool_progress(Some("mcp__lumina__lumina_create_chapter_outline")),
+            Some(("building_outline", "正在建立章节框架"))
+        );
+        assert_eq!(
+            chapter_tool_progress(Some("lumina_capture_chapter_evidence")),
+            Some(("capturing_evidence", "正在获取字幕与画面证据"))
+        );
+        assert_eq!(chapter_tool_progress(Some("read_file")), None);
+        assert!(is_completed_tool_status("completed"));
+        assert!(!is_completed_tool_status("running"));
+
+        let event = ChapterProgressEvent {
+            task_key: "chapter-segmentation:test".to_string(),
+            task_id: 7,
+            attempt_id: Some(1),
+            phase: "building_outline".to_string(),
+            message: "正在建立章节框架".to_string(),
+            attempt_count: 1,
+            max_attempts: 3,
+            sequence: 2,
+            committed: false,
+            updated_at_ms: 100,
+        };
+        let json = serde_json::to_value(event).expect("progress event should serialize");
+        assert_eq!(json["taskKey"], "chapter-segmentation:test");
+        assert_eq!(json["attemptId"], 1);
+        assert_eq!(json["updatedAtMs"], 100);
+        assert!(!json.to_string().contains("tool_call_id"));
+        assert!(!json.to_string().contains("detail"));
+    }
+
+    #[test]
     fn business_failure_exhausts_three_independent_attempts_without_publishing(
     ) -> Result<(), Box<dyn std::error::Error>> {
         let database = Database::open_in_memory()?;
@@ -807,6 +971,7 @@ mod tests {
                 &database,
                 &claimed,
                 attempt_id,
+                &mut ProgressEmitter::new(None, &claimed, attempt_id),
                 WorkerFailure::business(
                     "章节校验未通过，请重试。",
                     format!("business validation failure on attempt {attempt_number}"),
@@ -906,6 +1071,7 @@ mod tests {
             r#"{"finalizedBy":"chapter_tool"}"#,
         )?);
 
+        let mut progress = ProgressEmitter::new(None, &task, attempt_id);
         let result = settle_attempt(
             &mut database,
             &task,
@@ -913,6 +1079,7 @@ mod tests {
             AttemptResult {
                 assistant_response: "Done — the chapter tools finalized the task.".to_string(),
             },
+            &mut progress,
         );
         assert!(result.is_ok(), "durable finalize should determine success");
         Ok(())
@@ -924,6 +1091,7 @@ mod tests {
         let mut database = Database::open_in_memory()?;
         let (task, attempt_id) = running_test_task(&mut database, "scoped-unfinalized")?;
 
+        let mut progress = ProgressEmitter::new(None, &task, attempt_id);
         let error = settle_attempt(
             &mut database,
             &task,
@@ -931,6 +1099,7 @@ mod tests {
             AttemptResult {
                 assistant_response: "I completed the chapters.".to_string(),
             },
+            &mut progress,
         )
         .expect_err("assistant text must not complete a scoped task");
         assert_eq!(error.message, "章节 Agent 未完成章节写入，请再次尝试。");

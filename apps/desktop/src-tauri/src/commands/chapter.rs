@@ -9,12 +9,33 @@ use lumina_acp::AgentProfilesHint;
 use lumina_ai::prompts::{SpoilerBoundary, TaskId, ValidationReport};
 use lumina_library::{AgentTaskRecord, Database, DatabaseError, NewAgentTask};
 use serde::{Deserialize, Serialize};
+use tauri::AppHandle;
 
 #[path = "chapter_worker.rs"]
 mod chapter_worker;
 
 const CHAPTER_TASK_TYPE: &str = "chapter_segmentation";
 const MAX_ATTEMPTS: i64 = 3;
+
+/// Broadcast projection for a durable chapter task. The database snapshot is
+/// still authoritative; this event only lets a mounted panel react without
+/// waiting for its next status poll.
+pub(crate) const CHAPTER_PROGRESS_EVENT: &str = "chapter-segmentation-progress";
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ChapterProgressEvent {
+    pub task_key: String,
+    pub task_id: i64,
+    pub attempt_id: Option<i64>,
+    pub phase: String,
+    pub message: String,
+    pub attempt_count: i64,
+    pub max_attempts: i64,
+    pub sequence: i64,
+    pub committed: bool,
+    pub updated_at_ms: i64,
+}
 
 /// Stable identity supplied by the user-triggered chapter segmentation entry
 /// point.  It is intentionally independent from the active chat session.
@@ -256,16 +277,18 @@ impl ChapterCommandError {
 
 #[tauri::command]
 pub async fn chapter_segmentation_start(
+    app: AppHandle,
     request: ChapterSegmentationRequest,
 ) -> Result<ChapterSegmentationSnapshot, ChapterCommandError> {
     tauri::async_runtime::spawn_blocking(move || {
         let worker_request = request.clone();
+        let worker_app = app.clone();
         let snapshot = create_or_load_task(request)?;
         if worker_request.worker_ready()
             && matches!(snapshot.status.as_str(), "pending" | "validation_failure")
         {
             tauri::async_runtime::spawn_blocking(move || {
-                if let Err(error) = chapter_worker::run(worker_request) {
+                if let Err(error) = chapter_worker::run(worker_request, Some(worker_app)) {
                     tracing::warn!(code = %error.code, details = ?error.details, "chapter worker stopped");
                 }
             });

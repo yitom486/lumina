@@ -4,6 +4,9 @@ use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 
+use super::context::VideoPromptContext;
+use super::settings::AcpClientSettings;
+
 /// Pure agent-kind discriminant. Owned by `domain` so profile DTOs never
 /// pull in launch/discovery logic; `agent` re-exports it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -407,4 +410,24 @@ mod tests {
             SessionKind::Chapter
         );
     }
+}
+
+/// Typed input boundary shared by interactive chat and isolated domain tasks.
+///
+/// The request deliberately carries the session kind and execution settings,
+/// while callers remain responsible for choosing the session/history scope.
+/// This keeps the ACP transport generic without allowing chapter work to
+/// reuse the interactive chat session.
+#[derive(Debug, Clone)]
+pub struct AgentExecutionRequest {
+    pub text: String,
+    pub cwd: Option<String>,
+    pub profile_id: Option<String>,
+    pub context: Option<VideoPromptContext>,
+    pub images: Vec<PromptImage>,
+    pub saved_session: Option<SavedSessionHint>,
+    pub client_settings: AcpClientSettings,
+    pub profiles: AgentProfilesHint,
+    pub session_kind: SessionKind,
+    pub attempt_label: Option<String>,
 }

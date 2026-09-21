@@ -32,6 +32,7 @@ export type ChaptersPanelProps = {
   retryAction?: "retry" | "configure_agent" | null;
   agentConfigured?: boolean;
   taskStatus?: string | null;
+  progressMessage?: string | null;
 };
 
 export function ChaptersPanel({
@@ -78,6 +79,7 @@ export function ChaptersPanel({
             chapters={draftChapters}
             positionMs={positionMs}
             seek={seek}
+            progressMessage={segmentation.liveProgress?.message}
           />
         );
       }
@@ -94,6 +96,7 @@ export function ChaptersPanel({
           retryAction={onStartAiSegmentation ? undefined : segmentation.retryAction}
           agentConfigured={onStartAiSegmentation ? undefined : segmentation.agentConfigured}
           taskStatus={onStartAiSegmentation ? undefined : segmentation.taskStatus}
+          progressMessage={onStartAiSegmentation ? null : segmentation.liveProgress?.message}
           description="该在线视频暂无真实章节。"
         />
       );
@@ -122,6 +125,7 @@ export function ChaptersPanel({
           chapters={draftChapters}
           positionMs={positionMs}
           seek={seek}
+          progressMessage={segmentation.liveProgress?.message}
         />
       );
     }
@@ -138,6 +142,7 @@ export function ChaptersPanel({
         retryAction={onStartAiSegmentation ? undefined : segmentation.retryAction}
         agentConfigured={onStartAiSegmentation ? undefined : segmentation.agentConfigured}
         taskStatus={onStartAiSegmentation ? undefined : segmentation.taskStatus}
+        progressMessage={onStartAiSegmentation ? null : segmentation.liveProgress?.message}
         description="该文件暂无容器章节。"
       />
     );
@@ -161,6 +166,7 @@ function EmptyChaptersState({
   retryAction,
   agentConfigured = true,
   taskStatus,
+  progressMessage,
 }: ChaptersPanelProps & { description: string; errorMessage?: string | null }) {
   const retryableFailure =
     (aiSegmentationStatus === "validation_failure" ||
@@ -238,7 +244,8 @@ function EmptyChaptersState({
       ) : null}
       {aiSegmentationStatus === "pending" && agentConfigured ? (
         <p className="text-[11px] text-muted-foreground">
-          任务已保存，章节 Agent 正在独立执行；不会写入自由聊天，也不会自动重复启动。
+          {progressMessage ??
+            "任务已保存，章节 Agent 正在独立执行；不会写入自由聊天，也不会自动重复启动。"}
         </p>
       ) : null}
       {aiSegmentationStatus === "completed" ? (
@@ -296,16 +303,23 @@ function ChapterDraftList({
   chapters,
   positionMs,
   seek,
+  progressMessage,
 }: {
   chapters: ChapterDraftSnapshot[];
   positionMs: number;
   seek: (ms: number) => unknown;
+  progressMessage?: string | null;
 }) {
   return (
     <div className="min-h-0 flex-1 space-y-2 overflow-auto p-3">
       <div className="text-xs text-muted-foreground">
         AI 章节草稿 · 已从任务大纲持久化
       </div>
+      {progressMessage ? (
+        <div className="rounded-md bg-muted px-2 py-1.5 text-[11px] text-muted-foreground">
+          {progressMessage}
+        </div>
+      ) : null}
       {chapters.map((chapter, index) => {
         const active = positionMs >= chapter.startMs && positionMs < chapter.endMs;
         return (

@@ -10,7 +10,8 @@ use crate::agent::workspace::resolve_session_cwd;
 use crate::domain::context::VideoPromptContext;
 use crate::domain::environment::session_env;
 use crate::domain::model::{
-    validate_prompt_images, AcpEvent, AgentProfilesHint, PromptImage, SavedSessionHint, SessionKind,
+    validate_prompt_images, AcpEvent, AgentExecutionRequest, AgentProfilesHint, PromptImage,
+    SavedSessionHint, SessionKind,
 };
 use crate::domain::settings::AcpClientSettings;
 use crate::error::AcpError;
@@ -37,18 +38,20 @@ impl AcpService {
     where
         F: FnMut(AcpEvent),
     {
-        self.prompt_with_label(
-            text,
-            cwd,
-            profile_id,
-            context,
-            &images,
-            saved_session,
-            client_settings,
-            profiles,
-            SessionKind::Chat,
+        self.execute(
+            AgentExecutionRequest {
+                text: text.as_ref().to_string(),
+                cwd,
+                profile_id,
+                context,
+                images,
+                saved_session,
+                client_settings,
+                profiles,
+                session_kind: SessionKind::Chat,
+                attempt_label: None,
+            },
             on_event,
-            None,
         )
     }
 
@@ -67,8 +70,36 @@ impl AcpService {
         client_settings: AcpClientSettings,
         profiles: AgentProfilesHint,
         session_kind: SessionKind,
-        mut on_event: F,
+        on_event: F,
         attempt_label: Option<&str>,
+    ) -> Result<String, AcpError>
+    where
+        F: FnMut(AcpEvent),
+    {
+        self.execute(
+            AgentExecutionRequest {
+                text: text.as_ref().to_string(),
+                cwd,
+                profile_id,
+                context,
+                images: images.to_vec(),
+                saved_session,
+                client_settings,
+                profiles,
+                session_kind,
+                attempt_label: attempt_label.map(str::to_string),
+            },
+            on_event,
+        )
+    }
+
+    /// Shared typed execution boundary for interactive chat and isolated
+    /// domain tasks. Retry policy and durable task state live outside this
+    /// method; this executes exactly one prompt in one session scope.
+    pub(crate) fn execute<F>(
+        &self,
+        request: AgentExecutionRequest,
+        mut on_event: F,
     ) -> Result<String, AcpError>
     where
         F: FnMut(AcpEvent),
@@ -84,26 +115,26 @@ impl AcpService {
                 .try_lock()
                 .ok()
                 .and_then(|guard| guard.as_ref().map(|session| session.agent.id()));
-            Self::log_workshop_exit(attempt_label, pid, "busy", None, 0);
+            Self::log_workshop_exit(request.attempt_label.as_deref(), pid, "busy", None, 0);
             return Err(AcpError::busy());
         }
         self.cancel.store(false, Ordering::SeqCst);
         if let Ok(mut guard) = self.permission_mode.lock() {
-            *guard = client_settings.permission_mode;
+            *guard = request.client_settings.permission_mode;
         }
 
-        let prepared = prepare_profiles(&profiles);
+        let prepared = prepare_profiles(&request.profiles);
         let outcome = self.run_prompt_inner(
-            text.as_ref(),
-            cwd.as_deref(),
-            profile_id.as_deref(),
-            context.as_ref(),
-            images,
-            saved_session.as_ref(),
+            request.text.as_str(),
+            request.cwd.as_deref(),
+            request.profile_id.as_deref(),
+            request.context.as_ref(),
+            &request.images,
+            request.saved_session.as_ref(),
             &prepared,
-            session_kind,
+            request.session_kind,
             &mut on_event,
-            attempt_label,
+            request.attempt_label.as_deref(),
         );
 
         // Graceful cancel keeps the connection: `session/cancel` aborts only

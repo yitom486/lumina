@@ -6,7 +6,8 @@ use std::sync::atomic::Ordering;
 
 use crate::agent::profile::prepare_profiles;
 use crate::domain::model::{
-    AcpModelDiscoveryResult, AcpSessionModelSelection, AgentProfilesHint, SessionKind,
+    AcpEvent, AcpModelDiscoveryResult, AcpSessionModelSelection, AgentExecutionRequest,
+    AgentProfilesHint, SessionKind,
 };
 use crate::domain::settings::{AcpClientSettings, PermissionMode, ThinkingLevel};
 use crate::error::AcpError;
@@ -85,24 +86,40 @@ impl ChapterSession {
     /// `AcpService` session unless ACP reports a transport failure, in which
     /// case the existing prompt flow returns its business error unchanged.
     pub fn prompt(&self, text: impl AsRef<str>) -> Result<String, AcpError> {
+        self.prompt_with_events(text, |_| {})
+    }
+
+    /// Send one prompt while allowing the owning task orchestrator to project
+    /// a filtered subset of ACP events. The full protocol event is never
+    /// serialized to the chapter UI by this type.
+    pub fn prompt_with_events<F>(
+        &self,
+        text: impl AsRef<str>,
+        on_event: F,
+    ) -> Result<String, AcpError>
+    where
+        F: FnMut(AcpEvent),
+    {
         // Re-arm the selection so a subsequent prompt can still apply it if a
         // transport failure caused ACP to drop the live session before the
         // worker decides whether to continue.
         if let Ok(mut selection) = self.service.next_session_model_selection.lock() {
             *selection = self.model_selection.clone();
         }
-        self.service.prompt_with_label(
-            text,
-            self.cwd.clone(),
-            Some(self.profile_id.clone()),
-            None,
-            &[],
-            None,
-            chapter_client_settings(),
-            self.profiles.clone(),
-            SessionKind::Chapter,
-            |_| {},
-            self.task_label.as_deref(),
+        self.service.execute(
+            AgentExecutionRequest {
+                text: text.as_ref().to_string(),
+                cwd: self.cwd.clone(),
+                profile_id: Some(self.profile_id.clone()),
+                context: None,
+                images: Vec::new(),
+                saved_session: None,
+                client_settings: chapter_client_settings(),
+                profiles: self.profiles.clone(),
+                session_kind: SessionKind::Chapter,
+                attempt_label: self.task_label.clone(),
+            },
+            on_event,
         )
     }
 

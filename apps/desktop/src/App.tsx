@@ -29,7 +29,7 @@ import {
 } from "@/layouts/SettingsWorkspaceFrame";
 import { ChatDock } from "@/features/acp/components/ChatDock";
 import { useChatUiStore } from "@lumina/chat-ui/chatUiStore";
-import { ChaptersPanel } from "@/features/chapters";
+import { ChaptersPanel, useChapterProgressEvents } from "@/features/chapters";
 import { MediaInfoPanel } from "@/features/media";
 import { MediaLibraryPanel, useLibraryPlaybackRootSync } from "@/features/library";
 import {
@@ -133,6 +133,7 @@ export default function App() {
   useSessionRestore();
   useWindowFullscreenSync();
   useLibraryPlaybackRootSync();
+  useChapterProgressEvents();
 
   const fullscreen = useUiStore((s) => s.fullscreen);
   const sidebarTab = useUiStore((s) => s.sidebarTab);

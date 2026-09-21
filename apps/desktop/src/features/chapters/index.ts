@@ -11,10 +11,16 @@ export type {
   ChapterCommandError,
   ChapterDraftSnapshot,
   ChapterDraftStatus,
+  ChapterProgressEvent,
   ChapterSegmentationRequest,
   ChapterSegmentationSnapshot,
 } from "./api";
 export { chapterSegmentationKey } from "./queries";
+export { useChapterProgressEvents } from "./hooks/useChapterProgressEvents";
+export {
+  chapterProgressForTask,
+  useChapterProgressStore,
+} from "./progressStore";
 export {
   useChapterSegmentation,
   type ChapterSegmentationController,

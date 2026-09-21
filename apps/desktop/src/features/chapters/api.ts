@@ -86,6 +86,24 @@ export type ChapterSegmentationSnapshot = {
   updatedAtMs: number;
 };
 
+/**
+ * Ephemeral, safe UI projection of a running chapter task. The matching
+ * snapshot from SQLite remains authoritative when the panel mounts or
+ * reconciles after an event.
+ */
+export type ChapterProgressEvent = {
+  taskKey: string;
+  taskId: number;
+  attemptId: number | null;
+  phase: string;
+  message: string;
+  attemptCount: number;
+  maxAttempts: number;
+  sequence: number;
+  committed: boolean;
+  updatedAtMs: number;
+};
+
 function isPositiveInteger(value: number | null | undefined): value is number {
   return typeof value === "number" && Number.isInteger(value) && value > 0;
 }

@@ -20,6 +20,7 @@ import {
   type ChapterSegmentationSnapshot,
 } from "../api";
 import { chapterSegmentationKey } from "../queries";
+import { useChapterProgressStore } from "../progressStore";
 
 export type ChapterSegmentationUiStatus =
   | "unavailable"
@@ -135,6 +136,9 @@ export function useChapterSegmentation() {
   });
 
   const snapshot = statusQuery.data;
+  const liveProgress = useChapterProgressStore((state) =>
+    snapshot?.taskKey ? state.byTaskKey[snapshot.taskKey] ?? null : null,
+  );
   const pending =
     startMutation.isPending || isPendingTask(snapshot?.status);
   const status: ChapterSegmentationUiStatus = !request
@@ -163,6 +167,7 @@ export function useChapterSegmentation() {
   return {
     request,
     snapshot,
+    liveProgress,
     status,
     isPending: pending,
     isIdentityPending,
