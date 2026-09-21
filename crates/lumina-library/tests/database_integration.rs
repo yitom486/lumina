@@ -391,7 +391,6 @@ fn legacy_to_authoritative_migration_moves_projections_and_preserves_conflicting
     authoritative_feed.episode_id = Some(authoritative_episode);
     let _ = must(repository.insert_watch_feed_item(&authoritative_feed));
 
-    drop(repository);
     let conflict_report = must(
         database.migrate_legacy_episode(&LegacyEpisodeMigration::new(
             legacy_episode,

@@ -525,8 +525,6 @@ fn draft_question_feed_reconciliation_and_publish_project_terminal_state() {
         let attempt =
             NewAgentAttempt::new(task_id, 1, "initial", "running", "chapter-agent.v1", 500);
         let attempt_id = must(repository.insert_agent_attempt(&attempt));
-        drop(repository);
-
         let published = must(database.transaction(|repository| {
             repository.publish_agent_chapter_task(
                 task_id,

@@ -524,13 +524,12 @@ mod tests {
             read_chapter_task_context(&path).expect("read chapter scope"),
             Some(context)
         );
-        assert_eq!(
+        assert!(
             read_snapshot(&path)
                 .expect("read synced snapshot")
                 .capabilities
                 .expect("capabilities")
-                .vision_capable,
-            true
+                .vision_capable
         );
         let _ = fs::remove_dir_all(dir);
     }
