@@ -59,6 +59,7 @@ import {
   getTranscriptCache,
   prefetchAgentSessionList,
   useAgentSessionList,
+  useSyncTaskContracts,
 } from "../queries";
 import { profilesHintFromStore } from "@lumina/chat-ui/defaultAgentProfiles";
 import {
@@ -207,6 +208,10 @@ export function AcpPanel() {
     },
     staleTime: 15_000,
   });
+
+  // 任务契约唯一源头是后端提示词仓库：挂载即同步版本表，
+  // 快捷任务解析不再依赖前端硬编码（离线/失败时保留 fallback）。
+  useSyncTaskContracts();
 
   const idSeq = useState(() => ({ n: 0 }))[0];
   const listKey = useId();

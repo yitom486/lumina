@@ -9,6 +9,7 @@ import {
 import { Button } from "@lumina/ui/button";
 
 import type { AcpTaskId } from "../api";
+import { SHORTCUT_TASK_LABELS } from "../shortcutOutput";
 
 export type CompanionTaskId = AcpTaskId;
 
@@ -19,18 +20,17 @@ type QuickAction = {
 };
 
 const QUICK_ACTIONS: readonly QuickAction[] = [
-  { id: "chapter_recap", label: "本段总结", icon: BookOpenText },
-  { id: "chapter_outlook", label: "后续看点", icon: Compass },
-  { id: "question_candidates", label: "观众问题", icon: CircleHelp },
-  { id: "plot_summary", label: "剧情梳理", icon: ListChecks },
+  { id: "chapter_recap", label: SHORTCUT_TASK_LABELS.chapter_recap, icon: BookOpenText },
+  { id: "chapter_outlook", label: SHORTCUT_TASK_LABELS.chapter_outlook, icon: Compass },
+  {
+    id: "question_candidates",
+    label: SHORTCUT_TASK_LABELS.question_candidates,
+    icon: CircleHelp,
+  },
+  { id: "plot_summary", label: SHORTCUT_TASK_LABELS.plot_summary, icon: ListChecks },
 ];
 
-export const COMPANION_TASK_LABELS = {
-  chapter_recap: "本段总结",
-  chapter_outlook: "后续看点",
-  question_candidates: "观众问题",
-  plot_summary: "剧情梳理",
-} satisfies Readonly<Record<CompanionTaskId, string>>;
+export const COMPANION_TASK_LABELS = SHORTCUT_TASK_LABELS;
 
 type Props = {
   disabled?: boolean;

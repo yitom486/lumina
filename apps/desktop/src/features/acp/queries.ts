@@ -3,12 +3,15 @@ import {
   useQuery,
   type QueryClient,
 } from "@tanstack/react-query";
+import { useEffect } from "react";
 
 import {
   acpLoadSession,
+  getAcpTaskContracts,
   listAcpAgentSessions,
   type LoadedTranscriptEvent,
 } from "./api";
+import { setTaskContractVersions } from "./shortcutOutput";
 import type { AgentSessionListResult } from "./types";
 
 /** Agent 会话列表快照（单个 profile+cwd 作用域）。 */
@@ -24,7 +27,29 @@ export const acpQueryKeys = {
     ["acp-session-list", profileId, cwd] as const,
   transcript: (profileId: string, cwd: string | null, sessionId: string) =>
     ["acp-transcript", profileId, cwd, sessionId] as const,
+  taskContracts: () => ["acp-task-contracts"] as const,
 };
+
+/**
+ * 后端提示词仓库是任务契约的唯一源头。启动时拉一次版本表并写入
+ * `shortcutOutput` 的动态表；失败则静默保留本地 fallback（离线/单测），
+ * 绝不阻塞聊天。staleTime Infinity：版本随应用版本一起发版。
+ */
+export function useSyncTaskContracts() {
+  const query = useQuery({
+    queryKey: acpQueryKeys.taskContracts(),
+    queryFn: getAcpTaskContracts,
+    staleTime: Number.POSITIVE_INFINITY,
+    retry: false,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
+  });
+  const contracts = query.data;
+  useEffect(() => {
+    if (contracts) setTaskContractVersions(contracts);
+  }, [contracts]);
+  return query;
+}
 
 const UNVERIFIED_EMPTY_RESULT: AgentSessionListResult = {
   verified: false,

@@ -18,7 +18,10 @@ import type { AssistantAction } from "@lumina/chat-ui/assistantBlocks";
 import { parseAssistantBlocksText } from "@lumina/chat-ui/assistantBlocks";
 import { RichBlockRenderer } from "@lumina/chat-ui/components/RichBlockRenderer";
 import type { ChatTurn } from "../types";
-import { adaptShortcutOutput } from "../shortcutOutput";
+import {
+  adaptShortcutOutput,
+  normalizeRestoredShortcutOutput,
+} from "../shortcutOutput";
 import { ChatActivityFeed } from "@lumina/chat-ui/components/ChatActivityFeed";
 import { ChatColumn } from "@lumina/chat-ui/components/ChatShell";
 import { ChatWaitingDots } from "@lumina/chat-ui/components/ChatWaitingDots";
@@ -179,19 +182,36 @@ export function ChatTurnView({
   const showActivityFeed =
     visibleActivities.length > 0 &&
     (isStreaming || (presentationMode === "development" && toolsOpen));
-  const shortcutOutput =
-    !isError && visibleAnswer && turn.shortcutTaskId
+  const restoredShortcut =
+    !isError && !isStreaming && visibleAnswer
+      ? normalizeRestoredShortcutOutput(visibleAnswer)
+      : null;
+  const normalizedAnswer = restoredShortcut?.answer ?? visibleAnswer;
+  // Unified shortcut entry: same task-aware adapter as the persisted
+  // watch-feed. The backend owns the contract versions; `adaptShortcutOutput`
+  // validates against the live table (fallback literals only offline/tests).
+  // Free chat and `{blocks:[...]}` envelopes skip this and use the generic
+  // parser below.
+  const shortcutAnswer =
+    !isError && turn.shortcutTaskId && visibleAnswer
       ? adaptShortcutOutput(turn.shortcutTaskId, visibleAnswer, {
           streaming: isStreaming,
         })
       : null;
   const structuredAnswer =
-    shortcutOutput?.blocks.length
-      ? shortcutOutput
-      : !isError && visibleAnswer && !shortcutOutput
-        ? parseAssistantBlocksText(visibleAnswer, { streaming: isStreaming })
-        : null;
-  const answerText = shortcutOutput?.fallbackText ?? visibleAnswer;
+    !isError && normalizedAnswer && !shortcutAnswer?.blocks.length
+      ? parseAssistantBlocksText(normalizedAnswer, { streaming: isStreaming })
+      : null;
+  const shortcutFallback =
+    !isStreaming && shortcutAnswer?.fallbackText ? shortcutAnswer.fallbackText : null;
+  const richBlocks = shortcutAnswer?.blocks.length
+    ? shortcutAnswer.blocks
+    : (structuredAnswer?.blocks ?? []);
+  const answerText =
+    shortcutFallback ??
+    (looksLikeStructuredJson(normalizedAnswer) && richBlocks.length === 0
+      ? "正在整理结构化结果…"
+      : normalizedAnswer);
   const releaseLiveLabel =
     presentationMode === "release"
       ? visibleActivities.find((item) => item.kind === "tool")?.title
@@ -256,14 +276,14 @@ export function ChatTurnView({
           {answerText ? (
             isError ? (
               answerText
-            ) : structuredAnswer?.blocks.length ? (
+            ) : richBlocks.length ? (
               <Suspense
                 fallback={
                   <span className="whitespace-pre-wrap">{answerText}</span>
                 }
               >
                 <RichBlockRenderer
-                  blocks={structuredAnswer.blocks}
+                  blocks={richBlocks}
                   onAction={onAssistantAction}
                   renderMarkdown={(markdown) => <ChatMarkdown content={markdown} />}
                 />
@@ -317,4 +337,9 @@ export function ChatTurnView({
       </div>
     </ChatColumn>
   );
+}
+
+function looksLikeStructuredJson(value: string): boolean {
+  const source = value.trimStart();
+  return source.startsWith("{") || source.startsWith("[") || /^```json\s/i.test(source);
 }

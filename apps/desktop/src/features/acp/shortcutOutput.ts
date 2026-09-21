@@ -1,5 +1,6 @@
 import {
   normalizeAssistantBlocks,
+  parseAssistantBlocksText,
   type AssistantBlock,
 } from "@lumina/chat-ui/assistantBlocks";
 
@@ -15,19 +16,63 @@ export type RestoredShortcutOutput = {
   shortcutTaskId?: AcpTaskId;
 };
 
-const EXPECTED_VERSIONS: Record<AcpTaskId, string> = {
+const FALLBACK_VERSIONS: Record<AcpTaskId, string> = {
   chapter_recap: "chapter_recap.v1",
   chapter_outlook: "chapter_outlook.v1",
   plot_summary: "plot_summary.v1",
   question_candidates: "question_candidates.v1",
 };
 
-const TASK_LABELS: Record<AcpTaskId, string> = {
+/**
+ * Live backend contracts keyed by task id. Populated once from
+ * `acp_task_contracts` (owned by the Rust prompt repository). The fallback
+ * literals above exist only for offline/tests; at runtime the backend map
+ * wins so the two sides can never drift into a second source of truth.
+ */
+let dynamicVersions: Partial<Record<AcpTaskId, string>> = {};
+
+export function setTaskContractVersions(
+  contracts: readonly { taskId: string; outputContractVersion: string }[],
+): void {
+  const next: Partial<Record<AcpTaskId, string>> = {};
+  for (const contract of contracts) {
+    if (isTaskId(contract.taskId) && contract.outputContractVersion) {
+      next[contract.taskId] = contract.outputContractVersion;
+    }
+  }
+  dynamicVersions = next;
+}
+
+export function resetTaskContractVersions(): void {
+  dynamicVersions = {};
+}
+
+function expectedVersion(taskId: AcpTaskId): string {
+  return dynamicVersions[taskId] ?? FALLBACK_VERSIONS[taskId];
+}
+
+function findTaskByVersion(version: string): AcpTaskId | undefined {
+  const ids = Object.keys(FALLBACK_VERSIONS) as AcpTaskId[];
+  return ids.find((taskId) => expectedVersion(taskId) === version);
+}
+
+function isTaskId(value: string): value is AcpTaskId {
+  return Object.prototype.hasOwnProperty.call(FALLBACK_VERSIONS, value);
+}
+
+/**
+ * Canonical Chinese labels for the four companion shortcuts.
+ * Frontend-owned UI copy (not a backend contract): the single copy every
+ * shortcut surface imports instead of maintaining its own literal map.
+ */
+export const SHORTCUT_TASK_LABELS: Record<AcpTaskId, string> = {
   chapter_recap: "本段总结",
   chapter_outlook: "后续看点",
   plot_summary: "剧情梳理",
   question_candidates: "观众问题",
 };
+
+const TASK_LABELS = SHORTCUT_TASK_LABELS;
 
 const MAX_ITEMS = 8;
 
@@ -55,7 +100,11 @@ export function adaptShortcutOutput(
   }
 
   if (!isRecord(value)) return fallback(taskId);
-  if (readString(value.version) !== EXPECTED_VERSIONS[taskId]) {
+  // The chat renderer also accepts its own closed-world `{ blocks: [...] }`
+  // envelope. Let that envelope continue through parseAssistantBlocksText;
+  // it is not one of the task contracts handled by this adapter.
+  if (Array.isArray(value.blocks)) return null;
+  if (readContractVersion(value) !== expectedVersion(taskId)) {
     return fallback(taskId);
   }
 
@@ -85,12 +134,16 @@ export function normalizeRestoredShortcutOutput(
   if (!isRecord(value)) {
     return { answer: "该结构化结果暂时无法展示，请稍后重试。" };
   }
-  const version = readString(value.version);
-  const shortcutTaskId = (Object.keys(EXPECTED_VERSIONS) as AcpTaskId[]).find(
-    (taskId) => EXPECTED_VERSIONS[taskId] === version,
-  );
+  const version = readContractVersion(value);
+  if (Array.isArray(value.blocks)) return { answer };
+  const shortcutTaskId = version ? findTaskByVersion(version) : undefined;
   if (!shortcutTaskId) {
     return { answer: "该结构化结果暂时无法展示，请稍后重试。" };
+  }
+  if (!parseAssistantBlocksText(answer)?.blocks.length) {
+    return {
+      answer: `${TASK_LABELS[shortcutTaskId]}结果暂时无法展示，请稍后重试。`,
+    };
   }
   return { answer, shortcutTaskId };
 }
@@ -100,14 +153,20 @@ function contractCandidates(
   value: Record<string, unknown>,
 ): ReadonlyArray<Record<string, unknown>> {
   const evidence = normalizeEvidence(value.evidence);
-  const scope = normalizeScope(value.scope);
+  const scope =
+    normalizeScope(value.scope) ??
+    normalizeChapterScope(value.chapter) ??
+    normalizeSpoilerBoundary(value.spoiler_boundary);
+  const uncertainty = normalizeTextArray(value.uncertainty).map(
+    (item) => `待确认：${item}`,
+  );
 
   switch (taskId) {
     case "chapter_recap":
       return cardCandidates(taskId, value, {
         title: "本段总结",
         summaryKeys: ["summary", "recap", "content", "text"],
-        bullets: evidence,
+        bullets: [...evidence, ...uncertainty],
         scope,
       });
     case "chapter_outlook":
@@ -207,6 +266,7 @@ function normalizeEvidence(value: unknown): string[] {
       return text ? [text] : [];
     }
     if (!isRecord(item)) return [];
+    const reference = firstText(item, ["ref", "reference", "timestamp", "time_range"]);
     const text = firstText(item, [
       "text",
       "quote",
@@ -214,8 +274,10 @@ function normalizeEvidence(value: unknown): string[] {
       "title",
       "description",
       "summary",
+      "fact",
     ]);
-    if (text) return [text];
+    if (text) return [reference ? `${text} · ${reference}` : text];
+    if (reference) return [reference];
     const kind = readString(item.kind);
     const kindLabel =
       kind === "transcript"
@@ -276,6 +338,31 @@ function readText(value: unknown): string | null {
 
 function readString(value: unknown): string | null {
   return typeof value === "string" ? value.trim() || null : null;
+}
+
+function normalizeChapterScope(value: unknown): string | undefined {
+  if (!isRecord(value)) return undefined;
+  const title = firstText(value, ["title", "name"]);
+  const position = firstText(value, ["position", "timestamp"]);
+  if (title && position) return `${title} · ${position}`;
+  return title ?? position ?? undefined;
+}
+
+function normalizeSpoilerBoundary(value: unknown): string | undefined {
+  switch (readString(value)) {
+    case "current_position":
+      return "截至当前播放位置";
+    case "current_chapter":
+      return "截至当前章节";
+    case "none":
+      return "不剧透";
+    default:
+      return undefined;
+  }
+}
+
+function readContractVersion(value: Record<string, unknown>): string | null {
+  return readString(value.version) ?? readString(value.contract);
 }
 
 function looksLikeJson(value: string): boolean {

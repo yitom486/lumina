@@ -16,8 +16,8 @@ use crate::state::AppState;
 use lumina_acp::agent::workspace::resolve_session_cwd;
 use lumina_acp::AcpClientSettings;
 use lumina_ai::prompts::{
-    compose_prompt, EpisodeContext, MediaContext, PromptSlots, SpoilerBoundary, TaskId,
-    ViewingContext,
+    compose_prompt, EpisodeContext, MediaContext, PromptRepository, PromptSlots, SpoilerBoundary,
+    TaskId, ViewingContext,
 };
 use lumina_library::{
     ChapterAssetRecord, ChapterRecord, ChapterRevisionRecord, EpisodeRecord, MediaMetadataContext,
@@ -848,6 +848,34 @@ fn enrich_prompt_context(
 }
 
 #[tauri::command]
+pub fn acp_task_contracts() -> Vec<AcpTaskContract> {
+    let repository = PromptRepository::new();
+    TaskId::ALL
+        .iter()
+        .map(|task_id| {
+            let definition = repository.definition(*task_id);
+            AcpTaskContract {
+                task_id: definition.task_id.as_str().to_string(),
+                output_contract_version: definition.output_contract_version.to_string(),
+                prompt_version: definition.version.to_string(),
+            }
+        })
+        .collect()
+}
+
+/// Versioned task contracts owned by the Rust prompt repository.
+///
+/// Only identifiers and versions cross the IPC boundary here. Prompt role,
+/// objectives and rules stay in Rust and are never exposed to the frontend.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AcpTaskContract {
+    pub task_id: String,
+    pub output_contract_version: String,
+    pub prompt_version: String,
+}
+
+#[tauri::command]
 pub async fn acp_cancel(app: AppHandle) -> Result<(), AcpError> {
     tauri::async_runtime::spawn_blocking(move || {
         let Some(state) = app.try_state::<AppState>() else {
@@ -977,6 +1005,22 @@ mod tests {
             episode_title: Some("开端".into()),
             ..VideoPromptContext::default()
         }
+    }
+
+    #[test]
+    fn task_contracts_come_from_the_prompt_repository() {
+        let contracts = super::acp_task_contracts();
+        assert_eq!(contracts.len(), TaskId::ALL.len());
+        for contract in &contracts {
+            assert!(!contract.task_id.is_empty());
+            assert!(contract.output_contract_version.contains('.'));
+            assert!(!contract.prompt_version.is_empty());
+        }
+        let recap = contracts
+            .iter()
+            .find(|contract| contract.task_id == "chapter_recap")
+            .expect("chapter_recap contract");
+        assert_eq!(recap.output_contract_version, "chapter_recap.v1");
     }
 
     #[test]

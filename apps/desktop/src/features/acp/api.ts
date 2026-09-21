@@ -275,6 +275,23 @@ export function getAcpWatchFeed(): Promise<AcpWatchFeedResponse> {
   return invoke<AcpWatchFeedResponse>("acp_watch_feed");
 }
 
+export type AcpTaskContract = {
+  taskId: string;
+  outputContractVersion: string;
+  promptVersion: string;
+};
+
+/**
+ * Single source of truth for shortcut output contracts.
+ * Versions are owned by the Rust prompt repository; the frontend must not
+ * hardcode a second copy. Callers cache the result and feed it into
+ * `setTaskContractVersions` so `adaptShortcutOutput` validates against the
+ * live backend instead of a stale literal.
+ */
+export function getAcpTaskContracts(): Promise<AcpTaskContract[]> {
+  return invoke<AcpTaskContract[]>("acp_task_contracts");
+}
+
 export function discoverAcpModels(
   profiles: AgentProfilesHint,
   profileId: string,
