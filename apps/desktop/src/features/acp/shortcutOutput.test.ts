@@ -145,4 +145,111 @@ describe("adaptShortcutOutput", () => {
       title: "剧情梳理",
     });
   });
+
+  it("exposes two seek jumps for a ranged evidence segment", () => {
+    const result = adaptShortcutOutput(
+      "chapter_recap",
+      JSON.stringify({
+        version: "chapter_recap.v1",
+        recap: "两人关系进展。",
+        evidence: [{ ref: "[11:38]-[11:59]", fact: "两人讨论未来选择。" }],
+      }),
+    );
+
+    expect(result?.blocks[0]).toMatchObject({
+      kind: "watch-feed-card",
+      bullets: ["两人讨论未来选择。 · [11:38]-[11:59]"],
+      actions: [
+        {
+          label: "跳转到 11:38",
+          action: { type: "seek", anchor: { startMs: 698_000 } },
+        },
+        {
+          label: "跳转到 11:59",
+          action: { type: "seek", anchor: { startMs: 719_000 } },
+        },
+      ],
+    });
+  });
+
+  it("exposes a single seek jump for one timestamp", () => {
+    const result = adaptShortcutOutput(
+      "plot_summary",
+      JSON.stringify({
+        version: "plot_summary.v1",
+        summary: "主线推进。",
+        evidence: [{ ref: "[12:32]", fact: "关键转折。" }],
+      }),
+    );
+
+    expect(result?.blocks[0]).toMatchObject({
+      kind: "watch-feed-card",
+      bullets: ["关键转折。 · [12:32]"],
+      actions: [
+        {
+          label: "跳转到 12:32",
+          action: { type: "seek", anchor: { startMs: 752_000 } },
+        },
+      ],
+    });
+  });
+
+  it("supports hour timestamps", () => {
+    const result = adaptShortcutOutput(
+      "plot_summary",
+      JSON.stringify({
+        version: "plot_summary.v1",
+        summary: "长片梳理。",
+        evidence: [{ fact: "高潮戏", ref: "[1:02:03]" }],
+      }),
+    );
+
+    expect(result?.blocks[0]).toMatchObject({
+      kind: "watch-feed-card",
+      actions: [
+        {
+          label: "跳转到 1:02:03",
+          action: { type: "seek", anchor: { startMs: 3_723_000 } },
+        },
+      ],
+    });
+  });
+
+  it("keeps actions empty when evidence has no timestamp", () => {
+    const result = adaptShortcutOutput(
+      "plot_summary",
+      JSON.stringify({
+        version: "plot_summary.v1",
+        summary: "主角在车站重新确认了调查方向。",
+        evidence: ["字幕：我们必须回到车站。"],
+      }),
+    );
+
+    expect(result?.blocks[0]).toMatchObject({
+      kind: "watch-feed-card",
+      bullets: ["字幕：我们必须回到车站。"],
+      actions: [],
+    });
+  });
+
+  it("humanizes library_context without inventing mappings", () => {
+    const result = adaptShortcutOutput(
+      "plot_summary",
+      JSON.stringify({
+        version: "plot_summary.v1",
+        summary: "背景梳理。",
+        evidence: [
+          { fact: "剧集背景介绍", ref: "library_context" },
+          { fact: "未知来源事实", ref: "mystery_source" },
+        ],
+      }),
+    );
+
+    expect(result?.blocks[0]).toMatchObject({
+      kind: "watch-feed-card",
+      bullets: ["剧集背景介绍 · 剧集简介", "未知来源事实 · mystery_source"],
+      actions: [],
+    });
+    expect(JSON.stringify(result)).not.toContain("library_context");
+  });
 });

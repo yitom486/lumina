@@ -1,11 +1,14 @@
 import { createTurn } from "@lumina/chat-ui/chatTurns";
 
-import { normalizeRestoredShortcutOutput } from "./shortcutOutput";
+import { SHORTCUT_TASK_LABELS, normalizeRestoredShortcutOutput } from "./shortcutOutput";
 import type { ChatTurn } from "./types";
 import type { LoadedTranscriptEvent } from "./api";
 
 const TOOL_PRIORITY_MARKER = "【工具优先】";
 const PLAYBACK_MARKER = "【当前播放】";
+const ASSEMBLED_TASK_PREFIX = "Lumina task:";
+const ASSEMBLED_TASK_FIRST_LINE_PATTERN = /^Lumina task:\s*([A-Za-z0-9_-]+)/;
+const ASSEMBLED_TASK_FALLBACK_LABEL = "快捷 AI 操作";
 const TOOL_ID_PATTERN = /lumina_[a-z_]+/;
 const MARKDOWN_FILE_LINK_PATTERN = /\[[^\]]*\]\(file:\/\/[^)]*\)/g;
 
@@ -46,6 +49,28 @@ const PLAYBACK_DETAIL_PREFIXES = [
 ];
 
 /**
+ * 快捷任务发给 Agent 的是完整组装 prompt（首行 `Lumina task: <task_id>`，
+ * 内含 role/objective/rules 与本地媒体绝对路径），它作为 user 消息存在
+ * Agent 线程里。历史回放必须整条替换为人类标签，原文整体丢弃（含本地
+ * 路径），绝不能露出英文 prompt。
+ */
+function taskLabelForAssembledPrompt(text: string): string | null {
+  const trimmed = text.trimStart();
+  if (!trimmed.startsWith(ASSEMBLED_TASK_PREFIX)) return null;
+  const firstLine = (trimmed.split("\n", 1)[0] ?? "").trim();
+  const taskId = ASSEMBLED_TASK_FIRST_LINE_PATTERN.exec(firstLine)?.[1] ?? "";
+  if (
+    taskId &&
+    Object.prototype.hasOwnProperty.call(SHORTCUT_TASK_LABELS, taskId)
+  ) {
+    return SHORTCUT_TASK_LABELS[
+      taskId as keyof typeof SHORTCUT_TASK_LABELS
+    ];
+  }
+  return ASSEMBLED_TASK_FALLBACK_LABEL;
+}
+
+/**
  * Strip scaffold we inject into session/prompt (tool header, playback block,
  * resource_link echo).
  *
@@ -58,6 +83,9 @@ const PLAYBACK_DETAIL_PREFIXES = [
  */
 export function stripTranscriptScaffolding(text: string): string {
   if (!text) return "";
+  // 组装 prompt 整条替换：原文整体丢弃，不走逐行清洗（路径必须消失）。
+  const assembledLabel = taskLabelForAssembledPrompt(text);
+  if (assembledLabel) return assembledLabel;
   const kept: string[] = [];
   for (const raw of text.split("\n")) {
     const trimmed = raw.trim();

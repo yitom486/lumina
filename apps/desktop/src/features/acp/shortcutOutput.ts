@@ -75,6 +75,14 @@ export const SHORTCUT_TASK_LABELS: Record<AcpTaskId, string> = {
 const TASK_LABELS = SHORTCUT_TASK_LABELS;
 
 const MAX_ITEMS = 8;
+const MAX_SEEK_ACTIONS = 4;
+
+/** Internal source keys must never leak to users; unknown keys stay as-is. */
+const SOURCE_LABELS: Record<string, string> = {
+  library_context: "剧集简介",
+};
+
+const TIMESTAMP_PATTERN = /\d{1,3}:\d{2}(?::\d{2})?/g;
 
 /**
  * Adapt one known companion contract into the closed chat block union.
@@ -219,16 +227,74 @@ function watchCard(
   },
 ): Record<string, unknown> {
   const summary = firstText(value, options.summaryKeys);
+  const bullets = options.bullets.map(humanizeBulletTail).slice(0, MAX_ITEMS);
   return {
     kind: "watch-feed-card",
     id: `${taskId}-result`,
     eyebrow: options.scope,
     title: options.title,
     ...(summary ? { summary } : {}),
-    bullets: options.bullets.slice(0, MAX_ITEMS),
+    bullets,
     spoilerLevel: "current",
-    actions: [],
+    actions: collectSeekActions(taskId, bullets),
   };
+}
+
+function humanizeReference(reference: string): string {
+  const key = reference.trim();
+  return SOURCE_LABELS[key] ?? reference;
+}
+
+function humanizeBulletTail(bullet: string): string {
+  const trimmed = bullet.trim();
+  if (SOURCE_LABELS[trimmed]) return SOURCE_LABELS[trimmed];
+  const separator = bullet.lastIndexOf("·");
+  if (separator < 0) return bullet;
+  const head = bullet.slice(0, separator).trimEnd();
+  const tail = bullet.slice(separator + 1).trim();
+  const mapped = SOURCE_LABELS[tail];
+  if (!mapped || !head) return bullet;
+  return `${head} · ${mapped}`;
+}
+
+function collectSeekActions(
+  taskId: string,
+  bullets: readonly string[],
+): Array<Record<string, unknown>> {
+  const seen = new Set<number>();
+  const actions: Array<Record<string, unknown>> = [];
+  for (const bullet of bullets) {
+    const matches = bullet.match(TIMESTAMP_PATTERN);
+    if (!matches) continue;
+    for (const timestamp of matches) {
+      const startMs = timestampToMs(timestamp);
+      if (startMs === null || seen.has(startMs)) continue;
+      seen.add(startMs);
+      actions.push({
+        id: `${taskId}-seek-${actions.length}`,
+        label: `跳转到 ${timestamp}`,
+        action: { type: "seek", anchor: { startMs } },
+      });
+      if (actions.length >= MAX_SEEK_ACTIONS) return actions;
+    }
+  }
+  return actions;
+}
+
+function timestampToMs(timestamp: string): number | null {
+  const parts = timestamp.split(":").map((part) => Number(part));
+  if (parts.some((part) => !Number.isFinite(part) || part < 0)) return null;
+  if (parts.length === 2) {
+    const [minutes, seconds] = parts as [number, number];
+    if (seconds > 59) return null;
+    return (minutes * 60 + seconds) * 1000;
+  }
+  if (parts.length === 3) {
+    const [hours, minutes, seconds] = parts as [number, number, number];
+    if (minutes > 59 || seconds > 59) return null;
+    return (hours * 3600 + minutes * 60 + seconds) * 1000;
+  }
+  return null;
 }
 
 function normalizeQuestions(
@@ -263,7 +329,7 @@ function normalizeEvidence(value: unknown): string[] {
   return value.slice(0, MAX_ITEMS).flatMap((item) => {
     if (typeof item === "string") {
       const text = readText(item);
-      return text ? [text] : [];
+      return text ? [humanizeBulletTail(text)] : [];
     }
     if (!isRecord(item)) return [];
     const reference = firstText(item, ["ref", "reference", "timestamp", "time_range"]);
@@ -276,8 +342,9 @@ function normalizeEvidence(value: unknown): string[] {
       "summary",
       "fact",
     ]);
-    if (text) return [reference ? `${text} · ${reference}` : text];
-    if (reference) return [reference];
+    if (text)
+      return [reference ? `${text} · ${humanizeReference(reference)}` : text];
+    if (reference) return [humanizeReference(reference)];
     const kind = readString(item.kind);
     const kindLabel =
       kind === "transcript"
