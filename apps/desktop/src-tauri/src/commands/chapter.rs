@@ -3,11 +3,14 @@
 //! The command owns the durable task boundary; the worker module owns the
 //! asynchronous evidence collection, isolated ACP execution and validation.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
+use base64::{engine::general_purpose::STANDARD, Engine as _};
 use lumina_acp::AgentProfilesHint;
 use lumina_ai::prompts::{SpoilerBoundary, TaskId, ValidationReport};
-use lumina_library::{AgentTaskRecord, ChapterRecord, Database, DatabaseError, NewAgentTask};
+use lumina_library::{
+    AgentTaskRecord, ChapterAssetRecord, ChapterRecord, Database, DatabaseError, NewAgentTask,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tauri::AppHandle;
@@ -17,6 +20,8 @@ mod chapter_worker;
 
 const CHAPTER_TASK_TYPE: &str = "chapter_segmentation";
 const MAX_ATTEMPTS: i64 = 3;
+const CHAPTER_ASSET_ROOT: &str = "chapter-assets";
+const MAX_CHAPTER_ASSET_BYTES: u64 = 8 * 1024 * 1024;
 
 /// Broadcast projection for a durable chapter task. The database snapshot is
 /// still authoritative; this event only lets a mounted panel react without
@@ -253,6 +258,15 @@ pub struct ChapterAssetSnapshot {
     pub captured_at_ms: i64,
 }
 
+/// Image bytes returned only to the mounted desktop UI. Agent sessions never
+/// call this command and only receive the opaque resource reference above.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ChapterAssetData {
+    pub mime: String,
+    pub data: String,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct FailureProjection {
     code: String,
@@ -342,6 +356,115 @@ pub async fn chapter_segmentation_status(
     tauri::async_runtime::spawn_blocking(move || load_task(request))
         .await
         .map_err(|error| ChapterCommandError::internal(format!("chapter status join: {error}")))?
+}
+
+/// Resolve one persisted chapter image by its opaque resource reference.
+/// Missing or invalidated files deliberately degrade to `None` so the detail
+/// panel can keep rendering its text and show a placeholder.
+#[tauri::command]
+pub async fn chapter_asset_get(
+    resource_ref: String,
+) -> Result<Option<ChapterAssetData>, ChapterCommandError> {
+    tauri::async_runtime::spawn_blocking(move || load_chapter_asset(&resource_ref))
+        .await
+        .map_err(|error| ChapterCommandError::internal(format!("chapter asset join: {error}")))?
+}
+
+fn load_chapter_asset(resource_ref: &str) -> Result<Option<ChapterAssetData>, ChapterCommandError> {
+    let asset_id = parse_opaque_asset_id(resource_ref)
+        .ok_or_else(|| ChapterCommandError::invalid("章节画面引用无效"))?;
+    let database = open_database()?;
+    let asset = database
+        .repository()
+        .get_chapter_asset(asset_id)
+        .map_err(ChapterCommandError::storage)?;
+    let Some(asset) = asset else {
+        return Ok(None);
+    };
+    let asset_root = database_path()?
+        .parent()
+        .map(|parent| parent.join(CHAPTER_ASSET_ROOT))
+        .ok_or_else(|| ChapterCommandError::internal("章节资源目录不可用"))?;
+    read_chapter_asset_file(&asset, &asset_root)
+}
+
+fn parse_opaque_asset_id(resource_ref: &str) -> Option<i64> {
+    let value = resource_ref.strip_prefix("chapter-asset:")?;
+    if value.is_empty() || !value.bytes().all(|byte| byte.is_ascii_digit()) {
+        return None;
+    }
+    value.parse::<i64>().ok().filter(|id| *id > 0)
+}
+
+fn read_chapter_asset_file(
+    asset: &ChapterAssetRecord,
+    asset_root: &Path,
+) -> Result<Option<ChapterAssetData>, ChapterCommandError> {
+    if !is_image_asset_type(&asset.asset_type) {
+        tracing::warn!(asset_id = asset.id, "chapter asset type is not an image");
+        return Ok(None);
+    }
+    let Ok(root) = std::fs::canonicalize(asset_root) else {
+        return Ok(None);
+    };
+    let path = Path::new(&asset.path);
+    let Ok(path) = std::fs::canonicalize(path) else {
+        tracing::warn!(asset_id = asset.id, "chapter asset file is missing");
+        return Ok(None);
+    };
+    if !path.starts_with(&root) {
+        tracing::warn!(
+            asset_id = asset.id,
+            "chapter asset path is outside managed storage"
+        );
+        return Ok(None);
+    }
+    let Ok(metadata) = std::fs::metadata(&path) else {
+        return Ok(None);
+    };
+    if !metadata.is_file() || metadata.len() > MAX_CHAPTER_ASSET_BYTES {
+        tracing::warn!(
+            asset_id = asset.id,
+            "chapter asset file is not an allowed regular file"
+        );
+        return Ok(None);
+    }
+    let Ok(bytes) = std::fs::read(&path) else {
+        tracing::warn!(asset_id = asset.id, "chapter asset file could not be read");
+        return Ok(None);
+    };
+    let Some(mime) = detect_image_mime(&bytes) else {
+        tracing::warn!(
+            asset_id = asset.id,
+            "chapter asset file is not a supported image"
+        );
+        return Ok(None);
+    };
+    Ok(Some(ChapterAssetData {
+        mime: mime.to_string(),
+        data: STANDARD.encode(bytes),
+    }))
+}
+
+fn is_image_asset_type(asset_type: &str) -> bool {
+    matches!(
+        asset_type.trim().to_ascii_lowercase().as_str(),
+        "cover" | "screenshot" | "jpeg_frame" | "frame" | "image"
+    )
+}
+
+fn detect_image_mime(bytes: &[u8]) -> Option<&'static str> {
+    if bytes.starts_with(&[0xff, 0xd8, 0xff]) {
+        Some("image/jpeg")
+    } else if bytes.starts_with(&[0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a]) {
+        Some("image/png")
+    } else if bytes.len() >= 12 && &bytes[0..4] == b"RIFF" && &bytes[8..12] == b"WEBP" {
+        Some("image/webp")
+    } else if bytes.starts_with(b"GIF87a") || bytes.starts_with(b"GIF89a") {
+        Some("image/gif")
+    } else {
+        None
+    }
 }
 
 fn create_or_load_task(
@@ -1316,5 +1439,90 @@ mod tests {
         assert_eq!(normalized_asset_kind("screenshot"), "screenshot");
         assert_eq!(normalized_asset_kind("cover"), "cover");
         assert_eq!(normalized_asset_kind("other"), "image");
+    }
+
+    fn test_asset(path: &Path, asset_type: &str) -> ChapterAssetRecord {
+        ChapterAssetRecord {
+            id: 7,
+            chapter_id: 3,
+            asset_type: asset_type.to_string(),
+            path: path.to_string_lossy().into_owned(),
+            content_hash: "fixture-hash".to_string(),
+            captured_at_ms: 1_000,
+            width: Some(640),
+            height: Some(360),
+            source: "fixture".to_string(),
+            created_at_ms: 1_000,
+        }
+    }
+
+    #[test]
+    fn chapter_asset_reference_accepts_only_positive_opaque_ids() {
+        assert_eq!(parse_opaque_asset_id("chapter-asset:7"), Some(7));
+        assert!(parse_opaque_asset_id("chapter-asset:0").is_none());
+        assert!(parse_opaque_asset_id("chapter-asset:-1").is_none());
+        assert!(parse_opaque_asset_id("chapter-asset:7/secret").is_none());
+        assert!(parse_opaque_asset_id(r"C:\secret\frame.jpg").is_none());
+    }
+
+    #[test]
+    fn chapter_asset_loader_returns_image_data_without_exposing_path() {
+        let dir = std::env::temp_dir().join(format!(
+            "lumina-chapter-asset-success-{}",
+            std::process::id()
+        ));
+        let root = dir.join(CHAPTER_ASSET_ROOT);
+        std::fs::create_dir_all(&root).expect("asset fixture root");
+        let image = root.join("frame.png");
+        std::fs::write(
+            &image,
+            [0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a, 0x00],
+        )
+        .expect("image fixture");
+
+        let result = read_chapter_asset_file(&test_asset(&image, "jpeg_frame"), &root)
+            .expect("load image")
+            .expect("image should be present");
+        assert_eq!(result.mime, "image/png");
+        assert!(!result.data.is_empty());
+        let serialized = serde_json::to_string(&result).expect("serialize image data");
+        let image_path = image.to_string_lossy().into_owned();
+        assert!(!serialized.contains(&image_path));
+
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn chapter_asset_loader_degrades_missing_non_image_and_outside_paths_to_placeholder() {
+        let dir = std::env::temp_dir().join(format!(
+            "lumina-chapter-asset-boundary-{}",
+            std::process::id()
+        ));
+        let root = dir.join(CHAPTER_ASSET_ROOT);
+        std::fs::create_dir_all(&root).expect("asset fixture root");
+        let missing = root.join("missing.jpg");
+        assert!(
+            read_chapter_asset_file(&test_asset(&missing, "jpeg_frame"), &root)
+                .expect("missing file is safe")
+                .is_none()
+        );
+
+        let text = root.join("not-an-image.txt");
+        std::fs::write(&text, b"not an image").expect("text fixture");
+        assert!(
+            read_chapter_asset_file(&test_asset(&text, "jpeg_frame"), &root)
+                .expect("non-image is safe")
+                .is_none()
+        );
+
+        let outside = dir.join("outside.jpg");
+        std::fs::write(&outside, [0xff, 0xd8, 0xff, 0xd9]).expect("outside fixture");
+        assert!(
+            read_chapter_asset_file(&test_asset(&outside, "jpeg_frame"), &root)
+                .expect("outside path is safe")
+                .is_none()
+        );
+
+        let _ = std::fs::remove_dir_all(dir);
     }
 }

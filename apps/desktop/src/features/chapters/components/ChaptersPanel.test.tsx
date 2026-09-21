@@ -86,6 +86,105 @@ afterEach(() => {
 });
 
 describe("ChaptersPanel container chapters and AI entry", () => {
+  it("loads a representative image through an opaque ref and renders the detail preview", async () => {
+    const draftChapters = [
+      {
+        id: 12,
+        stableId: "chapter-01",
+        startMs: 0,
+        endMs: 30_000,
+        title: "开场",
+        mainline: "两人重新见面。",
+        status: "generated",
+        updatedAtMs: 2,
+        detail: {
+          recap: "前情提要",
+          watchPoints: ["留意两人的关系变化"],
+          mainline: "两人重新见面。",
+          outlook: "后续看点",
+          questions: ["他们会如何回应？"],
+          draftKey: "draft-1",
+          evidenceAssetRefs: ["chapter-asset:11"],
+          coverAssetRef: "chapter-asset:11",
+          assets: [{ resourceRef: "chapter-asset:11", kind: "screenshot", width: 640, height: 360, capturedAtMs: 1_000 }],
+          revisionNumber: 1,
+          revisionStatus: "accepted",
+          source: "chapter_agent",
+          promptVersion: "1.0",
+          contentVersion: "v1",
+        },
+      },
+    ];
+    vi.mocked(invoke).mockImplementation((cmd: string) => {
+      if (cmd === "media_inspect")
+        return Promise.resolve({ path: "C:\\v\\a.mp4", streams: [], chapters: [] });
+      if (cmd === "library_context_for_media") return Promise.resolve(null);
+      if (cmd === "chapter_segmentation_status")
+        return Promise.resolve({ ...segmentationSnapshot, status: "running", draftChapters });
+      if (cmd === "chapter_asset_get")
+        return Promise.resolve({ mime: "image/png", data: "iVBORw0KGgo=" });
+      return Promise.resolve(null);
+    });
+
+    renderPanel();
+
+    await waitFor(() => {
+      expect(screen.getByAltText("章节代表画面")).toBeInTheDocument();
+    });
+    const assetCalls = invokeCmds("chapter_asset_get");
+    expect(assetCalls).toHaveLength(1);
+    expect(assetCalls[0]?.[1]).toEqual({ resourceRef: "chapter-asset:11" });
+    expect(screen.getByRole("heading", { name: "前情提要" })).toBeInTheDocument();
+    expect(screen.queryByText(/C:\\v\\a\.mp4|chapter-assets|stderr|JSON-RPC/i)).not.toBeInTheDocument();
+  });
+
+  it("keeps a stable placeholder when the representative image is missing", async () => {
+    const draftChapters = [
+      {
+        id: 12,
+        stableId: "chapter-01",
+        startMs: 0,
+        endMs: 30_000,
+        title: "开场",
+        mainline: null,
+        status: "generated",
+        updatedAtMs: 2,
+        detail: {
+          recap: null,
+          watchPoints: [],
+          mainline: null,
+          outlook: null,
+          questions: [],
+          draftKey: null,
+          evidenceAssetRefs: ["chapter-asset:404"],
+          coverAssetRef: "chapter-asset:404",
+          assets: [],
+          revisionNumber: 1,
+          revisionStatus: "accepted",
+          source: "chapter_agent",
+          promptVersion: "1.0",
+          contentVersion: "v1",
+        },
+      },
+    ];
+    vi.mocked(invoke).mockImplementation((cmd: string) => {
+      if (cmd === "media_inspect")
+        return Promise.resolve({ path: "C:\\v\\a.mp4", streams: [], chapters: [] });
+      if (cmd === "library_context_for_media") return Promise.resolve(null);
+      if (cmd === "chapter_segmentation_status")
+        return Promise.resolve({ ...segmentationSnapshot, status: "running", draftChapters });
+      if (cmd === "chapter_asset_get") return Promise.resolve(null);
+      return Promise.resolve(null);
+    });
+
+    renderPanel();
+
+    await waitFor(() => {
+      expect(screen.getByText("代表画面暂不可用")).toBeInTheDocument();
+    });
+    expect(screen.getByRole("img", { name: "章节代表画面占位" })).toBeInTheDocument();
+  });
+
   it("renders the durable outline skeleton while the task is still running", async () => {
     const draftChapters = [
       {

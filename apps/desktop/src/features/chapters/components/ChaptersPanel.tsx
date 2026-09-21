@@ -7,8 +7,8 @@ import { ytdlResolveKey } from "@lumina/query-keys";
 import { getCachedYtdlResolve } from "@/features/ytdl";
 import { formatTime } from "@/lib/format";
 import type { MediaChapter } from "@lumina/contracts";
-import { parseDraftChapters } from "../api";
-import type { ChapterDetailSnapshot, ChapterDraftSnapshot } from "../api";
+import { chapterAssetKey, getChapterAsset, parseDraftChapters } from "../api";
+import type { ChapterAssetData, ChapterDetailSnapshot, ChapterDraftSnapshot } from "../api";
 import { useChapterSegmentation } from "../hooks/useChapterSegmentation";
 
 export type AiSegmentationStatus =
@@ -370,6 +370,15 @@ function ChapterDetailView({
 }: {
   detail?: ChapterDetailSnapshot | null;
 }) {
+  const coverAssetRef = detail?.coverAssetRef ?? null;
+  const coverQuery = useQuery({
+    queryKey: chapterAssetKey(coverAssetRef),
+    queryFn: () => getChapterAsset(coverAssetRef as string),
+    enabled: Boolean(coverAssetRef),
+    staleTime: Infinity,
+    retry: false,
+  });
+
   if (!detail) {
     return (
       <section className="space-y-1 rounded-lg border border-border bg-card p-3 text-xs">
@@ -397,10 +406,16 @@ function ChapterDetailView({
         </div>
         {detail.coverAssetRef ? (
           <span className="rounded-full bg-muted px-2 py-1 text-[11px] text-muted-foreground">
-            含代表画面
+            {coverQuery.data ? "代表画面" : "含代表画面"}
           </span>
         ) : null}
       </div>
+
+      <ChapterAssetPreview
+        asset={coverQuery.data}
+        loading={coverQuery.isLoading}
+        unavailable={Boolean(coverAssetRef) && Boolean(coverQuery.error || coverQuery.data === null)}
+      />
 
       <ChapterDetailSection title="前情提要" value={detail.recap} empty="暂无前情提要" />
       <ChapterDetailList
@@ -416,6 +431,37 @@ function ChapterDetailView({
         empty="暂无问题候选"
       />
     </section>
+  );
+}
+
+function ChapterAssetPreview({
+  asset,
+  loading,
+  unavailable,
+}: {
+  asset?: ChapterAssetData | null;
+  loading: boolean;
+  unavailable: boolean;
+}) {
+  if (asset) {
+    return (
+      <div className="overflow-hidden rounded-md border border-border bg-muted">
+        <img
+          src={`data:${asset.mime};base64,${asset.data}`}
+          alt="章节代表画面"
+          className="max-h-48 w-full object-cover"
+        />
+      </div>
+    );
+  }
+  return (
+    <div
+      role="img"
+      aria-label="章节代表画面占位"
+      className="flex min-h-24 items-center justify-center rounded-md border border-dashed border-border bg-muted px-3 text-center text-[11px] text-muted-foreground"
+    >
+      {loading ? "正在读取代表画面…" : unavailable ? "代表画面暂不可用" : "暂无代表画面"}
+    </div>
   );
 }
 

@@ -86,6 +86,11 @@ export type ChapterAssetSnapshot = {
   capturedAtMs: number;
 };
 
+export type ChapterAssetData = {
+  mime: string;
+  data: string;
+};
+
 export type ChapterSegmentationSnapshot = {
   id: number;
   taskKey: string;
@@ -239,6 +244,17 @@ export function startChapterSegmentation(
   return invoke<ChapterSegmentationSnapshot>("chapter_segmentation_start", {
     request,
   });
+}
+
+export function chapterAssetKey(resourceRef: string | null | undefined) {
+  return ["chapter-asset", resourceRef ?? null] as const;
+}
+
+/** Loads a persisted chapter image through an opaque reference only. */
+export function getChapterAsset(
+  resourceRef: string,
+): Promise<ChapterAssetData | null> {
+  return invoke<ChapterAssetData | null>("chapter_asset_get", { resourceRef });
 }
 
 export function getChapterSegmentationStatus(

@@ -5,10 +5,12 @@ export type {
 } from "./components/ChaptersPanel";
 export {
   getChapterSegmentationStatus,
+  getChapterAsset,
   startChapterSegmentation,
 } from "./api";
 export type {
   ChapterCommandError,
+  ChapterAssetData,
   ChapterAssetSnapshot,
   ChapterDetailSnapshot,
   ChapterDraftSnapshot,

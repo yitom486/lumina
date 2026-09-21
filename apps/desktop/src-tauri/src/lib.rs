@@ -57,7 +57,9 @@ use commands::acp::{
     acp_watch_feed,
 };
 use commands::asr::{asr_install, asr_status, asr_transcribe};
-use commands::chapter::{chapter_segmentation_start, chapter_segmentation_status};
+use commands::chapter::{
+    chapter_asset_get, chapter_segmentation_start, chapter_segmentation_status,
+};
 use commands::library::{
     library_agent_models_discover, library_apply_tmdb_match, library_context_for_media,
     library_credential_delete, library_credential_status, library_credentials_save,
@@ -114,9 +116,11 @@ pub fn run() {
     init_tracing();
     tracing::info!(elapsed_ms = startup_ms(), "startup: tracing initialized");
 
-    let app = match tauri::Builder::default()
-        .plugin(tauri_plugin_opener::init())
-        .plugin(tauri_plugin_dialog::init())
+    let builder = tauri::Builder::default().plugin(tauri_plugin_opener::init());
+    #[cfg(not(test))]
+    let builder = builder.plugin(tauri_plugin_dialog::init());
+
+    let app = match builder
         .on_page_load(|_webview, payload| {
             tracing::info!(
                 elapsed_ms = startup_ms(),
@@ -163,6 +167,7 @@ pub fn run() {
             asr_install,
             chapter_segmentation_start,
             chapter_segmentation_status,
+            chapter_asset_get,
             ytdl_status,
             ytdl_cookie_status,
             ytdl_set_cookies,
@@ -301,24 +306,73 @@ fn init_tracing() {
         .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));
     let dir = commands::system::log_dir();
     let _ = std::fs::create_dir_all(&dir);
-    // Daily-rotated `lumina.log.<date>` next to a live stdout layer; ANSI off in files.
-    let file_appender = tracing_appender::rolling::daily(&dir, "lumina.log");
-    let (file_writer, guard) = tracing_appender::non_blocking(file_appender);
-    let _ = LOG_GUARD.set(guard);
+
+    // `rolling::daily` panics when its directory cannot be opened. Startup
+    // diagnostics must never be able to take down the player, so use the
+    // fallible builder and degrade to a temp directory, then stdout only.
+    let build_appender = |directory: &std::path::Path| {
+        tracing_appender::rolling::RollingFileAppender::builder()
+            .rotation(tracing_appender::rolling::Rotation::DAILY)
+            .filename_prefix("lumina.log")
+            .build(directory)
+    };
+    let file_target = match build_appender(&dir) {
+        Ok(appender) => Some((appender, dir.clone())),
+        Err(primary_error) => {
+            let fallback_dir = std::env::temp_dir().join("lumina").join("logs");
+            let _ = std::fs::create_dir_all(&fallback_dir);
+            match build_appender(&fallback_dir) {
+                Ok(appender) => {
+                    eprintln!(
+                        "Lumina file logging fell back to {} after {} was unavailable: {}",
+                        fallback_dir.display(),
+                        dir.display(),
+                        primary_error
+                    );
+                    Some((appender, fallback_dir))
+                }
+                Err(fallback_error) => {
+                    eprintln!(
+                        "Lumina file logging unavailable for {} and {}: {}; {}",
+                        dir.display(),
+                        fallback_dir.display(),
+                        primary_error,
+                        fallback_error
+                    );
+                    None
+                }
+            }
+        }
+    };
+
     let stdout_layer = tracing_subscriber::fmt::layer().with_writer(std::io::stdout);
-    let file_layer = tracing_subscriber::fmt::layer()
-        .with_writer(file_writer)
-        .with_ansi(false);
-    let _ = tracing_subscriber::registry()
-        .with(filter)
-        .with(stdout_layer)
-        .with(file_layer)
-        .try_init();
+    if let Some((file_appender, active_dir)) = file_target {
+        // Daily-rotated `lumina.log.<date>` next to a live stdout layer; ANSI off in files.
+        let (file_writer, guard) = tracing_appender::non_blocking(file_appender);
+        let _ = LOG_GUARD.set(guard);
+        let file_layer = tracing_subscriber::fmt::layer()
+            .with_writer(file_writer)
+            .with_ansi(false);
+        let _ = tracing_subscriber::registry()
+            .with(filter)
+            .with(stdout_layer)
+            .with(file_layer)
+            .try_init();
+        tracing::info!(log_dir = %active_dir.display(), "file logging initialized");
+    } else {
+        let _ = tracing_subscriber::registry()
+            .with(filter)
+            .with(stdout_layer)
+            .try_init();
+        tracing::warn!(
+            log_dir = %dir.display(),
+            "file logging unavailable; continuing with stdout logging"
+        );
+    }
     commands::system::initialize_crash_diagnostics();
     std::panic::set_hook(Box::new(|info| {
         tracing::error!(panic = %info, "application panicked");
     }));
-    tracing::info!(log_dir = %dir.display(), "file logging initialized");
 }
 
 fn attach_native_surface(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {

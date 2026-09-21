@@ -65,7 +65,11 @@ fn marker_path() -> PathBuf {
 }
 
 fn read_unclean_marker() -> bool {
-    let Ok(contents) = std::fs::read_to_string(marker_path()) else {
+    read_unclean_marker_at(&marker_path())
+}
+
+fn read_unclean_marker_at(path: &std::path::Path) -> bool {
+    let Ok(contents) = std::fs::read_to_string(path) else {
         return false;
     };
     let Ok(value) = serde_json::from_str::<serde_json::Value>(&contents) else {
@@ -83,7 +87,22 @@ fn write_marker(
     fault_address: Option<usize>,
     thread_id: Option<u32>,
 ) {
-    let path = marker_path();
+    write_marker_at(
+        &marker_path(),
+        clean,
+        exception_code,
+        fault_address,
+        thread_id,
+    );
+}
+
+fn write_marker_at(
+    path: &std::path::Path,
+    clean: bool,
+    exception_code: Option<String>,
+    fault_address: Option<usize>,
+    thread_id: Option<u32>,
+) {
     if let Some(parent) = path.parent() {
         let _ = std::fs::create_dir_all(parent);
     }
@@ -200,6 +219,17 @@ pub(crate) fn data_dir() -> Option<PathBuf> {
 mod tests {
     use super::*;
 
+    static TEST_MARKER_SEQUENCE: std::sync::atomic::AtomicU64 =
+        std::sync::atomic::AtomicU64::new(0);
+
+    fn test_marker_path() -> PathBuf {
+        let sequence = TEST_MARKER_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+        std::env::temp_dir().join(format!(
+            "lumina-system-marker-{}-{sequence}.json",
+            std::process::id()
+        ))
+    }
+
     #[test]
     fn log_dir_never_fails_and_points_at_lumina_logs() {
         let dir = log_dir();
@@ -223,5 +253,67 @@ mod tests {
         assert!(!notice.message.contains("0xc0000005"));
         assert!(!notice.message.contains("DLL"));
         assert!(startup_notice(false).is_none());
+    }
+
+    #[test]
+    fn marker_lifecycle_distinguishes_unclean_and_clean_shutdown() {
+        let path = test_marker_path();
+
+        write_marker_at(
+            &path,
+            false,
+            Some("0xC0000005".to_owned()),
+            Some(0x1234),
+            Some(42),
+        );
+        assert!(read_unclean_marker_at(&path));
+
+        let contents = std::fs::read_to_string(&path).expect("marker should be readable");
+        let marker: serde_json::Value =
+            serde_json::from_str(&contents).expect("marker should be valid JSON");
+        assert_eq!(marker["clean"], false);
+        assert_eq!(marker["exceptionCode"], "0xC0000005");
+        assert_eq!(marker["faultAddress"], "0x1234");
+        assert_eq!(marker["threadId"], 42);
+
+        write_marker_at(&path, true, None, None, None);
+        assert!(!read_unclean_marker_at(&path));
+
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn marker_records_player_phase_without_exposing_media_context() {
+        let path = test_marker_path();
+
+        write_marker_at(&path, false, None, None, None);
+        let contents = std::fs::read_to_string(&path).expect("marker should be readable");
+        let marker: serde_json::Value =
+            serde_json::from_str(&contents).expect("marker should be valid JSON");
+
+        assert_eq!(marker["phase"], "startup");
+        assert!(!contents.contains("media"));
+        assert!(!contents.contains("subtitle"));
+        assert!(!contents.contains("stderr"));
+
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn player_phase_mapping_is_stable() {
+        assert_eq!(phase_code("player_attach"), 1);
+        assert_eq!(phase_code("player_poll"), 2);
+        assert_eq!(phase_code("shutdown"), 3);
+        assert_eq!(phase_code("unknown"), 0);
+        assert_eq!(phase_name(1), "player_attach");
+        assert_eq!(phase_name(2), "player_poll");
+        assert_eq!(phase_name(3), "shutdown");
+        assert_eq!(phase_name(0), "startup");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_exception_filter_registration_is_non_panicking() {
+        install_native_exception_filter();
     }
 }
