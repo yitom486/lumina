@@ -52,10 +52,10 @@ export function PlayerBar() {
     return (
       <div
         className={cn(
-          "relative z-20 shrink-0 overflow-hidden transition-all duration-300 ease-out",
+          "relative z-20 shrink-0 transition-all duration-300 ease-out",
           visible
-            ? "max-h-48 opacity-100"
-            : "max-h-0 opacity-0 pointer-events-none",
+            ? "max-h-48 overflow-visible opacity-100"
+            : "max-h-0 overflow-hidden opacity-0 pointer-events-none",
         )}
         onMouseEnter={pin}
         onMouseLeave={() => {

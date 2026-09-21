@@ -83,7 +83,8 @@ export function SeekBar() {
         <ResumeChip />
         {previewTooltipPercent !== null && previewTimeMs !== null ? (
           <span
-            className="pointer-events-none absolute bottom-full z-20 mb-2 -translate-x-1/2 rounded-md border border-border/70 bg-popover px-2 py-1 text-[10px] tabular-nums text-popover-foreground shadow-md"
+            className="pointer-events-none absolute top-full z-20 mt-2 -translate-x-1/2 rounded-md border border-border/70 bg-popover px-2 py-1 text-[10px] tabular-nums text-popover-foreground shadow-md"
+            data-seek-preview-placement="below"
             role="tooltip"
             style={{ left: `${previewTooltipPercent}%` }}
           >

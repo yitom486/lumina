@@ -21,6 +21,11 @@ import type { CompanionTaskId } from "./CompanionQuickActions";
 import { CompanionQuickActions } from "./CompanionQuickActions";
 import { ChatMarkdown } from "./ChatMarkdown";
 import { ChatTurnView } from "./ChatTurnView";
+import {
+  countWatchFeedItemsAfterPosition,
+  currentWatchFeedChapter,
+  selectWatchFeedItemsForPosition,
+} from "./watchFeedProjection";
 
 type Props = {
   turns: ChatTurn[];
@@ -51,6 +56,7 @@ export function WatchFeedView({
 }: Props) {
   const endRef = useRef<HTMLDivElement>(null);
   const currentFile = usePlayerStore((state) => state.currentFile);
+  const currentTimeMs = usePlayerStore((state) => state.currentTimeMs);
   const watchFeedQuery = useQuery({
     queryKey: [...acpWatchFeedQueryKey, currentFile ?? null],
     queryFn: getAcpWatchFeed,
@@ -60,14 +66,23 @@ export function WatchFeedView({
   });
   const persistedItems =
     watchFeedQuery.data?.source === "sqlite" ? watchFeedQuery.data.items : [];
+  const visiblePersistedItems = selectWatchFeedItemsForPosition(
+    persistedItems,
+    currentTimeMs,
+  );
+  const futureItemCount = countWatchFeedItemsAfterPosition(
+    persistedItems,
+    currentTimeMs,
+  );
+  const currentChapter = currentWatchFeedChapter(persistedItems, currentTimeMs);
   const hasFallbackContent = turns.length > 0 || notices.length > 0;
-  const showingFallback = persistedItems.length === 0;
+  const showingFallback = visiblePersistedItems.length === 0;
 
   useEffect(() => {
     if (followEnd) {
       endRef.current?.scrollIntoView({ behavior: "auto", block: "end" });
     }
-  }, [followEnd, notices, persistedItems, turns]);
+  }, [currentTimeMs, followEnd, notices, visiblePersistedItems, turns]);
 
   return (
     <ChatColumn className="space-y-3 py-3">
@@ -78,10 +93,21 @@ export function WatchFeedView({
           source={watchFeedQuery.data?.source}
           hasFallbackContent={hasFallbackContent}
         />
+        {persistedItems.length > 0 ? (
+          <WatchFeedPositionStatus
+            currentTimeMs={currentTimeMs}
+            currentChapterTitle={currentChapter?.title ?? null}
+            futureItemCount={futureItemCount}
+          />
+        ) : null}
         {!watchFeedQuery.isLoading && showingFallback && !hasFallbackContent ? (
-          <EmptyWatchFeed />
-        ) : persistedItems.length > 0 ? (
-          persistedItems.map((item) => (
+          persistedItems.length > 0 ? (
+            <FutureWatchFeedNotice />
+          ) : (
+            <EmptyWatchFeed />
+          )
+        ) : visiblePersistedItems.length > 0 ? (
+          visiblePersistedItems.map((item) => (
             <PersistedWatchFeedItem
               key={`sqlite-${item.id}`}
               item={item}
@@ -135,6 +161,38 @@ export function WatchFeedView({
         <div ref={endRef} aria-hidden />
       </div>
     </ChatColumn>
+  );
+}
+
+function WatchFeedPositionStatus({
+  currentTimeMs,
+  currentChapterTitle,
+  futureItemCount,
+}: {
+  currentTimeMs: number;
+  currentChapterTitle: string | null;
+  futureItemCount: number;
+}) {
+  return (
+    <div
+      className="mb-3 flex flex-wrap items-center gap-x-2 gap-y-1 rounded-lg border border-border/70 bg-muted/20 px-3 py-2 text-[10px] text-muted-foreground"
+      data-watch-feed-position={currentTimeMs}
+      role="status"
+    >
+      <span>当前播放 · {formatTime(currentTimeMs)}</span>
+      {currentChapterTitle ? <span>· {currentChapterTitle}</span> : null}
+      {futureItemCount > 0 ? (
+        <span>· {futureItemCount} 条后续内容将在播放到对应位置后显示</span>
+      ) : null}
+    </div>
+  );
+}
+
+function FutureWatchFeedNotice() {
+  return (
+    <div className="rounded-xl border border-dashed border-border px-4 py-6 text-center text-xs text-muted-foreground">
+      观剧流已同步到当前进度，后续内容将在播放到对应位置后显示。
+    </div>
   );
 }
 

@@ -1,11 +1,28 @@
 import { useEffect } from "react";
 import { listen } from "@tauri-apps/api/event";
-import { useQueryClient } from "@tanstack/react-query";
+import { useQueryClient, type QueryClient } from "@tanstack/react-query";
 
+import { acpWatchFeedQueryKey } from "@/features/acp/api";
 import type { ChapterProgressEvent } from "../api";
 import { useChapterProgressStore } from "../progressStore";
 
 const CHAPTER_PROGRESS_EVENT = "chapter-segmentation-progress";
+
+/**
+ * One durable-commit event fans out to every projection that is derived from
+ * the same SQLite write. Add future committed projections here instead of
+ * giving each panel its own timer or event subscription.
+ */
+const COMMITTED_QUERY_KEYS = [
+  ["chapter-segmentation"],
+  acpWatchFeedQueryKey,
+] as const;
+
+function invalidateCommittedProjections(queryClient: QueryClient): void {
+  for (const queryKey of COMMITTED_QUERY_KEYS) {
+    void queryClient.invalidateQueries({ queryKey });
+  }
+}
 
 /**
  * Subscribe once at the application root. Chapter work continues in Rust
@@ -28,9 +45,7 @@ export function useChapterProgressEvents(): void {
             if (cancelled) return;
             upsert(event.payload);
             if (event.payload.committed) {
-              void queryClient.invalidateQueries({
-                queryKey: ["chapter-segmentation"],
-              });
+              invalidateCommittedProjections(queryClient);
             }
           },
         );
@@ -41,7 +56,8 @@ export function useChapterProgressEvents(): void {
         unlisten = cleanup;
       } catch {
         // The browser-only development shell has no Tauri event bridge. The
-        // SQLite polling path remains the fallback and source of truth.
+        // SQLite remains the source of truth; the event is only an invalidation
+        // hint and remounts still reconcile from the database.
       }
     })();
 

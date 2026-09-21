@@ -15,7 +15,7 @@ vi.mock("../api", async () => {
 
 afterEach(() => {
   cleanup();
-  usePlayerStore.setState({ currentFile: null });
+  usePlayerStore.setState({ currentFile: null, currentTimeMs: 0 });
   vi.mocked(getAcpWatchFeed).mockReset();
 });
 
@@ -97,7 +97,10 @@ describe("WatchFeedView", () => {
   });
 
   it("prefers SQLite items over the temporary ACP-turn fallback", async () => {
-    usePlayerStore.setState({ currentFile: "C:\\videos\\episode-01.mp4" });
+    usePlayerStore.setState({
+      currentFile: "C:\\videos\\episode-01.mp4",
+      currentTimeMs: 10_000,
+    });
     vi.mocked(getAcpWatchFeed).mockResolvedValue({
       source: "sqlite",
       items: [
@@ -141,6 +144,86 @@ describe("WatchFeedView", () => {
     expect(screen.queryByText("不应显示的临时记录")).not.toBeInTheDocument();
     expect(screen.getByText(/含章节封面引用/)).toBeInTheDocument();
     expect(screen.getByText(/含 1 个画面引用/)).toBeInTheDocument();
+  });
+
+  it("follows playback position and reveals the next chapter without remounting", async () => {
+    usePlayerStore.setState({
+      currentFile: "C:\\videos\\episode-01.mp4",
+      currentTimeMs: 10_000,
+    });
+    vi.mocked(getAcpWatchFeed).mockResolvedValue({
+      source: "sqlite",
+      items: [
+        {
+          id: 1,
+          episodeId: 2,
+          chapterId: 1,
+          revisionId: null,
+          taskId: null,
+          itemType: "chapter",
+          source: "ai",
+          content: "当前章节内容",
+          spoilerLevel: "current_chapter",
+          contentVersion: "v1",
+          publishedAtMs: 1,
+          chapter: {
+            id: 1,
+            startMs: 10_000,
+            endMs: 20_000,
+            spoilerLevel: "current_chapter",
+            title: "当前章节",
+            mainline: null,
+            status: "ready",
+          },
+          revision: null,
+          questionCandidate: null,
+          screenshotRefs: [],
+          coverRef: null,
+        },
+        {
+          id: 2,
+          episodeId: 2,
+          chapterId: 2,
+          revisionId: null,
+          taskId: null,
+          itemType: "chapter",
+          source: "ai",
+          content: "后续章节内容",
+          spoilerLevel: "current_chapter",
+          contentVersion: "v1",
+          publishedAtMs: 2,
+          chapter: {
+            id: 2,
+            startMs: 30_000,
+            endMs: 40_000,
+            spoilerLevel: "current_chapter",
+            title: "后续章节",
+            mainline: null,
+            status: "ready",
+          },
+          revision: null,
+          questionCandidate: null,
+          screenshotRefs: [],
+          coverRef: null,
+        },
+      ],
+    });
+
+    renderFeed({
+      turns: [],
+      notices: [],
+      followEnd: false,
+      onSelectTask: vi.fn(),
+    });
+
+    expect(await screen.findByText("当前章节内容")).toBeInTheDocument();
+    expect(screen.queryByText("后续章节内容")).not.toBeInTheDocument();
+    expect(screen.getByText(/当前播放 · 0:10/)).toBeInTheDocument();
+
+    usePlayerStore.setState({ currentTimeMs: 30_000 });
+
+    expect(await screen.findByText("后续章节内容")).toBeInTheDocument();
+    expect(screen.getByText(/当前播放 · 0:30/)).toBeInTheDocument();
   });
 
   it("keeps ACP turns as an explicit fallback when the SQLite read fails", async () => {

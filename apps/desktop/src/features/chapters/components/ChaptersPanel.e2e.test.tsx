@@ -3,6 +3,7 @@ import { act, cleanup, fireEvent, render, screen } from "@testing-library/react"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { useAcpProfilesStore } from "@lumina/chat-ui/acpProfilesStore";
+import { acpWatchFeedQueryKey } from "@/features/acp/api";
 import type { ChapterProgressEvent, ChapterSegmentationSnapshot } from "../api";
 import { usePlayerStore } from "@/features/player";
 import { useChapterProgressEvents } from "../hooks/useChapterProgressEvents";
@@ -366,6 +367,44 @@ describe("ChaptersPanel command-boundary integration", () => {
     );
     await settleUntil(() => Boolean(screen.queryByText("正在写入章节草稿…")));
     expect(screen.queryByText(/tool payload|JSON-RPC|stderr|capturing_evidence/i)).not.toBeInTheDocument();
+  });
+
+  it("invalidates the watch feed when a durable chapter commit is reported", async () => {
+    let progressListener:
+      | ((event: { payload: ChapterProgressEvent }) => void)
+      | undefined;
+
+    vi.mocked(listen).mockImplementation(async (_event, handler) => {
+      progressListener = handler as (event: {
+        payload: ChapterProgressEvent;
+      }) => void;
+      return () => undefined;
+    });
+
+    const view = renderPanelWithProgressBridge(false);
+    view.queryClient.setQueryData(acpWatchFeedQueryKey, {
+      source: "empty",
+      items: [],
+    });
+    await settleUntil(() => Boolean(progressListener));
+
+    expect(view.queryClient.getQueryState(acpWatchFeedQueryKey)?.isInvalidated).toBe(
+      false,
+    );
+    await act(async () => {
+      progressListener?.({
+        payload: {
+          ...runningProgress("chapter-segmentation:test", 41),
+          committed: true,
+          phase: "succeeded",
+          message: "章节已生成并保存",
+        },
+      });
+    });
+
+    expect(view.queryClient.getQueryState(acpWatchFeedQueryKey)?.isInvalidated).toBe(
+      true,
+    );
   });
 });
 
