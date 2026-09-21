@@ -1,11 +1,10 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import type { ComponentProps } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { usePlayerStore } from "@/features/player";
-import { getAcpWatchFeed } from "../api";
-import type { ChatTurn } from "../types";
+import { getAcpWatchFeed, type AcpWatchFeedItem } from "../api";
 import { WatchFeedView } from "./WatchFeedView";
 
 vi.mock("../api", async () => {
@@ -30,25 +29,44 @@ function renderFeed(props: ComponentProps<typeof WatchFeedView>) {
   );
 }
 
-function makeTurn(partial: Partial<ChatTurn> & Pick<ChatTurn, "id">): ChatTurn {
+function makeItem(
+  id: number,
+  content: string,
+  startMs: number,
+  itemType: string,
+  chapterId = id,
+): AcpWatchFeedItem {
   return {
-    userText: "用户问题",
-    answer: "",
-    status: "streaming",
-    activities: [],
-    showActivities: true,
-    ...partial,
+    id,
+    episodeId: 2,
+    chapterId,
+    revisionId: null,
+    taskId: null,
+    itemType,
+    source: "ai",
+    content,
+    spoilerLevel: "current_chapter",
+    contentVersion: "v1",
+    publishedAtMs: id,
+    chapter: {
+      id: chapterId,
+      startMs,
+      endMs: startMs + 10_000,
+      spoilerLevel: "current_chapter",
+      title: `章节 ${chapterId}`,
+      mainline: null,
+      status: "ready",
+    },
+    revision: null,
+    questionCandidate: null,
+    screenshotRefs: [],
+    coverRef: null,
   };
 }
 
 describe("WatchFeedView", () => {
-  it("shows a non-session empty state when there are no turns", () => {
-    renderFeed({
-      turns: [],
-      notices: [],
-      followEnd: false,
-      onSelectTask: vi.fn(),
-    });
+  it("shows a compact empty state when no durable projection exists", () => {
+    renderFeed({ onSelectTask: vi.fn() });
 
     expect(screen.getByText("AI 观剧流已就绪")).toBeInTheDocument();
     expect(screen.getByRole("tabpanel", { name: "AI 观剧流" })).toBeInTheDocument();
@@ -56,47 +74,56 @@ describe("WatchFeedView", () => {
 
   it("shows watch-feed shortcuts and emits a stable task id", async () => {
     const onSelectTask = vi.fn();
-    renderFeed({
-      turns: [],
-      notices: [],
-      followEnd: false,
-      onSelectTask,
-    });
+    renderFeed({ onSelectTask });
 
     expect(screen.getByRole("button", { name: "本段总结" })).toBeInTheDocument();
     await screen.getByRole("button", { name: "本段总结" }).click();
     expect(onSelectTask).toHaveBeenCalledWith("chapter_recap");
   });
 
-  it("keeps the real turn anchor visible in the feed card", async () => {
-    renderFeed({
-      turns: [
-        makeTurn({
-          id: "turn-1",
-          answer: "当前片段的分析",
-          status: "done",
-          anchorMs: 125_000,
-          activities: [
-            {
-              id: "tool-1",
-              kind: "tool",
-              title: "读取当前台词",
-              status: "completed",
-            },
-          ],
-        }),
+  it("renders one replaceable card per slot and filters future chapters", async () => {
+    usePlayerStore.setState({
+      currentFile: "C:\\videos\\episode-01.mp4",
+      currentTimeMs: 10_000,
+    });
+    vi.mocked(getAcpWatchFeed).mockResolvedValue({
+      source: "sqlite",
+      items: [
+        makeItem(1, "当前观剧记录", 0, "chapter", 1),
+        makeItem(
+          2,
+          JSON.stringify({
+            version: "chapter_recap.v1",
+            scope: { label: "已观看内容" },
+            recap: "已格式化的前情提要",
+            evidence: ["字幕证据"],
+          }),
+          0,
+          "recap",
+          1,
+        ),
+        makeItem(3, "本段需要留意人物的选择", 0, "watch_point", 1),
+        makeItem(4, "尚未播放的章节", 30_000, "chapter", 2),
       ],
-      notices: [],
-      followEnd: false,
-      onSelectTask: vi.fn(),
     });
 
-    expect(screen.getByText("2:05")).toBeInTheDocument();
-    expect(screen.getByText("1 个工具活动 · 已完成")).toBeInTheDocument();
-    expect(await screen.findByText("当前片段的分析")).toBeInTheDocument();
+    renderFeed({ onSelectTask: vi.fn() });
+
+    expect(await screen.findByText("当前观剧记录")).toBeInTheDocument();
+    expect(screen.queryByText("尚未播放的章节")).not.toBeInTheDocument();
+    expect(document.querySelectorAll("[data-watch-feed-slot]")).toHaveLength(3);
+
+    fireEvent.click(screen.getByRole("button", { name: /前情提要/ }));
+    expect(await screen.findByText("已格式化的前情提要")).toBeInTheDocument();
+    expect(screen.queryByText(/chapter_recap\.v1/)).not.toBeInTheDocument();
+
+    usePlayerStore.setState({ currentTimeMs: 30_000 });
+
+    expect(await screen.findByText("尚未播放的章节")).toBeInTheDocument();
+    expect(screen.queryByText("当前观剧记录")).not.toBeInTheDocument();
   });
 
-  it("prefers SQLite items over the temporary ACP-turn fallback", async () => {
+  it("prefers SQLite content and keeps asset references non-visual metadata", async () => {
     usePlayerStore.setState({
       currentFile: "C:\\videos\\episode-01.mp4",
       currentTimeMs: 10_000,
@@ -105,158 +132,41 @@ describe("WatchFeedView", () => {
       source: "sqlite",
       items: [
         {
-          id: 7,
-          episodeId: 2,
-          chapterId: 3,
+          ...makeItem(7, "已保存的章节主线", 10_000, "chapter", 3),
           revisionId: 4,
           taskId: 5,
-          itemType: "chapter",
-          source: "ai",
-          content: "已保存的章节主线",
-          spoilerLevel: "current_chapter",
-          contentVersion: "v1",
-          publishedAtMs: 1,
-          chapter: {
-            id: 3,
-            startMs: 10_000,
-            endMs: 20_000,
-            spoilerLevel: "current_chapter",
-            title: "初见",
-            mainline: "主线",
-            status: "ready",
-          },
-          revision: null,
-          questionCandidate: null,
           screenshotRefs: ["opaque-frame-1"],
           coverRef: "opaque-cover-1",
         },
       ],
     });
 
-    renderFeed({
-      turns: [makeTurn({ id: "turn-1", answer: "不应显示的临时记录" })],
-      notices: [],
-      followEnd: false,
-      onSelectTask: vi.fn(),
-    });
+    renderFeed({ onSelectTask: vi.fn() });
 
     expect(await screen.findByText("已保存的章节主线")).toBeInTheDocument();
-    expect(screen.queryByText("不应显示的临时记录")).not.toBeInTheDocument();
     expect(screen.getByText(/含章节封面引用/)).toBeInTheDocument();
     expect(screen.getByText(/含 1 个画面引用/)).toBeInTheDocument();
   });
 
-  it("follows playback position and reveals the next chapter without remounting", async () => {
-    usePlayerStore.setState({
-      currentFile: "C:\\videos\\episode-01.mp4",
-      currentTimeMs: 10_000,
-    });
-    vi.mocked(getAcpWatchFeed).mockResolvedValue({
-      source: "sqlite",
-      items: [
-        {
-          id: 1,
-          episodeId: 2,
-          chapterId: 1,
-          revisionId: null,
-          taskId: null,
-          itemType: "chapter",
-          source: "ai",
-          content: "当前章节内容",
-          spoilerLevel: "current_chapter",
-          contentVersion: "v1",
-          publishedAtMs: 1,
-          chapter: {
-            id: 1,
-            startMs: 10_000,
-            endMs: 20_000,
-            spoilerLevel: "current_chapter",
-            title: "当前章节",
-            mainline: null,
-            status: "ready",
-          },
-          revision: null,
-          questionCandidate: null,
-          screenshotRefs: [],
-          coverRef: null,
-        },
-        {
-          id: 2,
-          episodeId: 2,
-          chapterId: 2,
-          revisionId: null,
-          taskId: null,
-          itemType: "chapter",
-          source: "ai",
-          content: "后续章节内容",
-          spoilerLevel: "current_chapter",
-          contentVersion: "v1",
-          publishedAtMs: 2,
-          chapter: {
-            id: 2,
-            startMs: 30_000,
-            endMs: 40_000,
-            spoilerLevel: "current_chapter",
-            title: "后续章节",
-            mainline: null,
-            status: "ready",
-          },
-          revision: null,
-          questionCandidate: null,
-          screenshotRefs: [],
-          coverRef: null,
-        },
-      ],
-    });
-
-    renderFeed({
-      turns: [],
-      notices: [],
-      followEnd: false,
-      onSelectTask: vi.fn(),
-    });
-
-    expect(await screen.findByText("当前章节内容")).toBeInTheDocument();
-    expect(screen.queryByText("后续章节内容")).not.toBeInTheDocument();
-    expect(screen.getByText(/当前播放 · 0:10/)).toBeInTheDocument();
-
-    usePlayerStore.setState({ currentTimeMs: 30_000 });
-
-    expect(await screen.findByText("后续章节内容")).toBeInTheDocument();
-    expect(screen.getByText(/当前播放 · 0:30/)).toBeInTheDocument();
-  });
-
-  it("keeps ACP turns as an explicit fallback when the SQLite read fails", async () => {
+  it("keeps the watch feed compact when the SQLite read fails", async () => {
     usePlayerStore.setState({ currentFile: "C:\\videos\\episode-01.mp4" });
     vi.mocked(getAcpWatchFeed).mockRejectedValue(new Error("read failed"));
 
-    renderFeed({
-      turns: [makeTurn({ id: "turn-1", answer: "实时会话记录" })],
-      notices: [],
-      followEnd: false,
-      onSelectTask: vi.fn(),
-    });
+    renderFeed({ onSelectTask: vi.fn() });
 
     expect(
-      await screen.findByText("本地观剧流暂时不可用，当前显示本次会话的临时记录。"),
+      await screen.findByText("本地观剧流暂时不可用，聊天仍可继续使用。"),
     ).toBeInTheDocument();
-    expect(await screen.findByText("实时会话记录")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "本段总结" })).toBeInTheDocument();
   });
 
   it("shows a safe empty state for an empty SQLite projection", async () => {
     usePlayerStore.setState({ currentFile: "C:\\videos\\episode-01.mp4" });
     vi.mocked(getAcpWatchFeed).mockResolvedValue({ source: "empty", items: [] });
 
-    renderFeed({
-      turns: [],
-      notices: [],
-      followEnd: false,
-      onSelectTask: vi.fn(),
-    });
+    renderFeed({ onSelectTask: vi.fn() });
 
-    expect(
-      await screen.findByText("暂无已保存的观剧条目；本次会话结果会安全显示在这里。"),
-    ).toBeInTheDocument();
-    expect(screen.getByText("AI 观剧流已就绪")).toBeInTheDocument();
+    expect(await screen.findByText("AI 观剧流已就绪")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "剧情梳理" })).toBeInTheDocument();
   });
 });

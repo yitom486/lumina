@@ -5,6 +5,7 @@ import {
   countWatchFeedItemsAfterPosition,
   currentWatchFeedChapter,
   selectWatchFeedItemsForPosition,
+  selectWatchFeedSlots,
 } from "./watchFeedProjection";
 
 function item(
@@ -58,5 +59,33 @@ describe("watch-feed position projection", () => {
 
     expect(currentWatchFeedChapter(items, 35_000)?.title).toBe("章节 2");
     expect(currentWatchFeedChapter(items, 15_000)?.title).toBe("章节 1");
+  });
+
+  it("keeps one latest item per semantic slot for the current chapter", () => {
+    const currentRecord = item(1, 0);
+    const sameChapter = currentRecord.chapter;
+    const laterRecord = {
+      ...item(2, 0),
+      chapter: sameChapter,
+      publishedAtMs: 2,
+    };
+    const recap = { ...item(3, 0), chapter: sameChapter, itemType: "chapter_recap" };
+    const oldHighlight = { ...item(4, 0), chapter: sameChapter, itemType: "watch_point" };
+    const currentHighlight = {
+      ...item(5, 0),
+      chapter: sameChapter,
+      itemType: "question_candidates",
+      publishedAtMs: 5,
+    };
+    const futureRecord = item(6, 30_000);
+
+    const slots = selectWatchFeedSlots(
+      [currentRecord, laterRecord, recap, oldHighlight, currentHighlight, futureRecord],
+      10_000,
+    );
+
+    expect(slots["watch-record"]?.id).toBe(2);
+    expect(slots.recap?.id).toBe(3);
+    expect(slots.highlights?.id).toBe(5);
   });
 });

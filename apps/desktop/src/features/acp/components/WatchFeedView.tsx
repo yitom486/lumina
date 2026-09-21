@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
-import { Activity, Clock3, MessageSquareText, Sparkles } from "lucide-react";
-import { useEffect, useRef } from "react";
+import { ChevronDown, Clock3, Sparkles } from "lucide-react";
+import { useEffect, useId, useState } from "react";
 
 import {
   parseAssistantBlocksText,
@@ -8,53 +8,51 @@ import {
 } from "@lumina/chat-ui/assistantBlocks";
 import { ChatColumn } from "@lumina/chat-ui/components/ChatShell";
 import { RichBlockRenderer } from "@lumina/chat-ui/components/RichBlockRenderer";
-import { hasActiveToolActivity } from "@lumina/chat-ui/activityStatus";
-import { isToolFailed, isToolSucceeded } from "@lumina/chat-ui/toolStatus";
 import { usePlayerStore } from "@/features/player";
 import {
   acpWatchFeedQueryKey,
   getAcpWatchFeed,
+  type AcpTaskId,
   type AcpWatchFeedItem,
 } from "../api";
-import type { ChatTurn } from "../types";
+import {
+  adaptShortcutOutput,
+  normalizeRestoredShortcutOutput,
+} from "../shortcutOutput";
 import type { CompanionTaskId } from "./CompanionQuickActions";
 import { CompanionQuickActions } from "./CompanionQuickActions";
 import { ChatMarkdown } from "./ChatMarkdown";
-import { ChatTurnView } from "./ChatTurnView";
 import {
   countWatchFeedItemsAfterPosition,
   currentWatchFeedChapter,
-  selectWatchFeedItemsForPosition,
+  selectWatchFeedSlots,
+  type WatchFeedSlot,
 } from "./watchFeedProjection";
 
 type Props = {
-  turns: ChatTurn[];
-  notices: { id: string; content: string }[];
-  followEnd: boolean;
-  annotationWorkspace?: string | null;
-  onDismissAnnotation?: (turnId: string) => void;
-  onSaveAnnotation?: (turnId: string) => void;
   onSelectTask: (taskId: CompanionTaskId) => void;
   quickActionsDisabled?: boolean;
   onAssistantAction?: (action: AssistantAction) => void;
 };
 
+const SLOT_ORDER: readonly WatchFeedSlot[] = [
+  "watch-record",
+  "recap",
+  "highlights",
+];
+
 /**
- * A watch-oriented projection of the same real ACP turns.
- * It deliberately does not create a second session or write to chat history.
+ * A compact projection of the durable watch-feed state.
+ *
+ * SQLite keeps every published item, but this surface intentionally renders
+ * one replaceable card per semantic slot. The conversation below this view is
+ * rendered by ChatTurnList and remains the single shared ACP chat session.
  */
 export function WatchFeedView({
-  turns,
-  notices,
-  followEnd,
-  annotationWorkspace,
-  onDismissAnnotation,
-  onSaveAnnotation,
   onSelectTask,
   quickActionsDisabled,
   onAssistantAction,
 }: Props) {
-  const endRef = useRef<HTMLDivElement>(null);
   const currentFile = usePlayerStore((state) => state.currentFile);
   const currentTimeMs = usePlayerStore((state) => state.currentTimeMs);
   const watchFeedQuery = useQuery({
@@ -66,32 +64,21 @@ export function WatchFeedView({
   });
   const persistedItems =
     watchFeedQuery.data?.source === "sqlite" ? watchFeedQuery.data.items : [];
-  const visiblePersistedItems = selectWatchFeedItemsForPosition(
-    persistedItems,
-    currentTimeMs,
-  );
+  const slots = selectWatchFeedSlots(persistedItems, currentTimeMs);
   const futureItemCount = countWatchFeedItemsAfterPosition(
     persistedItems,
     currentTimeMs,
   );
   const currentChapter = currentWatchFeedChapter(persistedItems, currentTimeMs);
-  const hasFallbackContent = turns.length > 0 || notices.length > 0;
-  const showingFallback = visiblePersistedItems.length === 0;
-
-  useEffect(() => {
-    if (followEnd) {
-      endRef.current?.scrollIntoView({ behavior: "auto", block: "end" });
-    }
-  }, [currentTimeMs, followEnd, notices, visiblePersistedItems, turns]);
+  const hasVisibleSlot = SLOT_ORDER.some((slot) => slots[slot] !== null);
 
   return (
-    <ChatColumn className="space-y-3 py-3">
+    <ChatColumn className="space-y-2 py-2">
       <div id="companion-panel-watch-feed" role="tabpanel" aria-label="AI 观剧流">
         <WatchFeedQueryStatus
           isLoading={watchFeedQuery.isLoading}
           isError={watchFeedQuery.isError}
           source={watchFeedQuery.data?.source}
-          hasFallbackContent={hasFallbackContent}
         />
         {persistedItems.length > 0 ? (
           <WatchFeedPositionStatus
@@ -100,68 +87,244 @@ export function WatchFeedView({
             futureItemCount={futureItemCount}
           />
         ) : null}
-        {!watchFeedQuery.isLoading && showingFallback && !hasFallbackContent ? (
-          persistedItems.length > 0 ? (
-            <FutureWatchFeedNotice />
-          ) : (
-            <EmptyWatchFeed />
-          )
-        ) : visiblePersistedItems.length > 0 ? (
-          visiblePersistedItems.map((item) => (
-            <PersistedWatchFeedItem
-              key={`sqlite-${item.id}`}
-              item={item}
-              onAssistantAction={onAssistantAction}
-            />
-          ))
-        ) : (
-          <>
-            {turns.map((turn) => (
-              <article
-                key={turn.id}
-                className="overflow-hidden rounded-xl border border-border bg-card shadow-sm"
-              >
-                <header className="flex items-center justify-between gap-2 border-b border-border/70 px-3 py-2">
-                  <span className="inline-flex min-w-0 items-center gap-1.5 text-[11px] font-medium text-muted-foreground">
-                    <MessageSquareText className="size-3.5 shrink-0" aria-hidden />
-                    <span className="truncate">AI 观剧记录</span>
-                  </span>
-                  {typeof turn.anchorMs === "number" ? (
-                    <span className="inline-flex shrink-0 items-center gap-1 text-[10px] text-muted-foreground">
-                      <Clock3 className="size-3" aria-hidden />
-                      {formatTime(turn.anchorMs)}
-                    </span>
-                  ) : null}
-                  <ToolActivitySummary turn={turn} />
-                </header>
-                <div className="px-3">
-                  <ChatTurnView
-                    turn={turn}
-                    annotationWorkspace={annotationWorkspace}
-                    onDismissAnnotation={onDismissAnnotation}
-                    onSaveAnnotation={onSaveAnnotation}
-                    onAssistantAction={onAssistantAction}
-                  />
-                </div>
-              </article>
-            ))}
-            {notices.map((notice) => (
-              <p key={notice.id} className="text-center text-[11px] text-muted-foreground">
-                {notice.content}
-              </p>
-            ))}
-          </>
-        )}
+
+        {hasVisibleSlot ? (
+          <div
+            className="space-y-1.5"
+            aria-label="当前观剧上下文"
+            data-watch-feed-slots
+          >
+            {SLOT_ORDER.map((slot) => {
+              const item = slots[slot];
+              return item ? (
+                <WatchFeedSlotCard
+                  key={slot}
+                  slot={slot}
+                  item={item}
+                  defaultExpanded={slot === "watch-record"}
+                  onAssistantAction={onAssistantAction}
+                />
+              ) : null;
+            })}
+          </div>
+        ) : !watchFeedQuery.isLoading && futureItemCount > 0 ? (
+          <FutureWatchFeedNotice />
+        ) : !watchFeedQuery.isLoading && !watchFeedQuery.isError ? (
+          <EmptyWatchFeed />
+        ) : null}
+
         <div className="border-t border-border/70 pt-2">
           <CompanionQuickActions
             disabled={quickActionsDisabled}
             onSelectTask={onSelectTask}
           />
         </div>
-        <div ref={endRef} aria-hidden />
       </div>
     </ChatColumn>
   );
+}
+
+function WatchFeedSlotCard({
+  slot,
+  item,
+  defaultExpanded,
+  onAssistantAction,
+}: {
+  slot: WatchFeedSlot;
+  item: AcpWatchFeedItem;
+  defaultExpanded: boolean;
+  onAssistantAction?: (action: AssistantAction) => void;
+}) {
+  const [expanded, setExpanded] = useState(defaultExpanded);
+  const contentId = useId();
+
+  // A new chapter is a new state snapshot. Make the current record visible,
+  // while keeping the user's explicit collapse choice during stable renders.
+  useEffect(() => {
+    setExpanded(defaultExpanded);
+  }, [defaultExpanded, item.id]);
+
+  return (
+    <section
+      className="overflow-hidden rounded-lg border border-border/80 bg-card/70"
+      data-watch-feed-slot={slot}
+      data-watch-feed-item-id={item.id}
+    >
+      <button
+        type="button"
+        className="flex w-full items-center gap-2 px-3 py-2 text-left transition-colors hover:bg-muted/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
+        aria-expanded={expanded}
+        aria-controls={contentId}
+        onClick={() => setExpanded((value) => !value)}
+      >
+        <Sparkles className="size-3.5 shrink-0 text-primary" aria-hidden />
+        <span className="min-w-0 flex-1">
+          <span className="block truncate text-xs font-medium text-foreground">
+            {slotLabel(slot)}
+          </span>
+          <span className="block truncate text-[10px] text-muted-foreground">
+            {slotHint(slot)}
+          </span>
+        </span>
+        <span className="shrink-0 text-[10px] text-muted-foreground">
+          {spoilerLevelLabel(item.spoilerLevel)}
+        </span>
+        <ChevronDown
+          className={`size-3.5 shrink-0 text-muted-foreground transition-transform ${
+            expanded ? "rotate-180" : ""
+          }`}
+          aria-hidden
+        />
+      </button>
+
+      {expanded ? (
+        <div
+          id={contentId}
+          className="max-h-48 overflow-y-auto border-t border-border/70 px-3 py-2 text-xs"
+        >
+          <div className="mb-1.5 flex items-center gap-1.5 text-[10px] text-muted-foreground">
+            <Clock3 className="size-3" aria-hidden />
+            <span>{formatItemRange(item)}</span>
+          </div>
+          <PersistedWatchFeedContent
+            item={item}
+            onAssistantAction={onAssistantAction}
+          />
+          {item.screenshotRefs.length > 0 || item.coverRef ? (
+            <p className="mt-2 border-t border-border/70 pt-2 text-[10px] text-muted-foreground">
+              {item.coverRef ? "含章节封面引用" : null}
+              {item.screenshotRefs.length > 0
+                ? `${item.coverRef ? " · " : ""}含 ${item.screenshotRefs.length} 个画面引用`
+                : null}
+            </p>
+          ) : null}
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
+function PersistedWatchFeedContent({
+  item,
+  onAssistantAction,
+}: {
+  item: AcpWatchFeedItem;
+  onAssistantAction?: (action: AssistantAction) => void;
+}) {
+  const restored = normalizeRestoredShortcutOutput(item.content);
+  const taskId = restored.shortcutTaskId ?? shortcutTaskForItem(item.itemType);
+  const shortcut = taskId ? adaptShortcutOutput(taskId, item.content) : null;
+  const structured = shortcut?.blocks.length
+    ? shortcut
+    : parseAssistantBlocksText(item.content);
+
+  if (shortcut?.blocks.length) {
+    return (
+      <RichBlockRenderer
+        blocks={shortcut.blocks}
+        density="compact"
+        onAction={onAssistantAction}
+        renderMarkdown={(markdown) => <ChatMarkdown content={markdown} />}
+      />
+    );
+  }
+
+  if (shortcut?.fallbackText) {
+    return <p className="text-xs leading-relaxed text-muted-foreground">{shortcut.fallbackText}</p>;
+  }
+
+  if (structured?.blocks.length) {
+    return (
+      <RichBlockRenderer
+        blocks={structured.blocks}
+        density="compact"
+        onAction={onAssistantAction}
+        renderMarkdown={(markdown) => <ChatMarkdown content={markdown} />}
+      />
+    );
+  }
+
+  if (looksLikeJson(item.content)) {
+    return (
+      <p className="text-xs leading-relaxed text-muted-foreground">
+        该结构化内容暂时无法展示，请稍后重试。
+      </p>
+    );
+  }
+
+  return <ChatMarkdown content={item.content} />;
+}
+
+function shortcutTaskForItem(itemType: string): AcpTaskId | null {
+  switch (itemType.trim().toLowerCase()) {
+    case "recap":
+    case "chapter_recap":
+      return "chapter_recap";
+    case "outlook":
+    case "chapter_outlook":
+      return "chapter_outlook";
+    case "question":
+    case "question_candidates":
+      return "question_candidates";
+    case "plot_summary":
+    case "summary":
+      return "plot_summary";
+    default:
+      return null;
+  }
+}
+
+function looksLikeJson(value: string): boolean {
+  const source = value.trim();
+  return (
+    (source.startsWith("{") && source.endsWith("}")) ||
+    (source.startsWith("[") && source.endsWith("]")) ||
+    /^```json\s/i.test(source)
+  );
+}
+
+function slotLabel(slot: WatchFeedSlot): string {
+  switch (slot) {
+    case "watch-record":
+      return "观剧记录";
+    case "recap":
+      return "前情提要";
+    case "highlights":
+      return "本段要点";
+  }
+}
+
+function slotHint(slot: WatchFeedSlot): string {
+  switch (slot) {
+    case "watch-record":
+      return "当前播放位置的观察";
+    case "recap":
+      return "只回顾已经看过的内容";
+    case "highlights":
+      return "不剧透的关注点和问题";
+  }
+}
+
+function formatItemRange(item: AcpWatchFeedItem): string {
+  if (!item.chapter) return "当前播放位置";
+  return `${item.chapter.title || "当前章节"} · ${formatTime(item.chapter.startMs)}${
+    item.chapter.endMs > item.chapter.startMs
+      ? `–${formatTime(item.chapter.endMs)}`
+      : ""
+  }`;
+}
+
+function spoilerLevelLabel(level: string): string {
+  switch (level) {
+    case "current_position":
+      return "当前进度";
+    case "current_chapter":
+      return "当前章节";
+    case "none":
+      return "不剧透";
+    default:
+      return "已标注范围";
+  }
 }
 
 function WatchFeedPositionStatus({
@@ -175,7 +338,7 @@ function WatchFeedPositionStatus({
 }) {
   return (
     <div
-      className="mb-3 flex flex-wrap items-center gap-x-2 gap-y-1 rounded-lg border border-border/70 bg-muted/20 px-3 py-2 text-[10px] text-muted-foreground"
+      className="flex flex-wrap items-center gap-x-2 gap-y-1 px-1 pb-1 text-[10px] text-muted-foreground"
       data-watch-feed-position={currentTimeMs}
       role="status"
     >
@@ -188,28 +351,18 @@ function WatchFeedPositionStatus({
   );
 }
 
-function FutureWatchFeedNotice() {
-  return (
-    <div className="rounded-xl border border-dashed border-border px-4 py-6 text-center text-xs text-muted-foreground">
-      观剧流已同步到当前进度，后续内容将在播放到对应位置后显示。
-    </div>
-  );
-}
-
 function WatchFeedQueryStatus({
   isLoading,
   isError,
   source,
-  hasFallbackContent,
 }: {
   isLoading: boolean;
   isError: boolean;
   source?: "sqlite" | "empty";
-  hasFallbackContent: boolean;
 }) {
-  if (isLoading && !hasFallbackContent) {
+  if (isLoading) {
     return (
-      <p className="px-3 py-2 text-center text-xs text-muted-foreground" role="status">
+      <p className="px-1 py-1 text-[11px] text-muted-foreground" role="status">
         正在读取已保存的观剧流…
       </p>
     );
@@ -217,154 +370,33 @@ function WatchFeedQueryStatus({
 
   if (isError) {
     return (
-      <p className="rounded-lg border border-border bg-muted/20 px-3 py-2 text-xs text-muted-foreground">
-        本地观剧流暂时不可用，当前显示本次会话的临时记录。
+      <p className="rounded-lg border border-border bg-muted/20 px-3 py-2 text-[11px] text-muted-foreground">
+        本地观剧流暂时不可用，聊天仍可继续使用。
       </p>
     );
   }
 
-  if (source === "empty" && !hasFallbackContent) {
-    return (
-      <p className="rounded-lg border border-border bg-muted/20 px-3 py-2 text-xs text-muted-foreground">
-        暂无已保存的观剧条目；本次会话结果会安全显示在这里。
-      </p>
-    );
-  }
-
+  if (source === "empty") return null;
   return null;
 }
 
-function PersistedWatchFeedItem({
-  item,
-  onAssistantAction,
-}: {
-  item: AcpWatchFeedItem;
-  onAssistantAction?: (action: AssistantAction) => void;
-}) {
-  const structured = parseAssistantBlocksText(item.content);
-
+function FutureWatchFeedNotice() {
   return (
-    <article
-      className="mb-3 overflow-hidden rounded-xl border border-border bg-card shadow-sm"
-      data-watch-feed-source="sqlite"
-      data-watch-feed-item-type={item.itemType}
-    >
-      <header className="flex items-center justify-between gap-2 border-b border-border/70 px-3 py-2">
-        <span className="inline-flex min-w-0 items-center gap-1.5 text-[11px] font-medium text-muted-foreground">
-          <Sparkles className="size-3.5 shrink-0" aria-hidden />
-          <span className="truncate">{watchFeedItemLabel(item.itemType)}</span>
-        </span>
-        <span
-          className="shrink-0 text-[10px] text-muted-foreground"
-          data-spoiler-level={item.spoilerLevel}
-        >
-          {spoilerLevelLabel(item.spoilerLevel)}
-        </span>
-      </header>
-      {item.chapter ? (
-        <div className="flex items-center gap-1.5 px-3 pt-2 text-[10px] text-muted-foreground">
-          <Clock3 className="size-3" aria-hidden />
-          <span>
-            {item.chapter.title || "章节"} · {formatTime(item.chapter.startMs)}
-            {item.chapter.endMs > item.chapter.startMs
-              ? `–${formatTime(item.chapter.endMs)}`
-              : ""}
-          </span>
-        </div>
-      ) : null}
-      <div className="px-3 py-2">
-        {structured?.blocks.length ? (
-          <RichBlockRenderer
-            blocks={structured.blocks}
-            onAction={onAssistantAction}
-            renderMarkdown={(markdown) => <ChatMarkdown content={markdown} />}
-          />
-        ) : (
-          <ChatMarkdown content={item.content} />
-        )}
-      </div>
-      {item.screenshotRefs.length > 0 || item.coverRef ? (
-        <footer className="flex items-center gap-2 border-t border-border/70 px-3 py-2 text-[10px] text-muted-foreground">
-          {item.coverRef ? "含章节封面引用" : null}
-          {item.screenshotRefs.length > 0
-            ? `含 ${item.screenshotRefs.length} 个画面引用`
-            : null}
-        </footer>
-      ) : null}
-    </article>
-  );
-}
-
-function watchFeedItemLabel(itemType: string): string {
-  switch (itemType) {
-    case "chapter":
-      return "章节主线";
-    case "recap":
-      return "前情提要";
-    case "outlook":
-      return "后续看点";
-    case "question":
-      return "观众问题";
-    case "watch_point":
-      return "观剧看点";
-    default:
-      return "AI 观剧记录";
-  }
-}
-
-function spoilerLevelLabel(level: string): string {
-  switch (level) {
-    case "current_position":
-      return "当前进度";
-    case "current_chapter":
-      return "当前章节";
-    case "full_media":
-      return "全片分析";
-    default:
-      return "已标注剧透范围";
-  }
-}
-
-function EmptyWatchFeed() {
-  return (
-    <div className="flex min-h-48 flex-col items-center justify-center rounded-xl border border-dashed border-border px-6 py-8 text-center">
-      <SparkleMark />
-      <p className="mt-3 text-sm font-medium text-foreground">AI 观剧流已就绪</p>
-      <p className="mt-1 max-w-xs text-xs leading-relaxed text-muted-foreground">
-        从当前播放位置提问后，回答、台词引用和工具活动会按观看锚点整理在这里。
-      </p>
+    <div className="rounded-lg border border-dashed border-border px-3 py-4 text-center text-[11px] text-muted-foreground">
+      观剧流已同步到当前进度，后续内容将在播放到对应位置后显示。
     </div>
   );
 }
 
-function SparkleMark() {
+function EmptyWatchFeed() {
   return (
-    <span
-      className="flex size-9 items-center justify-center rounded-full bg-accent text-accent-foreground"
-      aria-hidden
-    >
-      <Sparkles className="size-4" />
-    </span>
-  );
-}
-
-function ToolActivitySummary({ turn }: { turn: ChatTurn }) {
-  const toolActivities = turn.activities.filter((item) => item.kind === "tool");
-  if (toolActivities.length === 0) return null;
-
-  const status = hasActiveToolActivity(turn.activities)
-    ? "执行中"
-    : toolActivities.some((item) => isToolFailed(item.status))
-      ? "有失败"
-      : toolActivities.every((item) => isToolSucceeded(item.status))
-        ? "已完成"
-        : "进行中";
-
-  return (
-    <span className="inline-flex shrink-0 items-center gap-1 text-[10px] text-muted-foreground">
-      <Activity className="size-3" aria-hidden />
-      {toolActivities.length} 个工具活动 · {status}
-    </span>
+    <div className="rounded-lg border border-dashed border-border px-3 py-4 text-center">
+      <Sparkles className="mx-auto size-4 text-muted-foreground" aria-hidden />
+      <p className="mt-2 text-xs font-medium text-foreground">AI 观剧流已就绪</p>
+      <p className="mt-1 text-[11px] leading-relaxed text-muted-foreground">
+        播放到有分析结果的内容后，当前上下文会显示在这里。
+      </p>
+    </div>
   );
 }
 

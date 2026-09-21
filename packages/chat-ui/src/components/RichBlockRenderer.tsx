@@ -18,6 +18,7 @@ type Props = {
   /** Inject the existing ChatMarkdown here; the renderer never parses HTML. */
   renderMarkdown?: (markdown: string) => ReactNode;
   className?: string;
+  density?: "default" | "compact";
 };
 
 /** Closed-world renderer: input must already be the normalized AssistantBlock union. */
@@ -26,6 +27,7 @@ export function RichBlockRenderer({
   onAction,
   renderMarkdown,
   className,
+  density = "default",
 }: Props) {
   return (
     <div className={cn("space-y-3", className)} data-rich-blocks>
@@ -35,6 +37,7 @@ export function RichBlockRenderer({
           block={block}
           onAction={onAction}
           renderMarkdown={renderMarkdown}
+          density={density}
         />
       ))}
     </div>
@@ -45,10 +48,12 @@ function BlockView({
   block,
   onAction,
   renderMarkdown,
+  density,
 }: {
   block: AssistantBlock;
   onAction?: (action: AssistantAction) => void;
   renderMarkdown?: (markdown: string) => ReactNode;
+  density: "default" | "compact";
 }) {
   switch (block.kind) {
     case "narrative":
@@ -92,9 +97,9 @@ function BlockView({
         </section>
       );
     case "watch-feed-card":
-      return <WatchFeedCard block={block} onAction={onAction} />;
+      return <WatchFeedCard block={block} onAction={onAction} density={density} />;
     case "question-card":
-      return <QuestionCard block={block} onAction={onAction} />;
+      return <QuestionCard block={block} onAction={onAction} density={density} />;
     case "agent-task-status":
       return <AgentTaskCard block={block} />;
     case "action-chip":

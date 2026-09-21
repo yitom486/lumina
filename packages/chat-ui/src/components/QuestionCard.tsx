@@ -11,19 +11,37 @@ import { ActionChip } from "./ActionChip";
 type Props = {
   block: QuestionCardBlock;
   onAction?: (action: AssistantAction) => void;
+  density?: "default" | "compact";
 };
 
-export function QuestionCard({ block, onAction }: Props) {
+export function QuestionCard({ block, onAction, density = "default" }: Props) {
+  const compact = density === "compact";
   return (
     <section
-      className="space-y-3 rounded-lg border border-border bg-muted/20 p-3"
+      className={cn(
+        compact
+          ? "space-y-2 rounded-md border border-border bg-muted/20 p-2"
+          : "space-y-3 rounded-lg border border-border bg-muted/20 p-3",
+      )}
       aria-labelledby={`question-${block.id}`}
       data-block-kind={block.kind}
     >
       <div className="flex items-start gap-2">
-        <HelpCircle className="mt-0.5 size-4 shrink-0 text-primary" aria-hidden />
+        <HelpCircle
+          className={cn(
+            "mt-0.5 shrink-0 text-primary",
+            compact ? "size-3.5" : "size-4",
+          )}
+          aria-hidden
+        />
         <div className="min-w-0 flex-1">
-          <h3 id={`question-${block.id}`} className="font-medium text-foreground">
+          <h3
+            id={`question-${block.id}`}
+            className={cn(
+              "font-medium text-foreground",
+              compact ? "text-xs" : "text-sm",
+            )}
+          >
             {block.question}
           </h3>
           {block.anchor ? (

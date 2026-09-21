@@ -1482,22 +1482,38 @@ export function AcpPanel() {
           </p>
         ) : null}
         {companionMode === "watch-feed" ? (
-          <WatchFeedView
-            turns={turns}
-            notices={notices}
-            followEnd={stickToEnd}
-            annotationWorkspace={sessionCwd}
-            onDismissAnnotation={handleDismissAnnotation}
-            onSaveAnnotation={handleSaveAnnotation}
-            onSelectTask={selectCompanionTask}
-            onAssistantAction={onAssistantAction}
-            quickActionsDisabled={
-              !currentFile ||
-              !available ||
-              connectionState !== "connected" ||
-              composerBusy
-            }
-          />
+          <>
+            <WatchFeedView
+              onSelectTask={selectCompanionTask}
+              onAssistantAction={onAssistantAction}
+              quickActionsDisabled={
+                !currentFile ||
+                !available ||
+                connectionState !== "connected" ||
+                composerBusy
+              }
+            />
+            <div
+              id="companion-panel-watch-feed-chat"
+              role="region"
+              aria-label="观剧流对话"
+              className="border-t border-border/70"
+            >
+              <p className="px-1 pb-1 pt-2 text-[10px] font-medium text-muted-foreground">
+                当前会话
+              </p>
+              <ChatTurnList
+                turns={turns}
+                notices={notices}
+                followEnd={stickToEnd}
+                annotationWorkspace={sessionCwd}
+                onDismissAnnotation={handleDismissAnnotation}
+                onSaveAnnotation={handleSaveAnnotation}
+                onAssistantAction={onAssistantAction}
+                emptyHint="快捷操作的完整回答会显示在这里，也可以直接输入问题。"
+              />
+            </div>
+          </>
         ) : (
           <div id="companion-panel-chat" role="tabpanel" aria-label="自由聊天">
             <ChatTurnList
