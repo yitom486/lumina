@@ -17,7 +17,7 @@ pub async fn system_log_dir() -> String {
     log_dir().to_string_lossy().into_owned()
 }
 
-fn data_dir() -> Option<PathBuf> {
+pub(crate) fn data_dir() -> Option<PathBuf> {
     #[cfg(windows)]
     {
         std::env::var_os("APPDATA").map(PathBuf::from)

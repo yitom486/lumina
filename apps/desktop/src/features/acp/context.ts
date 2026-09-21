@@ -15,6 +15,7 @@ export function buildVideoPromptContext(input: {
   positionMs?: number;
   durationMs?: number;
   subtitleChoiceId?: string | null;
+  transcriptWindowRadiusSec?: number | null;
 }): VideoPromptContext | undefined {
   const mediaPath = input.mediaPath?.trim();
   if (!mediaPath) return undefined;
@@ -25,6 +26,7 @@ export function buildVideoPromptContext(input: {
     positionMs: input.positionMs,
     durationMs: input.durationMs,
     subtitleChoiceId: input.subtitleChoiceId?.trim() || undefined,
+    transcriptWindowRadiusSec: input.transcriptWindowRadiusSec ?? undefined,
   };
 
   return context;
@@ -45,5 +47,6 @@ export function buildAnchoredVideoPromptContext(input: {
     positionMs: input.anchorPositionMs,
     durationMs: input.durationMs ?? input.base?.durationMs ?? undefined,
     subtitleChoiceId: input.base?.subtitleChoiceId,
+    transcriptWindowRadiusSec: input.base?.transcriptWindowRadiusSec,
   });
 }

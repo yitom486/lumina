@@ -3,7 +3,7 @@
 本文把两类验收分开：
 
 - **自动真实联调**：`scripts/test-acp-mcp-tool-priority.mjs` 会真实启动 Lumina MCP 与 Codex ACP，依赖本机登录、Agent、网络和构建产物；不属于默认 unit/UI 测试。
-- **人工桌面验收**：必须在 `bun tauri dev` 的真实 Tauri 窗口执行。`bun run test:ui` 只有 mock 数据和 DOM 渲染覆盖，不能证明 Agent、MCP、libmpv 或 HWND 链路可用。
+- **人工桌面验收**：必须在 `bun run tauri` 的真实 Tauri 窗口执行。`bun run test:ui` 只有 mock 数据和 DOM 渲染覆盖，不能证明 Agent、MCP、libmpv 或 HWND 链路可用。
 
 工作区布局与全屏/HWND 检查见 [`manual-e2e-workspace.md`](./manual-e2e-workspace.md)。
 
@@ -66,7 +66,7 @@ bun run test:e2e:acp-mcp-priority
 
 ### 前置
 
-- [ ] 用 `bun tauri dev` 启动真实桌面应用，并打开一个可播放媒体
+- [ ] 用 `bun run tauri` 启动真实桌面应用，并打开一个可播放媒体
 - [ ] 顶部状态栏打开 **AI 对话**；Agent 设置中的 Codex 或 custom profile 显示可用
 - [ ] 若验证在线媒体，先确认在线字幕已在文稿面板选择/缓存；在线 URL 不作为 ACP workspace cwd
 - [ ] 打开日志目录入口，知道如何在失败时收集脱敏日志；UI 不应展示 stderr、路径或 JSON-RPC 原文
@@ -108,4 +108,4 @@ bun run test:e2e:acp-mcp-priority
 
 - DOM mock UI 测试不覆盖真实 ACP/MCP、登录、模型回答、网络、libmpv 或 HWND。
 - 自动脚本不证明所有 UI 工作区布局、全屏交互、权限按钮视觉状态或历史列表可用性；这些必须按上面的人工清单确认。
-- 当前源码实际提供的是单一 **AI 对话** sibling dock；“AI 观剧流 / 自由聊天”双 Tab 若在构建中没有入口，应记录为“未覆盖”，不得用单一 AI 对话 dock 或 mock 测试代替通过。
+- 当前迁移分支已接入 **AI 观剧流 / 自由聊天** 双 Tab，但仍必须在真实 Tauri 窗口中逐项验证；若实际构建入口缺失，应记录为未覆盖，不得用单一 AI 对话 dock 或 mock 测试代替通过。

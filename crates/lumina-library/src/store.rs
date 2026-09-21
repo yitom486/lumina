@@ -7,9 +7,15 @@ use std::path::{Path, PathBuf};
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+use serde_json::Value;
+
 use crate::error::LibraryError;
 use crate::model::LibraryIndex;
 use crate::paths::{lumina_groups_dir, lumina_index_path};
+
+/// The index format currently written by the scanner.  Older known shapes
+/// are normalized in memory only; no legacy file is rewritten implicitly.
+const CURRENT_LIBRARY_INDEX_SCHEMA_VERSION: u32 = 1;
 
 pub fn index_path(root: &Path) -> PathBuf {
     lumina_index_path(root)
@@ -23,9 +29,80 @@ pub fn load(root: &Path) -> Result<Option<LibraryIndex>, LibraryError> {
     let text = fs::read_to_string(&path).map_err(|error| {
         LibraryError::storage_failed(Some(&format!("read {}: {error}", path.display())))
     })?;
-    serde_json::from_str(&text).map(Some).map_err(|error| {
+    let raw: Value = serde_json::from_str(&text).map_err(|error| {
         LibraryError::storage_failed(Some(&format!("parse {}: {error}", path.display())))
-    })
+    })?;
+    if let Some(schema_version) = index_schema_version(&raw) {
+        if schema_version > CURRENT_LIBRARY_INDEX_SCHEMA_VERSION {
+            return Err(LibraryError::storage_failed(Some(&format!(
+                "unsupported library index schema {schema_version} in {}",
+                path.display()
+            ))));
+        }
+    }
+    let normalized = normalize_legacy_index(raw);
+    serde_json::from_value(normalized)
+        .map(Some)
+        .map_err(|error| {
+            LibraryError::storage_failed(Some(&format!("parse {}: {error}", path.display())))
+        })
+}
+
+fn index_schema_version(value: &Value) -> Option<u32> {
+    value
+        .get("schemaVersion")
+        .or_else(|| value.get("schema_version"))
+        .and_then(Value::as_u64)
+        .and_then(|version| u32::try_from(version).ok())
+}
+
+fn normalize_legacy_index(mut value: Value) -> Value {
+    let Some(object) = value.as_object_mut() else {
+        return value;
+    };
+
+    move_key(object, "schemaVersion", "schema_version");
+    move_key(object, "updatedAtMs", "updated_at_ms");
+    if !object.contains_key("schemaVersion") {
+        // A pre-versioned index can only be read as legacy data.  The missing
+        // version is kept as 0 in memory so the next explicit save can write
+        // the current schema, while the source file remains untouched.
+        object.insert("schemaVersion".to_string(), Value::from(0_u32));
+    }
+
+    if let Some(files) = object.get_mut("files").and_then(Value::as_array_mut) {
+        for file in files {
+            let Some(file) = file.as_object_mut() else {
+                continue;
+            };
+            move_key(file, "relativePath", "relative_path");
+            move_key(file, "fileName", "file_name");
+            move_key(file, "sizeBytes", "size_bytes");
+            move_key(file, "modifiedAtMs", "modified_at_ms");
+            move_key(file, "groupKey", "group_key");
+        }
+    }
+
+    if let Some(groups) = object.get_mut("groups").and_then(Value::as_array_mut) {
+        for group in groups {
+            let Some(group) = group.as_object_mut() else {
+                continue;
+            };
+            move_key(group, "displayName", "display_name");
+            move_key(group, "manualTitle", "manual_title");
+        }
+    }
+
+    value
+}
+
+fn move_key(object: &mut serde_json::Map<String, Value>, current: &str, legacy: &str) {
+    if object.contains_key(current) {
+        return;
+    }
+    if let Some(value) = object.remove(legacy) {
+        object.insert(current.to_string(), value);
+    }
 }
 
 pub fn save_if_changed(root: &Path, index: &LibraryIndex) -> Result<bool, LibraryError> {
@@ -295,6 +372,98 @@ fn unique_suffix() -> u128 {
 mod tests {
     use super::*;
     use crate::model::{GroupResolution, MediaGroupKind};
+
+    fn test_root(prefix: &str) -> PathBuf {
+        std::env::temp_dir().join(format!(
+            "{prefix}-{}",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map(|duration| duration.as_nanos())
+                .unwrap_or_default()
+        ))
+    }
+
+    #[test]
+    fn load_normalizes_known_legacy_index_keys_without_rewriting_source() {
+        let root = test_root("lumina-store-legacy-index");
+        let path = index_path(&root);
+        let parent = match path.parent() {
+            Some(parent) => parent,
+            None => panic!("index path has no parent"),
+        };
+        fs::create_dir_all(parent).expect("mkdir");
+        fs::write(
+            &path,
+            r#"{
+                "schema_version": 1,
+                "root": "D:/media",
+                "updated_at_ms": 1,
+                "files": [{
+                    "relative_path": "Example.Show/S01E02.mkv",
+                    "file_name": "S01E02.mkv",
+                    "size_bytes": 1,
+                    "modified_at_ms": 1,
+                    "group_key": "Example.Show",
+                    "season": 1,
+                    "episode": 2
+                }],
+                "groups": [{
+                    "key": "Example.Show",
+                    "display_name": "Example Show",
+                    "kind": "series",
+                    "files": ["Example.Show/S01E02.mkv"],
+                    "resolution": {
+                        "state": "matched",
+                        "tmdb_id": 42,
+                        "media_type": "tv"
+                    }
+                }]
+            }"#,
+        )
+        .expect("seed legacy index");
+
+        let index = load(&root)
+            .expect("legacy index should be readable")
+            .expect("legacy index should exist");
+        assert_eq!(index.schema_version, 1);
+        assert_eq!(index.files[0].relative_path, "Example.Show/S01E02.mkv");
+        assert_eq!(
+            index.groups[0].resolution,
+            GroupResolution::Matched {
+                tmdb_id: 42,
+                media_type: crate::model::MetadataMediaType::Tv,
+            }
+        );
+        let original = fs::read_to_string(&path).expect("read source");
+        assert!(original.contains("schema_version"));
+        assert!(!original.contains("schemaVersion"));
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn future_index_schema_is_rejected_without_overwriting_the_file() {
+        let root = test_root("lumina-store-future-index");
+        let path = index_path(&root);
+        let parent = match path.parent() {
+            Some(parent) => parent,
+            None => panic!("index path has no parent"),
+        };
+        fs::create_dir_all(parent).expect("mkdir");
+        let original = r#"{
+            "schemaVersion": 99,
+            "root": "D:/media",
+            "updatedAtMs": 1,
+            "files": [],
+            "groups": []
+        }"#;
+        fs::write(&path, original).expect("seed future index");
+
+        let error = load(&root).expect_err("future schema should not be accepted");
+        assert_eq!(error.code, crate::error::LibraryErrorCode::StorageFailed);
+        assert_eq!(error.message, "媒体索引保存失败，请重试");
+        assert_eq!(fs::read_to_string(&path).expect("read source"), original);
+        let _ = fs::remove_dir_all(&root);
+    }
 
     #[test]
     fn cleanup_removes_only_stale_tmps() {

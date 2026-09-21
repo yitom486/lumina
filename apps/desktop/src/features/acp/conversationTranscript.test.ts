@@ -109,23 +109,31 @@ describe("mapLoadedTranscript", () => {
     ).toBe("这段讲了什么？");
   });
 
-  it("restores tool calls as done activities on their turn", () => {
+  it("ignores legacy tool entries and keeps only the final agent answer", () => {
     const turns = mapLoadedTranscript([
       { role: "user", text: "这段讲了什么？" },
-      { role: "tool", text: "lumina_get_transcript_window 01:00" },
+      { role: "agent", text: "Designing JSON schema for plot summary" },
       { role: "tool", text: "lumina_get_transcript_window 01:00" },
       { role: "tool", text: "lumina_capture_frames f32" },
       { role: "agent", text: "这段讲离别。" },
     ]);
     expect(turns).toHaveLength(1);
-    const tools =
-      turns[0]?.activities.filter((item) => item.kind === "tool") ?? [];
-    expect(tools).toHaveLength(3);
-    // 同一调用的连续分块共用一个 call id，不虚增计数。
-    expect(new Set(tools.map((item) => item.toolCallId)).size).toBe(2);
-    expect(tools.every((item) => item.status === "completed")).toBe(true);
-    expect(turns[0]?.showActivities).toBe(true);
+    expect(turns[0]?.activities).toEqual([]);
+    expect(turns[0]?.showActivities).toBe(false);
     expect(turns[0]?.answer).toBe("这段讲离别。");
+  });
+
+  it("filters the residual transcript-window injection from legacy history", () => {
+    const turns = mapLoadedTranscript([
+      {
+        role: "user",
+        text: "台词上下文窗口建议：当前播放点前后各 30 秒；读取当前台词时优先使用该范围。\n这段在讲什么？",
+      },
+      { role: "agent", text: "这段在介绍人物之间的误会。" },
+    ]);
+
+    expect(turns[0]?.userText).toBe("这段在讲什么？");
+    expect(turns[0]?.userText).not.toContain("台词上下文窗口建议");
   });
 
   it("drops pure-echo agent events but keeps configured prefixes", () => {

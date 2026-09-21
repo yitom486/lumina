@@ -30,9 +30,6 @@ use crate::runtime::inbound::handle_inbound_side_effects;
 use crate::runtime::io::{read_until_id_raw, write_request};
 use crate::wire::codec::{classify_inbound, is_error_response};
 use crate::wire::session::{session_cancel_params, session_delete_params, session_load_params};
-use crate::wire::updates::{
-    extract_plan_summary, extract_tool_call, extract_tool_call_content_chunk,
-};
 
 pub struct AcpService {
     pub(crate) busy: AtomicBool,
@@ -204,7 +201,7 @@ impl AcpService {
             let env = session_env()?;
             let workspace = resolve_session_cwd(cwd.as_deref())?;
             env.sync_snapshot(
-                &env.snapshot_path(&workspace),
+                &env.snapshot_path(&workspace, SessionKind::Chat),
                 client_settings.vision_capable,
             )
             .map_err(|error| AcpError::internal(Some(&error)))?;
@@ -571,14 +568,11 @@ impl Default for AcpService {
     }
 }
 
-/// One neutral transcript turn replayed by `session/load`.
+/// One public, completed transcript message replayed by `session/load`.
 ///
-/// The Agent streams history as `session/update` notifications
-/// (`user_message_chunk` / `agent_message_chunk` / `agent_thought_chunk` /
-/// `tool_call*`); the final `session/load` result carries only modes and
-/// config options, never text. Roles stay neutral (`user` / `agent` /
-/// `tool`) so callers can rebuild local archives without learning ACP
-/// update kinds.
+/// ACP history streams raw execution updates, but callers must never learn
+/// about thoughts, plans, tool calls, or implementation details. The loader
+/// projects that stream into neutral public messages (`user` / `agent`) only.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LoadedTurn {
@@ -601,6 +595,11 @@ impl LoadedTurn {
 /// Bound for one `session/load` replay (history streams are smaller than a
 /// full prompt turn, which gets 600s; large threads still need headroom).
 const LOAD_TRANSCRIPT_TIMEOUT_SECS: u64 = 120;
+
+/// Avoid letting a malformed or unexpectedly large remote history retain an
+/// unbounded amount of display text in the desktop process.
+const MAX_LOADED_TRANSCRIPT_TURNS: usize = 2_000;
+const MAX_LOADED_TRANSCRIPT_MESSAGE_CHARS: usize = 64 * 1024;
 
 /// Resets `busy` when a transcript load exits on any path.
 struct BusyReset<'a>(&'a AtomicBool);
@@ -674,10 +673,10 @@ impl AcpService {
             .and_then(|env| env.snapshot_vision_capable(&workspace))
             .unwrap_or(true);
         let env = session_env()?;
-        let snapshot_path = env.snapshot_path(&workspace);
+        let snapshot_path = env.snapshot_path(&workspace, SessionKind::Chat);
         env.sync_snapshot(&snapshot_path, vision_capable)
             .map_err(|error| AcpError::internal(Some(&error)))?;
-        let mcp_servers = env.mcp_servers(&snapshot_path, self.isolated_task());
+        let mcp_servers = env.mcp_servers(&snapshot_path, SessionKind::Chat);
 
         let mut guard = self
             .session
@@ -702,7 +701,7 @@ impl AcpService {
 
         let started = Instant::now();
         let deadline = started + Duration::from_secs(LOAD_TRANSCRIPT_TIMEOUT_SECS);
-        let mut turns = Vec::new();
+        let mut projector = LoadTranscriptProjector::default();
         tracing::info!(session_id, cwd = %cwd_string, "ACP session/load started");
         loop {
             if self.cancel.load(Ordering::SeqCst) {
@@ -752,9 +751,7 @@ impl AcpService {
             if value.get("method").and_then(Value::as_str) == Some("session/update")
                 && value.get("id").is_none()
             {
-                if let Some(turn) = map_load_update_to_turn(&value) {
-                    turns.push(turn);
-                }
+                projector.push(&value);
                 continue;
             }
             let mut sink = |_: AcpEvent| {};
@@ -772,7 +769,7 @@ impl AcpService {
                         // failure with no backend trace of the agent's reason.
                         tracing::warn!(
                             session_id,
-                            turns = turns.len(),
+                            turns = projector.public_turn_count(),
                             elapsed_ms = started.elapsed().as_millis(),
                             %message,
                             "ACP session/load failed"
@@ -781,14 +778,14 @@ impl AcpService {
                             "session/load: {message}"
                         ))));
                     }
+                    let turns = projector.finish();
                     let mut user_turns = 0usize;
                     let mut agent_turns = 0usize;
-                    let mut tool_turns = 0usize;
                     for turn in &turns {
                         match turn.role.as_str() {
                             "user" => user_turns += 1,
                             "agent" => agent_turns += 1,
-                            _ => tool_turns += 1,
+                            _ => {}
                         }
                     }
                     tracing::info!(
@@ -796,7 +793,6 @@ impl AcpService {
                         turns = turns.len(),
                         user_turns,
                         agent_turns,
-                        tool_turns,
                         // Role pairing without content: shows whether user
                         // content landed in agent bubbles and vice versa.
                         turns_detail = %turns
@@ -916,35 +912,177 @@ impl AcpService {
     }
 }
 
-/// Map one streamed `session/update` notification to a neutral transcript turn.
-///
-/// Accepts the full notification (`method` + `params.update`) as well as a
-/// bare update object so the mapping stays unit-testable without a child.
-/// Empty bodies map to `None` (status-only tool updates, blank chunks).
-/// `agent_thought_chunk` folds into `agent`: reasoning is agent text and the
-/// DTO only knows `user` / `agent` / `tool`.
-pub(crate) fn map_load_update_to_turn(value: &Value) -> Option<LoadedTurn> {
-    let update = load_update(value)?;
-    match update.get("sessionUpdate").and_then(Value::as_str)? {
-        "user_message_chunk" => LoadedTurn::new("user", load_content_text(update.get("content")?)?),
-        "agent_message_chunk" | "agent_thought_chunk" => {
-            LoadedTurn::new("agent", load_content_text(update.get("content")?)?)
-        }
-        "tool_call" | "tool_call_update" => {
-            let tool = extract_tool_call(value)?;
-            let text = tool
-                .detail
-                .filter(|text| !text.trim().is_empty())
-                .or_else(|| tool.title.filter(|text| !text.trim().is_empty()))?;
-            LoadedTurn::new("tool", text)
-        }
-        "tool_call_content_chunk" => {
-            let (_, detail) = extract_tool_call_content_chunk(value)?;
-            LoadedTurn::new("tool", detail)
-        }
-        "plan" => LoadedTurn::new("agent", extract_plan_summary(value)?),
-        _ => None,
+/// Projects raw `session/update` notifications into only the messages that
+/// are safe to restore in a user's conversation. It deliberately keeps no
+/// ACP thought, plan, or tool content. An internal update invalidates any
+/// earlier provisional agent text in the same user turn, so an Agent that
+/// writes a short preamble before using tools cannot leak it as the answer.
+#[derive(Default)]
+struct LoadTranscriptProjector {
+    turns: Vec<LoadedTurn>,
+    current: Option<PendingLoadedTurn>,
+}
+
+#[derive(Default)]
+struct PendingLoadedTurn {
+    user_text: Option<String>,
+    agent_text: String,
+}
+
+impl LoadTranscriptProjector {
+    fn public_turn_count(&self) -> usize {
+        self.turns.len() + usize::from(self.current.is_some())
     }
+
+    fn push(&mut self, value: &Value) {
+        let Some(update) = load_update(value) else {
+            return;
+        };
+        let Some(kind) = update.get("sessionUpdate").and_then(Value::as_str) else {
+            return;
+        };
+
+        match kind {
+            "user_message_chunk" => {
+                let Some(text) = update.get("content").and_then(load_public_user_content) else {
+                    return;
+                };
+                self.finish_current();
+                self.current = Some(PendingLoadedTurn {
+                    user_text: Some(text),
+                    agent_text: String::new(),
+                });
+            }
+            "agent_message_chunk" => {
+                let Some(text) = update.get("content").and_then(load_content_text) else {
+                    return;
+                };
+                if text.trim().is_empty() {
+                    return;
+                }
+                let current = self.current.get_or_insert_with(PendingLoadedTurn::default);
+                append_bounded(&mut current.agent_text, &text);
+            }
+            // These are execution-internal updates, never public history. If
+            // any follows an agent preamble, that preamble was provisional;
+            // the later agent message (if present) is the answer to restore.
+            "agent_thought_chunk"
+            | "plan"
+            | "tool_call"
+            | "tool_call_update"
+            | "tool_call_content_chunk" => {
+                if let Some(current) = self.current.as_mut() {
+                    current.agent_text.clear();
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn finish(mut self) -> Vec<LoadedTurn> {
+        self.finish_current();
+        self.turns
+    }
+
+    fn finish_current(&mut self) {
+        let Some(current) = self.current.take() else {
+            return;
+        };
+        let emits_user = current.user_text.is_some();
+        let emits_agent = !current.agent_text.trim().is_empty();
+        let needed = usize::from(emits_user) + usize::from(emits_agent);
+        if self.turns.len().saturating_add(needed) > MAX_LOADED_TRANSCRIPT_TURNS {
+            return;
+        }
+        if let Some(user_text) = current.user_text {
+            self.push_turn("user", user_text);
+        }
+        self.push_turn("agent", current.agent_text);
+    }
+
+    fn push_turn(&mut self, role: &str, text: String) {
+        if self.turns.len() >= MAX_LOADED_TRANSCRIPT_TURNS {
+            return;
+        }
+        if let Some(turn) = LoadedTurn::new(role, text) {
+            self.turns.push(turn);
+        }
+    }
+}
+
+fn append_bounded(target: &mut String, text: &str) {
+    let used = target.chars().count();
+    if used >= MAX_LOADED_TRANSCRIPT_MESSAGE_CHARS {
+        return;
+    }
+    target.extend(
+        text.chars()
+            .take(MAX_LOADED_TRANSCRIPT_MESSAGE_CHARS.saturating_sub(used)),
+    );
+}
+
+const LUMINA_PROMPT_MARKERS: [&str; 2] = ["【工具优先】", "【当前播放】"];
+const LUMINA_CONTEXT_PREFIXES: [&str; 20] = [
+    "媒体：",
+    "媒体:",
+    "进度：",
+    "进度:",
+    "时长：",
+    "时长:",
+    "集数：",
+    "集数:",
+    "季数：",
+    "季数:",
+    "字幕轨道：",
+    "字幕轨道:",
+    "本集标题：",
+    "本集标题:",
+    "本集剧情：",
+    "本集剧情:",
+    "台词上下文窗口建议：",
+    "台词上下文窗口建议:",
+    "台词上下文：",
+    "台词上下文:",
+];
+
+/// Remove the prompt scaffolding Lumina injects before the real user text.
+/// This belongs at the ACP history boundary, not in a React string cleaner:
+/// a restored transcript must already contain public content only.
+fn sanitize_loaded_user_text(text: &str) -> Option<String> {
+    let kept = text
+        .lines()
+        .filter(|line| {
+            let trimmed = line.trim();
+            !(trimmed.is_empty()
+                || LUMINA_PROMPT_MARKERS
+                    .iter()
+                    .any(|marker| trimmed.starts_with(marker))
+                || LUMINA_CONTEXT_PREFIXES
+                    .iter()
+                    .any(|prefix| trimmed.starts_with(prefix))
+                || trimmed.contains("file://"))
+        })
+        .map(|line| line.to_string())
+        .collect::<Vec<_>>()
+        .join("\n")
+        .trim()
+        .to_string();
+    (!kept.is_empty()).then_some(kept)
+}
+
+fn load_public_user_content(content: &Value) -> Option<String> {
+    if let Some(blocks) = content.as_array() {
+        let text = blocks
+            .iter()
+            .filter_map(load_content_text)
+            .filter_map(|text| sanitize_loaded_user_text(&text))
+            .collect::<Vec<_>>()
+            .join("\n")
+            .trim()
+            .to_string();
+        return (!text.is_empty()).then_some(text);
+    }
+    load_content_text(content).and_then(|text| sanitize_loaded_user_text(&text))
 }
 
 fn load_update(value: &Value) -> Option<&Value> {
@@ -1404,123 +1542,106 @@ mod tests {
     }
 
     #[test]
-    fn load_transcript_mapping_covers_user_agent_tool_and_skips_empty() {
+    fn load_transcript_projection_keeps_only_completed_public_turns() {
         use serde_json::json;
 
-        // Shapes mirror codex-acp history replay (`createUserMessageChunk` /
-        // `createAgentMessageChunk` / tool_call updates over `session/update`).
-        let user = json!({
-            "method": "session/update",
-            "params": {
-                "sessionId": "sess-1",
-                "update": {
-                    "sessionUpdate": "user_message_chunk",
-                    "content": { "type": "text", "text": "这段讲了什么？" },
-                },
-            },
-        });
-        assert_eq!(
-            map_load_update_to_turn(&user),
-            Some(LoadedTurn {
-                role: "user".to_string(),
-                text: "这段讲了什么？".to_string(),
-            })
-        );
+        let final_answer =
+            r#"{"version":"plot_summary.v1","summary":"延秀和崔雄在重逢后仍然互相试探。"}"#;
+        let updates = vec![
+            json!({ "method": "session/update", "params": { "sessionId": "sess-1", "update": {
+                "sessionUpdate": "user_message_chunk",
+                "content": [
+                    { "type": "text", "text": "【工具优先】本轮优先使用 Lumina 本地工具：lumina_get_transcript_window。" },
+                    { "type": "resource_link", "name": "episode.mp4", "uri": "file:///D:/movie/episode.mp4" },
+                    { "type": "text", "text": "【当前播放】\n媒体：episode.mp4\n进度：03:32 / 59:34（212337ms）\n字幕轨道：cache:subdl:en\n台词上下文窗口建议：当前播放点前后各 30 秒；读取当前台词时优先使用该范围。" },
+                    { "type": "text", "text": "\n\n请帮我梳理当前剧情。" }
+                ]
+            }}}),
+            json!({ "method": "session/update", "params": { "update": {
+                "sessionUpdate": "agent_message_chunk", "content": { "type": "text", "text": "我先读取字幕和画面。" }
+            }}}),
+            json!({ "method": "session/update", "params": { "update": {
+                "sessionUpdate": "agent_thought_chunk", "content": { "type": "text", "text": "Designing JSON schema for plot summary" }
+            }}}),
+            json!({ "method": "session/update", "params": { "update": {
+                "sessionUpdate": "plan", "entries": [{ "content": "Confirming timestamp boundaries" }]
+            }}}),
+            json!({ "method": "session/update", "params": { "update": {
+                "sessionUpdate": "tool_call", "toolCallId": "call-1", "title": "lumina_get_transcript_window",
+                "content": [{ "type": "content", "content": { "type": "text", "text": "D:/movie/private.srt\nstderr: unavailable" }}]
+            }}}),
+            json!({ "method": "session/update", "params": { "update": {
+                "sessionUpdate": "tool_call_update", "toolCallId": "call-1", "status": "completed", "detail": "raw tool result"
+            }}}),
+            json!({ "method": "session/update", "params": { "update": {
+                "sessionUpdate": "tool_call_content_chunk", "toolCallId": "call-1", "content": { "type": "text", "text": "internal tool output" }
+            }}}),
+            json!({ "method": "session/update", "params": { "update": {
+                "sessionUpdate": "agent_message_chunk", "content": { "type": "text", "text": final_answer }
+            }}}),
+        ];
 
-        let agent = json!({
-            "method": "session/update",
-            "params": {
-                "sessionId": "sess-1",
-                "update": {
-                    "sessionUpdate": "agent_message_chunk",
-                    "content": [
-                        { "type": "text", "text": "本集讲了" },
-                        { "type": "text", "text": "重逢。" },
-                    ],
-                },
-            },
-        });
-        assert_eq!(
-            map_load_update_to_turn(&agent),
-            Some(LoadedTurn {
-                role: "agent".to_string(),
-                text: "本集讲了重逢。".to_string(),
-            })
-        );
-
-        // Reasoning folds into `agent`: the DTO only knows user/agent/tool.
-        let thought = json!({
-            "sessionUpdate": "agent_thought_chunk",
-            "content": { "type": "text", "text": "先查台词再回答" },
-        });
-        assert_eq!(
-            map_load_update_to_turn(&thought)
-                .as_ref()
-                .map(|turn| turn.role.as_str()),
-            Some("agent")
-        );
-
-        let tool = json!({
-            "method": "session/update",
-            "params": {
-                "sessionId": "sess-1",
-                "update": {
-                    "sessionUpdate": "tool_call",
-                    "toolCallId": "call-1",
-                    "title": "搜索",
-                    "status": "completed",
-                    "content": [
-                        {
-                            "type": "content",
-                            "content": { "type": "text", "text": "找到 3 条台词" },
-                        },
-                    ],
-                },
-            },
-        });
-        assert_eq!(
-            map_load_update_to_turn(&tool),
-            Some(LoadedTurn {
-                role: "tool".to_string(),
-                text: "找到 3 条台词".to_string(),
-            })
-        );
-
-        // Empty bodies never become turns: blank agent chunk, status-only
-        // tool update, and metadata updates carry no transcript text.
-        for empty in [
-            json!({
-                "method": "session/update",
-                "params": {
-                    "update": {
-                        "sessionUpdate": "agent_message_chunk",
-                        "content": { "type": "text", "text": "   " },
-                    },
-                },
-            }),
-            json!({
-                "method": "session/update",
-                "params": {
-                    "update": {
-                        "sessionUpdate": "tool_call_update",
-                        "toolCallId": "call-1",
-                        "status": "completed",
-                    },
-                },
-            }),
-            json!({
-                "method": "session/update",
-                "params": {
-                    "update": {
-                        "sessionUpdate": "session_info_update",
-                        "title": "看剧对话",
-                    },
-                },
-            }),
-            json!({ "id": 7, "result": {} }),
-        ] {
-            assert_eq!(map_load_update_to_turn(&empty), None, "value={empty}");
+        let mut projector = LoadTranscriptProjector::default();
+        for update in &updates {
+            projector.push(update);
         }
+        let turns = projector.finish();
+        assert_eq!(
+            turns,
+            vec![
+                LoadedTurn {
+                    role: "user".into(),
+                    text: "请帮我梳理当前剧情。".into()
+                },
+                LoadedTurn {
+                    role: "agent".into(),
+                    text: final_answer.into()
+                },
+            ]
+        );
+        let restored = turns
+            .iter()
+            .map(|turn| turn.text.as_str())
+            .collect::<String>();
+        for leaked in [
+            "台词上下文窗口建议",
+            "Designing JSON schema",
+            "Confirming timestamp boundaries",
+            "lumina_get_transcript_window",
+            "private.srt",
+            "我先读取字幕和画面",
+        ] {
+            assert!(!restored.contains(leaked), "leaked {leaked}");
+        }
+    }
+
+    #[test]
+    fn load_transcript_projection_keeps_normal_direct_agent_reply() {
+        use serde_json::json;
+
+        let mut projector = LoadTranscriptProjector::default();
+        for update in [
+            json!({ "sessionUpdate": "user_message_chunk", "content": { "type": "text", "text": "你好" } }),
+            json!({ "sessionUpdate": "agent_message_chunk", "content": [
+                { "type": "text", "text": "你好，" },
+                { "type": "text", "text": "很高兴见到你。" }
+            ]}),
+        ] {
+            projector.push(&update);
+        }
+        assert_eq!(
+            projector.finish(),
+            vec![
+                LoadedTurn {
+                    role: "user".into(),
+                    text: "你好".into()
+                },
+                LoadedTurn {
+                    role: "agent".into(),
+                    text: "你好，很高兴见到你。".into()
+                },
+            ]
+        );
     }
 
     #[test]

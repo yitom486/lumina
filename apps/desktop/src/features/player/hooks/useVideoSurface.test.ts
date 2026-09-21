@@ -18,4 +18,8 @@ describe("nativeSurfaceMode", () => {
     expect(nativeSurfaceMode(true, "Idle", null)).toBe("hide");
     expect(nativeSurfaceMode(true, "Error", "broken.mp4")).toBe("hide");
   });
+
+  it("hides the HWND while Settings owns the primary workspace", () => {
+    expect(nativeSurfaceMode(true, "Playing", "movie.mp4", true)).toBe("hide");
+  });
 });

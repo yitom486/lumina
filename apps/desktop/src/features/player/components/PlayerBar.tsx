@@ -65,7 +65,7 @@ export function PlayerBar() {
       >
         <div
           className={cn(
-            "border-t border-white/10 bg-gradient-to-t from-black/95 via-black/75 to-black/20 px-3 pb-3 pt-6 text-foreground",
+            "border-t border-player-control/50 bg-gradient-to-t from-player-surface/95 via-player-surface/75 to-player-surface/20 px-3 pb-3 pt-6 text-player-control-foreground",
             (menuPinned || volumeHover) && "pt-8",
           )}
         >
@@ -95,12 +95,14 @@ export function PlayerBar() {
   }
 
   return (
-    <div className="relative z-20 shrink-0 border-t border-border bg-card px-3 py-2.5">
-      <div className="grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-x-3">
-        <TransportControls />
+    <div className="relative z-20 shrink-0 border-t border-border/70 bg-player-chrome px-4 pb-3 pt-2.5">
+      <div className="flex flex-col gap-2">
         <SeekBar />
-        <VolumeControl />
-        <p className="col-span-full text-[11px] text-muted-foreground">
+        <div className="flex items-center justify-between gap-3">
+          <TransportControls />
+          <VolumeControl className="w-32" />
+        </div>
+        <p className="text-[11px] text-muted-foreground">
           空格 播放/暂停 · 单击画面 播停 · 双击全屏 · ←→ 5 秒 · ↑↓ 音量 · M 静音 · F / Esc 全屏
         </p>
       </div>

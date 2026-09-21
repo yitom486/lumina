@@ -69,7 +69,7 @@ export function VolumeControl({
           type="button"
           variant="ghost"
           size="icon"
-          className="size-8 text-foreground hover:bg-white/10"
+          className="size-8 text-player-control-foreground hover:bg-player-control-hover/60"
           aria-label={muted ? "取消静音" : "静音"}
           onClick={muteToggle}
         >

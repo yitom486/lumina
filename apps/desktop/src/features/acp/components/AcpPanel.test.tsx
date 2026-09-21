@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { usePlayerStore } from "@/features/player";
 import { useAcpSessionStore } from "@lumina/chat-ui/acpSessionStore";
 
-import { AcpPanel } from "./AcpPanel";
+import { AcpPanel, handleAssistantAction } from "./AcpPanel";
 
 vi.mock("@tauri-apps/api/core", () => ({
   invoke: vi.fn(),
@@ -69,6 +69,69 @@ afterEach(() => {
 });
 
 describe("AcpPanel", () => {
+  it("handles rich actions through the existing player, ask, and note capabilities", async () => {
+    const seek = vi.fn(async () => undefined);
+    const askAbout = vi.fn();
+    const saveNote = vi.fn(async () => undefined);
+    const notify = vi.fn();
+    const deps = {
+      mediaPath: "D:\\show.mp4",
+      currentTimeMs: 12_000,
+      busy: false,
+      seek,
+      askAbout,
+      saveNote,
+      notify,
+    };
+
+    await handleAssistantAction(
+      { type: "seek", anchor: { startMs: 42_000 } },
+      deps,
+    );
+    await handleAssistantAction(
+      { type: "ask", anchor: { startMs: 50_000 }, prompt: "解释这段" },
+      deps,
+    );
+    await handleAssistantAction(
+      { type: "save-note", anchor: { chapterId: "ch-1" }, content: "重要线索" },
+      deps,
+    );
+
+    expect(seek).toHaveBeenCalledWith(42_000);
+    expect(askAbout).toHaveBeenCalledWith(50_000, "解释这段");
+    expect(saveNote).toHaveBeenCalledWith({
+      mediaPath: "D:\\show.mp4",
+      positionMs: 12_000,
+      body: "重要线索",
+    });
+    expect(notify).toHaveBeenCalledWith("已保存为笔记");
+  });
+
+  it("safely rejects rich actions without media or a required anchor", async () => {
+    const notify = vi.fn();
+    const deps = {
+      mediaPath: null,
+      currentTimeMs: 0,
+      busy: false,
+      seek: vi.fn(async () => undefined),
+      askAbout: vi.fn(),
+      saveNote: vi.fn(async () => undefined),
+      notify,
+    };
+
+    await handleAssistantAction(
+      { type: "seek", anchor: { startMs: 42_000 } },
+      deps,
+    );
+    expect(notify).toHaveBeenCalledWith("请先打开视频");
+
+    await handleAssistantAction(
+      { type: "ask", anchor: { chapterId: "ch-1" }, prompt: "解释" },
+      { ...deps, mediaPath: "D:\\show.mp4" },
+    );
+    expect(notify).toHaveBeenCalledWith("该操作缺少时间锚点");
+  });
+
   it("mounts without throwing while status is loading", async () => {
     expect(() => renderPanel()).not.toThrow();
     await waitFor(() => {

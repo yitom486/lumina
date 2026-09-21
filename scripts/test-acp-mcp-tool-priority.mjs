@@ -11,14 +11,42 @@ const codexPath =
   process.env.CODEX_PATH ??
   "C:\\Users\\zheye\\AppData\\Local\\Programs\\OpenAI\\Codex\\bin\\codex.exe";
 const mcpCommand = process.env.LUMINA_MCP_COMMAND ?? path.join(root, "target", "debug", "lumina-app.exe");
-const codexAcpEntry = path.join(
-  root,
-  "node_modules",
-  "@agentclientprotocol",
-  "codex-acp",
-  "dist",
-  "index.js",
-);
+const codexAcpCandidates = [
+  process.env.CODEX_ACP_ENTRY,
+  path.join(root, "node_modules", "@agentclientprotocol", "codex-acp", "dist", "index.js"),
+  path.join(
+    root,
+    "apps",
+    "desktop",
+    "node_modules",
+    "@agentclientprotocol",
+    "codex-acp",
+    "dist",
+    "index.js",
+  ),
+].filter(Boolean);
+const codexAcpEntry = codexAcpCandidates.find((candidate) => fs.existsSync(candidate)) ?? codexAcpCandidates[0];
+
+const PLOT_TOOLS = new Set(["lumina_get_library_context", "lumina_get_transcript_window"]);
+const WEB_SEARCH_PATTERN = /web[_-]?search/i;
+
+if (process.argv.includes("--help") || process.argv.includes("-h")) {
+  console.log(`Real ACP/MCP priority E2E (opt-in)
+
+Run:
+  LUMINA_MCP_E2E=1 bun run test:e2e:acp-mcp-priority
+
+Optional environment:
+  LUMINA_MCP_E2E_TIMEOUT_MS  Per-RPC timeout in milliseconds (default: 90000)
+  CODEX_PATH                Codex executable path
+  CODEX_ACP_ENTRY           codex-acp dist/index.js path override
+  LUMINA_MCP_COMMAND        Lumina executable with --lumina-mcp (default: target/debug/lumina-app.exe)
+
+The test uses a temporary, redacted fixture snapshot and never prints snapshot
+contents, media paths, or Agent stderr. It is intentionally excluded from the
+default unit/UI test suites.`);
+  process.exit(0);
+}
 
 const PLOT_TOOLS = new Set(["lumina_get_library_context", "lumina_get_transcript_window"]);
 const WEB_SEARCH_PATTERN = /web[_-]?search/i;

@@ -1,317 +1,1191 @@
-#![allow(dead_code)]
-
-//! Minimal synchronous chapter evidence worker.
+//! Background execution for user-triggered chapter segmentation.
 //!
-//! The worker is deliberately independent from the player and the main ACP
-//! service.  It currently prepares and validates local evidence, which gives
-//! the later DB/Chapter-session batch a real execution seam without inventing
-//! APIs that are not present in this checkout.
+//! Prompt rules and output validation remain in `lumina-ai`; ACP remains a
+//! generic isolated client. This module only orchestrates the desktop inputs.
 
 use std::path::{Path, PathBuf};
 
-use lumina_acp::AgentProfilesHint;
-use lumina_ai::chapter::{
-    build_screenshot_reference, build_transcript_windows, ScreenshotMetadata,
+use lumina_acp::agent::workspace::resolve_session_cwd;
+use lumina_acp::jobs::isolated::ChapterSession;
+use lumina_acp::{AcpError, AcpErrorCode, AcpEvent, AcpSessionModelSelection};
+use lumina_ai::prompts::{
+    compose_prompt, EpisodeContext, MediaContext, PromptSlots, SpoilerBoundary, TaskId,
+    TranscriptWindow, ValidationReport, ViewingContext,
+};
+use lumina_ai::{build_screenshot_reference, build_transcript_windows, ScreenshotMetadata};
+use lumina_library::{
+    AgentTaskRecord, Database, DatabaseError, DatabaseErrorCode, DatabaseResult,
+    LegacyEpisodeMigration, NewAgentAttempt, NewEpisode, NewSeries, Repository,
 };
 use lumina_media::frame_capture::{
     capture_frames, detect_scene_times, select_keyframes, DEFAULT_SCENE_THRESHOLD,
 };
 use lumina_media::MediaInspector;
-use lumina_subtitle::SubtitleService;
-use serde::de::DeserializeOwned;
+use lumina_subtitle::{SubtitleService, Transcript};
+use tauri::{AppHandle, Emitter};
 
-use super::chapter::{ChapterError, ChapterSegmentationRequest};
+use super::{
+    now_ms_for_command, open_database, ChapterCommandError, ChapterEpisodeIdentity,
+    ChapterProgressEvent, ChapterSegmentationRequest, PersistedChapterFailure,
+    CHAPTER_PROGRESS_EVENT,
+};
 
-pub const TRANSCRIPT_WINDOW_WIDTH_MS: u64 = 30_000;
-pub const DEFAULT_CAPTURE_BUDGET: usize = 15;
+const TRANSCRIPT_WINDOW_WIDTH_MS: u64 = 30_000;
+const MAX_COVERAGE_POINTS: usize = 12;
+const MAX_SCREENSHOTS: usize = 8;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum JsonFenceError {
-    Empty,
-    InvalidFence,
-    InvalidJson,
+#[derive(Debug)]
+struct WorkerFailure {
+    code: &'static str,
+    message: &'static str,
+    details: String,
+    validation_report: Option<ValidationReport>,
+    retry_count: i64,
 }
 
-/// Parse either a JSON document or a single ```json fenced JSON document.
-/// This helper deliberately does not accept prose around the document.
-pub fn parse_json_fence<T: DeserializeOwned>(text: &str) -> Result<T, JsonFenceError> {
-    let trimmed = text.trim();
-    if trimmed.is_empty() {
-        return Err(JsonFenceError::Empty);
+impl WorkerFailure {
+    fn business(message: &'static str, details: impl Into<String>) -> Self {
+        Self {
+            code: "ChapterAnalysisFailed",
+            message,
+            details: details.into(),
+            validation_report: None,
+            retry_count: 0,
+        }
     }
-    let payload = if trimmed.starts_with("```") {
-        let mut lines = trimmed.lines();
-        let Some(opening) = lines.next() else {
-            return Err(JsonFenceError::InvalidFence);
-        };
-        let language = opening.trim().trim_start_matches("```").trim();
-        if !language.is_empty() && !language.eq_ignore_ascii_case("json") {
-            return Err(JsonFenceError::InvalidFence);
+
+    fn agent_not_configured(details: impl Into<String>) -> Self {
+        Self {
+            code: "AgentNotConfigured",
+            message: "尚未配置可用的 AI Agent，请先完成 Agent 设置。",
+            details: details.into(),
+            validation_report: None,
+            retry_count: 0,
         }
-        let Some(closing) = lines.next_back() else {
-            return Err(JsonFenceError::InvalidFence);
-        };
-        if closing.trim() != "```" {
-            return Err(JsonFenceError::InvalidFence);
+    }
+
+    fn agent_unavailable(error: AcpError) -> Self {
+        let details = error.details.clone().unwrap_or_else(|| error.to_string());
+        if error.code == AcpErrorCode::NotConfigured {
+            Self::agent_not_configured(details)
+        } else {
+            Self {
+                code: "AgentUnavailable",
+                message: "章节 Agent 暂时不可用，请检查 Agent 设置后重试。",
+                details,
+                validation_report: None,
+                retry_count: 0,
+            }
         }
-        lines.collect::<Vec<_>>().join("\n")
+    }
+
+    fn persisted_report(&self) -> String {
+        let persisted = PersistedChapterFailure {
+            code: self.code.to_string(),
+            message: self.message.to_string(),
+            summary: None,
+            validation_report: self.validation_report.clone(),
+        };
+        serde_json::to_string(&persisted).unwrap_or_else(|_| self.message.to_string())
+    }
+
+    fn into_command_error(self) -> ChapterCommandError {
+        tracing::error!(message = self.message, details = %self.details, "chapter worker failed");
+        ChapterCommandError {
+            code: self.code.to_string(),
+            message: self.message.to_string(),
+            details: Some(self.details),
+        }
+    }
+}
+
+#[derive(Debug)]
+struct EvidenceBundle {
+    transcript_windows: Vec<TranscriptWindow>,
+    screenshots: Vec<lumina_ai::prompts::ScreenshotReference>,
+}
+
+#[derive(Debug)]
+struct AttemptResult {
+    /// The final assistant text is diagnostic data only. The scoped chapter
+    /// session never parses it; durable task state is authoritative.
+    assistant_response: String,
+}
+
+#[derive(Debug)]
+struct AttemptScope {
+    media_path: PathBuf,
+    duration_ms: u64,
+    episode_id: i64,
+    database_path: PathBuf,
+}
+
+/// A deliberately small, safe projection of ACP events for the chapters UI.
+/// It never forwards agent text, thoughts, tool arguments, file paths, or
+/// stderr. The durable task row remains the source of truth.
+struct ProgressEmitter {
+    app: Option<AppHandle>,
+    task_key: String,
+    task_id: i64,
+    attempt_id: i64,
+    attempt_count: i64,
+    max_attempts: i64,
+    sequence: i64,
+}
+
+impl ProgressEmitter {
+    fn new(app: Option<AppHandle>, task: &AgentTaskRecord, attempt_id: i64) -> Self {
+        Self {
+            app,
+            task_key: task.task_key.clone(),
+            task_id: task.id,
+            attempt_id,
+            attempt_count: task.attempt_count,
+            max_attempts: task.max_attempts,
+            sequence: 0,
+        }
+    }
+
+    fn emit(&mut self, phase: &str, message: &str, committed: bool) {
+        self.sequence = self.sequence.saturating_add(1);
+        let event = ChapterProgressEvent {
+            task_key: self.task_key.clone(),
+            task_id: self.task_id,
+            attempt_id: Some(self.attempt_id),
+            phase: phase.to_string(),
+            message: message.to_string(),
+            attempt_count: self.attempt_count,
+            max_attempts: self.max_attempts,
+            sequence: self.sequence,
+            committed,
+            updated_at_ms: now_ms_for_command(),
+        };
+        if let Some(app) = self.app.as_ref() {
+            if let Err(error) = app.emit(CHAPTER_PROGRESS_EVENT, &event) {
+                tracing::debug!(%error, "chapter progress emit failed");
+            }
+        }
+    }
+
+    fn on_acp_event(&mut self, event: AcpEvent) {
+        match event {
+            AcpEvent::Started => self.emit("agent_running", "正在执行章节 Agent", false),
+            AcpEvent::ToolCall { title, .. } => {
+                if let Some((phase, message)) = chapter_tool_progress(title.as_deref()) {
+                    self.emit(phase, message, false);
+                }
+            }
+            AcpEvent::ToolCallUpdate { title, status, .. } => {
+                if let Some((phase, message)) = chapter_tool_progress(title.as_deref()) {
+                    let committed = status.as_deref().is_some_and(is_completed_tool_status);
+                    self.emit(phase, message, committed);
+                }
+            }
+            AcpEvent::Finished { .. } => self.emit("checking_result", "正在确认章节结果", false),
+            AcpEvent::Failed { .. } => {
+                self.emit("agent_failed", "章节 Agent 执行失败，正在整理结果", false)
+            }
+            AcpEvent::Progress { .. }
+            | AcpEvent::AgentMessage { .. }
+            | AcpEvent::AgentThought { .. }
+            | AcpEvent::Plan { .. }
+            | AcpEvent::SessionSaved { .. }
+            | AcpEvent::PermissionRequest { .. }
+            | AcpEvent::PermissionResolved { .. } => {}
+        }
+    }
+}
+
+fn chapter_tool_progress(title: Option<&str>) -> Option<(&'static str, &'static str)> {
+    let title = title?.to_ascii_lowercase();
+    use lumina_core::tool_contract as contract;
+    if title.contains(contract::TOOL_CREATE_CHAPTER_OUTLINE) {
+        Some(("building_outline", "正在建立章节框架"))
+    } else if title.contains(contract::TOOL_CAPTURE_CHAPTER_EVIDENCE) {
+        Some(("capturing_evidence", "正在获取字幕与画面证据"))
+    } else if title.contains(contract::TOOL_UPDATE_CHAPTER_DRAFT) {
+        Some(("updating_draft", "正在补充章节内容"))
+    } else if title.contains(contract::TOOL_FINALIZE_CHAPTER_TASK) {
+        Some(("finalizing", "正在校验并保存章节"))
     } else {
-        trimmed.to_owned()
-    };
-    serde_json::from_str(&payload).map_err(|_| JsonFenceError::InvalidJson)
+        None
+    }
 }
 
-pub fn has_complete_worker_config(
-    profile_id: Option<&str>,
-    profiles: Option<&AgentProfilesHint>,
-) -> bool {
-    let Some(profile_id) = profile_id.map(str::trim).filter(|value| !value.is_empty()) else {
-        return false;
-    };
-    let Some(profiles) = profiles else {
-        return false;
-    };
-    profiles
-        .profiles
-        .iter()
-        .any(|profile| profile.id == profile_id && !profile.command.trim().is_empty())
+fn is_completed_tool_status(status: &str) -> bool {
+    matches!(
+        status.to_ascii_lowercase().as_str(),
+        "completed" | "complete" | "finished" | "succeeded" | "success"
+    )
 }
 
-/// Run the local, non-UI part of a chapter task.
-pub fn run(request: ChapterSegmentationRequest) -> Result<(), ChapterError> {
-    validate_request(&request)?;
-    let media_path = PathBuf::from(&request.media_path);
-    if !media_path.is_file() {
-        return Err(ChapterError::media_missing(Some(
-            "media file is not readable",
-        )));
+/// Execute one claimed task. Concurrent callers for the same task key are
+/// safe because the SQLite claim is conditional and atomic.
+pub(super) fn run(
+    request: ChapterSegmentationRequest,
+    app: Option<AppHandle>,
+) -> Result<(), ChapterCommandError> {
+    let mut database = open_database()?;
+    let task_key = super::task_key(&request);
+    let Some(task) = database
+        .repository()
+        .claim_agent_task_by_key(&task_key)
+        .map_err(ChapterCommandError::storage)?
+    else {
+        return Ok(());
+    };
+
+    let attempt_id = database
+        .repository()
+        .insert_agent_attempt(&NewAgentAttempt::new(
+            task.id,
+            task.attempt_count,
+            "chapter_segmentation",
+            "running",
+            task.prompt_version.clone(),
+            now_ms_for_command(),
+        ))
+        .map_err(ChapterCommandError::storage)?;
+    let mut progress = ProgressEmitter::new(app, &task, attempt_id);
+    progress.emit("running", "章节任务已保存，准备开始分析", true);
+
+    let scope = match establish_attempt_scope(&mut database, &request, &task) {
+        Ok(scope) => scope,
+        Err(error) => return finish_failed(&database, &task, attempt_id, &mut progress, error),
+    };
+
+    match execute_attempt(&request, &task, attempt_id, &scope, &mut progress) {
+        Ok(result) => settle_attempt(&mut database, &task, attempt_id, result, &mut progress),
+        Err(error) => finish_failed(&database, &task, attempt_id, &mut progress, error),
+    }
+}
+
+/// Establish the complete task scope before the ACP process is spawned.
+/// Episode creation and task linking are both idempotent repository operations
+/// and occur in one transaction so the chapter snapshot never points at a
+/// half-created episode/task pair.
+fn establish_attempt_scope(
+    database: &mut Database,
+    request: &ChapterSegmentationRequest,
+    task: &AgentTaskRecord,
+) -> Result<AttemptScope, WorkerFailure> {
+    let media_path = local_media_path(request)?;
+    let media_info = MediaInspector::inspect(&media_path).map_err(|error| {
+        WorkerFailure::business("无法读取媒体信息，请检查媒体文件", error.to_string())
+    })?;
+    let duration_ms = media_info
+        .duration_ms
+        .filter(|duration| *duration > 0)
+        .ok_or_else(|| {
+            WorkerFailure::business(
+                "无法读取媒体时长，暂时不能生成章节",
+                "media duration missing",
+            )
+        })?;
+    let episode_id = database
+        .transaction(|repository| {
+            let episode_id = ensure_episode(repository, request, &media_path, duration_ms)?;
+            if !repository.update_agent_task_scope(task.id, Some(episode_id), None)? {
+                return Err(persistence_error(
+                    "agent task disappeared while establishing scope",
+                ));
+            }
+            Ok(episode_id)
+        })
+        .map_err(|error| {
+            WorkerFailure::business("章节任务范围初始化失败，请重试", error.message)
+        })?;
+    let database_path = super::database_path().map_err(|error| {
+        WorkerFailure::business(
+            "章节任务范围初始化失败，请重试",
+            error.details.unwrap_or(error.message),
+        )
+    })?;
+    Ok(AttemptScope {
+        media_path,
+        duration_ms,
+        episode_id,
+        database_path,
+    })
+}
+
+fn settle_attempt(
+    database: &mut Database,
+    task: &AgentTaskRecord,
+    attempt_id: i64,
+    result: AttemptResult,
+    progress: &mut ProgressEmitter,
+) -> Result<(), ChapterCommandError> {
+    // Keep the response available for diagnostics, but never use assistant
+    // text as a completion signal for a scoped Batch G tool session.
+    let _assistant_response = result.assistant_response;
+    let persisted = database
+        .repository()
+        .get_agent_task(task.id)
+        .map_err(ChapterCommandError::storage)?
+        .ok_or_else(|| {
+            ChapterCommandError::internal("chapter task disappeared after Agent session")
+        })?;
+
+    match persisted.status.as_str() {
+        // The finalize tool owns publication and the terminal task/attempt
+        // update.  Do not infer success from the assistant response.
+        "succeeded" => {
+            progress.emit("succeeded", "章节已生成并保存", true);
+            Ok(())
+        }
+        _ => finish_failed(
+            database,
+            task,
+            attempt_id,
+            progress,
+            WorkerFailure::business(
+                "章节 Agent 未完成章节写入，请再次尝试。",
+                "scoped chapter session ended without durable finalize",
+            ),
+        ),
+    }
+}
+
+fn finish_failed(
+    database: &Database,
+    task: &AgentTaskRecord,
+    attempt_id: i64,
+    progress: &mut ProgressEmitter,
+    failure: WorkerFailure,
+) -> Result<(), ChapterCommandError> {
+    let persisted_report = failure.persisted_report();
+    let status = failure_status(task.attempt_count, task.max_attempts);
+    database
+        .repository()
+        .update_agent_task_status(
+            task.id,
+            status,
+            task.attempt_count,
+            failure.retry_count,
+            Some(&persisted_report),
+        )
+        .map_err(ChapterCommandError::storage)?;
+    finish_attempt(
+        &database.repository(),
+        attempt_id,
+        "failed",
+        Some(&persisted_report),
+    )?;
+    if task.attempt_count < task.max_attempts {
+        progress.emit(
+            "retrying",
+            &format!(
+                "本次尝试未通过校验，将准备第 {} / {} 次尝试",
+                task.attempt_count + 1,
+                task.max_attempts
+            ),
+            true,
+        );
+    } else {
+        progress.emit("failed", "章节分析失败，请检查资源后重试", true);
+    }
+    Err(failure.into_command_error())
+}
+
+fn failure_status(attempt_count: i64, max_attempts: i64) -> &'static str {
+    if attempt_count < max_attempts {
+        "validation_failure"
+    } else {
+        "failed"
+    }
+}
+
+fn finish_attempt(
+    repository: &Repository<'_>,
+    attempt_id: i64,
+    status: &str,
+    validation_report: Option<&str>,
+) -> Result<(), ChapterCommandError> {
+    repository
+        .update_agent_attempt_status(attempt_id, status, validation_report, now_ms_for_command())
+        .map_err(ChapterCommandError::storage)?;
+    Ok(())
+}
+
+fn persistence_error(details: impl Into<String>) -> DatabaseError {
+    DatabaseError {
+        code: DatabaseErrorCode::QueryFailed,
+        message: "应用数据存储写入失败，请重试".to_string(),
+        details: Some(details.into()),
+    }
+}
+
+fn ensure_episode(
+    repository: &Repository<'_>,
+    request: &ChapterSegmentationRequest,
+    media_path: &Path,
+    duration_ms: u64,
+) -> DatabaseResult<i64> {
+    let fallback_title = media_path
+        .file_stem()
+        .and_then(|value| value.to_str())
+        .unwrap_or(request.episode_key.trim())
+        .to_string();
+    if let Some((
+        series_stable_id,
+        episode_stable_id,
+        season,
+        episode_number,
+        series_title,
+        episode_title,
+    )) = request
+        .episode_identity
+        .as_ref()
+        .and_then(ChapterEpisodeIdentity::authoritative_parts)
+    {
+        let series_title = series_title.unwrap_or(fallback_title.as_str());
+        let series_id = match repository.get_series_by_stable_id(series_stable_id)? {
+            Some(series) => series.id,
+            None => {
+                repository.insert_series(&NewSeries::new(series_stable_id, series_title, "tmdb"))?
+            }
+        };
+        let mut new_episode = NewEpisode::new(series_id, episode_stable_id, "tmdb");
+        new_episode.season_number = Some(i64::from(season));
+        new_episode.episode_number = Some(i64::from(episode_number));
+        new_episode.title = Some(episode_title.unwrap_or(fallback_title.as_str()).to_string());
+        new_episode.duration_ms = Some(i64_from_ms(duration_ms)?);
+        let episode = repository.get_or_create_episode(&new_episode)?;
+
+        if let Some(legacy_episode_id) = find_legacy_episode_for_migration(repository, request)? {
+            let migration = repository.migrate_legacy_episode(&LegacyEpisodeMigration::new(
+                legacy_episode_id,
+                episode.id,
+            ))?;
+            if migration.status == lumina_library::EpisodeMigrationStatus::Conflict {
+                tracing::warn!(
+                    legacy_episode_id,
+                    authoritative_episode_id = episode.id,
+                    diagnostics = ?migration.diagnostics,
+                    "legacy episode migration retained both sources"
+                );
+            }
+        }
+        return Ok(episode.id);
     }
 
-    let media = MediaInspector::inspect(&media_path).map_err(|error| {
-        tracing::warn!(%error, "chapter media inspection failed");
-        ChapterError::probe_failed(Some(&error.to_string()))
+    let series_stable_id = format!("media-series:{}", request.media_path.trim());
+    let series_id = match repository.get_series_by_stable_id(&series_stable_id)? {
+        Some(series) => series.id,
+        None => repository.insert_series(&NewSeries::new(
+            series_stable_id,
+            fallback_title.clone(),
+            "local",
+        ))?,
+    };
+    let mut new_episode = NewEpisode::new(series_id, request.episode_key.trim(), "local");
+    new_episode.title = Some(fallback_title);
+    new_episode.duration_ms = Some(i64_from_ms(duration_ms)?);
+    repository
+        .get_or_create_episode(&new_episode)
+        .map(|episode| episode.id)
+}
+
+/// Find the legacy episode without guessing from a filename or changing the
+/// requested identity.  Older rows used either the media path or, in an
+/// earlier worker version, the caller-provided episode key as the episode
+/// stable id.  Authoritative requests use `sXXeYY`, so the path lookup must be
+/// attempted first.
+fn find_legacy_episode_for_migration(
+    repository: &Repository<'_>,
+    request: &ChapterSegmentationRequest,
+) -> DatabaseResult<Option<i64>> {
+    let media_path = request.media_path.trim();
+    let episode_key = request.episode_key.trim();
+    let legacy_series_stable_id = format!("media-series:{media_path}");
+    let Some(legacy_series) = repository.get_series_by_stable_id(&legacy_series_stable_id)? else {
+        return Ok(None);
+    };
+
+    if let Some(legacy_episode) =
+        repository.get_episode_by_stable_id(legacy_series.id, media_path)?
+    {
+        return Ok(Some(legacy_episode.id));
+    }
+    if episode_key.is_empty() || episode_key == media_path {
+        return Ok(None);
+    }
+    repository
+        .get_episode_by_stable_id(legacy_series.id, episode_key)
+        .map(|episode| episode.map(|episode| episode.id))
+}
+
+fn i64_from_ms(value: u64) -> DatabaseResult<i64> {
+    i64::try_from(value).map_err(|_| persistence_error("timestamp exceeds SQLite range"))
+}
+
+fn spoiler_level(boundary: SpoilerBoundary) -> &'static str {
+    match boundary {
+        SpoilerBoundary::CurrentPosition => "current_position",
+        SpoilerBoundary::CurrentChapter => "current_chapter",
+        SpoilerBoundary::FullMedia => "full_media",
+    }
+}
+
+fn execute_attempt(
+    request: &ChapterSegmentationRequest,
+    task: &AgentTaskRecord,
+    attempt_id: i64,
+    scope: &AttemptScope,
+    progress: &mut ProgressEmitter,
+) -> Result<AttemptResult, WorkerFailure> {
+    let boundary = request
+        .spoiler_boundary
+        .unwrap_or(SpoilerBoundary::FullMedia);
+    let position_ms = request
+        .position_ms
+        .unwrap_or(scope.duration_ms)
+        .min(scope.duration_ms);
+    let cwd = resolve_session_cwd(Some(&request.media_path)).map_err(|error| {
+        WorkerFailure::business("章节 Agent 工作区不可用，请重试", error.to_string())
+    })?;
+    crate::acp::adapter::write_chapter_task_snapshot(
+        &cwd,
+        &scope.media_path,
+        position_ms,
+        scope.duration_ms,
+        request.subtitle_choice_id.as_deref(),
+        crate::mcp::ChapterTaskContext {
+            task_id: task.id,
+            attempt_id,
+            episode_id: scope.episode_id,
+            database_path: scope.database_path.to_string_lossy().into_owned(),
+            media_path: scope.media_path.to_string_lossy().into_owned(),
+            duration_ms: scope.duration_ms,
+            spoiler_boundary: spoiler_level(boundary).to_string(),
+            prompt_version: task.prompt_version.clone(),
+        },
+    )
+    .map_err(WorkerFailure::agent_unavailable)?;
+
+    // Prewarming is only a prompt optimization.  The isolated session has
+    // task-scoped MCP read/write tools and must still start when both local
+    // prewarm paths are unavailable.
+    progress.emit("preparing_evidence", "正在准备字幕与画面证据", false);
+    let evidence = collect_evidence(request, task, &scope.media_path, scope.duration_ms)?;
+
+    let slots = build_prompt_slots(
+        request,
+        &scope.media_path,
+        scope.duration_ms,
+        position_ms,
+        boundary,
+        &evidence,
+    );
+    let composed = compose_prompt(TaskId::ChapterSegment, &slots).map_err(|error| {
+        WorkerFailure::business("章节分析提示词准备失败，请重试", error.to_string())
     })?;
 
-    let transcript = load_transcript(&media_path, request.subtitle_choice_id.as_deref())?;
-    let transcript_windows = build_transcript_windows(
-        transcript.as_deref().unwrap_or(&[]),
-        TRANSCRIPT_WINDOW_WIDTH_MS,
-    )
-    .map_err(|error| ChapterError::subtitle_failed(Some(&error.to_string())))?;
-
-    let screenshots = capture_evidence(
-        &media_path,
-        &request.task_key(),
-        media.duration_ms,
-        request.position_ms.unwrap_or(0),
-    )?;
-
-    tracing::info!(
-        task_key = %request.task_key(),
-        transcript_windows = transcript_windows.len(),
-        screenshots = screenshots.len(),
-        "chapter evidence prepared"
+    let profile_id = request
+        .profile_id
+        .as_deref()
+        .filter(|value| !value.trim().is_empty())
+        .ok_or_else(|| WorkerFailure::agent_not_configured("missing profile id"))?;
+    let profiles = request
+        .profiles
+        .clone()
+        .ok_or_else(|| WorkerFailure::agent_not_configured("missing profiles"))?;
+    let session = ChapterSession::new(
+        Some(cwd.to_string_lossy().into_owned()),
+        profile_id.to_string(),
+        profiles,
+        model_selection(request),
+        Some(format!("chapter-{}", task.id)),
     );
-    Ok(())
+
+    progress.emit("agent_running", "正在执行章节 Agent", false);
+    let response = session
+        .prompt_with_events(composed.initial_prompt(), |event| {
+            progress.on_acp_event(event)
+        })
+        .map_err(WorkerFailure::agent_unavailable)?;
+    Ok(AttemptResult {
+        assistant_response: response,
+    })
 }
 
-fn validate_request(request: &ChapterSegmentationRequest) -> Result<(), ChapterError> {
-    if request.media_path.trim().is_empty() || request.episode_key.trim().is_empty() {
-        return Err(ChapterError::invalid_input(Some("empty task identity")));
+fn local_media_path(request: &ChapterSegmentationRequest) -> Result<PathBuf, WorkerFailure> {
+    let path_text = request.media_path.trim();
+    if path_text.is_empty() || path_text.starts_with("http://") || path_text.starts_with("https://")
+    {
+        return Err(WorkerFailure::business(
+            "当前媒体不支持 AI 分段",
+            "chapter segmentation requires a local media file",
+        ));
     }
-    if is_remote_url(&request.media_path) {
-        return Err(ChapterError::remote_media(Some("remote media path")));
+    let path = PathBuf::from(path_text);
+    if !path.is_file() {
+        return Err(WorkerFailure::business(
+            "媒体文件不可用，请重新打开后重试",
+            "media file missing",
+        ));
     }
-    if !has_complete_worker_config(request.profile_id.as_deref(), request.profiles.as_ref()) {
-        return Err(ChapterError::invalid_input(Some(
-            "profileId and profiles must describe an available profile",
-        )));
-    }
-    Ok(())
+    Ok(path)
 }
 
-fn is_remote_url(value: &str) -> bool {
-    let lower = value.trim().to_ascii_lowercase();
-    lower.starts_with("http://") || lower.starts_with("https://")
+fn collect_evidence(
+    request: &ChapterSegmentationRequest,
+    task: &AgentTaskRecord,
+    media_path: &Path,
+    duration_ms: u64,
+) -> Result<EvidenceBundle, WorkerFailure> {
+    let transcript_windows = match load_transcript(request, media_path) {
+        Ok(Some(transcript)) => {
+            match build_transcript_windows(&transcript.cues, TRANSCRIPT_WINDOW_WIDTH_MS) {
+                Ok(windows) => windows,
+                Err(error) => {
+                    tracing::warn!(
+                        details = %error,
+                        "chapter worker could not build transcript evidence"
+                    );
+                    Vec::new()
+                }
+            }
+        }
+        Ok(None) => Vec::new(),
+        Err(error) => {
+            tracing::warn!(
+                details = %error.details,
+                "chapter worker subtitle prewarm failed; agent may use MCP transcript tools"
+            );
+            Vec::new()
+        }
+    };
+    let screenshots = match collect_screenshots(task, media_path, duration_ms) {
+        Ok(screenshots) => screenshots,
+        Err(error) => {
+            tracing::warn!(
+                details = %error.details,
+                "chapter worker screenshot prewarm failed; agent may use MCP capture"
+            );
+            Vec::new()
+        }
+    };
+    Ok(EvidenceBundle {
+        transcript_windows,
+        screenshots,
+    })
 }
 
 fn load_transcript(
+    request: &ChapterSegmentationRequest,
     media_path: &Path,
-    choice_id: Option<&str>,
-) -> Result<Option<Vec<lumina_subtitle::Cue>>, ChapterError> {
-    let choices = SubtitleService::list_choices(media_path).map_err(|error| {
-        tracing::warn!(%error, "chapter subtitle listing failed");
-        ChapterError::subtitle_failed(Some(&error.to_string()))
-    })?;
-    let selected = match choice_id {
-        Some(choice_id) => choices
-            .iter()
-            .find(|choice| choice.id == choice_id && choice.supported),
-        None => choices.iter().find(|choice| choice.supported),
-    };
-    let Some(selected) = selected else {
-        // A chapter task can proceed with visual evidence alone.
-        return Ok(None);
-    };
-    let transcript = SubtitleService::load_choice(media_path, &selected.id).map_err(|error| {
-        tracing::warn!(%error, "chapter subtitle loading failed");
-        ChapterError::subtitle_failed(Some(&error.to_string()))
-    })?;
-    Ok(Some(transcript.cues))
-}
-
-fn capture_evidence(
-    media_path: &Path,
-    task_key: &str,
-    duration_ms: Option<u64>,
-    position_ms: u64,
-) -> Result<Vec<lumina_ai::prompts::ScreenshotReference>, ChapterError> {
-    let coverage = build_coverage_times(duration_ms, position_ms, DEFAULT_CAPTURE_BUDGET);
-    let coverage_seconds: Vec<f64> = coverage
-        .iter()
-        .map(|value| *value as f64 / 1_000.0)
-        .collect();
-    let scenes = detect_scene_times(media_path, DEFAULT_SCENE_THRESHOLD).map_err(|error| {
-        tracing::warn!(%error, "chapter scene detection failed");
-        ChapterError::capture_failed(Some(&error.to_string()))
-    })?;
-    let selected = select_keyframes(&coverage_seconds, &scenes, DEFAULT_CAPTURE_BUDGET);
-
-    let parent = media_path
-        .parent()
-        .ok_or_else(|| ChapterError::capture_failed(Some("media has no parent directory")))?;
-    let capture_dir = parent
-        .join(".lumina")
-        .join("tmp")
-        .join(format!("chapter-capture-{}", stable_task_id(task_key)));
-    let files = capture_frames(media_path, &selected, &capture_dir).map_err(|error| {
-        tracing::warn!(%error, "chapter frame capture failed");
-        ChapterError::capture_failed(Some(&error.to_string()))
-    })?;
-
-    files
-        .iter()
-        .enumerate()
-        .map(|(index, path)| {
-            let timestamp_ms = selected
-                .get(index)
-                .and_then(|value| seconds_to_millis(*value))
-                .ok_or_else(|| ChapterError::capture_failed(Some("invalid capture timestamp")))?;
-            build_screenshot_reference(&ScreenshotMetadata {
-                asset_id: format!("chapter-frame-{index:02}"),
-                timestamp_ms: Some(timestamp_ms),
-                resource_ref: path.to_string_lossy().to_string(),
-                note: None,
-            })
-            .map_err(|error| ChapterError::capture_failed(Some(&error.to_string())))
-        })
-        .collect()
-}
-
-/// Build a bounded, deterministic coverage grid and keep the requested
-/// position as an anchor. This helper is pure and does not touch ffmpeg.
-pub fn build_coverage_times(duration_ms: Option<u64>, position_ms: u64, budget: usize) -> Vec<u64> {
-    if budget == 0 {
-        return Vec::new();
-    }
-    let end_ms = duration_ms.unwrap_or(position_ms).max(position_ms);
-    if budget == 1 || end_ms == 0 {
-        return vec![position_ms.min(end_ms)];
-    }
-    let last = budget - 1;
-    let mut times: Vec<u64> = (0..budget)
-        .map(|index| end_ms.saturating_mul(index as u64) / last as u64)
-        .collect();
-    let anchor = position_ms.min(end_ms);
-    if !times.contains(&anchor) {
-        times.push(anchor);
-        times.sort_unstable();
-        times.dedup();
-        if times.len() > budget {
-            times = select_uniform_budget(&times, budget);
+) -> Result<Option<Transcript>, WorkerFailure> {
+    if let Some(choice_id) = request
+        .subtitle_choice_id
+        .as_deref()
+        .filter(|value| !value.trim().is_empty())
+    {
+        if lumina_ytdl::provider::parse_cache_choice(choice_id).is_some() {
+            return lumina_ytdl::provider::load_cached_choice(
+                &media_path.to_string_lossy(),
+                choice_id,
+            )
+            .map(Some)
+            .map_err(|error| {
+                WorkerFailure::business("字幕证据准备失败，请重试", error.to_string())
+            });
         }
     }
-    times
+    let choices = match SubtitleService::list_choices(media_path) {
+        Ok(choices) => choices,
+        Err(error) => {
+            tracing::warn!(details = %error, "chapter worker could not list subtitles");
+            return Ok(None);
+        }
+    };
+    let choice = if let Some(choice_id) = request.subtitle_choice_id.as_deref() {
+        choices.iter().find(|candidate| candidate.id == choice_id)
+    } else {
+        choices.iter().find(|candidate| candidate.supported)
+    };
+    let Some(choice) = choice else {
+        return Ok(None);
+    };
+    if !choice.supported {
+        return Err(WorkerFailure::business(
+            "当前字幕格式无法用于章节分析",
+            "selected subtitle is not supported",
+        ));
+    }
+    SubtitleService::load_choice(media_path, &choice.id)
+        .map(Some)
+        .map_err(|error| WorkerFailure::business("字幕证据准备失败，请重试", error.to_string()))
 }
 
-fn select_uniform_budget(values: &[u64], budget: usize) -> Vec<u64> {
-    if values.len() <= budget {
-        return values.to_vec();
+fn collect_screenshots(
+    task: &AgentTaskRecord,
+    media_path: &Path,
+    duration_ms: u64,
+) -> Result<Vec<lumina_ai::prompts::ScreenshotReference>, WorkerFailure> {
+    let coverage = coverage_times(duration_ms);
+    let scenes = detect_scene_times(media_path, DEFAULT_SCENE_THRESHOLD).unwrap_or_default();
+    let selected = select_keyframes(&coverage, &scenes, MAX_SCREENSHOTS);
+    if selected.is_empty() {
+        return Ok(Vec::new());
     }
-    if budget == 1 {
-        return vec![values[values.len() / 2]];
+    let root = media_path.parent().unwrap_or_else(|| Path::new("."));
+    let output_dir = root
+        .join(".lumina")
+        // Chapter evidence is referenced by the prompt and persisted as a
+        // chapter asset. Keep it outside MCP's ephemeral tmp directory:
+        // ACP snapshot synchronization clears `.lumina/tmp` before the
+        // chapter session starts.
+        .join("chapter-evidence")
+        .join(format!("chapter-capture-{}", task.id));
+    let paths = capture_frames(media_path, &selected, &output_dir)
+        .map_err(|error| WorkerFailure::business("画面证据准备失败，请重试", error.to_string()))?;
+    let mut references = Vec::new();
+    for (index, (path, time_sec)) in paths.into_iter().zip(selected).enumerate() {
+        let timestamp_ms = (time_sec.max(0.0) * 1000.0).round() as u64;
+        let metadata = ScreenshotMetadata {
+            asset_id: format!("chapter-{}-frame-{index:02}", task.id),
+            timestamp_ms,
+            resource_ref: path.to_string_lossy().into_owned(),
+            note: Some("worker representative frame".to_string()),
+            media_duration_ms: Some(duration_ms),
+        };
+        match build_screenshot_reference(metadata) {
+            Ok(reference) => references.push(reference),
+            Err(error) => tracing::warn!(details = %error, "invalid chapter screenshot metadata"),
+        }
     }
-    let last = values.len() - 1;
-    (0..budget)
-        .map(|index| values[index * last / (budget - 1)])
+    Ok(references)
+}
+
+fn coverage_times(duration_ms: u64) -> Vec<f64> {
+    if duration_ms == 0 {
+        return Vec::new();
+    }
+    let points = MAX_COVERAGE_POINTS.min(((duration_ms / 30_000) as usize).saturating_add(1));
+    let points = points.max(1);
+    if points == 1 {
+        return vec![0.0];
+    }
+    let last_sec = (duration_ms.saturating_sub(100) as f64) / 1000.0;
+    (0..points)
+        .map(|index| last_sec * index as f64 / (points - 1) as f64)
         .collect()
 }
 
-fn seconds_to_millis(value: f64) -> Option<u64> {
-    if !value.is_finite() || value < 0.0 {
-        return None;
+fn build_prompt_slots(
+    request: &ChapterSegmentationRequest,
+    media_path: &Path,
+    duration_ms: u64,
+    position_ms: u64,
+    boundary: SpoilerBoundary,
+    evidence: &EvidenceBundle,
+) -> PromptSlots {
+    let identity = request
+        .episode_identity
+        .as_ref()
+        .and_then(ChapterEpisodeIdentity::authoritative_parts);
+    let title = media_path
+        .file_stem()
+        .and_then(|value| value.to_str())
+        .map(str::to_string)
+        .or_else(|| {
+            request
+                .episode_key
+                .trim()
+                .is_empty()
+                .then(|| request.episode_key.clone())
+        });
+    let (media_id, series_id, series_title, season, episode, episode_title) = identity
+        .map(
+            |(
+                series_stable_id,
+                episode_stable_id,
+                season,
+                episode,
+                series_title,
+                episode_title,
+            )| {
+                (
+                    episode_stable_id.to_string(),
+                    Some(series_stable_id.to_string()),
+                    series_title.map(str::to_string),
+                    Some(season),
+                    Some(episode),
+                    episode_title.map(str::to_string),
+                )
+            },
+        )
+        .unwrap_or_else(|| (request.episode_key.clone(), None, None, None, None, None));
+    let mut slots = PromptSlots::default()
+        .with_media(MediaContext {
+            media_id,
+            title,
+            duration_ms: Some(duration_ms),
+        })
+        .with_episode(EpisodeContext {
+            series_id,
+            series_title,
+            season,
+            episode,
+            title: episode_title.or_else(|| Some(request.episode_key.clone())),
+        })
+        .with_viewing(ViewingContext {
+            position_ms,
+            spoiler_boundary: boundary,
+        });
+    for window in &evidence.transcript_windows {
+        slots = slots.with_transcript_window(window.clone());
     }
-    let millis = value * 1_000.0;
-    if millis > u64::MAX as f64 {
-        return None;
+    for screenshot in &evidence.screenshots {
+        slots = slots.with_screenshot(screenshot.clone());
     }
-    Some(millis.round() as u64)
+    slots
 }
 
-fn stable_task_id(value: &str) -> String {
-    let hash = value.bytes().fold(0xcbf29ce484222325u64, |hash, byte| {
-        hash ^ u64::from(byte).wrapping_mul(0x100000001b3)
-    });
-    format!("{hash:016x}")
+fn model_selection(request: &ChapterSegmentationRequest) -> Option<AcpSessionModelSelection> {
+    let model_id = request.model_id.as_deref()?.trim();
+    if model_id.is_empty() {
+        return None;
+    }
+    Some(AcpSessionModelSelection {
+        model_id: model_id.to_string(),
+        reasoning_effort: request
+            .reasoning_effort
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string),
+    })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use lumina_library::{
+        Database, NewAgentAttempt, NewAgentTask, NewChapter, NewEpisode, NewSeries,
+    };
 
     #[test]
-    fn coverage_keeps_anchor_and_respects_budget() {
-        let values = build_coverage_times(Some(120_000), 30_000, 5);
-        assert!(values.contains(&30_000));
-        assert!(values.len() <= 5);
-        assert!(values.windows(2).all(|pair| pair[0] < pair[1]));
+    fn coverage_is_bounded_and_deterministic() {
+        let points = coverage_times(600_000);
+        assert!(points.len() <= MAX_COVERAGE_POINTS);
+        assert_eq!(points.first().copied(), Some(0.0));
+        assert!(points.windows(2).all(|pair| pair[0] <= pair[1]));
     }
 
     #[test]
-    fn coverage_zero_budget_is_empty() {
-        assert!(build_coverage_times(Some(120_000), 30_000, 0).is_empty());
+    fn failure_is_retryable_until_task_attempt_budget_is_exhausted() {
+        assert_eq!(failure_status(1, 3), "validation_failure");
+        assert_eq!(failure_status(2, 3), "validation_failure");
+        assert_eq!(failure_status(3, 3), "failed");
     }
 
     #[test]
-    fn json_parser_accepts_plain_and_json_fenced_documents() {
-        let plain: serde_json::Value = match parse_json_fence(r#"{"chapters":[]}"#) {
-            Ok(value) => value,
-            Err(error) => panic!("plain JSON should parse: {error:?}"),
-        };
-        let fenced: serde_json::Value = match parse_json_fence("```json\n{\"chapters\": []}\n```") {
-            Ok(value) => value,
-            Err(error) => panic!("JSON fence should parse: {error:?}"),
-        };
-        assert_eq!(plain, fenced);
-    }
-
-    #[test]
-    fn json_parser_rejects_prose_and_non_json_fences() {
+    fn chapter_progress_maps_only_known_tools_and_safe_statuses() {
         assert_eq!(
-            parse_json_fence::<serde_json::Value>("```rust\n{}\n```")
-                .expect_err("rust fence must be rejected"),
-            JsonFenceError::InvalidFence
+            chapter_tool_progress(Some("mcp__lumina__lumina_create_chapter_outline")),
+            Some(("building_outline", "正在建立章节框架"))
         );
         assert_eq!(
-            parse_json_fence::<serde_json::Value>("not json").expect_err("prose must be rejected"),
-            JsonFenceError::InvalidJson
+            chapter_tool_progress(Some("lumina_capture_chapter_evidence")),
+            Some(("capturing_evidence", "正在获取字幕与画面证据"))
         );
+        assert_eq!(chapter_tool_progress(Some("read_file")), None);
+        assert!(is_completed_tool_status("completed"));
+        assert!(!is_completed_tool_status("running"));
+
+        let event = ChapterProgressEvent {
+            task_key: "chapter-segmentation:test".to_string(),
+            task_id: 7,
+            attempt_id: Some(1),
+            phase: "building_outline".to_string(),
+            message: "正在建立章节框架".to_string(),
+            attempt_count: 1,
+            max_attempts: 3,
+            sequence: 2,
+            committed: false,
+            updated_at_ms: 100,
+        };
+        let json = serde_json::to_value(event).expect("progress event should serialize");
+        assert_eq!(json["taskKey"], "chapter-segmentation:test");
+        assert_eq!(json["attemptId"], 1);
+        assert_eq!(json["updatedAtMs"], 100);
+        assert!(!json.to_string().contains("tool_call_id"));
+        assert!(!json.to_string().contains("detail"));
     }
 
     #[test]
-    fn remote_urls_are_rejected_without_io() {
-        assert!(is_remote_url("https://example.test/video"));
-        assert!(is_remote_url("HTTP://example.test/video"));
-        assert!(!is_remote_url("C:/video/a.mkv"));
+    fn business_failure_exhausts_three_independent_attempts_without_publishing(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let database = Database::open_in_memory()?;
+        let task_key = "chapter-retry-state-machine";
+        let series_id = database.repository().insert_series(&NewSeries::new(
+            "series:retry-state-machine",
+            "Retry State Machine",
+            "test",
+        ))?;
+        let episode_id = database.repository().insert_episode(&NewEpisode::new(
+            series_id,
+            "episode:retry-state-machine",
+            "test",
+        ))?;
+        let mut task_input = NewAgentTask::new(task_key, "chapter_segmentation", "chapter.v1");
+        task_input.episode_id = Some(episode_id);
+        let task = database
+            .repository()
+            .get_or_create_agent_task(&task_input)?;
+        let chapter_id = database.repository().insert_chapter(&NewChapter::new(
+            episode_id,
+            "draft:opening",
+            0,
+            1_000,
+            "ai",
+        ))?;
+        database
+            .repository()
+            .ensure_agent_task_chapter_scope(task.id, episode_id, chapter_id)?;
+
+        let expected_task_statuses = ["validation_failure", "validation_failure", "failed"];
+        let mut attempt_ids = Vec::new();
+        for (index, expected_status) in expected_task_statuses.iter().enumerate() {
+            let attempt_number = i64::try_from(index + 1)?;
+            let claimed = database
+                .repository()
+                .claim_agent_task_by_key(task_key)?
+                .ok_or("retryable chapter task was not claimed")?;
+            assert_eq!(claimed.attempt_count, attempt_number);
+
+            let attempt_id = database
+                .repository()
+                .insert_agent_attempt(&NewAgentAttempt::new(
+                    claimed.id,
+                    attempt_number,
+                    "chapter_segmentation",
+                    "running",
+                    claimed.prompt_version.clone(),
+                    now_ms_for_command(),
+                ))?;
+            let error = finish_failed(
+                &database,
+                &claimed,
+                attempt_id,
+                &mut ProgressEmitter::new(None, &claimed, attempt_id),
+                WorkerFailure::business(
+                    "章节校验未通过，请重试。",
+                    format!("business validation failure on attempt {attempt_number}"),
+                ),
+            )
+            .expect_err("business failure must not be treated as success");
+            assert_eq!(error.code, "ChapterAnalysisFailed");
+
+            let persisted = database
+                .repository()
+                .get_agent_task(claimed.id)?
+                .ok_or("chapter retry task disappeared")?;
+            assert_eq!(persisted.status, *expected_status);
+            assert_eq!(persisted.attempt_count, attempt_number);
+            assert_eq!(persisted.output_json, None);
+
+            let attempt = database
+                .repository()
+                .get_agent_attempt(attempt_id)?
+                .ok_or("chapter attempt disappeared")?;
+            assert_eq!(attempt.attempt_number, attempt_number);
+            assert_eq!(attempt.status, "failed");
+            assert!(attempt
+                .validation_report
+                .as_deref()
+                .is_some_and(|report| report.contains("章节校验未通过")));
+            attempt_ids.push(attempt_id);
+
+            let chapters = database
+                .repository()
+                .list_chapters_by_agent_task(claimed.id, episode_id)?;
+            assert_eq!(chapters.len(), 1);
+            assert_eq!(chapters[0].id, chapter_id);
+            assert_eq!(chapters[0].status, "draft");
+        }
+
+        assert_eq!(attempt_ids.len(), 3);
+        assert!(attempt_ids.windows(2).all(|pair| pair[0] != pair[1]));
+        assert!(database
+            .repository()
+            .claim_agent_task_by_key(task_key)?
+            .is_none());
+
+        let final_task = database
+            .repository()
+            .get_agent_task(task.id)?
+            .ok_or("final chapter retry task disappeared")?;
+        assert_eq!(final_task.status, "failed");
+        assert_eq!(final_task.attempt_count, 3);
+        assert_eq!(final_task.max_attempts, 3);
+        assert_eq!(final_task.output_json, None);
+        Ok(())
+    }
+
+    #[test]
+    fn persisted_failure_contains_business_fields_only() {
+        let failure = WorkerFailure::agent_not_configured("private agent details");
+        let report = failure.persisted_report();
+        assert!(report.contains("AgentNotConfigured"));
+        assert!(report.contains("尚未配置可用的 AI Agent"));
+        assert!(!report.contains("private agent details"));
+        assert!(!report.contains("stderr"));
+    }
+
+    fn running_test_task(
+        database: &mut Database,
+        task_key: &str,
+    ) -> Result<(AgentTaskRecord, i64), Box<dyn std::error::Error>> {
+        let repository = database.repository();
+        let input = NewAgentTask::new(task_key, "chapter_segmentation", "chapter.v1");
+        let created = repository.get_or_create_agent_task(&input)?;
+        let task = repository
+            .claim_agent_task_by_key(&created.task_key)?
+            .ok_or("test task was not claimable")?;
+        let attempt_id = repository.insert_agent_attempt(&NewAgentAttempt::new(
+            task.id,
+            task.attempt_count,
+            "chapter_segmentation",
+            "running",
+            task.prompt_version.clone(),
+            now_ms_for_command(),
+        ))?;
+        Ok((task, attempt_id))
+    }
+
+    #[test]
+    fn non_json_assistant_final_succeeds_after_durable_finalize(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let mut database = Database::open_in_memory()?;
+        let (task, attempt_id) = running_test_task(&mut database, "scoped-finalized")?;
+        assert!(database.repository().complete_agent_task(
+            task.id,
+            "succeeded",
+            task.attempt_count,
+            0,
+            None,
+            r#"{"finalizedBy":"chapter_tool"}"#,
+        )?);
+
+        let mut progress = ProgressEmitter::new(None, &task, attempt_id);
+        let result = settle_attempt(
+            &mut database,
+            &task,
+            attempt_id,
+            AttemptResult {
+                assistant_response: "Done — the chapter tools finalized the task.".to_string(),
+            },
+            &mut progress,
+        );
+        assert!(result.is_ok(), "durable finalize should determine success");
+        Ok(())
+    }
+
+    #[test]
+    fn non_json_assistant_final_without_finalize_fails_as_scoped_completion(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let mut database = Database::open_in_memory()?;
+        let (task, attempt_id) = running_test_task(&mut database, "scoped-unfinalized")?;
+
+        let mut progress = ProgressEmitter::new(None, &task, attempt_id);
+        let error = settle_attempt(
+            &mut database,
+            &task,
+            attempt_id,
+            AttemptResult {
+                assistant_response: "I completed the chapters.".to_string(),
+            },
+            &mut progress,
+        )
+        .expect_err("assistant text must not complete a scoped task");
+        assert_eq!(error.message, "章节 Agent 未完成章节写入，请再次尝试。");
+        let persisted = database
+            .repository()
+            .get_agent_task(task.id)?
+            .ok_or("test task disappeared")?;
+        assert_eq!(persisted.status, "validation_failure");
+        let report = persisted
+            .validation_report
+            .ok_or("scoped completion failure was not persisted")?;
+        assert!(report.contains("章节 Agent 未完成章节写入，请再次尝试"));
+        assert!(!report.contains("I completed the chapters"));
+        Ok(())
+    }
+
+    #[test]
+    fn legacy_lookup_prefers_media_path_when_authoritative_episode_key_differs(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let database = Database::open_in_memory()?;
+        let repository = database.repository();
+        let media_path = r"C:\media\show\episode.mkv";
+        let series_id = repository.insert_series(&NewSeries::new(
+            format!("media-series:{media_path}"),
+            "Legacy Show",
+            "local",
+        ))?;
+        let legacy_episode =
+            repository.insert_episode(&NewEpisode::new(series_id, media_path, "local"))?;
+        let request = ChapterSegmentationRequest {
+            media_path: media_path.to_string(),
+            episode_key: "s01e01".to_string(),
+            episode_identity: Some(ChapterEpisodeIdentity::Authoritative {
+                series_stable_id: "tmdb:tv:42".to_string(),
+                episode_stable_id: "s01e01".to_string(),
+                season: 1,
+                episode: 1,
+                series_title: None,
+                title: None,
+            }),
+            profile_id: None,
+            profiles: None,
+            model_id: None,
+            reasoning_effort: None,
+            subtitle_choice_id: None,
+            position_ms: None,
+            spoiler_boundary: None,
+        };
+
+        assert_eq!(
+            find_legacy_episode_for_migration(&repository, &request)?,
+            Some(legacy_episode)
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn legacy_lookup_falls_back_to_old_episode_key_only_after_path_miss(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let database = Database::open_in_memory()?;
+        let repository = database.repository();
+        let media_path = r"C:\media\show\episode.mkv";
+        let series_id = repository.insert_series(&NewSeries::new(
+            format!("media-series:{media_path}"),
+            "Legacy Show",
+            "local",
+        ))?;
+        let legacy_episode =
+            repository.insert_episode(&NewEpisode::new(series_id, "s01e01", "local"))?;
+        let request = ChapterSegmentationRequest {
+            media_path: media_path.to_string(),
+            episode_key: "s01e01".to_string(),
+            episode_identity: None,
+            profile_id: None,
+            profiles: None,
+            model_id: None,
+            reasoning_effort: None,
+            subtitle_choice_id: None,
+            position_ms: None,
+            spoiler_boundary: None,
+        };
+
+        assert_eq!(
+            find_legacy_episode_for_migration(&repository, &request)?,
+            Some(legacy_episode)
+        );
+        Ok(())
     }
 }

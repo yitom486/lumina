@@ -24,6 +24,9 @@ pub struct VideoPromptContext {
     pub position_ms: Option<u64>,
     pub duration_ms: Option<u64>,
     pub subtitle_choice_id: Option<String>,
+    /// Frontend preference for the current transcript tool window.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub transcript_window_radius_sec: Option<u64>,
     /// Filled by the app from local episode metadata before ACP prompt.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub season: Option<u32>,
@@ -44,6 +47,7 @@ impl VideoPromptContext {
                 .is_none_or(|s| s.trim().is_empty())
             && self.position_ms.is_none()
             && self.duration_ms.is_none()
+            && self.transcript_window_radius_sec.is_none()
             && self
                 .subtitle_choice_id
                 .as_ref()

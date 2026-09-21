@@ -9,13 +9,14 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use lumina_acp::{AcpError, SessionEnvironment, VideoPromptContext};
+use lumina_acp::{AcpError, SessionEnvironment, SessionKind, VideoPromptContext};
 use lumina_core::{AgentConversation, AgentTaskError, IsolatedAgentTask};
 
 use crate::library::MediaLibraryService;
 use crate::mcp::{
-    read_snapshot, snapshot_path_for_cwd, sync_snapshot_capabilities, write_snapshot,
-    LuminaMcpSnapshot, PromptSnapshotState,
+    read_snapshot, snapshot_path_for_cwd, sync_snapshot_capabilities,
+    write_chapter_task_snapshot as write_scoped_snapshot, write_snapshot, AgentCapabilities,
+    ChapterTaskContext, LuminaMcpSnapshot, PromptAnchor, PromptSnapshotState,
 };
 
 /// MCP-backed [`SessionEnvironment`] for ACP spawn paths.
@@ -33,8 +34,11 @@ fn next_mcp_diagnostic_id() -> String {
 }
 
 impl SessionEnvironment for AppSessionEnvironment {
-    fn snapshot_path(&self, cwd: &Path) -> PathBuf {
-        snapshot_path_for_cwd(cwd)
+    fn snapshot_path(&self, cwd: &Path, kind: SessionKind) -> PathBuf {
+        match kind {
+            SessionKind::Chapter => cwd.join(".lumina").join("chapter-agent-context.json"),
+            SessionKind::Chat | SessionKind::Workshop => snapshot_path_for_cwd(cwd),
+        }
     }
 
     fn sync_snapshot(&self, snapshot_path: &Path, vision_capable: bool) -> Result<(), String> {
@@ -46,19 +50,13 @@ impl SessionEnvironment for AppSessionEnvironment {
         sync_snapshot_capabilities(snapshot_path, vision_capable)
     }
 
-    fn mcp_servers(&self, snapshot_path: &Path, isolated: bool) -> serde_json::Value {
-        // Chat selects `Chat`; isolated AI tasks select `NoTools` so the
-        // server lists nothing and never loads Chat snapshot state.
-        let profile = if isolated {
-            crate::mcp::McpToolProfile::NoTools
-        } else {
-            crate::mcp::McpToolProfile::Chat
-        };
+    fn mcp_servers(&self, snapshot_path: &Path, kind: SessionKind) -> serde_json::Value {
+        let profile = mcp_profile_for_session(kind);
         let diagnostic_id = next_mcp_diagnostic_id();
         tracing::info!(
             diagnostic_id = %diagnostic_id,
             profile = %profile.env_value(),
-            isolated,
+            session_kind = ?kind,
             snapshot = %snapshot_path.display(),
             "prepared Lumina MCP server environment"
         );
@@ -98,6 +96,120 @@ impl SessionEnvironment for AppSessionEnvironment {
     }
 }
 
+fn mcp_profile_for_session(kind: SessionKind) -> crate::mcp::McpToolProfile {
+    match kind {
+        SessionKind::Workshop => crate::mcp::McpToolProfile::NoTools,
+        SessionKind::Chat | SessionKind::Chapter => crate::mcp::McpToolProfile::Chat,
+    }
+}
+
+/// Seed the isolated chapter session with the same media anchor that the
+/// interactive chat session exposes to Lumina MCP. The session remains
+/// independent from chat history, but its tools must resolve the current
+/// media, subtitle choice and playback boundary.
+pub fn write_chapter_snapshot(
+    cwd: &Path,
+    media_path: &Path,
+    position_ms: u64,
+    duration_ms: u64,
+    subtitle_choice_id: Option<&str>,
+) -> Result<PathBuf, AcpError> {
+    let environment = AppSessionEnvironment;
+    let snapshot_path = environment.snapshot_path(cwd, SessionKind::Chapter);
+    let snapshot = LuminaMcpSnapshot {
+        schema_version: crate::mcp::SNAPSHOT_SCHEMA_VERSION,
+        anchor: Some(PromptAnchor {
+            media_path: media_path.to_string_lossy().into_owned(),
+            media_title: None,
+            library_root: None,
+            group_key: None,
+            season: None,
+            episode: None,
+            position_ms,
+            duration_ms: Some(duration_ms),
+            sent_at_ms: SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map(|duration| duration.as_millis())
+                .unwrap_or_default(),
+            subtitle_choice_id: subtitle_choice_id
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(str::to_string),
+            transcript_window_radius_sec: None,
+        }),
+        current_episode: None,
+        library: None,
+        session: None,
+        capabilities: Some(AgentCapabilities {
+            vision_capable: true,
+            subtitle_workshop_enabled: false,
+            video_annotations_enabled: true,
+        }),
+        online: None,
+        updated_at_ms: SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|duration| duration.as_millis())
+            .unwrap_or_default(),
+    };
+    write_snapshot(&snapshot_path, &snapshot).map_err(|error| AcpError::internal(Some(&error)))?;
+    Ok(snapshot_path)
+}
+
+/// Seed an isolated chapter session with its complete durable scope.
+///
+/// The MCP server must treat the snapshot as the authority for task/attempt/
+/// episode ownership.  In particular, the database path is supplied by the
+/// desktop command rather than by Agent arguments.
+pub fn write_chapter_task_snapshot(
+    cwd: &Path,
+    media_path: &Path,
+    position_ms: u64,
+    duration_ms: u64,
+    subtitle_choice_id: Option<&str>,
+    chapter_task: ChapterTaskContext,
+) -> Result<PathBuf, AcpError> {
+    let environment = AppSessionEnvironment;
+    let snapshot_path = environment.snapshot_path(cwd, SessionKind::Chapter);
+    let snapshot = LuminaMcpSnapshot {
+        schema_version: crate::mcp::SNAPSHOT_SCHEMA_VERSION,
+        anchor: Some(PromptAnchor {
+            media_path: media_path.to_string_lossy().into_owned(),
+            media_title: None,
+            library_root: None,
+            group_key: None,
+            season: None,
+            episode: None,
+            position_ms,
+            duration_ms: Some(duration_ms),
+            sent_at_ms: SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map(|duration| duration.as_millis())
+                .unwrap_or_default(),
+            subtitle_choice_id: subtitle_choice_id
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(str::to_string),
+            transcript_window_radius_sec: None,
+        }),
+        current_episode: None,
+        library: None,
+        session: None,
+        capabilities: Some(AgentCapabilities {
+            vision_capable: true,
+            subtitle_workshop_enabled: false,
+            video_annotations_enabled: true,
+        }),
+        online: None,
+        updated_at_ms: SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|duration| duration.as_millis())
+            .unwrap_or_default(),
+    };
+    write_scoped_snapshot(&snapshot_path, &snapshot, &chapter_task)
+        .map_err(|error| AcpError::internal(Some(&error)))?;
+    Ok(snapshot_path)
+}
+
 /// Installed once at startup; `session/new|resume` wiring uses it.
 pub fn install_session_environment() -> bool {
     lumina_acp::set_default_environment(Arc::new(AppSessionEnvironment))
@@ -118,6 +230,7 @@ pub fn build_prompt_snapshot(
         position_ms: context.position_ms,
         duration_ms: context.duration_ms,
         subtitle_choice_id: context.subtitle_choice_id.clone(),
+        transcript_window_radius_sec: context.transcript_window_radius_sec,
     });
     let mut guard = snapshots
         .lock()
@@ -248,5 +361,160 @@ fn map_acp_error(error: lumina_acp::AcpError) -> AgentTaskError {
         AgentTaskError::Failed {
             details: error.details,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn session_kind_selects_explicit_mcp_profiles() {
+        assert_eq!(
+            mcp_profile_for_session(SessionKind::Chat),
+            crate::mcp::McpToolProfile::Chat
+        );
+        assert_eq!(
+            mcp_profile_for_session(SessionKind::Workshop),
+            crate::mcp::McpToolProfile::NoTools
+        );
+        assert_eq!(
+            mcp_profile_for_session(SessionKind::Chapter),
+            crate::mcp::McpToolProfile::Chat
+        );
+    }
+
+    #[test]
+    fn chapter_mcp_servers_inject_chat_profile() {
+        let root = std::env::temp_dir().join(format!(
+            "lumina-chapter-mcp-config-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map(|duration| duration.as_nanos())
+                .unwrap_or_default()
+        ));
+        let snapshot_path = root.join(".lumina").join("chapter-agent-context.json");
+        let servers = AppSessionEnvironment.mcp_servers(&snapshot_path, SessionKind::Chapter);
+        let env = servers
+            .get(0)
+            .and_then(|server| server.get("env"))
+            .and_then(serde_json::Value::as_array)
+            .expect("chapter MCP server environment");
+        assert!(env.iter().any(|entry| {
+            entry.get("name").and_then(serde_json::Value::as_str)
+                == Some(crate::mcp::TOOL_PROFILE_ENV)
+                && entry.get("value").and_then(serde_json::Value::as_str) == Some("chat")
+        }));
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn chapter_snapshot_contains_media_anchor_and_tool_capability() {
+        let root = std::env::temp_dir().join(format!(
+            "lumina-chapter-snapshot-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map(|duration| duration.as_nanos())
+                .unwrap_or_default()
+        ));
+        let media = root.join("episode.mp4");
+        let result = write_chapter_snapshot(&root, &media, 12_345, 60_000, Some("cache:subdl:en"))
+            .expect("chapter snapshot should be written");
+        let snapshot = read_snapshot(&result).expect("chapter snapshot should be readable");
+        let anchor = snapshot.anchor.expect("chapter anchor");
+        assert_eq!(anchor.media_path, media.to_string_lossy());
+        assert_eq!(anchor.position_ms, 12_345);
+        assert_eq!(anchor.duration_ms, Some(60_000));
+        assert_eq!(anchor.subtitle_choice_id.as_deref(), Some("cache:subdl:en"));
+        assert!(
+            snapshot
+                .capabilities
+                .expect("chapter capabilities")
+                .vision_capable
+        );
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn chapter_task_snapshot_contains_durable_scope() {
+        let root = std::env::temp_dir().join(format!(
+            "lumina-chapter-task-snapshot-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map(|duration| duration.as_nanos())
+                .unwrap_or_default()
+        ));
+        let media = root.join("episode.mp4");
+        let result = write_chapter_task_snapshot(
+            &root,
+            &media,
+            12_345,
+            60_000,
+            Some("cache:subdl:en"),
+            ChapterTaskContext {
+                task_id: 7,
+                attempt_id: 8,
+                episode_id: 9,
+                database_path: "C:\\data\\lumina.sqlite3".to_string(),
+                media_path: media.to_string_lossy().into_owned(),
+                duration_ms: 60_000,
+                spoiler_boundary: "full_media".to_string(),
+                prompt_version: "1.0".to_string(),
+            },
+        )
+        .expect("chapter task snapshot should be written");
+        let scope = crate::mcp::read_chapter_task_context(&result)
+            .expect("chapter task snapshot should be readable")
+            .expect("chapter task scope");
+        assert_eq!(scope.task_id, 7);
+        assert_eq!(scope.attempt_id, 8);
+        assert_eq!(scope.episode_id, 9);
+        assert_eq!(scope.database_path, "C:\\data\\lumina.sqlite3");
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn chapter_session_sync_preserves_scoped_snapshot() {
+        let root = std::env::temp_dir().join(format!(
+            "lumina-chapter-sync-adapter-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map(|duration| duration.as_nanos())
+                .unwrap_or_default()
+        ));
+        let snapshot_path = root.join(".lumina").join("chapter-agent-context.json");
+        let context = ChapterTaskContext {
+            task_id: 51,
+            attempt_id: 52,
+            episode_id: 53,
+            database_path: r"C:\data\lumina.sqlite3".into(),
+            media_path: r"C:\videos\episode.mkv".into(),
+            duration_ms: 90_000,
+            spoiler_boundary: "episode".into(),
+            prompt_version: "chapter-v1".into(),
+        };
+
+        write_scoped_snapshot(&snapshot_path, &LuminaMcpSnapshot::empty(), &context)
+            .expect("write scoped snapshot");
+        AppSessionEnvironment
+            .sync_snapshot(&snapshot_path, true)
+            .expect("sync chapter snapshot");
+
+        assert_eq!(
+            crate::mcp::read_chapter_task_context(&snapshot_path).expect("read chapter scope"),
+            Some(context)
+        );
+        let snapshot = read_snapshot(&snapshot_path).expect("read synced snapshot");
+        assert!(
+            snapshot
+                .capabilities
+                .expect("chapter capabilities")
+                .vision_capable
+        );
+        let _ = std::fs::remove_dir_all(root);
     }
 }

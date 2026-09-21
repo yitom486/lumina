@@ -24,6 +24,10 @@ pub const TOOL_CAPTURE_FRAMES: &str = "lumina_capture_frames";
 pub const TOOL_PROPOSE_ANNOTATION: &str = "lumina_propose_video_annotation";
 pub const TOOL_SEEK_PLAYBACK: &str = "lumina_seek_playback";
 pub const TOOL_ENTITY_TIMELINE: &str = "lumina_get_entity_timeline";
+pub const TOOL_CREATE_CHAPTER_OUTLINE: &str = "lumina_create_chapter_outline";
+pub const TOOL_CAPTURE_CHAPTER_EVIDENCE: &str = "lumina_capture_chapter_evidence";
+pub const TOOL_UPDATE_CHAPTER_DRAFT: &str = "lumina_update_chapter_draft";
+pub const TOOL_FINALIZE_CHAPTER_TASK: &str = "lumina_finalize_chapter_task";
 
 /// Every known tool, in `tools/list` declaration order.
 pub const ALL_TOOLS: &[&str] = &[
@@ -39,10 +43,14 @@ pub const ALL_TOOLS: &[&str] = &[
     TOOL_PROPOSE_ANNOTATION,
     TOOL_SEEK_PLAYBACK,
     TOOL_ENTITY_TIMELINE,
+    TOOL_CREATE_CHAPTER_OUTLINE,
+    TOOL_CAPTURE_CHAPTER_EVIDENCE,
+    TOOL_UPDATE_CHAPTER_DRAFT,
+    TOOL_FINALIZE_CHAPTER_TASK,
 ];
 
 /// Number of known tools (locked: adding a tool is a contract change).
-pub const TOOL_COUNT: usize = 12;
+pub const TOOL_COUNT: usize = 16;
 
 /// True for the canonical names, false for anything else (including the
 /// historical `Unknown tool` path, which MCP preserves verbatim).
@@ -61,6 +69,10 @@ pub fn is_known_tool(name: &str) -> bool {
             | TOOL_PROPOSE_ANNOTATION
             | TOOL_SEEK_PLAYBACK
             | TOOL_ENTITY_TIMELINE
+            | TOOL_CREATE_CHAPTER_OUTLINE
+            | TOOL_CAPTURE_CHAPTER_EVIDENCE
+            | TOOL_UPDATE_CHAPTER_DRAFT
+            | TOOL_FINALIZE_CHAPTER_TASK
     )
 }
 

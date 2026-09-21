@@ -31,7 +31,6 @@ test("ACP/MCP priority CLI --help is deterministic", () => {
   assert.match(result.stdout, /LUMINA_MCP_E2E=1/);
   assert.match(result.stdout, /LUMINA_MCP_E2E_TIMEOUT_MS/);
 });
-
 test("ACP/MCP priority CLI safely skips when opt-in is absent", () => {
   const result = runCli(
     [],
@@ -46,7 +45,6 @@ test("ACP/MCP priority CLI safely skips when opt-in is absent", () => {
     "[skip] set LUMINA_MCP_E2E=1 to run the real Codex ACP/MCP priority check\n",
   );
 });
-
 test("ACP/MCP priority CLI rejects invalid timeouts before local dependency checks", () => {
   for (const timeout of ["not-a-number", "999"]) {
     const result = runCli(

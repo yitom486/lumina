@@ -180,6 +180,13 @@ fn format_playback_context_block(ctx: &VideoPromptContext) -> Option<String> {
     {
         lines.push(format!("字幕轨道：{choice}"));
     }
+    if let Some(radius_sec) = ctx.transcript_window_radius_sec {
+        if radius_sec > 0 {
+            lines.push(format!(
+                "台词上下文窗口建议：当前播放点前后各 {radius_sec} 秒；读取当前台词时优先使用该范围。"
+            ));
+        }
+    }
     // Conditional: only present when enrich packed them on media switch.
     if let Some(title) = ctx
         .episode_title
@@ -838,6 +845,7 @@ mod tests {
             position_ms: Some(83_000),
             duration_ms: Some(2_700_000),
             subtitle_choice_id: Some("embedded:0".into()),
+            transcript_window_radius_sec: None,
             season: Some(1),
             episode: Some(1),
             episode_title: None,
@@ -861,6 +869,27 @@ mod tests {
     }
 
     #[test]
+    fn prompt_inlines_transcript_window_preference_when_present() {
+        let ctx = VideoPromptContext {
+            media_path: Some(r"D:\videos\demo.mp4".into()),
+            position_ms: Some(83_000),
+            transcript_window_radius_sec: Some(60),
+            ..Default::default()
+        };
+        let params = session_prompt_params("sess_1", "这段讲了什么？", Some(&ctx), &[]);
+        let prompt = params
+            .get("prompt")
+            .and_then(Value::as_array)
+            .expect("prompt");
+        let playback = prompt
+            .iter()
+            .filter_map(|block| block.get("text").and_then(Value::as_str))
+            .find(|text| text.contains("台词上下文窗口建议"))
+            .expect("transcript preference");
+        assert!(playback.contains("前后各 60 秒"));
+    }
+
+    #[test]
     fn prompt_inlines_episode_plot_when_packed_for_media_switch() {
         let ctx = VideoPromptContext {
             media_path: Some(r"D:\videos\demo.mp4".into()),
@@ -868,6 +897,7 @@ mod tests {
             position_ms: Some(83_000),
             duration_ms: Some(2_700_000),
             subtitle_choice_id: None,
+            transcript_window_radius_sec: None,
             season: Some(1),
             episode: Some(2),
             episode_title: Some("第二集".into()),

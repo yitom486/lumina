@@ -2,7 +2,6 @@
 pub mod acp;
 pub mod asr;
 pub mod chapter;
-pub mod chapter_worker;
 pub mod library;
 pub mod media;
 pub mod notes;

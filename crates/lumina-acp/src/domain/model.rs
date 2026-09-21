@@ -4,6 +4,9 @@ use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 
+use super::context::VideoPromptContext;
+use super::settings::AcpClientSettings;
+
 /// Pure agent-kind discriminant. Owned by `domain` so profile DTOs never
 /// pull in launch/discovery logic; `agent` re-exports it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -59,10 +62,12 @@ pub enum SessionStoragePreset {
 /// Explicit Lumina-owned session purpose stored in ACP session metadata.
 /// This must be passed by each creation path; it is never inferred from
 /// tool access or other mutable service state.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum SessionKind {
     Chat,
     Workshop,
+    Chapter,
 }
 
 impl SessionKind {
@@ -70,6 +75,7 @@ impl SessionKind {
         match self {
             Self::Chat => "chat",
             Self::Workshop => "workshop",
+            Self::Chapter => "chapter",
         }
     }
 }
@@ -383,4 +389,45 @@ mod tests {
         let capped = validate_prompt_images(&too_many).expect_err("fifth image rejected");
         assert!(capped.message.contains("4 张"));
     }
+
+    #[test]
+    fn session_kind_serializes_to_stable_lowercase_strings() {
+        assert_eq!(
+            serde_json::to_string(&SessionKind::Chat).unwrap(),
+            "\"chat\""
+        );
+        assert_eq!(
+            serde_json::to_string(&SessionKind::Workshop).unwrap(),
+            "\"workshop\""
+        );
+        assert_eq!(
+            serde_json::to_string(&SessionKind::Chapter).unwrap(),
+            "\"chapter\""
+        );
+        assert_eq!(SessionKind::Chapter.as_str(), "chapter");
+        assert_eq!(
+            serde_json::from_str::<SessionKind>("\"chapter\"").unwrap(),
+            SessionKind::Chapter
+        );
+    }
+}
+
+/// Typed input boundary shared by interactive chat and isolated domain tasks.
+///
+/// The request deliberately carries the session kind and execution settings,
+/// while callers remain responsible for choosing the session/history scope.
+/// This keeps the ACP transport generic without allowing chapter work to
+/// reuse the interactive chat session.
+#[derive(Debug, Clone)]
+pub struct AgentExecutionRequest {
+    pub text: String,
+    pub cwd: Option<String>,
+    pub profile_id: Option<String>,
+    pub context: Option<VideoPromptContext>,
+    pub images: Vec<PromptImage>,
+    pub saved_session: Option<SavedSessionHint>,
+    pub client_settings: AcpClientSettings,
+    pub profiles: AgentProfilesHint,
+    pub session_kind: SessionKind,
+    pub attempt_label: Option<String>,
 }

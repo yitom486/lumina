@@ -1,4 +1,5 @@
 import { Channel, invoke } from "@tauri-apps/api/core";
+import type { ChatShortcutTaskId } from "@lumina/chat-ui";
 
 import type {
   AcpClientSettings,
@@ -61,6 +62,9 @@ export type PromptImageInput = {
   data: string;
 };
 
+/** Stable task identifiers owned by the versioned Rust prompt repository. */
+export type AcpTaskId = ChatShortcutTaskId;
+
 export function acpLoadSession(options: {
   profileId: string;
   sessionId: string;
@@ -113,6 +117,7 @@ export async function acpPrompt(
     images?: PromptImageInput[];
     savedSession?: SavedSessionHint | null;
     clientSettings?: AcpClientSettings;
+    taskId?: AcpTaskId;
     profiles: AgentProfilesHint;
   },
 ): Promise<string> {
@@ -128,6 +133,7 @@ export async function acpPrompt(
     images: options?.images ?? null,
     savedSession: options?.savedSession ?? null,
     clientSettings: options?.clientSettings ?? null,
+    taskId: options?.taskId ?? null,
     profiles: options?.profiles,
     onEvent: channel,
   });
@@ -203,6 +209,70 @@ export async function acpSetSessionModel(
     reasoningEffort: options.reasoningEffort ?? null,
     onEvent: channel,
   });
+}
+
+export type AcpWatchFeedSource = "sqlite" | "empty";
+
+export type AcpWatchFeedChapter = {
+  id: number;
+  startMs: number;
+  endMs: number;
+  spoilerLevel: string;
+  title: string | null;
+  mainline: string | null;
+  status: string;
+};
+
+export type AcpWatchFeedRevision = {
+  id: number;
+  revisionNumber: number;
+  revisionType: string;
+  content: string;
+  source: string;
+  promptVersion: string;
+  validationReport: string | null;
+  status: string;
+};
+
+export type AcpWatchFeedQuestionCandidate = {
+  id: number;
+  question: string;
+  source: string;
+  spoilerLevel: string;
+  batchKey: string | null;
+  isUserDefined: boolean;
+  selectedAtMs: number | null;
+};
+
+export type AcpWatchFeedItem = {
+  id: number;
+  episodeId: number | null;
+  chapterId: number | null;
+  revisionId: number | null;
+  taskId: number | null;
+  itemType: string;
+  source: string;
+  content: string;
+  spoilerLevel: string;
+  contentVersion: string;
+  publishedAtMs: number | null;
+  chapter: AcpWatchFeedChapter | null;
+  revision: AcpWatchFeedRevision | null;
+  questionCandidate: AcpWatchFeedQuestionCandidate | null;
+  screenshotRefs: string[];
+  coverRef: string | null;
+};
+
+export type AcpWatchFeedResponse = {
+  source: AcpWatchFeedSource;
+  items: AcpWatchFeedItem[];
+};
+
+export const acpWatchFeedQueryKey = ["acp-watch-feed"] as const;
+
+/** Read the durable watch-feed projection without writing chat turns. */
+export function getAcpWatchFeed(): Promise<AcpWatchFeedResponse> {
+  return invoke<AcpWatchFeedResponse>("acp_watch_feed");
 }
 
 export function discoverAcpModels(

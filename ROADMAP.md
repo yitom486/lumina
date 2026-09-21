@@ -49,7 +49,8 @@
 - **可选**：未配置 yt-dlp 不影响本地播放
 - **按需**：yt-dlp 下载到用户数据目录（不进默认安装包）；可更新
 - **登录**：显式支持从 Chrome / Edge / Firefox 读 Cookie（提清晰度）；cookies.txt 兜底；**永不**进 Agent prompt
-- **上下文**：字幕窗 / 截帧 / 章节仍由本机准备后交给 Agent；禁止 Agent 自行爬站
+- **上下文**：字幕窗 / 截帧 / 章节证据由本机 MCP 工具按 Agent 请求执行并返回；禁止 Agent 自行爬站，
+  也不得把本机预热证据误解为章节 Agent 的独立工具边界
 - **播放**：继续 libmpv（非 HTML `<video>`）；倍速复用现有 `set_rate`；清晰度新增领域 API
 - **工具**：对齐现有 MCP 语义；契约抽离便于日后去掉 MCP
 

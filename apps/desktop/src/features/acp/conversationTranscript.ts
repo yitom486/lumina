@@ -1,6 +1,7 @@
 import { createTurn } from "@lumina/chat-ui/chatTurns";
 
-import type { ChatActivity, ChatTurn } from "./types";
+import { normalizeRestoredShortcutOutput } from "./shortcutOutput";
+import type { ChatTurn } from "./types";
 import type { LoadedTranscriptEvent } from "./api";
 
 const TOOL_PRIORITY_MARKER = "【工具优先】";
@@ -40,6 +41,8 @@ const PLAYBACK_DETAIL_PREFIXES = [
   "本集标题:",
   "本集剧情：",
   "本集剧情:",
+  "台词上下文窗口建议：",
+  "台词上下文窗口建议:",
 ];
 
 /**
@@ -107,10 +110,10 @@ export function stripAgentEchoes(text: string): string {
 /**
  * Map a loaded Agent thread transcript to chat turns.
  *
- * User scaffolding is stripped; agent bodies are kept verbatim except
- * structural replay echoes (markdown file links, bare markers — never model
- * prose, including the user's own Codex config prefixes).
- * Tool events become done activities on their turn (same section as live).
+ * User scaffolding is stripped. The H1 backend projection supplies one final
+ * agent message per user turn; legacy loads occasionally contain interim
+ * thought-like agent chunks and tool entries, so this frontend defensively
+ * keeps only the final agent message and ignores every tool event.
  * Empty mapping returns [] for the caller to keep local turns.
  */
 export function mapLoadedTranscript(
@@ -118,7 +121,6 @@ export function mapLoadedTranscript(
 ): ChatTurn[] {
   if (!Array.isArray(events) || events.length === 0) return [];
   const seq = { n: 0 };
-  let toolSeq = 0;
   const turns: ChatTurn[] = [];
   let current: ChatTurn | null = null;
   for (const event of events) {
@@ -136,52 +138,26 @@ export function mapLoadedTranscript(
     if (event.role === "agent") {
       const text = stripAgentEchoes(event.text ?? "");
       if (!text) continue;
+      const restored = normalizeRestoredShortcutOutput(text);
       if (!current) {
         const turn = createTurn(seq, "");
         turn.status = "done";
         turn.showActivities = false;
-        turn.answer = text;
+        turn.answer = restored.answer;
+        turn.shortcutTaskId = restored.shortcutTaskId;
         turns.push(turn);
         current = turn;
         continue;
       }
-      current.answer = current.answer ? `${current.answer}\n\n${text}` : text;
+      // Do not concatenate legacy streamed thought or interim messages into
+      // the final visible answer. H1 produces only this final message.
+      current.answer = restored.answer;
+      current.shortcutTaskId = restored.shortcutTaskId;
       current.status = "done";
       continue;
     }
-    // tool role: restored as a done activity on the current turn, so the
-    // restored history shows the same tool section (and counter) as live
-    // turns. Consecutive same-title chunks share one call id (replay lost
-    // the real ids; counting chunks would inflate the counter).
-    // Orphan tool events open a holder that a later agent chunk fills;
-    // never-filled holders are dropped by the filter below.
-    const toolText = (event.text ?? "").trim();
-    if (!toolText) continue;
-    let holder: ChatTurn | null = current;
-    if (!holder) {
-      holder = createTurn(seq, "");
-      holder.status = "done";
-      holder.showActivities = false;
-      turns.push(holder);
-      current = holder;
-    }
-    const prevTool = [...holder.activities]
-      .reverse()
-      .find((item) => item.kind === "tool");
-    const toolCallId =
-      prevTool?.title === toolText && prevTool?.toolCallId
-        ? prevTool.toolCallId
-        : `loaded-call-${toolSeq}`;
-    const activity: ChatActivity = {
-      id: `loaded-tool-${toolSeq++}`,
-      kind: "tool",
-      toolCallId,
-      title: toolText.slice(0, 120),
-      status: "completed",
-    };
-    holder.activities.push(activity);
-    holder.showActivities = true;
-    continue;
+    // H1 no longer returns this role. Ignore legacy tool transcript entries:
+    // tool names, result payloads and implementation details are not history.
   }
   return turns.filter(
     (turn) => turn.userText.trim() || turn.answer.trim(),

@@ -81,6 +81,20 @@ cargo test --workspace --lib
 cargo clippy --workspace --all-targets -- -D warnings
 ```
 
+MCP 协议级黑盒测试需要启用确定性 fixture seam：
+
+```bash
+cargo test -p lumina-mcp --features test-support --test chapter_blackbox_stdio
+```
+
+### MCP / Agent 工具黑盒验收（强制）
+
+- 每新增一个 MCP/Agent 工具，或改变现有工具的参数、权限、输出或副作用，都必须同时新增或更新协议级黑盒测试。
+- 黑盒测试必须通过真实的 stdio `initialize → tools/list → tools/call` 链路调用工具，不能只测试内部函数或静态的 `tools/list`。
+- 测试必须使用确定性的 mock 台词、图片、媒体和数据库输入，验证：工具是否出现在正确的 profile、是否可以正常调用、输出是否符合契约、越权/非法输入是否被拒绝，以及实际副作用是否正确落库或写入控制文件。
+- 每个工具至少覆盖一个成功场景和一个边界/失败场景；有外部媒体工具依赖时使用 `cfg(test-support)` 的确定性 fixture seam，但仍必须经过生产工具 handler 和 MCP transport。
+- 黑盒测试通过是工具完成和合并的必要条件；真实 ACP/桌面 E2E 是额外验收，不能替代黑盒测试。测试日志应记录工具名、阶段、耗时和最终状态，不输出媒体绝对路径、Agent stderr 或敏感上下文。
+
 ## ASR（Phase 4）
 
 - **非必须**；仅用户点击才 spawn whisper-cli；未配置返回 `NotConfigured`

@@ -1,52 +1,41 @@
-//! Build deterministic evidence blocks for chapter workers.
+//! Pure builders for evidence supplied to the chapter agent.
 //!
-//! This module deliberately contains no file I/O, media processing, process
-//! lifecycle, or agent protocol code. Fixed-width windows are only evidence
-//! partitions; they must not be interpreted as chapter segmentation.
+//! A transcript window is only an evidence container. It is not a chapter and
+//! must never be used as a replacement for semantic segmentation.
 
-use std::fmt;
 use std::collections::BTreeMap;
+use std::fmt;
 
 use lumina_subtitle::Cue;
 
-use crate::prompts::{ScreenshotReference, TranscriptWindow};
+use crate::prompts::{ScreenshotReference, TranscriptLine, TranscriptWindow};
 
-const WINDOW_ID_PREFIX: &str = "transcript-window";
-
-/// Metadata emitted by a screenshot-producing layer before prompt assembly.
+/// Metadata produced by the host after capturing one screenshot.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ScreenshotMetadata {
     pub asset_id: String,
-    pub timestamp_ms: Option<u64>,
+    pub timestamp_ms: u64,
     pub resource_ref: String,
     pub note: Option<String>,
+    pub media_duration_ms: Option<u64>,
 }
 
-/// The pure evidence payload consumed together by a chapter worker.
+/// Errors for invalid evidence metadata supplied by the host.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ChapterEvidence {
-    pub transcript_windows: Vec<TranscriptWindow>,
-    pub screenshots: Vec<ScreenshotReference>,
-}
-
-/// Domain validation failures while preparing chapter evidence.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EvidenceBuildError {
-    InvalidWindowWidth,
+    ZeroWindowWidth,
     EmptyScreenshotAssetId,
-    MissingScreenshotTimestamp,
-    InvalidScreenshotTimestamp,
-    EmptyScreenshotResourceRef,
+    EmptyScreenshotResource,
+    ScreenshotOutsideMedia,
 }
 
 impl fmt::Display for EvidenceBuildError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         let message = match self {
-            Self::InvalidWindowWidth => "字幕证据窗口宽度必须大于零",
-            Self::EmptyScreenshotAssetId => "截图证据缺少资源标识",
-            Self::MissingScreenshotTimestamp => "截图证据缺少时间点",
-            Self::InvalidScreenshotTimestamp => "截图证据时间点无效",
-            Self::EmptyScreenshotResourceRef => "截图证据缺少资源引用",
+            Self::ZeroWindowWidth => "evidence window width must be greater than zero",
+            Self::EmptyScreenshotAssetId => "screenshot asset id must not be empty",
+            Self::EmptyScreenshotResource => "screenshot resource reference must not be empty",
+            Self::ScreenshotOutsideMedia => "screenshot timestamp must be inside the media",
         };
         formatter.write_str(message)
     }
@@ -54,126 +43,87 @@ impl fmt::Display for EvidenceBuildError {
 
 impl std::error::Error for EvidenceBuildError {}
 
-/// Build fixed-width transcript evidence windows.
+/// Build stable, ordered transcript evidence windows from subtitle cues.
 ///
-/// Cues with empty text or an invalid half-open interval (`start_ms >=
-/// end_ms`) are ignored. Valid cues are ordered by timeline and included in
-/// every bucket they overlap, so a cue crossing a boundary is available from
-/// both sides without being split. Empty buckets are omitted. The returned
-/// window bounds are clipped to the actual ranges of the cues in that bucket.
+/// Cues are assigned by their start timestamp to a fixed-width bucket. Empty
+/// text and non-positive cue intervals are ignored. A cue that crosses a
+/// bucket boundary remains intact in the bucket where it starts, so the Agent
+/// receives the original dialogue timing instead of a fabricated split line.
 pub fn build_transcript_windows(
     cues: &[Cue],
     window_width_ms: u64,
 ) -> Result<Vec<TranscriptWindow>, EvidenceBuildError> {
     if window_width_ms == 0 {
-        return Err(EvidenceBuildError::InvalidWindowWidth);
+        return Err(EvidenceBuildError::ZeroWindowWidth);
     }
 
-    let mut valid_cues: Vec<Cue> = cues
-        .iter()
-        .filter(|cue| is_valid_cue(cue))
-        .cloned()
-        .collect();
-    valid_cues.sort_by_key(|cue| (cue.start_ms, cue.end_ms, cue.index));
-
-    let mut windows_by_bucket: BTreeMap<u64, TranscriptWindow> = BTreeMap::new();
-    for cue in valid_cues {
-        let first_bucket = cue.start_ms / window_width_ms;
-        let last_bucket = (cue.end_ms - 1) / window_width_ms;
-
-        for bucket in first_bucket..=last_bucket {
-            let bucket_start = bucket.saturating_mul(window_width_ms);
-            let bucket_end = bucket_start
-                .checked_add(window_width_ms)
-                .unwrap_or(u64::MAX);
-            let clipped_start = cue.start_ms.max(bucket_start);
-            let clipped_end = cue.end_ms.min(bucket_end);
-
-            if clipped_start >= clipped_end {
-                continue;
-            }
-
-            if let Some(window) = windows_by_bucket.get_mut(&bucket) {
-                window.start_ms = window.start_ms.min(clipped_start);
-                window.end_ms = window.end_ms.max(clipped_end);
-                window.cues.push(cue.clone());
-            } else {
-                windows_by_bucket.insert(bucket, TranscriptWindow {
-                    window_id: transcript_window_id(bucket),
-                    start_ms: clipped_start,
-                    end_ms: clipped_end,
-                    cues: vec![cue.clone()],
-                });
-            }
+    let mut buckets: BTreeMap<u64, Vec<&Cue>> = BTreeMap::new();
+    for cue in cues {
+        if cue.start_ms >= cue.end_ms || cue.text.trim().is_empty() {
+            continue;
         }
+        let bucket = (cue.start_ms / window_width_ms) * window_width_ms;
+        buckets.entry(bucket).or_default().push(cue);
     }
 
-    Ok(windows_by_bucket.into_values().collect())
+    let mut windows = Vec::with_capacity(buckets.len());
+    for (ordinal, (_, mut bucket_cues)) in buckets.into_iter().enumerate() {
+        bucket_cues.sort_by_key(|cue| (cue.start_ms, cue.end_ms, cue.index));
+        let lines: Vec<TranscriptLine> = bucket_cues
+            .into_iter()
+            .map(|cue| TranscriptLine {
+                start_ms: cue.start_ms,
+                end_ms: cue.end_ms,
+                text: cue.text.trim().to_string(),
+            })
+            .collect();
+
+        let Some(start_ms) = lines.first().map(|line| line.start_ms) else {
+            continue;
+        };
+        let end_ms = lines
+            .iter()
+            .map(|line| line.end_ms)
+            .max()
+            .unwrap_or(start_ms);
+        windows.push(TranscriptWindow {
+            window_id: format!("transcript-window-{ordinal:04}"),
+            start_ms,
+            end_ms,
+            lines,
+        });
+    }
+
+    Ok(windows)
 }
 
-/// Construct a validated screenshot reference from generated-asset metadata.
+/// Convert host-owned screenshot metadata into a validator-visible reference.
 pub fn build_screenshot_reference(
-    metadata: &ScreenshotMetadata,
+    metadata: ScreenshotMetadata,
 ) -> Result<ScreenshotReference, EvidenceBuildError> {
     let asset_id = metadata.asset_id.trim();
     if asset_id.is_empty() {
         return Err(EvidenceBuildError::EmptyScreenshotAssetId);
     }
-
-    let timestamp_ms = metadata
-        .timestamp_ms
-        .ok_or(EvidenceBuildError::MissingScreenshotTimestamp)?;
-    if timestamp_ms == u64::MAX {
-        return Err(EvidenceBuildError::InvalidScreenshotTimestamp);
-    }
-
     let resource_ref = metadata.resource_ref.trim();
     if resource_ref.is_empty() {
-        return Err(EvidenceBuildError::EmptyScreenshotResourceRef);
+        return Err(EvidenceBuildError::EmptyScreenshotResource);
+    }
+    if metadata
+        .media_duration_ms
+        .is_some_and(|duration_ms| metadata.timestamp_ms > duration_ms)
+    {
+        return Err(EvidenceBuildError::ScreenshotOutsideMedia);
     }
 
-    let note = metadata
-        .note
-        .as_deref()
-        .map(str::trim)
-        .filter(|note| !note.is_empty())
-        .map(str::to_owned);
-
     Ok(ScreenshotReference {
-        asset_id: asset_id.to_owned(),
-        timestamp_ms,
-        resource_ref: resource_ref.to_owned(),
-        note,
+        asset_id: asset_id.to_string(),
+        timestamp_ms: metadata.timestamp_ms,
+        resource_ref: resource_ref.to_string(),
+        note: metadata
+            .note
+            .and_then(|note| (!note.trim().is_empty()).then(|| note.trim().to_string())),
     })
-}
-
-/// Build the complete transcript-and-screenshot payload for one worker call.
-///
-/// Screenshot validation is all-or-nothing: the first invalid metadata item
-/// is returned and no partial payload is produced.
-pub fn build_chapter_evidence(
-    cues: &[Cue],
-    window_width_ms: u64,
-    screenshots: &[ScreenshotMetadata],
-) -> Result<ChapterEvidence, EvidenceBuildError> {
-    let transcript_windows = build_transcript_windows(cues, window_width_ms)?;
-    let screenshots = screenshots
-        .iter()
-        .map(build_screenshot_reference)
-        .collect::<Result<Vec<_>, _>>()?;
-
-    Ok(ChapterEvidence {
-        transcript_windows,
-        screenshots,
-    })
-}
-
-fn is_valid_cue(cue: &Cue) -> bool {
-    cue.start_ms < cue.end_ms && !cue.text.trim().is_empty()
-}
-
-fn transcript_window_id(bucket: u64) -> String {
-    format!("{WINDOW_ID_PREFIX}-{bucket:016}")
 }
 
 #[cfg(test)]
@@ -185,179 +135,95 @@ mod tests {
             index,
             start_ms,
             end_ms,
-            text: text.to_owned(),
+            text: text.to_string(),
         }
     }
 
     #[test]
-    fn windows_are_clipped_to_actual_cue_ranges() {
-        let cues = [cue(1, 1_250, 2_250, "first"), cue(2, 3_100, 3_400, "second")];
-
-        let windows = build_transcript_windows(&cues, 1_000);
-
-        let windows = match windows {
-            Ok(windows) => windows,
-            Err(error) => panic!("unexpected error: {error}"),
-        };
-        assert_eq!(windows.len(), 3);
-        assert_eq!((windows[0].start_ms, windows[0].end_ms), (1_250, 2_000));
-        assert_eq!((windows[1].start_ms, windows[1].end_ms), (2_000, 2_250));
-        assert_eq!((windows[2].start_ms, windows[2].end_ms), (3_100, 3_400));
-    }
-
-    #[test]
-    fn cue_crossing_boundary_is_available_in_both_windows() {
-        let cues = [cue(7, 900, 1_100, "crossing")];
-
-        let windows = match build_transcript_windows(&cues, 1_000) {
-            Ok(windows) => windows,
-            Err(error) => panic!("unexpected error: {error}"),
-        };
-
-        assert_eq!(windows.len(), 2);
-        assert_eq!(windows[0].cues, cues);
-        assert_eq!(windows[1].cues, cues);
-        assert_eq!(windows[0].window_id, "transcript-window-0000000000000000");
-        assert_eq!(windows[1].window_id, "transcript-window-0000000000000001");
-    }
-
-    #[test]
-    fn empty_and_invalid_cues_are_skipped() {
-        let cues = [
-            cue(1, 0, 0, "zero length"),
-            cue(2, 20, 10, "backwards"),
-            cue(3, 10, 20, "   \n"),
-            cue(4, 30, 40, "valid"),
+    fn transcript_windows_are_stable_and_keep_cross_boundary_cues_intact() {
+        let cues = vec![
+            cue(4, 10_100, 11_500, " second "),
+            cue(1, 1_000, 2_000, " first "),
+            cue(2, 9_500, 10_500, " crosses "),
+            cue(3, 0, 1, "   "),
+            cue(5, 20, 20, "invalid"),
         ];
 
-        let windows = match build_transcript_windows(&cues, 100) {
-            Ok(windows) => windows,
-            Err(error) => panic!("unexpected error: {error}"),
-        };
-
-        assert_eq!(windows.len(), 1);
-        assert_eq!(windows[0].cues, vec![cues[3].clone()]);
-        assert_eq!((windows[0].start_ms, windows[0].end_ms), (30, 40));
-    }
-
-    #[test]
-    fn window_ids_are_stable_and_ordered() {
-        let cues = [cue(2, 2_100, 2_200, "later"), cue(1, 100, 200, "earlier")];
-
-        let first = match build_transcript_windows(&cues, 1_000) {
-            Ok(windows) => windows,
-            Err(error) => panic!("unexpected error: {error}"),
-        };
-        let second = match build_transcript_windows(&cues, 1_000) {
-            Ok(windows) => windows,
-            Err(error) => panic!("unexpected error: {error}"),
-        };
+        let first = build_transcript_windows(&cues, 10_000).expect("valid width");
+        let second = build_transcript_windows(&cues, 10_000).expect("valid width");
 
         assert_eq!(first, second);
-        assert_eq!(
-            first
-                .iter()
-                .map(|window| window.window_id.as_str())
-                .collect::<Vec<_>>(),
-            vec![
-                "transcript-window-0000000000000000",
-                "transcript-window-0000000000000002",
-            ]
-        );
+        assert_eq!(first.len(), 2);
+        assert_eq!(first[0].window_id, "transcript-window-0000");
+        assert_eq!(first[0].start_ms, 1_000);
+        assert_eq!(first[0].end_ms, 10_500);
+        assert_eq!(first[0].lines[0].text, "first");
+        assert_eq!(first[1].start_ms, 10_100);
+        assert_eq!(first[1].end_ms, 11_500);
+        assert_eq!(first[0].lines.len(), 2);
+        assert_eq!(first[1].lines.len(), 1);
     }
 
     #[test]
-    fn invalid_window_width_is_reported() {
-        assert_eq!(
-            build_transcript_windows(&[], 0),
-            Err(EvidenceBuildError::InvalidWindowWidth)
-        );
+    fn empty_or_invalid_cues_are_not_evidence() {
+        let cues = vec![cue(1, 5, 5, "same"), cue(2, 6, 7, "  ")];
+        let windows = build_transcript_windows(&cues, 1_000).expect("valid width");
+        assert!(windows.is_empty());
     }
 
     #[test]
-    fn screenshot_metadata_is_validated_and_trimmed() {
-        let metadata = ScreenshotMetadata {
-            asset_id: " asset-1 ".to_owned(),
-            timestamp_ms: Some(1_234),
-            resource_ref: " resource://frame-1 ".to_owned(),
-            note: Some("  establishing shot  ".to_owned()),
-        };
+    fn zero_window_width_is_rejected() {
+        let error = build_transcript_windows(&[], 0).expect_err("zero width must fail");
+        assert_eq!(error, EvidenceBuildError::ZeroWindowWidth);
+    }
 
-        let reference = match build_screenshot_reference(&metadata) {
-            Ok(reference) => reference,
-            Err(error) => panic!("unexpected error: {error}"),
-        };
+    #[test]
+    fn screenshot_reference_trims_text_and_validates_bounds() {
+        let reference = build_screenshot_reference(ScreenshotMetadata {
+            asset_id: " asset-1 ".to_string(),
+            timestamp_ms: 900,
+            resource_ref: " frame.jpg ".to_string(),
+            note: Some(" note ".to_string()),
+            media_duration_ms: Some(1_000),
+        })
+        .expect("valid screenshot");
         assert_eq!(reference.asset_id, "asset-1");
-        assert_eq!(reference.timestamp_ms, 1_234);
-        assert_eq!(reference.resource_ref, "resource://frame-1");
-        assert_eq!(reference.note.as_deref(), Some("establishing shot"));
-    }
+        assert_eq!(reference.resource_ref, "frame.jpg");
+        assert_eq!(reference.note.as_deref(), Some("note"));
 
-    #[test]
-    fn invalid_screenshot_metadata_never_panics() {
-        let cases = [
-            (
-                ScreenshotMetadata {
-                    asset_id: "  ".to_owned(),
-                    timestamp_ms: Some(1),
-                    resource_ref: "ref".to_owned(),
-                    note: None,
-                },
-                EvidenceBuildError::EmptyScreenshotAssetId,
-            ),
-            (
-                ScreenshotMetadata {
-                    asset_id: "asset".to_owned(),
-                    timestamp_ms: None,
-                    resource_ref: "ref".to_owned(),
-                    note: None,
-                },
-                EvidenceBuildError::MissingScreenshotTimestamp,
-            ),
-            (
-                ScreenshotMetadata {
-                    asset_id: "asset".to_owned(),
-                    timestamp_ms: Some(u64::MAX),
-                    resource_ref: "ref".to_owned(),
-                    note: None,
-                },
-                EvidenceBuildError::InvalidScreenshotTimestamp,
-            ),
-            (
-                ScreenshotMetadata {
-                    asset_id: "asset".to_owned(),
-                    timestamp_ms: Some(1),
-                    resource_ref: "  ".to_owned(),
-                    note: None,
-                },
-                EvidenceBuildError::EmptyScreenshotResourceRef,
-            ),
-        ];
-
-        for (metadata, expected) in cases {
-            assert_eq!(build_screenshot_reference(&metadata), Err(expected));
-        }
-    }
-
-    #[test]
-    fn chapter_evidence_returns_both_kinds_of_evidence_together() {
-        let screenshots = [ScreenshotMetadata {
-            asset_id: "asset-1".to_owned(),
-            timestamp_ms: Some(500),
-            resource_ref: "resource://asset-1".to_owned(),
+        let error = build_screenshot_reference(ScreenshotMetadata {
+            asset_id: "asset-2".to_string(),
+            timestamp_ms: 1_001,
+            resource_ref: "frame.jpg".to_string(),
             note: None,
-        }];
+            media_duration_ms: Some(1_000),
+        })
+        .expect_err("outside media must fail");
+        assert_eq!(error, EvidenceBuildError::ScreenshotOutsideMedia);
+    }
 
-        let evidence = match build_chapter_evidence(
-            &[cue(1, 100, 900, "line")],
-            1_000,
-            &screenshots,
-        ) {
-            Ok(evidence) => evidence,
-            Err(error) => panic!("unexpected error: {error}"),
+    #[test]
+    fn screenshot_reference_rejects_empty_identity_and_resource() {
+        let base = ScreenshotMetadata {
+            asset_id: " ".to_string(),
+            timestamp_ms: 0,
+            resource_ref: "frame.jpg".to_string(),
+            note: None,
+            media_duration_ms: None,
         };
+        assert_eq!(
+            build_screenshot_reference(base).expect_err("empty id must fail"),
+            EvidenceBuildError::EmptyScreenshotAssetId
+        );
 
-        assert_eq!(evidence.transcript_windows.len(), 1);
-        assert_eq!(evidence.screenshots.len(), 1);
+        let error = build_screenshot_reference(ScreenshotMetadata {
+            asset_id: "asset".to_string(),
+            timestamp_ms: 0,
+            resource_ref: " ".to_string(),
+            note: None,
+            media_duration_ms: None,
+        })
+        .expect_err("empty resource must fail");
+        assert_eq!(error, EvidenceBuildError::EmptyScreenshotResource);
     }
 }

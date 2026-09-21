@@ -21,7 +21,7 @@ export function ChatToggleButton({ className }: { className?: string }) {
           aria-pressed={chatOpen}
           onClick={toggleChat}
         >
-          <Sparkles className="size-3.5 text-amber-400/90" />
+          <Sparkles className="size-3.5 text-ai" />
           <MessageSquare className="size-4" />
         </Button>
       </TooltipTrigger>

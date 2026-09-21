@@ -1,18 +1,26 @@
 //! MCP tool handlers — read snapshot anchor and load heavy context on demand.
 
 use std::fs;
+use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
+use std::time::{SystemTime, UNIX_EPOCH};
+
+#[cfg(feature = "test-support")]
+const TEST_CAPTURE_FIXTURE_DIR_ENV: &str = "LUMINA_MCP_TEST_CAPTURE_FIXTURE_DIR";
 
 use base64::{engine::general_purpose::STANDARD, Engine as _};
 use serde::Serialize;
 use serde_json::{json, Value};
 use tracing::warn;
 
-use crate::snapshot::{ephemeral_tmp_dir, resolve_snapshot_path, LuminaMcpSnapshot, PromptAnchor};
+use crate::snapshot::{
+    ephemeral_tmp_dir, resolve_snapshot_path, ChapterTaskContext, LuminaMcpSnapshot, PromptAnchor,
+};
 use lumina_library::MergedMediaContext;
 use lumina_library::{
     episode_index_for_group, load_context_at_root, load_context_for_group, load_library_index,
-    resolve_episode_media_file, resolve_media_in_index, series_cache_from_context,
+    resolve_episode_media_file, resolve_media_in_index, series_cache_from_context, Database,
+    NewChapter, NewChapterAsset, NewChapterRevision, NewQuestionCandidate, NewWatchFeedItem,
 };
 use lumina_media::frame_capture::{
     capture_frames, detect_scene_times, sample_times_for_window, select_keyframes,
@@ -55,8 +63,9 @@ struct LibraryContextResult {
     merged: Option<MergedMediaContext>,
 }
 
-pub fn handle_tool_call(
+pub fn handle_tool_call_with_context(
     snapshot: &LuminaMcpSnapshot,
+    chapter_task: Option<&ChapterTaskContext>,
     name: &str,
     args: &Value,
 ) -> Result<Value, String> {
@@ -93,6 +102,22 @@ pub fn handle_tool_call(
         } else {
             propose_video_annotation(snapshot, args)
         }
+    } else if name == contract::TOOL_CREATE_CHAPTER_OUTLINE {
+        chapter_task
+            .ok_or_else(|| "章节任务上下文不可用".to_string())
+            .and_then(|context| create_chapter_outline(context, args))
+    } else if name == contract::TOOL_CAPTURE_CHAPTER_EVIDENCE {
+        chapter_task
+            .ok_or_else(|| "章节任务上下文不可用".to_string())
+            .and_then(|context| capture_chapter_evidence(context, args))
+    } else if name == contract::TOOL_UPDATE_CHAPTER_DRAFT {
+        chapter_task
+            .ok_or_else(|| "章节任务上下文不可用".to_string())
+            .and_then(|context| update_chapter_draft(context, args))
+    } else if name == contract::TOOL_FINALIZE_CHAPTER_TASK {
+        chapter_task
+            .ok_or_else(|| "章节任务上下文不可用".to_string())
+            .and_then(|context| finalize_chapter_task(context, args))
     } else {
         Err(format!("Unknown tool: {name}"))
     };
@@ -194,7 +219,20 @@ fn episode_index(snapshot: &LuminaMcpSnapshot) -> Result<Value, String> {
 
 fn transcript_window(snapshot: &LuminaMcpSnapshot, args: &Value) -> Result<Value, String> {
     let anchor = require_anchor(snapshot)?;
-    let (before_sec, after_sec) = parse_window_args(args, 60, 60);
+    let preferred_radius_sec = anchor
+        .transcript_window_radius_sec
+        .and_then(|value| u32::try_from(value).ok())
+        .filter(|value| *value > 0)
+        .unwrap_or(60);
+    let (before_sec, after_sec) =
+        parse_window_args(args, preferred_radius_sec, preferred_radius_sec);
+    tracing::debug!(
+        anchor_ms = anchor.position_ms,
+        preference_radius_sec = ?anchor.transcript_window_radius_sec,
+        before_sec,
+        after_sec,
+        "resolved transcript window"
+    );
     let duration_ms = snapshot_duration_ms(snapshot);
     let center_ms = parse_time_center_ms(args, anchor.position_ms, duration_ms);
     let choice_id = resolve_subtitle_choice_id(args, anchor)?;
@@ -572,7 +610,7 @@ fn capture_frame_tool(snapshot: &LuminaMcpSnapshot, args: &Value) -> Result<Valu
     };
     let cwd = snapshot_cwd()?;
     let output_dir = ephemeral_tmp_dir(&cwd).join(format!("capture-{}", anchor.sent_at_ms));
-    let frames = capture_frames(&media_path, &sample_times, &output_dir)
+    let frames = capture_frames_with_test_seam(&media_path, &sample_times, &output_dir)
         .map_err(|_| "无法获取当前画面".to_string())?;
 
     let mut content = Vec::new();
@@ -1140,10 +1178,638 @@ fn text_result<T: Serialize>(payload: &T) -> Result<Value, String> {
     }))
 }
 
+fn required_i64(args: &Value, key: &str) -> Result<i64, String> {
+    let value = args
+        .get(key)
+        .and_then(Value::as_i64)
+        .ok_or_else(|| format!("缺少或无效的 {key}"))?;
+    if value <= 0 {
+        return Err(format!("{key} 必须大于零"));
+    }
+    Ok(value)
+}
+
+fn required_scope(_args: &Value, context: &ChapterTaskContext) -> Result<(i64, i64, i64), String> {
+    if context.task_id <= 0 || context.attempt_id <= 0 || context.episode_id <= 0 {
+        return Err("当前章节任务范围无效".to_string());
+    }
+    // The model supplies business fields only. Scope comes from the trusted
+    // per-session snapshot, so a model cannot omit, guess, or redirect the
+    // task by inventing ids in tool arguments.
+    Ok((context.task_id, context.attempt_id, context.episode_id))
+}
+
+fn context_file_path(value: &str, label: &str) -> Result<PathBuf, String> {
+    let path = PathBuf::from(value);
+    if !path.is_absolute()
+        || path
+            .components()
+            .any(|component| matches!(component, std::path::Component::ParentDir))
+        || !path.is_file()
+    {
+        return Err(format!("snapshot 中的 {label} 无效"));
+    }
+    Ok(path)
+}
+
+fn validate_context(context: &ChapterTaskContext) -> Result<(PathBuf, PathBuf), String> {
+    if context.task_id <= 0 || context.attempt_id <= 0 || context.episode_id <= 0 {
+        return Err("snapshot 中的章节任务标识无效".to_string());
+    }
+    if context.duration_ms == 0 || context.duration_ms > i64::MAX as u64 {
+        return Err("snapshot 中的媒体时长无效".to_string());
+    }
+    if context.spoiler_boundary.trim().is_empty() || context.spoiler_boundary.len() > 64 {
+        return Err("snapshot 中的剧透边界无效".to_string());
+    }
+    if context.prompt_version.trim().is_empty() || context.prompt_version.len() > 128 {
+        return Err("snapshot 中的提示词版本无效".to_string());
+    }
+    let database = context_file_path(&context.database_path, "数据库位置")?;
+    let media = context_file_path(&context.media_path, "媒体位置")?;
+    Ok((database, media))
+}
+
+fn validate_agent_context(
+    repository: &lumina_library::Repository<'_>,
+    context: &ChapterTaskContext,
+    task_id: i64,
+    attempt_id: i64,
+    episode_id: i64,
+) -> Result<(), String> {
+    let task = repository
+        .get_agent_task(task_id)
+        .map_err(database_message)?
+        .ok_or_else(|| "章节任务不存在".to_string())?;
+    if !task.task_type.starts_with("chapter")
+        || task.episode_id != Some(episode_id)
+        || matches!(task.status.as_str(), "succeeded" | "failed")
+        || task.prompt_version != context.prompt_version
+    {
+        return Err("当前章节任务 scope 无效".to_string());
+    }
+    let attempt = repository
+        .get_agent_attempt(attempt_id)
+        .map_err(database_message)?
+        .ok_or_else(|| "章节任务尝试不存在".to_string())?;
+    if attempt.task_id != task_id || attempt.prompt_version != context.prompt_version {
+        return Err("任务尝试不属于当前章节任务".to_string());
+    }
+    Ok(())
+}
+
+fn database_message(error: lumina_library::DatabaseError) -> String {
+    if let Some(details) = error.details.as_deref() {
+        tracing::error!(code = ?error.code, details = %details, "chapter MCP database operation failed");
+    }
+    error.message
+}
+
+fn create_chapter_outline(context: &ChapterTaskContext, args: &Value) -> Result<Value, String> {
+    let (database_path, _) = validate_context(context)?;
+    let (task_id, attempt_id, episode_id) = required_scope(args, context)?;
+    let chapters = args
+        .get("chapters")
+        .and_then(Value::as_array)
+        .filter(|items| !items.is_empty() && items.len() <= 64)
+        .ok_or_else(|| "chapters 必须是非空数组".to_string())?;
+    let mut parsed = Vec::with_capacity(chapters.len());
+    let mut previous_end = 0_u64;
+    for item in chapters {
+        let stable_id = item
+            .get("stableId")
+            .and_then(Value::as_str)
+            .filter(|value| !value.trim().is_empty() && value.len() <= 128)
+            .ok_or_else(|| "章节 stableId 无效".to_string())?;
+        let start_ms = item
+            .get("startMs")
+            .and_then(Value::as_u64)
+            .ok_or_else(|| "章节 startMs 无效".to_string())?;
+        let end_ms = item
+            .get("endMs")
+            .and_then(Value::as_u64)
+            .ok_or_else(|| "章节 endMs 无效".to_string())?;
+        let title = item
+            .get("title")
+            .and_then(Value::as_str)
+            .filter(|value| !value.trim().is_empty() && value.len() <= 200)
+            .ok_or_else(|| "章节标题无效".to_string())?;
+        if start_ms < previous_end || end_ms <= start_ms || end_ms > context.duration_ms {
+            return Err("章节时间边界无效或未按顺序排列".to_string());
+        }
+        previous_end = end_ms;
+        parsed.push((stable_id.to_string(), start_ms, end_ms, title.to_string()));
+    }
+
+    let mut database = Database::open(database_path).map_err(database_message)?;
+    let records = database
+        .transaction(|repository| {
+            validate_agent_context(repository, context, task_id, attempt_id, episode_id).map_err(
+                |message| lumina_library::DatabaseError {
+                    code: lumina_library::DatabaseErrorCode::InvalidInput,
+                    message,
+                    details: None,
+                },
+            )?;
+            let records = parsed
+                .iter()
+                .map(|(stable_id, start_ms, end_ms, title)| {
+                    let mut input = NewChapter::new(
+                        episode_id,
+                        stable_id.clone(),
+                        *start_ms as i64,
+                        *end_ms as i64,
+                        "chapter_agent_mcp",
+                    );
+                    input.spoiler_level = context.spoiler_boundary.clone();
+                    input.title = Some(title.clone());
+                    repository.upsert_draft_chapter_for_agent_task(task_id, episode_id, &input)
+                })
+                .collect::<lumina_library::DatabaseResult<Vec<_>>>()?;
+            let keep_ids = records.iter().map(|chapter| chapter.id).collect::<Vec<_>>();
+            repository.replace_agent_task_chapter_outline(task_id, episode_id, &keep_ids)?;
+            Ok(records)
+        })
+        .map_err(database_message)?;
+    text_result(&json!({
+        "taskId": task_id,
+        "attemptId": attempt_id,
+        "episodeId": episode_id,
+        "status": "draft",
+        "chapters": records.iter().map(|chapter| json!({
+            "chapterId": chapter.id,
+            "stableId": chapter.stable_id,
+            "startMs": chapter.start_ms,
+            "endMs": chapter.end_ms,
+            "title": chapter.title,
+        })).collect::<Vec<_>>(),
+    }))
+}
+
+fn capture_chapter_evidence(context: &ChapterTaskContext, args: &Value) -> Result<Value, String> {
+    let (database_path, media_path) = validate_context(context)?;
+    let (task_id, attempt_id, episode_id) = required_scope(args, context)?;
+    let chapter_id = required_i64(args, "chapterId")?;
+    let timestamps = args
+        .get("timestampsMs")
+        .and_then(Value::as_array)
+        .filter(|items| !items.is_empty() && items.len() <= 8)
+        .ok_or_else(|| "timestampsMs 必须是非空数组".to_string())?;
+    let timestamps = timestamps
+        .iter()
+        .map(|value| value.as_u64().ok_or_else(|| "截图时间无效".to_string()))
+        .collect::<Result<Vec<_>, _>>()?;
+
+    let mut database = Database::open(&database_path).map_err(database_message)?;
+    let chapter = database
+        .transaction(|repository| {
+            validate_agent_context(repository, context, task_id, attempt_id, episode_id).map_err(
+                |message| lumina_library::DatabaseError {
+                    code: lumina_library::DatabaseErrorCode::InvalidInput,
+                    message,
+                    details: None,
+                },
+            )?;
+            let chapter = repository.get_chapter(chapter_id)?.ok_or_else(|| {
+                lumina_library::DatabaseError {
+                    code: lumina_library::DatabaseErrorCode::InvalidInput,
+                    message: "章节不存在".to_string(),
+                    details: None,
+                }
+            })?;
+            if chapter.episode_id != episode_id || chapter.status != "draft" {
+                return Err(lumina_library::DatabaseError {
+                    code: lumina_library::DatabaseErrorCode::InvalidInput,
+                    message: "只能为当前任务的 draft 章节采集证据".to_string(),
+                    details: None,
+                });
+            }
+            repository.ensure_agent_task_chapter_scope(task_id, episode_id, chapter_id)?;
+            Ok(chapter)
+        })
+        .map_err(database_message)?;
+    if timestamps.iter().any(|time| {
+        *time > context.duration_ms
+            || *time < chapter.start_ms as u64
+            || *time > chapter.end_ms as u64
+    }) {
+        return Err("截图时间必须位于当前章节边界内".to_string());
+    }
+
+    let capture_root = database_path
+        .parent()
+        .ok_or_else(|| "数据库位置缺少父目录".to_string())?
+        .join("chapter-assets")
+        .join(format!("task-{task_id}"))
+        .join(format!("chapter-{chapter_id}"))
+        .join(format!("capture-{}-{}", now_ms(), std::process::id()));
+    let sample_times = timestamps
+        .iter()
+        .map(|time| *time as f64 / 1000.0)
+        .collect::<Vec<_>>();
+    let paths = capture_chapter_evidence_frames(&media_path, &sample_times, &capture_root)?;
+    if paths.len() != timestamps.len() {
+        return Err("章节画面采集结果数量不一致".to_string());
+    }
+
+    let mut database = Database::open(&database_path).map_err(database_message)?;
+    let assets = database
+        .transaction(|repository| {
+            validate_agent_context(repository, context, task_id, attempt_id, episode_id).map_err(
+                |message| lumina_library::DatabaseError {
+                    code: lumina_library::DatabaseErrorCode::InvalidInput,
+                    message,
+                    details: None,
+                },
+            )?;
+            let mut assets = Vec::with_capacity(paths.len());
+            for (path, timestamp) in paths.iter().zip(timestamps.iter()) {
+                let bytes = fs::read(path).map_err(|error| lumina_library::DatabaseError {
+                    code: lumina_library::DatabaseErrorCode::QueryFailed,
+                    message: "章节画面读取失败".to_string(),
+                    details: Some(error.to_string()),
+                })?;
+                let mut hasher = std::collections::hash_map::DefaultHasher::new();
+                bytes.hash(&mut hasher);
+                let mut input = NewChapterAsset::new(
+                    chapter_id,
+                    "jpeg_frame",
+                    path.to_string_lossy().to_string(),
+                    format!("siphash-{:016x}", hasher.finish()),
+                    *timestamp as i64,
+                    "chapter_agent_mcp",
+                );
+                input.width = Some(640);
+                let asset =
+                    repository.insert_chapter_asset_for_agent_task(task_id, episode_id, &input)?;
+                assets.push(json!({
+                    "assetId": asset.id,
+                    "timestampMs": timestamp,
+                    "visualContext": format!("本地媒体在 {}ms 的 JPEG 画面证据", timestamp),
+                }));
+            }
+            Ok(assets)
+        })
+        .map_err(database_message)?;
+    let image_bytes = paths
+        .iter()
+        .map(|path| fs::read(path).map_err(|_| "章节画面读取失败".to_string()))
+        .collect::<Result<Vec<_>, _>>()?;
+    chapter_evidence_result(
+        &json!({
+        "taskId": task_id,
+        "episodeId": episode_id,
+        "chapterId": chapter_id,
+        "assets": assets,
+        }),
+        &image_bytes,
+    )
+}
+
+/// Test-only seam for the black-box MCP harness.
+///
+/// The normal path remains the project-local FFmpeg capture implementation.
+/// An explicit fixture directory lets a protocol-level test exercise the
+/// complete MCP/database path on hosts that do not carry the bundled FFmpeg;
+/// the environment variable is never set by the desktop application.
+fn capture_frames_with_test_seam(
+    media_path: &Path,
+    sample_times: &[f64],
+    output_dir: &Path,
+) -> Result<Vec<PathBuf>, String> {
+    #[cfg(feature = "test-support")]
+    if let Some(fixture_dir) = std::env::var_os(TEST_CAPTURE_FIXTURE_DIR_ENV) {
+        let fixture_dir = PathBuf::from(fixture_dir);
+        fs::create_dir_all(output_dir)
+            .map_err(|error| format!("测试截图输出目录创建失败: {error}"))?;
+        let mut outputs = Vec::with_capacity(sample_times.len());
+        for (index, _) in sample_times.iter().enumerate() {
+            let candidate = fixture_dir.join(format!("frame-{index:02}.jpg"));
+            let fallback = fixture_dir.join("frame.jpg");
+            let source = if candidate.is_file() {
+                candidate
+            } else if fallback.is_file() {
+                fallback.clone()
+            } else {
+                return Err(format!(
+                    "测试截图 fixture 缺少 frame-{index:02}.jpg 或 frame.jpg"
+                ));
+            };
+            let output = output_dir.join(format!("frame-{index:02}.jpg"));
+            fs::copy(&source, &output)
+                .map_err(|error| format!("测试截图 fixture 复制失败: {error}"))?;
+            outputs.push(output);
+        }
+        return Ok(outputs);
+    }
+
+    capture_frames(media_path, sample_times, output_dir)
+        .map_err(|error| format!("章节画面采集失败: {error}"))
+}
+
+fn capture_chapter_evidence_frames(
+    media_path: &Path,
+    sample_times: &[f64],
+    output_dir: &Path,
+) -> Result<Vec<PathBuf>, String> {
+    capture_frames_with_test_seam(media_path, sample_times, output_dir)
+}
+
+fn chapter_evidence_result(metadata: &Value, image_bytes: &[Vec<u8>]) -> Result<Value, String> {
+    let text = serde_json::to_string_pretty(metadata).map_err(|error| error.to_string())?;
+    let mut content = vec![json!({ "type": "text", "text": text })];
+    for bytes in image_bytes {
+        content.push(json!({
+            "type": "image",
+            "data": STANDARD.encode(bytes),
+            "mimeType": "image/jpeg",
+        }));
+    }
+    Ok(json!({ "content": content, "isError": false }))
+}
+
+fn update_chapter_draft(context: &ChapterTaskContext, args: &Value) -> Result<Value, String> {
+    let (database_path, _) = validate_context(context)?;
+    let (task_id, attempt_id, episode_id) = required_scope(args, context)?;
+    let chapter_id = required_i64(args, "chapterId")?;
+    let mainline = args
+        .get("mainline")
+        .and_then(Value::as_str)
+        .filter(|value| !value.trim().is_empty() && value.len() <= 20_000)
+        .ok_or_else(|| "mainline 无效".to_string())?;
+    let title = args.get("title").and_then(Value::as_str);
+    let draft_key = args
+        .get("draftKey")
+        .and_then(Value::as_str)
+        .filter(|value| !value.trim().is_empty() && value.len() <= 128)
+        .ok_or_else(|| "draftKey 无效".to_string())?;
+    let evidence_ids = args
+        .get("evidenceAssetIds")
+        .and_then(Value::as_array)
+        .filter(|items| !items.is_empty() && items.len() <= 16)
+        .ok_or_else(|| "evidenceAssetIds 必须是非空数组".to_string())?
+        .iter()
+        .map(|value| {
+            value
+                .as_i64()
+                .filter(|id| *id > 0)
+                .ok_or_else(|| "证据 assetId 无效".to_string())
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let recap = args.get("recap").and_then(Value::as_str).unwrap_or("");
+    let outlook = args.get("outlook").and_then(Value::as_str).unwrap_or("");
+    let highlights = args
+        .get("highlights")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let questions = args
+        .get("questions")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    if recap.len() > 20_000
+        || outlook.len() > 20_000
+        || highlights.len() > 32
+        || questions.len() > 32
+    {
+        return Err("章节草稿字段超出限制".to_string());
+    }
+    let content = json!({
+        "title": title,
+        "mainline": mainline,
+        "recap": recap,
+        "outlook": outlook,
+        "highlights": highlights,
+        "evidenceAssetIds": evidence_ids,
+        "draftKey": draft_key,
+    });
+    let content_text = serde_json::to_string(&content).map_err(|error| error.to_string())?;
+
+    let mut database = Database::open(database_path).map_err(database_message)?;
+    let result = database
+        .transaction(|repository| {
+            validate_agent_context(repository, context, task_id, attempt_id, episode_id).map_err(
+                |message| lumina_library::DatabaseError {
+                    code: lumina_library::DatabaseErrorCode::InvalidInput,
+                    message,
+                    details: None,
+                },
+            )?;
+            let chapter = repository.get_chapter(chapter_id)?.ok_or_else(|| {
+                lumina_library::DatabaseError {
+                    code: lumina_library::DatabaseErrorCode::InvalidInput,
+                    message: "章节不存在".to_string(),
+                    details: None,
+                }
+            })?;
+            if chapter.episode_id != episode_id
+                || chapter.end_ms > context.duration_ms as i64
+                || chapter.status != "draft"
+            {
+                return Err(lumina_library::DatabaseError {
+                    code: lumina_library::DatabaseErrorCode::InvalidInput,
+                    message: "章节草稿超出当前任务范围".to_string(),
+                    details: None,
+                });
+            }
+            let assets = repository.list_chapter_assets_by_chapter(chapter_id)?;
+            if evidence_ids
+                .iter()
+                .any(|id| !assets.iter().any(|asset| asset.id == *id))
+            {
+                return Err(lumina_library::DatabaseError {
+                    code: lumina_library::DatabaseErrorCode::InvalidInput,
+                    message: "章节证据不属于当前章节".to_string(),
+                    details: None,
+                });
+            }
+            repository.ensure_agent_task_chapter_scope(task_id, episode_id, chapter_id)?;
+            let chapter = repository.update_draft_chapter_for_agent_task(
+                task_id,
+                episode_id,
+                chapter_id,
+                title,
+                Some(mainline),
+            )?;
+            let revision_number = repository
+                .get_latest_chapter_revision(chapter_id)?
+                .map_or(1, |revision| revision.revision_number + 1);
+            let revision = repository.insert_draft_revision_for_agent_task(
+                task_id,
+                episode_id,
+                &NewChapterRevision::new(
+                    chapter_id,
+                    revision_number,
+                    format!("chapter_draft:{draft_key}"),
+                    content_text.clone(),
+                    "chapter_agent_mcp",
+                    context.prompt_version.clone(),
+                ),
+            )?;
+            let mut question_ids = Vec::new();
+            let mut question_fingerprints = Vec::new();
+            for (index, question) in questions.iter().enumerate() {
+                let Some(question) = question.as_str().filter(|value| !value.trim().is_empty())
+                else {
+                    return Err(lumina_library::DatabaseError {
+                        code: lumina_library::DatabaseErrorCode::InvalidInput,
+                        message: "问题候选无效".to_string(),
+                        details: None,
+                    });
+                };
+                let mut hasher = std::collections::hash_map::DefaultHasher::new();
+                format!("{task_id}:{chapter_id}:{draft_key}:{index}").hash(&mut hasher);
+                let fingerprint = format!("chapter-question-{:016x}", hasher.finish());
+                let mut candidate = NewQuestionCandidate::new(
+                    question,
+                    "chapter_agent_mcp",
+                    &context.spoiler_boundary,
+                    fingerprint.clone(),
+                );
+                candidate.episode_id = Some(episode_id);
+                candidate.chapter_id = Some(chapter_id);
+                candidate.task_id = Some(task_id);
+                candidate.batch_key = Some(draft_key.to_string());
+                question_fingerprints.push(fingerprint);
+                question_ids.push(
+                    repository
+                        .insert_question_candidate_for_agent_task(task_id, episode_id, &candidate)?
+                        .id,
+                );
+            }
+            repository.remove_stale_draft_questions_for_agent_task(
+                task_id,
+                episode_id,
+                chapter_id,
+                draft_key,
+                &question_fingerprints,
+            )?;
+            let mut feed_ids = Vec::new();
+            let mut feed_parts = vec![("mainline", mainline.to_string())];
+            if !recap.trim().is_empty() {
+                feed_parts.push(("recap", recap.to_string()));
+            }
+            if !outlook.trim().is_empty() {
+                feed_parts.push(("outlook", outlook.to_string()));
+            }
+            if !highlights.is_empty() {
+                feed_parts.push((
+                    "highlights",
+                    serde_json::to_string(&highlights).map_err(|error| {
+                        lumina_library::DatabaseError {
+                            code: lumina_library::DatabaseErrorCode::InvalidInput,
+                            message: "章节重点格式无效".to_string(),
+                            details: Some(error.to_string()),
+                        }
+                    })?,
+                ));
+            }
+            let feed_types = feed_parts
+                .iter()
+                .map(|(kind, _)| (*kind).to_string())
+                .collect::<Vec<_>>();
+            repository.remove_stale_draft_feed_items_for_agent_task(
+                task_id,
+                episode_id,
+                chapter_id,
+                draft_key,
+                &feed_types,
+            )?;
+            for (kind, value) in feed_parts {
+                let mut feed = NewWatchFeedItem::new(
+                    kind,
+                    "chapter_agent_mcp",
+                    value,
+                    &context.spoiler_boundary,
+                    context.prompt_version.clone(),
+                    format!("chapter-feed:{task_id}:{chapter_id}:{draft_key}:{kind}"),
+                );
+                feed.episode_id = Some(episode_id);
+                feed.chapter_id = Some(chapter_id);
+                feed.revision_id = Some(revision.id);
+                feed.task_id = Some(task_id);
+                feed_ids.push(
+                    repository
+                        .insert_draft_feed_item_for_agent_task(task_id, episode_id, &feed)?
+                        .id,
+                );
+            }
+            Ok(json!({
+                "chapterId": chapter.id,
+                "revisionId": revision.id,
+                "questionIds": question_ids,
+                "feedDraftIds": feed_ids,
+                "status": "draft",
+            }))
+        })
+        .map_err(database_message)?;
+    text_result(&result)
+}
+
+fn finalize_chapter_task(context: &ChapterTaskContext, args: &Value) -> Result<Value, String> {
+    let (database_path, _) = validate_context(context)?;
+    let (task_id, attempt_id, episode_id) = required_scope(args, context)?;
+    let mut database = Database::open(database_path).map_err(database_message)?;
+    let result = database
+        .transaction(|repository| {
+            validate_agent_context(repository, context, task_id, attempt_id, episode_id).map_err(
+                |message| lumina_library::DatabaseError {
+                    code: lumina_library::DatabaseErrorCode::InvalidInput,
+                    message,
+                    details: None,
+                },
+            )?;
+            let output = serde_json::to_string(&json!({
+                "taskId": task_id,
+                "attemptId": attempt_id,
+                "episodeId": episode_id,
+                "status": "published",
+            }))
+            .map_err(|error| lumina_library::DatabaseError {
+                code: lumina_library::DatabaseErrorCode::InvalidInput,
+                message: "章节任务输出格式无效".to_string(),
+                details: Some(error.to_string()),
+            })?;
+            let chapters = repository.publish_agent_chapter_task(
+                task_id,
+                attempt_id,
+                episode_id,
+                context.duration_ms as i64,
+                &output,
+            )?;
+            Ok(json!({
+                "taskId": task_id,
+                "episodeId": episode_id,
+                "status": "published",
+                "chapterIds": chapters.iter().map(|chapter| chapter.id).collect::<Vec<_>>(),
+            }))
+        })
+        .map_err(database_message)?;
+    text_result(&result)
+}
+
+fn now_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_millis().min(u64::MAX as u128) as u64)
+        .unwrap_or_default()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::snapshot::{AgentCapabilities, CONTEXT_FILE_ENV};
+    use crate::snapshot::{AgentCapabilities, ChapterTaskContext, CONTEXT_FILE_ENV};
+    use std::sync::{Mutex, OnceLock};
+
+    static CONTEXT_ENV_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+
+    fn context_env_lock() -> std::sync::MutexGuard<'static, ()> {
+        CONTEXT_ENV_LOCK
+            .get_or_init(|| Mutex::new(()))
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
 
     fn seek_snapshot() -> LuminaMcpSnapshot {
         LuminaMcpSnapshot {
@@ -1158,6 +1824,7 @@ mod tests {
                 duration_ms: Some(60_000),
                 sent_at_ms: 0,
                 subtitle_choice_id: None,
+                transcript_window_radius_sec: None,
             }),
             ..LuminaMcpSnapshot::empty()
         }
@@ -1254,6 +1921,7 @@ mod tests {
     /// Env var is restored afterwards (same convention as the capture chain).
     #[test]
     fn seek_tool_round_trips_through_control_file() {
+        let _context_guard = context_env_lock();
         let dir = std::env::temp_dir().join(format!("lumina-seek-{}", std::process::id()));
         std::fs::create_dir_all(&dir).expect("seek temp dir");
         let previous = std::env::var(CONTEXT_FILE_ENV).ok();
@@ -1328,35 +1996,14 @@ mod tests {
     /// Needs ffmpeg; SKIP otherwise (same convention as the codec matrix).
     #[test]
     fn capture_tool_returns_labeled_image_blocks() {
-        let ffmpeg = match lumina_media::tools::resolve_ffmpeg() {
-            Ok(path) => path,
-            Err(_) => {
-                eprintln!("SKIP capture chain: ffmpeg not vendored on this machine");
-                return;
-            }
-        };
+        let _context_guard = context_env_lock();
         let dir = std::env::temp_dir().join(format!("lumina-capture-chain-{}", std::process::id()));
         std::fs::create_dir_all(&dir).expect("chain temp dir");
         let media = dir.join("chain-20s.mp4");
-        let status = lumina_media::process::command(&ffmpeg)
-            .args([
-                "-y",
-                "-f",
-                "lavfi",
-                "-i",
-                "testsrc=duration=20:size=640x360:rate=30",
-                "-c:v",
-                "libx264",
-                "-preset",
-                "veryfast",
-                "-pix_fmt",
-                "yuv420p",
-                "-an",
-            ])
-            .arg(&media)
-            .output()
-            .expect("spawn ffmpeg");
-        assert!(status.status.success(), "chain fixture failed to encode");
+        if !create_synthetic_video(&media, 20) {
+            eprintln!("SKIP capture chain: ffmpeg not vendored on this machine");
+            return;
+        }
 
         // snapshot_cwd() follows LUMINA_MCP_CONTEXT_FILE; restore afterwards.
         let previous = std::env::var(CONTEXT_FILE_ENV).ok();
@@ -1376,6 +2023,7 @@ mod tests {
                 duration_ms: None,
                 sent_at_ms: 7,
                 subtitle_choice_id: None,
+                transcript_window_radius_sec: None,
             }),
             capabilities: Some(AgentCapabilities {
                 vision_capable: true,
@@ -1461,6 +2109,7 @@ mod tests {
     /// Needs ffmpeg; SKIP otherwise.
     #[test]
     fn capture_tool_scene_mode_merges_cuts() {
+        let _context_guard = context_env_lock();
         let ffmpeg = match lumina_media::tools::resolve_ffmpeg() {
             Ok(path) => path,
             Err(_) => {
@@ -1511,9 +2160,10 @@ mod tests {
                 season: None,
                 episode: None,
                 position_ms: 2_000,
-                duration_ms: None,
+                duration_ms: Some(4_000),
                 sent_at_ms: 9,
                 subtitle_choice_id: None,
+                transcript_window_radius_sec: None,
             }),
             capabilities: Some(AgentCapabilities {
                 vision_capable: true,
@@ -1567,6 +2217,37 @@ mod tests {
     fn parse_radius_argument() {
         let (before, after) = parse_window_args(&json!({ "radiusSec": 3 }), 60, 60);
         assert_eq!((before, after), (3, 3));
+    }
+
+    #[test]
+    fn transcript_window_uses_anchor_preference_when_window_is_omitted() {
+        let mut snapshot = online_snapshot_with_transcript();
+        snapshot
+            .anchor
+            .as_mut()
+            .expect("anchor")
+            .transcript_window_radius_sec = Some(15);
+
+        let value = transcript_window(&snapshot, &json!({})).expect("preferred window");
+        let payload = tool_text_payload(&value);
+        assert_eq!(payload.get("beforeSec").and_then(Value::as_u64), Some(15));
+        assert_eq!(payload.get("afterSec").and_then(Value::as_u64), Some(15));
+    }
+
+    #[test]
+    fn transcript_window_explicit_args_override_anchor_preference() {
+        let mut snapshot = online_snapshot_with_transcript();
+        snapshot
+            .anchor
+            .as_mut()
+            .expect("anchor")
+            .transcript_window_radius_sec = Some(15);
+
+        let value =
+            transcript_window(&snapshot, &json!({ "radiusSec": 3 })).expect("explicit window");
+        let payload = tool_text_payload(&value);
+        assert_eq!(payload.get("beforeSec").and_then(Value::as_u64), Some(3));
+        assert_eq!(payload.get("afterSec").and_then(Value::as_u64), Some(3));
     }
 
     #[test]
@@ -1628,6 +2309,7 @@ mod tests {
             duration_ms: None,
             sent_at_ms: 1,
             subtitle_choice_id: None,
+            transcript_window_radius_sec: None,
         };
         assert_eq!(episode_transcript_default_center(&anchor, 1, 2), 88_000);
         assert_eq!(episode_transcript_default_center(&anchor, 1, 3), 0);
@@ -1689,6 +2371,7 @@ mod tests {
                 duration_ms: None,
                 sent_at_ms: 1,
                 subtitle_choice_id: Some("online:en".into()),
+                transcript_window_radius_sec: None,
             }),
             capabilities: Some(AgentCapabilities {
                 vision_capable: false,
@@ -1832,6 +2515,7 @@ mod tests {
                     duration_ms: None,
                     sent_at_ms: 1,
                     subtitle_choice_id: Some(stored.choice_id.clone()),
+                    transcript_window_radius_sec: None,
                 }),
                 ..LuminaMcpSnapshot::empty()
             };
@@ -2060,6 +2744,7 @@ mod tests {
                 duration_ms: None,
                 sent_at_ms: 11,
                 subtitle_choice_id: None,
+                transcript_window_radius_sec: None,
             }),
             capabilities: Some(AgentCapabilities {
                 vision_capable: false,
@@ -2095,5 +2780,429 @@ mod tests {
         assert!((end as i64 - 4000).abs() < 400, "marks: {text}");
         assert!(parsed.get("peaks").and_then(Value::as_array).is_some());
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn chapter_evidence_result_exposes_mcp_images_without_local_paths() {
+        let metadata = json!({
+            "assets": [{
+                "assetId": 42,
+                "timestampMs": 1200,
+                "visualContext": "本地媒体在 1200ms 的 JPEG 画面证据"
+            }]
+        });
+        let result =
+            chapter_evidence_result(&metadata, &[vec![0xff, 0xd8, 0xff]]).expect("evidence result");
+        let blocks = result
+            .get("content")
+            .and_then(Value::as_array)
+            .expect("content blocks");
+        assert_eq!(blocks.len(), 2);
+        assert_eq!(blocks[1].get("type").and_then(Value::as_str), Some("image"));
+        assert_eq!(
+            blocks[1].get("mimeType").and_then(Value::as_str),
+            Some("image/jpeg")
+        );
+        assert!(blocks[1].get("data").and_then(Value::as_str).is_some());
+        let serialized = serde_json::to_string(&result).expect("serialize result");
+        assert!(!serialized.contains("chapter-assets"));
+        assert!(!serialized.contains(".jpg"));
+    }
+
+    struct ChapterToolFixture {
+        dir: PathBuf,
+        context: ChapterTaskContext,
+        task_id: i64,
+        attempt_id: i64,
+        episode_id: i64,
+    }
+
+    impl Drop for ChapterToolFixture {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.dir);
+        }
+    }
+
+    fn chapter_tool_fixture() -> ChapterToolFixture {
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("system clock")
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!(
+            "lumina-mcp-chapter-tools-{}-{nonce}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&dir).expect("fixture directory");
+        let database_path = dir.join("lumina.sqlite3");
+        let media_path = dir.join("episode.mkv");
+        fs::write(&media_path, b"dummy media").expect("dummy media");
+
+        let (task_id, attempt_id, episode_id) = {
+            let database = Database::open(&database_path).expect("fixture database");
+            let repository = database.repository();
+            let series_id = repository
+                .insert_series(&lumina_library::NewSeries::new(
+                    "fixture-series",
+                    "Fixture Series",
+                    "test",
+                ))
+                .expect("fixture series");
+            let mut episode = lumina_library::NewEpisode::new(series_id, "fixture-episode", "test");
+            episode.duration_ms = Some(10_000);
+            let episode_id = repository
+                .insert_episode(&episode)
+                .expect("fixture episode");
+            let mut task = lumina_library::NewAgentTask::new(
+                "fixture-chapter-task",
+                "chapter_generation",
+                "chapter-prompt-v1",
+            );
+            task.episode_id = Some(episode_id);
+            task.status = "running".into();
+            let task_id = repository.insert_agent_task(&task).expect("fixture task");
+            let attempt_id = repository
+                .insert_agent_attempt(&lumina_library::NewAgentAttempt::new(
+                    task_id,
+                    1,
+                    "initial",
+                    "running",
+                    "chapter-prompt-v1",
+                    1,
+                ))
+                .expect("fixture attempt");
+            (task_id, attempt_id, episode_id)
+        };
+
+        ChapterToolFixture {
+            dir,
+            context: ChapterTaskContext {
+                task_id,
+                attempt_id,
+                episode_id,
+                database_path: database_path.to_string_lossy().into_owned(),
+                media_path: media_path.to_string_lossy().into_owned(),
+                duration_ms: 10_000,
+                spoiler_boundary: "episode".into(),
+                prompt_version: "chapter-prompt-v1".into(),
+            },
+            task_id,
+            attempt_id,
+            episode_id,
+        }
+    }
+
+    fn chapter_tool_payload(value: &Value) -> Value {
+        let text = value
+            .get("content")
+            .and_then(Value::as_array)
+            .and_then(|blocks| blocks.first())
+            .and_then(|block| block.get("text"))
+            .and_then(Value::as_str)
+            .expect("chapter tool text result");
+        serde_json::from_str(text).expect("chapter tool JSON payload")
+    }
+
+    fn invoke_chapter_tool(
+        fixture: &ChapterToolFixture,
+        name: &str,
+        args: Value,
+    ) -> Result<Value, String> {
+        invoke_chapter_tool_with_context(&fixture.context, name, args)
+    }
+
+    fn invoke_chapter_tool_with_context(
+        context: &ChapterTaskContext,
+        name: &str,
+        args: Value,
+    ) -> Result<Value, String> {
+        handle_tool_call_with_context(&LuminaMcpSnapshot::empty(), Some(context), name, &args)
+    }
+
+    fn create_synthetic_video(path: &Path, duration_sec: u32) -> bool {
+        let ffmpeg = match lumina_media::tools::resolve_ffmpeg() {
+            Ok(path) => path,
+            Err(_) => return false,
+        };
+        let status = lumina_media::process::command(&ffmpeg)
+            .args([
+                "-y",
+                "-f",
+                "lavfi",
+                "-i",
+                &format!("testsrc=duration={duration_sec}:size=640x360:rate=30"),
+                "-c:v",
+                "libx264",
+                "-preset",
+                "veryfast",
+                "-pix_fmt",
+                "yuv420p",
+                "-an",
+            ])
+            .arg(path)
+            .output()
+            .expect("spawn ffmpeg");
+        assert!(
+            status.status.success(),
+            "synthetic fixture failed to encode"
+        );
+        true
+    }
+
+    fn chapter_scope_args(_fixture: &ChapterToolFixture) -> Value {
+        json!({})
+    }
+
+    #[test]
+    fn direct_capture_handler_persists_asset_and_returns_mcp_image() {
+        let fixture = chapter_tool_fixture();
+        let media_path = fixture.dir.join("capture-2s.mp4");
+        if !create_synthetic_video(&media_path, 2) {
+            eprintln!("SKIP chapter evidence capture: ffmpeg not vendored on this machine");
+            return;
+        }
+        let context = ChapterTaskContext {
+            media_path: media_path.to_string_lossy().into_owned(),
+            ..fixture.context.clone()
+        };
+
+        let mut outline_args = chapter_scope_args(&fixture);
+        outline_args["chapters"] = json!([{
+            "stableId": "scene-capture",
+            "startMs": 0,
+            "endMs": 1_500,
+            "title": "Captured scene"
+        }]);
+        let outline = invoke_chapter_tool_with_context(
+            &context,
+            lumina_core::tool_contract::TOOL_CREATE_CHAPTER_OUTLINE,
+            outline_args,
+        )
+        .expect("outline");
+        let chapter_id = chapter_tool_payload(&outline)["chapters"][0]["chapterId"]
+            .as_i64()
+            .expect("chapter id");
+
+        let mut capture_args = chapter_scope_args(&fixture);
+        capture_args["chapterId"] = json!(chapter_id);
+        capture_args["timestampsMs"] = json!([1_000]);
+        let result = invoke_chapter_tool_with_context(
+            &context,
+            lumina_core::tool_contract::TOOL_CAPTURE_CHAPTER_EVIDENCE,
+            capture_args,
+        )
+        .expect("chapter evidence capture");
+        let blocks = result
+            .get("content")
+            .and_then(Value::as_array)
+            .expect("MCP content blocks");
+        let image = blocks
+            .iter()
+            .find(|block| block.get("type").and_then(Value::as_str) == Some("image"))
+            .expect("MCP image block");
+        assert_eq!(
+            image.get("mimeType").and_then(Value::as_str),
+            Some("image/jpeg")
+        );
+        assert!(image
+            .get("data")
+            .and_then(Value::as_str)
+            .is_some_and(|data| data.starts_with("/9j/")));
+        let serialized = serde_json::to_string(&result).expect("serialize MCP result");
+        assert!(!serialized.contains("chapter-assets"));
+        assert!(!serialized.contains("capture-2s.mp4"));
+
+        let database = Database::open(&fixture.context.database_path).expect("reopen fixture db");
+        let assets = database
+            .repository()
+            .list_chapter_assets_by_chapter(chapter_id)
+            .expect("chapter assets");
+        assert_eq!(assets.len(), 1);
+        assert_eq!(assets[0].asset_type, "jpeg_frame");
+        assert_eq!(assets[0].source, "chapter_agent_mcp");
+        assert!(Path::new(&assets[0].path).is_file());
+    }
+
+    #[test]
+    fn direct_outline_handler_persists_idempotent_stable_chapter_mapping() {
+        let fixture = chapter_tool_fixture();
+        let mut args = chapter_scope_args(&fixture);
+        args["chapters"] = json!([{
+            "stableId": "scene-001",
+            "startMs": 0,
+            "endMs": 4_000,
+            "title": "Opening"
+        }]);
+
+        let first = invoke_chapter_tool(
+            &fixture,
+            lumina_core::tool_contract::TOOL_CREATE_CHAPTER_OUTLINE,
+            args.clone(),
+        )
+        .expect("first outline");
+        let first_payload = chapter_tool_payload(&first);
+        let first_id = first_payload["chapters"][0]["chapterId"]
+            .as_i64()
+            .expect("first chapter id");
+        let second = invoke_chapter_tool(
+            &fixture,
+            lumina_core::tool_contract::TOOL_CREATE_CHAPTER_OUTLINE,
+            args,
+        )
+        .expect("idempotent outline");
+        let second_id = chapter_tool_payload(&second)["chapters"][0]["chapterId"]
+            .as_i64()
+            .expect("second chapter id");
+        assert_eq!(first_id, second_id);
+
+        let database = Database::open(&fixture.context.database_path).expect("reopen fixture db");
+        let chapters = database
+            .repository()
+            .list_chapters_by_agent_task(fixture.task_id, fixture.episode_id)
+            .expect("task chapters");
+        assert_eq!(chapters.len(), 1);
+        assert_eq!(chapters[0].id, first_id);
+        assert_eq!(chapters[0].stable_id, "scene-001");
+    }
+
+    #[test]
+    fn direct_update_asset_and_finalize_handlers_persist_and_publish_atomically() {
+        let fixture = chapter_tool_fixture();
+        let mut outline_args = chapter_scope_args(&fixture);
+        outline_args["chapters"] = json!([{
+            "stableId": "scene-final",
+            "startMs": 0,
+            "endMs": 5_000,
+            "title": "Final scene"
+        }]);
+        let outline = invoke_chapter_tool(
+            &fixture,
+            lumina_core::tool_contract::TOOL_CREATE_CHAPTER_OUTLINE,
+            outline_args,
+        )
+        .expect("outline");
+        let chapter_id = chapter_tool_payload(&outline)["chapters"][0]["chapterId"]
+            .as_i64()
+            .expect("chapter id");
+
+        let asset_path = fixture.dir.join("durable-frame.jpg");
+        fs::write(&asset_path, b"jpeg fixture").expect("fixture asset");
+        let database = Database::open(&fixture.context.database_path).expect("open fixture db");
+        let asset = database
+            .repository()
+            .insert_chapter_asset(&lumina_library::NewChapterAsset::new(
+                chapter_id,
+                "jpeg_frame",
+                asset_path.to_string_lossy().into_owned(),
+                "fixture-hash",
+                1_000,
+                "test",
+            ))
+            .expect("persistent asset");
+        drop(database);
+
+        let mut update_args = chapter_scope_args(&fixture);
+        update_args["chapterId"] = json!(chapter_id);
+        update_args["mainline"] = json!("The durable chapter draft.");
+        update_args["recap"] = json!("A short recap.");
+        update_args["questions"] = json!(["What changes next?"]);
+        update_args["evidenceAssetIds"] = json!([asset]);
+        update_args["draftKey"] = json!("draft-001");
+        let update = invoke_chapter_tool(
+            &fixture,
+            lumina_core::tool_contract::TOOL_UPDATE_CHAPTER_DRAFT,
+            update_args,
+        )
+        .expect("chapter update");
+        assert_eq!(chapter_tool_payload(&update)["status"], "draft");
+
+        let finalize = invoke_chapter_tool(
+            &fixture,
+            lumina_core::tool_contract::TOOL_FINALIZE_CHAPTER_TASK,
+            chapter_scope_args(&fixture),
+        )
+        .expect("chapter finalize");
+        assert_eq!(chapter_tool_payload(&finalize)["status"], "published");
+
+        let database = Database::open(&fixture.context.database_path).expect("reopen published db");
+        let repository = database.repository();
+        assert_eq!(
+            repository
+                .get_agent_task(fixture.task_id)
+                .expect("task")
+                .expect("task row")
+                .status,
+            "succeeded"
+        );
+        assert_eq!(
+            repository
+                .get_agent_attempt(fixture.attempt_id)
+                .expect("attempt")
+                .expect("attempt row")
+                .status,
+            "succeeded"
+        );
+        assert_eq!(
+            repository
+                .get_chapter(chapter_id)
+                .expect("chapter")
+                .expect("chapter row")
+                .status,
+            "ready"
+        );
+        assert_eq!(
+            repository
+                .get_latest_chapter_revision(chapter_id)
+                .expect("revision")
+                .expect("revision row")
+                .status,
+            "accepted"
+        );
+        assert!(repository
+            .list_watch_feed_items_by_episode(fixture.episode_id)
+            .expect("feed")
+            .iter()
+            .any(|item| item.chapter_id == Some(chapter_id) && item.published_at_ms.is_some()));
+    }
+
+    #[test]
+    fn direct_chapter_handlers_reject_cross_task_and_cross_episode_scope() {
+        let fixture = chapter_tool_fixture();
+        let mut cross_task = chapter_scope_args(&fixture);
+        cross_task["chapters"] = json!([{
+            "stableId": "cross-task",
+            "startMs": 0,
+            "endMs": 1_000,
+            "title": "Rejected"
+        }]);
+        let cross_task_context = ChapterTaskContext {
+            task_id: fixture.task_id + 1,
+            ..fixture.context.clone()
+        };
+        let error = invoke_chapter_tool_with_context(
+            &cross_task_context,
+            lumina_core::tool_contract::TOOL_CREATE_CHAPTER_OUTLINE,
+            cross_task,
+        )
+        .expect_err("cross-task outline must be rejected");
+        assert_eq!(error, "章节任务不存在");
+
+        let mut cross_episode = chapter_scope_args(&fixture);
+        cross_episode["chapters"] = json!([{
+            "stableId": "cross-episode",
+            "startMs": 0,
+            "endMs": 1_000,
+            "title": "Rejected"
+        }]);
+        let cross_episode_context = ChapterTaskContext {
+            episode_id: fixture.episode_id + 1,
+            ..fixture.context.clone()
+        };
+        let error = invoke_chapter_tool_with_context(
+            &cross_episode_context,
+            lumina_core::tool_contract::TOOL_CREATE_CHAPTER_OUTLINE,
+            cross_episode,
+        )
+        .expect_err("cross-episode outline must be rejected");
+        assert_eq!(error, "当前章节任务 scope 无效");
     }
 }

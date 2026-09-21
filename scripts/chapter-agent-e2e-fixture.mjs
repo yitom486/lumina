@@ -53,7 +53,6 @@ Options:
 Environment fallbacks: LUMINA_FFMPEG and LUMINA_FFPROBE, then the project
 native/ffmpeg locations and finally PATH.`);
 }
-
 function parseArgs(argv) {
   const options = { output: defaultOutput, force: false, verify: null };
   for (let index = 0; index < argv.length; index += 1) {
@@ -82,7 +81,6 @@ function parseArgs(argv) {
   }
   return options;
 }
-
 function existingFile(value) {
   return value && existsSync(value) ? value : null;
 }

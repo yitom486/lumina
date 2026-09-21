@@ -67,7 +67,6 @@ test("fixture CLI --help is deterministic", () => {
   assert.match(result.stdout, /--ffprobe <path>/);
   assert.match(result.stdout, /--verify <file>/);
 });
-
 test("fixture CLI reports unknown arguments without side effects", () => {
   const result = runCli(["--unknown"]);
 
@@ -75,7 +74,6 @@ test("fixture CLI reports unknown arguments without side effects", () => {
   assert.equal(result.stdout, "");
   assert.equal(result.stderr, "[chapter-agent-e2e-fixture] Unknown option: --unknown\n");
 });
-
 test("fixture CLI gives an actionable ffprobe-unavailable diagnostic", () => {
   const result = runWithMissingTool(
     "ffprobe",

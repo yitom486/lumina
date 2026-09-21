@@ -1,17 +1,17 @@
 # UI 工作区手动 E2E 验收
 
-这是**真实桌面窗口**验收，不是 DOM mock 验收。使用 `bun tauri dev`、真实 libmpv HWND 和真实 ACP（需要时）；`bun run test:ui` 只能作为渲染回归辅助，不能勾选本清单中的桌面通过项。
+这是**真实桌面窗口**验收，不是 DOM mock 验收。使用 `bun run tauri`、真实 libmpv HWND 和真实 ACP（需要时）；`bun run test:ui` 只能作为渲染回归辅助，不能勾选本清单中的桌面通过项。
 
 ## 当前实现边界
 
 - 视频由 libmpv 原生 HWND 绘制；WebView 只负责 sibling 布局和 HTML 控件。
 - 普通窗口右侧是列表/文稿/笔记/章节/媒体库/在线侧栏；AI 是独立的右侧 `ChatDock` sibling。
 - 打开 AI 时普通侧栏暂不显示；关闭 AI 后恢复普通侧栏。AI 面板保持 mounted，收起不等于结束会话。
-- 当前源码入口是顶部 **AI 对话**，并未提供已接线的“AI 观剧流 / 自由聊天”双 Tab。双 Tab 属于必须单独记录的目标验收项，不能由单一 AI 对话 dock 推定完成。
+- 当前迁移分支的顶部 **AI 对话** 工作区已包含 **AI 观剧流 / 自由聊天** 双 Tab；仍需在真实 Tauri 窗口中分别验证两个 Tab 的数据隔离、工具轨迹和布局行为。
 
 ## 前置条件
 
-- [ ] `bun tauri dev` 启动成功，窗口可正常调整大小
+- [ ] `bun run tauri` 启动成功，窗口可正常调整大小
 - [ ] 打开一个有画面的本地媒体；若验证在线源，在线解析和字幕已先单独确认
 - [ ] 播放状态至少可在 Playing / Paused 间切换
 - [ ] ACP 需要时已按 [`manual-e2e-acp.md`](./manual-e2e-acp.md) 配置并登录
@@ -74,6 +74,6 @@
 
 ## 未覆盖项
 
-- “AI 观剧流 / 自由聊天”双 Tab 在当前源码没有真实入口；在实现前只能记录为未覆盖。
+- 双 Tab 的 DOM/组件测试不等于真实 Tauri 验收；仍需记录真实窗口中的切换、布局、权限、历史和 HWND 结果。
 - 本文不把 `bun run test:ui` 的 mock 数据、组件截图或静态原型截图当成真实桌面通过证据。
 - 本清单不验证生产实现内部的 FFI pointer、窗口句柄数值或 Agent stderr；这些属于实现细节，应通过业务结果和脱敏日志诊断。

@@ -54,8 +54,10 @@ use commands::acp::{
     acp_cancel, acp_close, acp_connect, acp_delete_session, acp_list_agent_sessions,
     acp_load_session, acp_login_antigravity, acp_new_chat, acp_prompt, acp_respond_permission,
     acp_set_session_model, acp_status, acp_switch_session, acp_sync_mcp_capabilities,
+    acp_watch_feed,
 };
 use commands::asr::{asr_install, asr_status, asr_transcribe};
+use commands::chapter::{chapter_segmentation_start, chapter_segmentation_status};
 use commands::library::{
     library_agent_models_discover, library_apply_tmdb_match, library_context_for_media,
     library_credential_delete, library_credential_status, library_credentials_save,
@@ -156,6 +158,8 @@ pub fn run() {
             asr_status,
             asr_transcribe,
             asr_install,
+            chapter_segmentation_start,
+            chapter_segmentation_status,
             ytdl_status,
             ytdl_cookie_status,
             ytdl_set_cookies,
@@ -192,6 +196,7 @@ pub fn run() {
             library_models_discover,
             library_agent_models_discover,
             acp_status,
+            acp_watch_feed,
             acp_respond_permission,
             acp_connect,
             acp_list_agent_sessions,
@@ -218,6 +223,7 @@ pub fn run() {
             notes_export_recap_card,
         ])
         .setup(|app| {
+            commands::chapter::recover_interrupted_tasks();
             if let Ok(resource_dir) = app.path().resource_dir() {
                 std::env::set_var(
                     lumina_media::tools::RESOURCE_DIR_ENV,

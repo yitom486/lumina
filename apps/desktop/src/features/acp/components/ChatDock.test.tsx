@@ -1,36 +1,46 @@
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import type { ReactNode } from "react";
+import userEvent from "@testing-library/user-event";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { useChatUiStore } from "@lumina/chat-ui/chatUiStore";
 
 import { ChatDock } from "./ChatDock";
 
-vi.mock("./AcpPanel", () => ({
-  AcpPanel: () => <input aria-label="AI 对话输入框" />,
+vi.mock("@/components/PanelErrorBoundary", () => ({
+  PanelErrorBoundary: ({ children }: { children: ReactNode }) => (
+    <>{children}</>
+  ),
 }));
 
-beforeEach(() => {
-  useChatUiStore.setState({
-    chatMounted: false,
-    chatOpen: false,
-    acpResponding: false,
-  });
-});
+vi.mock("@/layouts/WorkspacePanelFrame", () => ({
+  WorkspacePanelFrame: ({ children, actions }: { children: ReactNode; actions?: ReactNode }) => (
+    <section>
+      {actions}
+      {children}
+    </section>
+  ),
+}));
+
+vi.mock("./AcpPanel", () => ({
+  AcpPanel: () => (
+    <>
+      <button type="button">内部控件</button>
+      <input aria-label="AI 对话输入框" />
+    </>
+  ),
+}));
 
 afterEach(() => {
   cleanup();
-  vi.clearAllMocks();
+  useChatUiStore.setState({ chatMounted: false, chatOpen: false });
+  vi.restoreAllMocks();
 });
 
-describe("ChatDock layout sibling", () => {
-  it("does not mount the AI sibling before the user opens it", () => {
-    render(<ChatDock />);
-
-    expect(screen.queryByRole("complementary")).not.toBeInTheDocument();
-  });
-
-  it("keeps the open dock beside the content with an accessible live region", () => {
+describe("ChatDock", () => {
+  it("keeps the open dock beside the native content sibling", () => {
     useChatUiStore.setState({ chatMounted: true, chatOpen: true });
+
     render(
       <main>
         <section aria-label="Native video surface" />
@@ -49,7 +59,7 @@ describe("ChatDock layout sibling", () => {
     ).toBeInTheDocument();
   });
 
-  it("hides the dock as a sibling without unmounting its private UI state", () => {
+  it("hides the dock without unmounting its private UI state", () => {
     useChatUiStore.setState({ chatMounted: true, chatOpen: true });
     render(<ChatDock />);
 
@@ -63,24 +73,42 @@ describe("ChatDock layout sibling", () => {
     expect(input).toBeInTheDocument();
   });
 
-  it("closes from Escape while leaving the mounted dock recoverable", () => {
-    useChatUiStore.setState({ chatMounted: true, chatOpen: true });
+  it("keeps the mounted dock inert while closed and restores focusability when opened", async () => {
+    const user = userEvent.setup();
+    useChatUiStore.setState({ chatMounted: true, chatOpen: false });
+
     render(<ChatDock />);
 
-    fireEvent.keyDown(window, { key: "Escape" });
+    const dock = screen.getByRole("complementary", { hidden: true });
+    expect(dock).toHaveAttribute("aria-hidden", "true");
+    expect(dock).toHaveAttribute("inert");
+    expect(
+      screen.getByRole("button", { name: "内部控件", hidden: true }),
+    ).toBeInTheDocument();
+
+    await user.keyboard("{Escape}");
+    expect(useChatUiStore.getState().chatOpen).toBe(false);
+
+    useChatUiStore.getState().openChat();
+
+    await waitFor(() => {
+      expect(dock).toHaveAttribute("aria-hidden", "false");
+      expect(dock).not.toHaveAttribute("inert");
+      expect(screen.getByRole("button", { name: "收起对话" })).toBeEnabled();
+    });
+  });
+
+  it("closes from Escape while open without unmounting the dock", async () => {
+    const user = userEvent.setup();
+    useChatUiStore.setState({ chatMounted: true, chatOpen: true });
+
+    render(<ChatDock />);
+    const dock = screen.getByRole("complementary");
+
+    await user.keyboard("{Escape}");
 
     expect(useChatUiStore.getState().chatOpen).toBe(false);
-    expect(
-      screen.getByRole("complementary", { hidden: true }),
-    ).toHaveAttribute("aria-hidden", "true");
-    expect(
-      screen.getByRole("textbox", { name: "AI 对话输入框", hidden: true }),
-    ).toBeInTheDocument();
+    expect(screen.getByRole("complementary", { hidden: true })).toBe(dock);
+    expect(dock).toHaveAttribute("inert");
   });
-});
-
-it.todo("uses native inert and returns focus to the visible sibling when the dock closes");
-
-describe.todo("AI 观剧流 / 自由聊天 tabs", () => {
-  it.todo("isolates drafts, activities, errors, and session state when switching tabs");
 });

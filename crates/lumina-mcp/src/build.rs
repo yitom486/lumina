@@ -22,6 +22,7 @@ pub struct McpPromptContext {
     pub position_ms: Option<u64>,
     pub duration_ms: Option<u64>,
     pub subtitle_choice_id: Option<String>,
+    pub transcript_window_radius_sec: Option<u64>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -137,6 +138,7 @@ impl PromptSnapshotState {
             subtitle_choice_id: context
                 .and_then(|ctx| ctx.subtitle_choice_id.clone())
                 .filter(|value| !value.trim().is_empty()),
+            transcript_window_radius_sec: context.and_then(|ctx| ctx.transcript_window_radius_sec),
         });
 
         Ok(SnapshotBuildResult {
@@ -193,12 +195,21 @@ mod tests {
         let a = McpPromptContext {
             media_path: Some(r"D:\videos\a.mp4".into()),
             position_ms: Some(1_000),
+            transcript_window_radius_sec: Some(15),
             ..Default::default()
         };
         let first = state
             .next_snapshot(Some(&a), &library, false)
             .expect("first snapshot");
         assert!(first.media_changed);
+        assert_eq!(
+            first
+                .snapshot
+                .anchor
+                .as_ref()
+                .and_then(|anchor| anchor.transcript_window_radius_sec),
+            Some(15)
+        );
 
         let same = state
             .next_snapshot(Some(&a), &library, false)

@@ -673,14 +673,13 @@ impl AcpService {
 
         // Snapshot IO goes through the app-provided environment (M5).
         let env = session_env()?;
-        let snapshot_path = env.snapshot_path(std::path::Path::new(cwd));
+        let snapshot_path = env.snapshot_path(std::path::Path::new(cwd), kind);
+        let vision_capable = vision_capable || kind == SessionKind::Chapter;
         env.sync_snapshot(&snapshot_path, vision_capable)
             .map_err(|error| AcpError::internal(Some(&error)))?;
-        let isolated = self.isolated_task();
-        let mcp_servers = env.mcp_servers(&snapshot_path, isolated);
+        let mcp_servers = env.mcp_servers(&snapshot_path, kind);
         tracing::info!(
             session_kind = ?kind,
-            isolated,
             cwd,
             snapshot = %snapshot_path.display(),
             mcp = %mcp_servers,
@@ -841,16 +840,15 @@ impl AcpService {
         } = spec;
         // Snapshot IO goes through the app-provided environment (M5).
         let env = session_env()?;
-        let snapshot_path = env.snapshot_path(std::path::Path::new(cwd));
+        let snapshot_path = env.snapshot_path(std::path::Path::new(cwd), kind);
+        let vision_capable = vision_capable || kind == SessionKind::Chapter;
         env.sync_snapshot(&snapshot_path, vision_capable)
             .map_err(|error| AcpError::internal(Some(&error)))?;
         let new_id = session.next_id;
         session.next_id += 1;
-        let isolated = self.isolated_task();
-        let mcp_servers = env.mcp_servers(&snapshot_path, isolated);
+        let mcp_servers = env.mcp_servers(&snapshot_path, kind);
         tracing::info!(
             session_kind = ?kind,
-            isolated,
             cwd,
             snapshot = %snapshot_path.display(),
             mcp = %mcp_servers,

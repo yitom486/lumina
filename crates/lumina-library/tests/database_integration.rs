@@ -4,7 +4,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use lumina_library::{
     AgentTaskKeyMigration, Database, DatabaseResult, EpisodeMigrationStatus,
     LegacyEpisodeMigration, NewChapter, NewChapterAsset, NewChapterRevision, NewEpisode,
-    NewQuestionCandidate, NewSeries, NewWatchFeedItem, Repository,
+    NewQuestionCandidate, NewSeries, NewWatchFeedItem, Repository, CURRENT_SCHEMA_VERSION,
 };
 
 static NEXT_DATABASE_ID: AtomicU64 = AtomicU64::new(1);
@@ -79,7 +79,7 @@ fn real_sqlite_round_trip_projects_all_entities_and_survives_restart() {
     let path = TemporaryDatabasePath::new("round-trip");
     let (episode_id, chapter_id, revision_id, question_id, feed_id, asset_id, task_id) = {
         let database = must(Database::open(path.path()));
-        assert_eq!(must(database.schema_version()), 2);
+        assert_eq!(must(database.schema_version()), CURRENT_SCHEMA_VERSION);
 
         let repository = database.repository();
         let episode_id = seed_episode(&repository, "series:round-trip", "episode:01");

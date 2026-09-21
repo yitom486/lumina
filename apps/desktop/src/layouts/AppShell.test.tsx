@@ -37,6 +37,21 @@ beforeEach(() => {
 });
 
 describe("AboutButton", () => {
+  it("renders the branded application title bar", () => {
+    vi.mocked(getVersion).mockResolvedValue("0.3.0");
+    render(
+      <TooltipProvider>
+        <AppShell>
+          <div />
+        </AppShell>
+      </TooltipProvider>,
+    );
+
+    expect(screen.getByRole("banner", { name: "应用标题栏" })).toBeInTheDocument();
+    expect(screen.getByRole("img", { name: "Lumina" })).toBeInTheDocument();
+    expect(screen.getByText("AI Video Reader")).toBeInTheDocument();
+  });
+
   it("shows the runtime version in the about dialog", async () => {
     vi.mocked(getVersion).mockResolvedValue("0.3.0");
     const user = userEvent.setup();

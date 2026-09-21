@@ -52,7 +52,7 @@ export function TrackControlButtons({
 
   const compact = variant === "bar";
   const btnClass = cn(
-    compact && "h-8 gap-1 border-white/15 bg-black/40 px-2 text-xs text-foreground hover:bg-white/10",
+    compact && "h-8 gap-1 border-player-control/50 bg-player-surface/40 px-2 text-xs text-player-control-foreground hover:bg-player-control-hover/60",
     compact ? "max-w-[7rem]" : "max-w-[9rem] gap-1.5",
   );
 
@@ -188,7 +188,7 @@ export function TrackControlButtons({
       </div>
 
       {cinema && (audioInlineOpen || subtitleInlineOpen) ? (
-        <div className="flex flex-wrap gap-1 border-t border-white/10 px-3 py-2">
+        <div className="flex flex-wrap gap-1 border-t border-player-control/50 px-3 py-2">
           {audioInlineOpen
             ? audioTracks.map((track) => (
                 <Button

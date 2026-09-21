@@ -4,7 +4,7 @@
 
 ## 当前工作树的边界
 
-截至本分支验收准备时，章节 worker 已有本地媒体探测、字幕窗口和真实 ffmpeg 截帧的执行缝隙；章节 ACP 会话、校验重试、SQLite 表、观剧流任务卡和重启恢复仍属于 L2 Batch B/C/D 的待实现验收面。若 UI 没有下述入口或数据库尚未有对应 migration，应记录为 **未覆盖/阻断**，不能用机械 soft segment、自由聊天消息或人工插库代替通过。
+截至本分支验收准备时，章节 worker、版本化 PromptRepository、独立任务状态、SQLite 章节/观剧流投影、输出校验和三次增量重试均已有代码与定向测试覆盖。本清单补的是 F-4 的真实 Windows/Tauri 联调：不能用单元测试、mock Agent 或“任务已创建”替代真实字幕/截帧/ACP/重启链路。若实际构建缺少入口或持久化投影，应记录为未覆盖/阻断，不得静默跳过。
 
 ## 1. 前置条件
 
@@ -175,4 +175,4 @@ if (Test-Path -LiteralPath $out) { Remove-Item -LiteralPath $out -Recurse -Force
 
 - 自动化：fixture 生成、内嵌字幕存在性、无容器章节、时长下限和 ffprobe JSON 校验。
 - 人工真实 Tauri：native HWND、用户点击、真实 Agent/ACP、MCP 字幕窗口与截帧、权限、重启和普通聊天隔离。
-- 当前未覆盖：本工作树尚未具备可执行的 SQLite migration/diagnostic query、章节专用 ACP session、校验重试状态机和观剧流持久投影；这些必须在对应 L2 批次实现后重新执行本清单，不能以当前本地 evidence worker 的成功日志代替 F-4 全链路通过。
+- 当前未覆盖：真实 Tauri/HWND、已配置 Agent、ffmpeg/ffprobe、字幕/截帧、独立 ACP、重启恢复和失败重试仍未在本机完整跑通；现有代码级集成测试和定向门禁不能代替 F-4 的真实运行记录。
