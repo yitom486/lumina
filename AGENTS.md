@@ -95,7 +95,21 @@ cargo clippy --workspace --all-targets -- -D warnings
 ## 笔记 / 章节
 
 - 笔记：时间戳锚点 + Markdown 导出；不依赖 AI
-- 章节：容器元数据优先；无章节且有字幕允许机械分段（标明非语义，禁主题生成）；无字幕仍静默
+- 章节目标只有两种来源：容器/在线源提供的真实章节，以及用户主动触发的 AI 语义分段。
+  不再新增或扩展 soft/机械分段；现有 P6-M5 实现属于待下线迁移债务，迁移完成前不得把它
+  当作新的产品能力继续设计。AI 分段必须结合字幕/台词与按需截帧，不能在打开视频时静默启动。
+
+## UI 与 AI 实现约束
+
+- UI 原语统一使用现有 Radix UI + shadcn/ui；不得在同一套设计系统中引入 Base UI。
+- 颜色不得在业务组件中硬编码十六进制、RGB 或命名色。必须使用语义 CSS 变量；亮色和暗色
+  两套 token 都要完整定义。媒体画面黑色属于播放器 surface 的特殊语义，不得借此绕过主题变量。
+- 快捷 AI 操作只能引用版本化的任务提示词，不得把专有提示词散落在 React 组件字符串中。
+  提示词仓库、章节 Agent、输出校验、增量重试和 SQLite 数据层的执行约束见
+  `.plan/L2-chapter-agent-data-pipeline.md`。
+- AI 结构校验失败时，重试消息只能增量追加本次校验报告；同一校验错误最多重试三次，超过
+  上限必须失败并保留原因。只有 Agent 会话因传输故障丢失时，才允许使用完整 bootstrap
+  prompt 恢复新会话。底层技术细节仍只能进入 `details`/日志，不能直接展示给用户。
 
 ## Conventions
 
@@ -108,3 +122,17 @@ cargo clippy --workspace --all-targets -- -D warnings
 - Vendor 原件只读：`packages/ui` 内 shadcn 拷贝以上游 default 风格为准，禁止直接修改；
   定制只允许调用方 `className`（经 `cn` 合并）或外层转接拷贝；包 Radix 原语的 wrapper
   必须透传 `ref`（`asChild` 链的硬性契约，丢 ref 会静默杀死浮层定位）
+
+## UI design references
+
+- 主界面视觉参考图：`ui/lumina-desktop-overview-reference.png`
+- 文稿阅读工作区参考图：`ui/lumina-transcript-reading-reference.png`
+- 时间戳笔记工作区参考图：`ui/lumina-notes-workspace-reference.png`
+- 设置与资源管理工作区参考图：`ui/lumina-settings-workspace-reference.png`
+- 通用聊天与富输出参考图：`ui/lumina-general-chat-rich-output-reference.png`
+- AI 观剧流与自由聊天 Tab 参考图：`ui/lumina-ai-watch-feed-reference.png`
+- 无章节视频的章节工作区参考图：`ui/lumina-chapter-generation-reference.png`
+- AI 与自动化设置参考图：`ui/lumina-ai-automation-settings-reference.png`
+- UI 交互与渲染约定：`ui/README.md`
+- 设计方向：深蓝石墨背景、蓝青色 AI 状态光感、橙色播放操作强调，整体保持科技简约与低干扰。
+- 参考图只定义视觉语言和信息层级，不改变原生播放器约束：`libmpv` HWND 必须与 WebView UI 使用并排布局，文稿、笔记、章节与 AI 面板不得依赖覆盖 HWND 的透明 WebView 层。

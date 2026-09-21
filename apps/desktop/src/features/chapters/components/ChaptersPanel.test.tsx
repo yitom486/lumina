@@ -63,6 +63,41 @@ afterEach(() => {
 });
 
 describe("ChaptersPanel soft segments", () => {
+  it("shows a pending probe state while media metadata is loading", () => {
+    let resolveProbe: ((value: unknown) => void) | undefined;
+    vi.mocked(invoke).mockImplementation((cmd: string) => {
+      if (cmd === "media_inspect") {
+        return new Promise((resolve) => {
+          resolveProbe = resolve;
+        });
+      }
+      if (cmd === "subtitle_load_choice")
+        return Promise.resolve({ choiceId: "s1", cues: CUES });
+      return Promise.resolve(null);
+    });
+
+    renderPanel();
+
+    expect(screen.getByText("正在探测章节…")).toBeInTheDocument();
+    resolveProbe?.({ path: "C:\\v\\a.mp4", streams: [], chapters: [] });
+  });
+
+  it("shows a business-safe failed state without exposing probe details", async () => {
+    vi.mocked(invoke).mockImplementation((cmd: string) => {
+      if (cmd === "media_inspect") {
+        return Promise.reject(new Error("ffprobe stderr: private diagnostic"));
+      }
+      return Promise.resolve(null);
+    });
+
+    renderPanel();
+
+    await waitFor(() => {
+      expect(screen.getByText("无法读取媒体信息（章节依赖探测）。")).toBeInTheDocument();
+    });
+    expect(screen.queryByText(/ffprobe|private diagnostic/)).not.toBeInTheDocument();
+  });
+
   it("lists mechanical segments and seeks on click", async () => {
     renderPanel();
     await waitFor(() => {
@@ -100,6 +135,11 @@ describe("ChaptersPanel soft segments", () => {
     });
   });
 });
+
+it.todo("projects a user-visible pending AI chapter task without starting a real Agent");
+it.todo("projects a user-visible running AI chapter task in the AI watch feed");
+it.todo("projects a failed AI chapter task with an incremental retry entry point");
+it.todo("projects a succeeded AI chapter task without adding a turn to free chat");
 
 const REMOTE_URL = "https://www.youtube.com/watch?v=remote1";
 

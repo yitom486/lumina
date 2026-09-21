@@ -2370,6 +2370,7 @@ dependencies = [
  "base64 0.22.1",
  "lumina-media",
  "lumina-subtitle",
+ "lumina-ytdl",
  "serde",
  "serde_json",
  "tracing",

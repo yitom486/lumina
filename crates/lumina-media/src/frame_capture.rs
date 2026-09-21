@@ -6,6 +6,7 @@
 //! - Scale to 640px width, JPEG `-q:v 5` for moderate size
 //! - Write under `.lumina/tmp/capture-*`; deleted after MCP returns (next prompt also clears tmp)
 
+use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
@@ -23,6 +24,27 @@ pub const MAX_CAPTURE_SPAN_SEC: u32 = 7;
 /// per call; clamped to 0.1..=0.9). Duration is NOT a density proxy, so no
 /// auto-adaptation by media length (review decision).
 pub const DEFAULT_SCENE_THRESHOLD: f32 = 0.4;
+
+fn frame_capture_args(output: &Path) -> Vec<OsString> {
+    vec![
+        OsString::from("-frames:v"),
+        OsString::from("1"),
+        OsString::from("-vf"),
+        OsString::from(format!("scale={MAX_FRAME_WIDTH}:-1")),
+        OsString::from("-c:v"),
+        OsString::from("mjpeg"),
+        OsString::from("-threads:v"),
+        OsString::from("1"),
+        // yuvj420p is the full-range JPEG-compatible format expected by the
+        // Windows MJPEG encoder for frames decoded from H.264 media.
+        OsString::from("-pix_fmt"),
+        OsString::from("yuvj420p"),
+        OsString::from("-q:v"),
+        OsString::from("5"),
+        OsString::from("-y"),
+        output.as_os_str().to_owned(),
+    ]
+}
 
 /// Scene-cut timestamps (seconds) via ffmpeg `select` + `showinfo`.
 /// Sorted, possibly empty. Missing ffmpeg propagates the tool error.
@@ -138,16 +160,7 @@ pub fn capture_frames(
                 "-i",
             ])
             .arg(media_path)
-            .args([
-                "-frames:v",
-                "1",
-                "-vf",
-                &format!("scale={MAX_FRAME_WIDTH}:-1"),
-                "-q:v",
-                "5",
-                "-y",
-            ])
-            .arg(&output)
+            .args(frame_capture_args(&output))
             .status()
             .map_err(|error| MediaError::internal(Some(&format!("spawn ffmpeg: {error}"))))?;
         if started.elapsed() > CAPTURE_TIMEOUT {
@@ -218,6 +231,35 @@ fn subsample_times(times: Vec<f64>, max_len: usize) -> Vec<f64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn frame_capture_args_use_single_threaded_full_range_jpeg() {
+        let args = frame_capture_args(Path::new("frame-00.jpg"));
+        let args: Vec<String> = args
+            .iter()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect();
+
+        assert_eq!(
+            args,
+            vec![
+                "-frames:v",
+                "1",
+                "-vf",
+                "scale=640:-1",
+                "-c:v",
+                "mjpeg",
+                "-threads:v",
+                "1",
+                "-pix_fmt",
+                "yuvj420p",
+                "-q:v",
+                "5",
+                "-y",
+                "frame-00.jpg",
+            ]
+        );
+    }
 
     #[test]
     fn sample_times_default_is_anchor_only() {

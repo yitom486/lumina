@@ -1,7 +1,8 @@
 import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { useChatUiStore } from "@lumina/chat-ui/chatUiStore";
 import { TooltipProvider } from "@lumina/ui/tooltip";
 
 import { AppShell } from "./AppShell";
@@ -25,6 +26,14 @@ import { openUrl } from "@tauri-apps/plugin-opener";
 afterEach(() => {
   cleanup();
   vi.clearAllMocks();
+});
+
+beforeEach(() => {
+  useChatUiStore.setState({
+    chatMounted: false,
+    chatOpen: false,
+    acpResponding: false,
+  });
 });
 
 describe("AboutButton", () => {
@@ -64,3 +73,30 @@ describe("AboutButton", () => {
     );
   });
 });
+
+describe("AppShell AI entry", () => {
+  it("toggles the AI sibling entry without changing the ordinary workspace content", async () => {
+    const user = userEvent.setup();
+    render(
+      <TooltipProvider>
+        <AppShell>
+          <div data-testid="ordinary-workspace" />
+        </AppShell>
+      </TooltipProvider>,
+    );
+
+    expect(screen.getByTestId("ordinary-workspace")).toBeInTheDocument();
+    const toggle = screen.getByRole("button", { name: "打开 AI 对话" });
+    await user.click(toggle);
+    expect(toggle).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByTestId("ordinary-workspace")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "收起 AI 对话" }));
+    expect(screen.getByRole("button", { name: "打开 AI 对话" })).toHaveAttribute(
+      "aria-pressed",
+      "false",
+    );
+  });
+});
+
+it.todo("switches between WorkspacePanelFrame and ChatDock siblings with inert focus isolation");

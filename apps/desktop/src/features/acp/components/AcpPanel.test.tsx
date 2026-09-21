@@ -134,4 +134,16 @@ describe("AcpPanel", () => {
     );
     expect(depthErrors).toHaveLength(0);
   });
+
+  it("does not present the single chat dock as the planned two-tab experience", async () => {
+    renderPanel();
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "新建对话" })).toBeInTheDocument();
+    });
+
+    expect(screen.queryByRole("tab", { name: "AI 观剧流" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("tab", { name: "自由聊天" })).not.toBeInTheDocument();
+  });
 });
+
+it.todo("keeps AI watch-feed and free-chat drafts, activities, and errors isolated on tab switch");

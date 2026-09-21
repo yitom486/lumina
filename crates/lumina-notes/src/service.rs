@@ -6,12 +6,12 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::error::NoteError;
 use crate::headings::NotesExportHeadings;
+use crate::load_subtitle_choice;
 use crate::model::{
     Note, NoteCreate, NoteFrame, NoteFrameData, NotePreviewQuotes, NoteQuote, NoteUpdate,
 };
 use crate::quotes::{resolve_quotes, QuoteResolveInput};
 use crate::store::{self, default_store_path};
-use lumina_subtitle::service::SubtitleService;
 
 pub struct NoteService {
     path: PathBuf,
@@ -294,7 +294,7 @@ fn resolve_quotes_for_input(
     let Some(choice_id) = subtitle_choice_id.filter(|id| !id.trim().is_empty()) else {
         return Ok(Vec::new());
     };
-    let transcript = match SubtitleService::load_choice(media_path, choice_id) {
+    let transcript = match load_subtitle_choice(std::path::Path::new(media_path), choice_id) {
         Ok(transcript) => transcript,
         Err(error) => {
             tracing::warn!(%error, "failed to load subtitle for note quotes");
