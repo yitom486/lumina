@@ -3,8 +3,10 @@ import { act, cleanup, fireEvent, render, screen } from "@testing-library/react"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { useAcpProfilesStore } from "@lumina/chat-ui/acpProfilesStore";
-import type { ChapterSegmentationSnapshot } from "../api";
+import type { ChapterProgressEvent, ChapterSegmentationSnapshot } from "../api";
 import { usePlayerStore } from "@/features/player";
+import { useChapterProgressEvents } from "../hooks/useChapterProgressEvents";
+import { useChapterProgressStore } from "../progressStore";
 
 import { ChaptersPanel } from "./ChaptersPanel";
 
@@ -12,7 +14,12 @@ vi.mock("@tauri-apps/api/core", () => ({
   invoke: vi.fn(),
 }));
 
+vi.mock("@tauri-apps/api/event", () => ({
+  listen: vi.fn(),
+}));
+
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 
 const MEDIA_PATH = "C:\\fixtures\\episode-01.mp4";
 
@@ -87,6 +94,18 @@ function renderPanel() {
   );
 }
 
+function renderPanelWithProgressBridge(showPanel = true) {
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
+  const view = render(
+    <QueryClientProvider client={queryClient}>
+      <ProgressBridgeHarness visible={showPanel} />
+    </QueryClientProvider>,
+  );
+  return { ...view, queryClient };
+}
+
 async function advanceTimers(milliseconds = 0) {
   await act(async () => {
     await vi.advanceTimersByTimeAsync(milliseconds);
@@ -115,8 +134,10 @@ beforeEach(() => {
     status: "Paused",
     currentTimeMs: 500,
   });
+  useChapterProgressStore.setState({ byTaskKey: {} });
   useAcpProfilesStore.setState({ activeProfileId: "codex" });
   vi.mocked(invoke).mockReset();
+  vi.mocked(listen).mockReset();
 });
 
 afterEach(() => {
@@ -263,4 +284,107 @@ describe("ChaptersPanel command-boundary integration", () => {
       resolveRetry?.(snapshot("pending", { attemptCount: 2 }));
     });
   });
+
+  it("keeps live progress across panel unmount and remount", async () => {
+    const running = snapshot("running", { attemptCount: 1 });
+    const pending = snapshot("pending", { attemptCount: 1 });
+    let started = false;
+    let progressListener:
+      | ((event: { payload: ChapterProgressEvent }) => void)
+      | undefined;
+
+    vi.mocked(listen).mockImplementation(async (_event, handler) => {
+      progressListener = handler as (event: {
+        payload: ChapterProgressEvent;
+      }) => void;
+      return () => undefined;
+    });
+    vi.mocked(invoke).mockImplementation((command: string) => {
+      if (command === "media_inspect") {
+        return Promise.resolve({ path: MEDIA_PATH, streams: [], chapters: [] });
+      }
+      if (command === "library_context_for_media") return Promise.resolve(null);
+      if (command === "chapter_segmentation_start") {
+        started = true;
+        return Promise.resolve(pending);
+      }
+      if (command === "chapter_segmentation_status") {
+        return started
+          ? Promise.resolve(running)
+          : Promise.reject({ code: "NotFound", message: "尚未开始该媒体的 AI 分段" });
+      }
+      return Promise.resolve(null);
+    });
+
+    const view = renderPanelWithProgressBridge();
+    await settleUntil(() => Boolean(screen.queryByRole("button", { name: "开始 AI 分段" })));
+    await settleUntil(() => Boolean(progressListener));
+
+    fireEvent.click(screen.getByRole("button", { name: "开始 AI 分段" }));
+    await settleUntil(() => Boolean(screen.queryByText("正在分析字幕与画面…")));
+    await act(async () => {
+      progressListener?.({
+        payload: {
+          taskKey: pending.taskKey,
+          taskId: pending.id,
+          attemptId: 7,
+          phase: "capturing_evidence",
+          message: "正在采集第 1 章的画面证据…",
+          attemptCount: 1,
+          maxAttempts: 3,
+          sequence: 1,
+          committed: false,
+          updatedAtMs: 10,
+        },
+      });
+    });
+    expect(screen.getByText("正在采集第 1 章的画面证据…")).toBeInTheDocument();
+
+    view.rerender(
+      <QueryClientProvider client={view.queryClient}>
+        <ProgressBridgeHarness visible={false} />
+      </QueryClientProvider>,
+    );
+    await settleUntil(() => Boolean(screen.queryByTestId("chapters-unmounted")));
+    expect(screen.queryByText("正在采集第 1 章的画面证据…")).not.toBeInTheDocument();
+
+    await act(async () => {
+      progressListener?.({
+        payload: {
+          ...runningProgress(pending.taskKey, pending.id),
+          phase: "writing_projection",
+          message: "正在写入章节草稿…",
+          sequence: 2,
+          updatedAtMs: 11,
+        },
+      });
+    });
+    view.rerender(
+      <QueryClientProvider client={view.queryClient}>
+        <ProgressBridgeHarness visible />
+      </QueryClientProvider>,
+    );
+    await settleUntil(() => Boolean(screen.queryByText("正在写入章节草稿…")));
+    expect(screen.queryByText(/tool payload|JSON-RPC|stderr|capturing_evidence/i)).not.toBeInTheDocument();
+  });
 });
+
+function runningProgress(taskKey: string, taskId: number): ChapterProgressEvent {
+  return {
+    taskKey,
+    taskId,
+    attemptId: 7,
+    phase: "agent_running",
+    message: "Agent 正在分析…",
+    attemptCount: 1,
+    maxAttempts: 3,
+    sequence: 1,
+    committed: false,
+    updatedAtMs: 10,
+  };
+}
+
+function ProgressBridgeHarness({ visible }: { visible: boolean }) {
+  useChapterProgressEvents();
+  return visible ? <ChaptersPanel /> : <div data-testid="chapters-unmounted" />;
+}
