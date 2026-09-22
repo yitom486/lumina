@@ -237,7 +237,10 @@ pub struct ChapterOutlookOutput {
     /// alias here: `outlook` as a string already means the summary above, so
     /// a single key cannot deserialize as both shapes. Agents must use
     /// `items` (or `points`) for bullets.
-    #[serde(default, alias = "points")]
+    ///
+    /// `outlook_items` is accepted as an alias: observed in the wild from
+    /// models following older prompt wording (frontend renders it too).
+    #[serde(default, alias = "points", alias = "outlook_items")]
     pub items: Vec<BulletItem>,
     /// Supporting evidence citations.
     #[serde(default)]
@@ -283,7 +286,10 @@ pub struct QuestionCandidatesOutput {
     #[serde(alias = "contract")]
     pub version: String,
     /// Distinct answerable questions. `candidates` is accepted as an alias.
-    #[serde(default, alias = "candidates")]
+    ///
+    /// `open_questions` is accepted as an alias: observed in the wild from
+    /// models following older prompt wording (frontend renders it too).
+    #[serde(default, alias = "candidates", alias = "open_questions")]
     pub questions: Vec<QuestionItem>,
     /// Optional display scope (currently ignored by the question renderer).
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -963,6 +969,33 @@ mod tests {
             &validate_question_candidates_output(&blank),
             "empty_question"
         ));
+    }
+
+    #[test]
+    fn questions_accept_open_questions_alias() {
+        let json = format!(
+            r#"{{"version": "{version}", "open_questions": ["Why pause?"]}}"#,
+            version = QUESTION_CANDIDATES_CONTRACT_VERSION
+        );
+        let parsed = match serde_json::from_str::<QuestionCandidatesOutput>(&json) {
+            Ok(output) => output,
+            Err(error) => panic!("open_questions alias should deserialize: {error}"),
+        };
+        assert!(validate_question_candidates_output(&parsed).is_empty());
+    }
+
+    #[test]
+    fn outlook_accepts_outlook_items_alias() {
+        let json = format!(
+            r#"{{"version": "{version}", "summary": "留意伏笔。", "outlook_items": ["看灯光", {{"text": "听配乐"}}]}}"#,
+            version = CHAPTER_OUTLOOK_CONTRACT_VERSION
+        );
+        let parsed = match serde_json::from_str::<ChapterOutlookOutput>(&json) {
+            Ok(output) => output,
+            Err(error) => panic!("outlook_items alias should deserialize: {error}"),
+        };
+        assert_eq!(parsed.items.len(), 2);
+        assert!(validate_chapter_outlook_output(&parsed).is_empty());
     }
 
     #[test]

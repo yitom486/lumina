@@ -1,6 +1,7 @@
 import {
   normalizeAssistantBlocks,
   parseAssistantBlocksText,
+  warnJsonShapeOnce,
   type AssistantBlock,
 } from "@lumina/chat-ui/assistantBlocks";
 
@@ -56,15 +57,8 @@ function findTaskByVersion(version: string): AcpTaskId | undefined {
   const exact = ids.find((taskId) => expectedVersion(taskId) === version);
   if (exact) return exact;
   // 版本漂移（后端先发版或模型自带新戳）：同任务前缀即认身份，
-  // 渲染走通用解析保底，不整单吞掉。跨任务串味仍拒绝。
-  const familial = ids.find((taskId) => version.split(".")[0] === taskId);
-  if (familial) {
-    warnOnce(
-      `[acp] shortcut contract drift: stamped ${version}, registry expects ${expectedVersion(familial)}`,
-      `drift:${version}`,
-    );
-  }
-  return familial;
+  // 渲染走通用解析保底，不整单吞掉。跨任务串味仍拒绝（返回 undefined）。
+  return ids.find((taskId) => version.split(".")[0] === taskId);
 }
 
 function isTaskId(value: string): value is AcpTaskId {
@@ -128,17 +122,26 @@ export function adaptShortcutOutput(
     // 同任务前缀的版本漂移（任一方向）：形态对就渲染，不整单吞掉；
     // 跨任务串味（别家任务的 JSON 落到本任务槽位）仍拒绝，避免张冠李戴。
     if (stamped === null || stamped.split(".")[0] !== taskId) {
+      if (!options?.streaming) {
+        warnJsonShapeOnce(
+          `rejected cross-task feed content (stamped ${stamped}) for ${taskId}; content`,
+          value,
+        );
+      }
       return fallback(taskId);
     }
-    warnOnce(
-      `[acp] shortcut contract drift for ${taskId}: stamped ${stamped}, expected ${expectedVersion(taskId)}`,
-      `drift:${taskId}:${stamped}`,
+    warnJsonShapeOnce(
+      `contract drift for ${taskId}: stamped ${stamped}, expected ${expectedVersion(taskId)}; content`,
+      value,
     );
   }
 
   const candidates = contractCandidates(taskId, value);
   const blocks = normalizeAssistantBlocks(candidates);
   if (blocks.length > 0) return { blocks };
+  if (!options?.streaming) {
+    warnJsonShapeOnce(`unrenderable ${taskId} feed content; content`, value);
+  }
   return options?.streaming ? null : fallback(taskId);
 }
 
@@ -170,33 +173,29 @@ export function normalizeRestoredShortcutOutput(
   const parsed = parseAssistantBlocksText(answer);
   const version = readContractVersion(value);
   const shortcutTaskId = version ? findTaskByVersion(version) : undefined;
+  if (shortcutTaskId && version !== expectedVersion(shortcutTaskId)) {
+    warnJsonShapeOnce(
+      `contract drift: stamped ${version}, registry expects ${expectedVersion(shortcutTaskId)}; answer`,
+      value,
+    );
+  }
   if (parsed?.blocks.length) return { answer, shortcutTaskId };
   if (shortcutTaskId) {
+    warnJsonShapeOnce(
+      `unrenderable ${shortcutTaskId} answer (stamped ${version}); answer`,
+      value,
+    );
     return {
       answer: `${TASK_LABELS[shortcutTaskId]}结果暂时无法展示，请稍后重试。`,
     };
   }
-  if (version !== null) logUnknownContractVersion(version);
-  return { answer: "该结构化结果暂时无法展示，请稍后重试。" };
-}
-
-function logUnknownContractVersion(version: string): void {
-  // 只记协议 token，不记用户内容：下次再出现“无法展示”，devtools 里
-  // 直接能看到是哪个版本号对不上。按版本去重，避免每次重渲染刷屏。
-  warnOnce(
-    `[acp] unrecognized shortcut contract version: ${version}`,
-    `unknown:${version}`,
-  );
-}
-
-const warnedKeys = new Set<string>();
-
-function warnOnce(message: string, key: string): void {
-  if (warnedKeys.has(key)) return;
-  warnedKeys.add(key);
-  if (typeof console !== "undefined") {
-    console.warn(message);
+  if (version !== null) {
+    warnJsonShapeOnce(
+      `unrecognized shortcut answer (stamped ${version}); answer`,
+      value,
+    );
   }
+  return { answer: "该结构化结果暂时无法展示，请稍后重试。" };
 }
 
 function contractCandidates(
@@ -228,6 +227,8 @@ function contractCandidates(
           ...normalizeTextArray(value.items),
           ...normalizeTextArray(value.points),
           ...normalizeTextArray(value.outlook),
+          // 实测形态：模型用 outlook_items 写看点条目。
+          ...normalizeTextArray(value.outlook_items),
           ...evidence,
         ].slice(0, MAX_ITEMS),
         scope,
@@ -343,9 +344,18 @@ function timestampToMs(timestamp: string): number | null {
 function normalizeQuestions(
   value: Record<string, unknown>,
 ): ReadonlyArray<Record<string, unknown>> {
-  const rawItems = [value.questions, value.candidates].find(
-    Array.isArray,
-  ) as unknown[] | undefined;
+  // 实测形态：模型用 open_questions 写问题（candidates 是契约别名）。
+  // 优先非空数组：模型可能同时给出空 questions 和有料的 open_questions。
+  const sources: unknown[] = [
+    value.questions,
+    value.candidates,
+    value.open_questions,
+  ];
+  const rawItems =
+    sources.find(
+      (source): source is unknown[] =>
+        Array.isArray(source) && source.length > 0,
+    ) ?? sources.find((source): source is unknown[] => Array.isArray(source));
   if (!rawItems) return [];
 
   return rawItems.slice(0, MAX_ITEMS).flatMap((item, index) => {

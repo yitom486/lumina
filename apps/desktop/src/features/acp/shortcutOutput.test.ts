@@ -217,6 +217,20 @@ describe("adaptShortcutOutput", () => {
     ).toBe("剧情梳理结果暂时无法展示，请稍后重试。");
   });
 
+  it("fails honestly on metadata-only hollow answers instead of empty shells", () => {
+    // 用户截图场景：只有章节元数据、内容键全对不上——任务级 fallback，
+    // 不能摆出只有标题和元数据的空壳。
+    expect(
+      normalizeRestoredShortcutOutput(
+        JSON.stringify({
+          version: "chapter_outlook.v1",
+          chapter: { title: "1792个夏日" },
+          spoiler_boundary: "current_position",
+        }),
+      ).answer,
+    ).toBe("后续看点结果暂时无法展示，请稍后重试。");
+  });
+
   it("identifies drifted same-task versions on restore and warns once", () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     try {
@@ -229,12 +243,16 @@ describe("adaptShortcutOutput", () => {
         normalizeRestoredShortcutOutput('{"version":"plot_summary.v9"}')
           .answer,
       ).toBe("剧情梳理结果暂时无法展示，请稍后重试。");
-      normalizeRestoredShortcutOutput('{"version":"plot_summary.v9"}');
-      expect(
+      const driftWarns = () =>
         warn.mock.calls.filter(([message]) =>
-          String(message).includes("plot_summary.v9"),
-        ),
-      ).toHaveLength(1);
+          String(message).includes("contract drift: stamped plot_summary.v9"),
+        ).length;
+      expect(driftWarns()).toBeGreaterThanOrEqual(1);
+      // 同一形态重复渲染不再记：重渲染不刷屏。
+      const before = driftWarns();
+      normalizeRestoredShortcutOutput('{"version":"plot_summary.v9"}');
+      normalizeRestoredShortcutOutput('{"version":"plot_summary.v9"}');
+      expect(driftWarns()).toBe(before);
     } finally {
       warn.mockRestore();
     }

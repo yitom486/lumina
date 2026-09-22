@@ -425,6 +425,10 @@ function normalizeStructuredResult(
   const explicitActions = normalizeActionChips(input.actions, id);
   // 显式 actions 优先；后端没给时派生：时间戳给跳转，问题给追问。
   // 一点即问就靠这些 ask chips：无锚点，执行时取当前播放位置。
+  // 问题源含实测别名 open_questions（与正文小节同源，保持一致）。
+  const questionTexts = normalizeResultTextArray(input.questions).concat(
+    normalizeResultTextArray(input.open_questions),
+  );
   const derivedTexts = [
     ...(summary ? [summary] : []),
     ...sections.flatMap((section) => [...section.paragraphs, ...section.items]),
@@ -434,13 +438,12 @@ function normalizeStructuredResult(
       ? explicitActions
       : [
           ...collectSeekActionsFromTexts(derivedTexts, id),
-          ...collectAskActionsFromTexts(
-            normalizeResultTextArray(input.questions),
-            id,
-          ),
+          ...collectAskActionsFromTexts(questionTexts, id),
         ].slice(0, MAX_ACTIONS);
 
-  if (!summary && metadata.length === 0 && sections.length === 0) return null;
+  // 光有元数据（季/集/章节）没有正文和条目 = 空心卡：宁可不要，
+  // 让上层走任务级 fallback 诚实失败，也别摆个空壳让用户找内容。
+  if (!summary && sections.length === 0) return null;
 
   return {
     kind: "structured-result",
@@ -533,9 +536,18 @@ function normalizeResultSections(
   addSection(
     "观察方向",
     [],
-    normalizeResultTextArray(input.outlook).concat(normalizeResultTextArray(input.items)),
+    normalizeResultTextArray(input.outlook)
+      .concat(normalizeResultTextArray(input.items))
+      // 实测形态（devtools shape 日志）：模型用 outlook_items 寫看点。
+      .concat(normalizeResultTextArray(input.outlook_items)),
   );
-  addSection("观察问题", [], normalizeResultTextArray(input.questions));
+  addSection(
+    "观察问题",
+    [],
+    normalizeResultTextArray(input.questions)
+      // 实测形态：模型用 open_questions 写问题。
+      .concat(normalizeResultTextArray(input.open_questions)),
+  );
   addSection("待确认", [], normalizeResultTextArray(input.uncertainty));
   addSection("说明", normalizeResultTextArray(input.notes));
   return sections.slice(0, MAX_RESULT_SECTIONS);
@@ -899,4 +911,43 @@ function hasStartMs(
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/**
+ * JSON 形态描述：只记顶层键名与值形状（string 长度/array 长度），
+ * 绝不记值本身。fallback 时打一行日志，下次“无法展示”直接知道
+ * 模型吐了哪些键，不用瞎猜。
+ */
+export function describeJsonShape(value: unknown): string {
+  if (Array.isArray(value)) return `array[${value.length}]`;
+  if (!isRecord(value)) return typeof value;
+  const keys = Object.keys(value).slice(0, 20);
+  return `{${keys
+    .map((key) => `${key}:${shapeOf(value[key])}`)
+    .join(" ")}}`;
+}
+
+function shapeOf(value: unknown): string {
+  if (typeof value === "string") return `string(${value.length})`;
+  if (Array.isArray(value)) return `array[${value.length}]`;
+  if (typeof value === "object" && value !== null) return "object";
+  return typeof value;
+}
+
+function jsonShapeKey(value: unknown): string {
+  if (!isRecord(value))
+    return Array.isArray(value) ? "array" : typeof value;
+  return `keys:${Object.keys(value).sort().join(",")}`;
+}
+
+const warnedShapeKeys = new Set<string>();
+
+/** 同一形态只记一次，避免每次重渲染刷屏。 */
+export function warnJsonShapeOnce(tag: string, value: unknown): void {
+  const key = `${tag}||${jsonShapeKey(value)}`;
+  if (warnedShapeKeys.has(key)) return;
+  warnedShapeKeys.add(key);
+  if (typeof console !== "undefined") {
+    console.warn(`[acp] ${tag} shape=${describeJsonShape(value)}`);
+  }
 }

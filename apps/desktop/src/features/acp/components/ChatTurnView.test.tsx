@@ -256,6 +256,63 @@ describe("ChatTurnView", () => {
     },
   );
 
+  it("fails honestly on a metadata-only hollow answer instead of an empty shell", async () => {
+    render(
+      <ChatTurnView
+        turn={makeTurn({
+          id: "hollow-outlook-1",
+          answer: JSON.stringify({
+            version: "chapter_outlook.v1",
+            chapter: { title: "1792个夏日" },
+            spoiler_boundary: "current_position",
+          }),
+          status: "done",
+          showActivities: false,
+        })}
+      />,
+    );
+
+    expect(
+      await screen.findByText("后续看点结果暂时无法展示，请稍后重试。"),
+    ).toBeInTheDocument();
+    // 空壳不能出现：没有标题，没有只有元数据的卡片。
+    expect(screen.queryByRole("heading", { name: "后续看点" })).not.toBeInTheDocument();
+  });
+
+  it("renders the field-observed outlook shape with items, questions and ask chips", async () => {
+    const onAssistantAction = vi.fn();
+    render(
+      <ChatTurnView
+        turn={makeTurn({
+          id: "observed-outlook-1",
+          answer: JSON.stringify({
+            contract: "chapter_outlook.v1",
+            chapter: { title: "1792个夏日" },
+            spoiler_boundary: "current_position",
+            outlook_items: ["留意灯光变化。"],
+            open_questions: ["崔雄为什么拒绝？"],
+          }),
+          status: "done",
+          showActivities: false,
+        })}
+        onAssistantAction={onAssistantAction}
+      />,
+    );
+
+    expect(await screen.findByRole("heading", { name: "后续看点" })).toBeInTheDocument();
+    expect(screen.getByText("留意灯光变化。")).toBeInTheDocument();
+    expect(screen.getByText("崔雄为什么拒绝？")).toBeInTheDocument();
+    expect(screen.queryByText(/无法展示/)).not.toBeInTheDocument();
+
+    // 实测键的问题一点即问。
+    const chip = screen.getByRole("button", { name: "问：崔雄为什么拒绝？" });
+    fireEvent.click(chip);
+    expect(onAssistantAction).toHaveBeenCalledWith({
+      type: "ask",
+      prompt: "崔雄为什么拒绝？",
+    });
+  });
+
   it("sends a structured ask chip with one click", async () => {
     const onAssistantAction = vi.fn();
     render(

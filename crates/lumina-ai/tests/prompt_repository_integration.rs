@@ -94,6 +94,67 @@ fn every_versioned_repository_task_composes_from_typed_slots() {
 }
 
 #[test]
+fn json_contract_tasks_embed_an_exact_key_skeleton() {
+    let repository = PromptRepository::new();
+    // 契约任务：骨架给出规范键（规范键只此一处，别名静默兼容）。
+    let expectations = [
+        (TaskId::ChapterRecap, "chapter_recap.v1", "\"summary\""),
+        (TaskId::ChapterOutlook, "chapter_outlook.v1", "\"items\""),
+        (TaskId::PlotSummary, "plot_summary.v1", "\"summary\""),
+        (
+            TaskId::QuestionCandidates,
+            "question_candidates.v1",
+            "\"questions\"",
+        ),
+    ];
+    for (task_id, contract, key) in expectations {
+        let definition = repository.definition(task_id);
+        assert!(definition.output_skeleton.is_some());
+        let composed = match repository.compose(task_id, &integration_slots()) {
+            Ok(composed) => composed,
+            Err(error) => panic!("task {task_id} should compose: {error}"),
+        };
+        let prompt = composed.initial_prompt();
+        assert!(
+            prompt.contains(contract),
+            "task {task_id} prompt should name its contract"
+        );
+        assert!(
+            prompt.contains(key),
+            "task {task_id} prompt should show the canonical key {key}"
+        );
+        assert!(
+            prompt.contains("do not invent others"),
+            "task {task_id} prompt should forbid invented keys"
+        );
+        // 骨架只给规范键：野键一个都不许出现，否则等于教模型乱写。
+        for wild_key in ["\"outlook_items\"", "\"open_questions\""] {
+            assert!(
+                !prompt.contains(wild_key),
+                "task {task_id} skeleton must not teach {wild_key}"
+            );
+        }
+    }
+}
+
+#[test]
+fn tool_driven_and_free_text_tasks_have_no_json_skeleton() {
+    let repository = PromptRepository::new();
+    for task_id in [TaskId::ChapterSegment, TaskId::RewriteContent] {
+        let definition = repository.definition(task_id);
+        assert!(definition.output_skeleton.is_none());
+        let composed = match repository.compose(task_id, &integration_slots()) {
+            Ok(composed) => composed,
+            Err(error) => panic!("task {task_id} should compose: {error}"),
+        };
+        assert!(
+            !composed.initial_prompt().contains("Output JSON skeleton"),
+            "task {task_id} must not gain a JSON envelope"
+        );
+    }
+}
+
+#[test]
 fn chapter_agent_prompts_are_not_general_chat_prompts() {
     let repository = PromptRepository::new();
     let chapter_prompt = match repository.compose(TaskId::ChapterSegment, &integration_slots()) {

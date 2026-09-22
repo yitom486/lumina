@@ -121,8 +121,23 @@ describe("contract matrix: failures stay specific and never leak structure", () 
     });
   }
 
-  it("cross-task content is rejected instead of mislabeled", () => {
-    const cases: Array<{ taskId: AcpTaskId; payload: Record<string, unknown> }> = [
+  for (const taskId of TASKS) {
+    it(`${taskId}: metadata-only hollow answers fail honestly`, () => {
+      // 只有版本 + 章节元数据、内容键全对不上：任务级 fallback，
+      // 不能摆出只有标题和元数据的空壳。
+      expect(
+        normalizeRestoredShortcutOutput(
+          JSON.stringify({
+            version: `${taskId}.v1`,
+            chapter: { title: "1792个夏日" },
+            spoiler_boundary: "current_position",
+          }),
+        ).answer,
+      ).toBe(taskFallback(taskId));
+    });
+  }
+
+  it("cross-task content is rejected instead of mislabeled", () => {    const cases: Array<{ taskId: AcpTaskId; payload: Record<string, unknown> }> = [
       {
         taskId: "plot_summary",
         payload: { version: "chapter_recap.v1", recap: "串味的内容" },
@@ -170,5 +185,30 @@ describe("contract matrix: failures stay specific and never leak structure", () 
     expect(normalizeRestoredShortcutOutput("普通回答")).toEqual({
       answer: "普通回答",
     });
+  });
+
+  it("renders the field-observed outlook shape (contract + outlook_items + open_questions)", () => {
+    // devtools shape 日志实测：模型用 contract 键 + outlook_items/open_questions。
+    const observed = JSON.stringify({
+      contract: "chapter_outlook.v1",
+      chapter: { title: "1792个夏日" },
+      spoiler_boundary: "current_position",
+      outlook_items: ["留意灯光变化。", "听配乐转折。"],
+      open_questions: ["崔雄为什么拒绝？"],
+    });
+
+    const adapted = adaptShortcutOutput("chapter_outlook", observed);
+    expect(adapted?.blocks[0]).toMatchObject({
+      kind: "watch-feed-card",
+      title: "后续看点",
+      bullets: expect.arrayContaining([
+        "留意灯光变化。",
+        "听配乐转折。",
+      ]),
+    });
+
+    const restored = normalizeRestoredShortcutOutput(observed);
+    expect(restored.answer).toBe(observed);
+    expect(restored.shortcutTaskId).toBe("chapter_outlook");
   });
 });

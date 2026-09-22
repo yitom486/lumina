@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  describeJsonShape,
   normalizeAssistantBlocks,
   normalizeAssistantBlocksWithNotices,
   parseAssistantBlocksText,
@@ -299,5 +300,43 @@ describe("normalizeAssistantBlocks", () => {
         { streaming: true },
       ),
     ).toBeNull();
+  });
+
+  it("refuses metadata-only hollow cards instead of rendering an empty shell", () => {
+    // 只有章节元数据、没有任何正文条目：上层应走任务级 fallback 诚实失败，
+    // 而不是摆出只有标题和元数据的空壳（用户会问“内容呢”）。
+    expect(
+      parseAssistantBlocksText(
+        JSON.stringify({
+          contract: "chapter_outlook.v1",
+          chapter: { title: "1792个夏日" },
+          spoiler_boundary: "current_position",
+        }),
+      ),
+    ).toBeNull();
+  });
+});
+
+describe("describeJsonShape", () => {
+  it("reports keys and shapes without leaking values", () => {
+    const shape = describeJsonShape({
+      version: "chapter_outlook.v1",
+      chapter: { title: "机密章节名" },
+      highlights: ["第一条机密", "第二条机密"],
+      count: 3,
+    });
+
+    expect(shape).toContain("version:string(");
+    expect(shape).toContain("chapter:object");
+    expect(shape).toContain("highlights:array[2]");
+    expect(shape).toContain("count:number");
+    expect(shape).not.toContain("机密");
+    expect(shape).not.toContain("chapter_outlook");
+  });
+
+  it("handles non-object envelopes", () => {
+    expect(describeJsonShape(["a", "b"])).toBe("array[2]");
+    expect(describeJsonShape(null)).toBe("object");
+    expect(describeJsonShape(42)).toBe("number");
   });
 });
