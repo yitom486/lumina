@@ -14,7 +14,7 @@
     "lint:all": "bun run lint && bun run lint:ox",
     "check:rust": "cd src-tauri && cargo fmt --check && cargo check --all-targets && cargo test --lib && cargo clippy --all-targets -- -D warnings",
     "test": "vitest run",
-    "test:e2e:online": "cd src-tauri && cargo test --lib public_youtube_resolves_and_reaches_mpv_demux_without_cookies -- --ignored --nocapture",
+    "test:e2e:online": "cd ../.. && cargo test -p lumina-ytdl --lib public_youtube_resolves_without_cookies -- --ignored --nocapture",
     "test:unit": "vitest run --project unit",
     "test:ui": "vitest run --project ui",
     "tauri": "node ../../scripts/tauri-dev.mjs"
