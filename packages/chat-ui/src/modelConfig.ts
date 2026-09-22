@@ -1,4 +1,8 @@
-import type { AcpSessionModelOptions, AcpSessionOption } from "./types";
+import type {
+  AcpSessionModelOptions,
+  AcpSessionOption,
+  SessionConfigOption,
+} from "./types";
 
 /**
  * 全应用统一的模型配置模块。
@@ -135,4 +139,148 @@ export function selectedOptionLabel(
     options.find((option) => option.value === value)?.name ??
     (value.trim() ? value : emptyLabel)
   );
+}
+
+/**
+ * 参数化 Agent（cursor）的配置维度归类。对照 Cursor 原生五维度：
+ * Agent 模式 / Model / Effort / Context / Fast 开关。
+ *
+ * 匹配规则只认 agent 下发的东西（category/id/name），缺席的维度就是
+ * 该模型没下发——渲染为缺席，绝不硬编假选项：
+ * - mode：select 且 category==='mode'，或 id/name 含 mode（collab 除外）；
+ * - model：select 且 category==='model'，或 id 含独立 model 词；
+ * - effort：select 且 id 含 thought/reason/effort，或 category==='thought_level'；
+ * - context：select 且 category==='context'，或 id/name 含 context/ctx；
+ * - fastToggle：boolean 且 id 含 fast（category 不限）→ 输入栏可见开关；
+ * - fastSelect：select 且 id 含 fast → 进「更多设置」。
+ * 展示顺序固定 mode0/model1/effort2/context3；同维度只取首个命中，
+ * 其余与未归类的一起进 others（暂不渲染，不断言）。
+ */
+export type CursorConfigDimensions = {
+  mode?: SessionConfigOption;
+  model?: SessionConfigOption;
+  effort?: SessionConfigOption;
+  context?: SessionConfigOption;
+  fastToggle?: SessionConfigOption;
+  fastSelect?: SessionConfigOption;
+  others: SessionConfigOption[];
+};
+
+function isSelect(option: SessionConfigOption): boolean {
+  return option.kind.kind === "select";
+}
+
+function textOf(value: string | null | undefined): string {
+  return value?.trim().toLowerCase() ?? "";
+}
+
+function containsWord(haystack: string, word: string): boolean {
+  return haystack
+    .split(/[^a-z0-9]+/)
+    .some((token) => token === word);
+}
+
+export function classifyCursorDimensions(
+  options: readonly SessionConfigOption[] | null | undefined,
+): CursorConfigDimensions {
+  const result: CursorConfigDimensions = { others: [] };
+  if (!options) return result;
+  const taken = new Set<SessionConfigOption>();
+
+  const takeFirst = (
+    predicate: (option: SessionConfigOption) => boolean,
+  ): SessionConfigOption | undefined => {
+    const found = options.find(
+      (option) => !taken.has(option) && isSelect(option) && predicate(option),
+    );
+    if (found) taken.add(found);
+    return found;
+  };
+
+  const mode = takeFirst((option) => {
+    if (textOf(option.category) === "mode") return true;
+    // 独立 mode 词（"model" 含 mode 子串，必须按词切分，否则 mode 会吞掉 model）。
+    const text = `${textOf(option.id)} ${textOf(option.name)}`;
+    return containsWord(text, "mode") && !text.includes("collab");
+  });
+  if (mode) result.mode = mode;
+
+  const model = takeFirst((option) => {
+    if (textOf(option.category) === "model") return true;
+    return containsWord(textOf(option.id), "model");
+  });
+  if (model) result.model = model;
+
+  const effort = takeFirst((option) => {
+    if (textOf(option.category) === "thought_level") return true;
+    // "thinking" 不含 "thought" 子串，think/thought 都要认。
+    const id = textOf(option.id);
+    return (
+      id.includes("think") ||
+      id.includes("thought") ||
+      id.includes("reason") ||
+      id.includes("effort")
+    );
+  });
+  if (effort) result.effort = effort;
+
+  const context = takeFirst((option) => {
+    if (textOf(option.category) === "context") return true;
+    const text = `${textOf(option.id)} ${textOf(option.name)}`;
+    return text.includes("context") || /(^|[^a-z])ctx([^a-z]|$)/.test(text);
+  });
+  if (context) result.context = context;
+
+  const fastToggle = options.find(
+    (option) =>
+      !taken.has(option) &&
+      option.kind.kind === "boolean" &&
+      textOf(option.id).includes("fast"),
+  );
+  if (fastToggle) {
+    taken.add(fastToggle);
+    result.fastToggle = fastToggle;
+  }
+
+  const fastSelect = options.find(
+    (option) =>
+      !taken.has(option) && isSelect(option) && textOf(option.id).includes("fast"),
+  );
+  if (fastSelect) {
+    taken.add(fastSelect);
+    result.fastSelect = fastSelect;
+  }
+
+  result.others = options.filter((option) => !taken.has(option));
+  return result;
+}
+
+/**
+ * listed 门槛：只下发 agent advertised 的原值。select 的 value 必须在
+ * options 里，boolean 的 "true"/"false" 永远可发。未命中一律不发——
+ * 拼未 listed 值会被拒收（`Invalid params`），这是之前连接即报错的根因。
+ */
+export function isListedConfigValue(
+  option: SessionConfigOption,
+  value: string,
+): boolean {
+  if (option.kind.kind === "boolean") {
+    const normalized = value.trim().toLowerCase();
+    return normalized === "true" || normalized === "false";
+  }
+  if (option.kind.kind === "select") {
+    return option.kind.options.some((item) => item.value === value);
+  }
+  return false;
+}
+
+/** select 维度当前值（缺席即 ""，表示不动、沿用 agent 默认）。 */
+export function currentSelectValue(option: SessionConfigOption): string {
+  if (option.kind.kind !== "select") return "";
+  return option.kind.current?.trim() ?? "";
+}
+
+/** boolean 维度当前值（缺席即 false）。 */
+export function currentBooleanValue(option: SessionConfigOption): boolean {
+  return option.kind.kind === "boolean" && option.kind.current;
 }

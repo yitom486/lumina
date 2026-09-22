@@ -499,6 +499,55 @@ impl AcpService {
         Ok(session.model_options.clone())
     }
 
+    /// Apply one advertised session config option (cursor mode/model/effort/
+    /// context/fast …) to the live session without rotating it.
+    /// The value MUST come from the agent's advertised list: synthesized ids
+    /// are rejected with `Invalid params`. Cached `current` is updated only
+    /// after the agent accepts the write.
+    pub fn set_session_config<F>(
+        &self,
+        config_id: String,
+        value: String,
+        mut on_event: F,
+    ) -> Result<AcpSessionModelOptions, AcpError>
+    where
+        F: FnMut(AcpEvent),
+    {
+        if self.is_busy() {
+            return Err(AcpError::busy());
+        }
+        let config_id = config_id.trim().to_string();
+        if config_id.is_empty() {
+            return Err(AcpError::bad_request("配置项 id 不能为空"));
+        }
+
+        let mut guard = self
+            .session
+            .lock()
+            .map_err(|_| AcpError::internal(Some("ACP session mutex poisoned")))?;
+        let session = guard
+            .as_mut()
+            .ok_or_else(|| AcpError::protocol(Some("no active agent session")))?;
+
+        Self::set_session_config_option(session, &config_id, value.trim(), self, &mut on_event)?;
+        for option in &mut session.model_options.extra_options {
+            if option.id != config_id {
+                continue;
+            }
+            match &mut option.kind {
+                crate::domain::model::SessionConfigKind::Select { current, .. } => {
+                    *current = Some(value.trim().to_string());
+                }
+                crate::domain::model::SessionConfigKind::Boolean { current } => {
+                    *current = value.trim().eq_ignore_ascii_case("true");
+                }
+                crate::domain::model::SessionConfigKind::Unsupported => {}
+            }
+        }
+
+        Ok(session.model_options.clone())
+    }
+
     pub(crate) fn apply_model_selection(
         &self,
         session: &mut crate::runtime::lifecycle::LiveSession,

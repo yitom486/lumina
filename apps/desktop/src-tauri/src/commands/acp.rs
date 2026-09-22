@@ -1011,6 +1011,28 @@ pub async fn acp_set_session_model(
     .map_err(|error| AcpError::internal(Some(&format!("acp set session model join: {error}"))))?
 }
 
+/// Generic `session/set_config_option` for parameterized agents (cursor
+/// mode/model/effort/context/fast …). The value must be agent-advertised;
+/// anything else is rejected by the agent with `Invalid params`.
+#[tauri::command]
+pub async fn acp_set_session_config(
+    state: State<'_, AppState>,
+    config_id: String,
+    value: String,
+    on_event: Channel<AcpEvent>,
+) -> Result<crate::acp::AcpSessionModelOptions, AcpError> {
+    let acp = state.acp.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        acp.set_session_config(config_id, value, |event| {
+            if let Err(error) = on_event.send(event) {
+                tracing::warn!(%error, "failed to send ACP set session config event");
+            }
+        })
+    })
+    .await
+    .map_err(|error| AcpError::internal(Some(&format!("acp set session config join: {error}"))))?
+}
+
 #[tauri::command]
 pub async fn acp_new_chat(
     state: State<'_, AppState>,

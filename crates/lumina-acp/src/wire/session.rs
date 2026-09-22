@@ -736,6 +736,7 @@ pub fn parse_session_model_options(value: &Value) -> crate::domain::model::AcpSe
     let Some(config_options) = result.get("configOptions").and_then(Value::as_array) else {
         return options;
     };
+    options.extra_options = parse_session_config_options_list(config_options);
     for option in config_options {
         let id = option.get("id").and_then(Value::as_str);
         let current = option
@@ -778,6 +779,76 @@ pub fn parse_session_model_options(value: &Value) -> crate::domain::model::AcpSe
         }
     }
     options
+}
+
+/// Full advertised `configOptions` list, parsed tolerantly for parameterized
+/// agents (cursor mode/model/effort/context/fast …). Malformed items are
+/// skipped; unknown shapes become `Unsupported` (rendered as absent).
+/// Only advertised values may ever be sent back (`set_config_option` with a
+/// synthesized id is rejected with `Invalid params`).
+pub fn parse_session_config_options_list(
+    config_options: &[Value],
+) -> Vec<crate::domain::model::SessionConfigOption> {
+    use crate::domain::model::{SessionConfigKind, SessionConfigOption, SessionConfigValue};
+
+    fn clean_text(item: &Value, key: &str) -> Option<String> {
+        item.get(key)
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|text| !text.is_empty())
+            .map(str::to_string)
+    }
+
+    let mut out = Vec::new();
+    for option in config_options {
+        let Some(id) = clean_text(option, "id") else {
+            continue;
+        };
+        let name = clean_text(option, "name").unwrap_or_else(|| id.clone());
+        let description = clean_text(option, "description");
+        let category = clean_text(option, "category");
+        let kind = match option.get("options").and_then(Value::as_array) {
+            Some(values) => {
+                let options = values
+                    .iter()
+                    .filter_map(|item| {
+                        let value = item.get("value").and_then(Value::as_str)?.trim();
+                        if value.is_empty() {
+                            return None;
+                        }
+                        let name = item
+                            .get("name")
+                            .and_then(Value::as_str)
+                            .map(str::trim)
+                            .filter(|name| !name.is_empty())
+                            .unwrap_or(value)
+                            .to_string();
+                        Some(SessionConfigValue {
+                            value: value.to_string(),
+                            name,
+                            description: clean_text(item, "description"),
+                        })
+                    })
+                    .collect::<Vec<_>>();
+                SessionConfigKind::Select {
+                    options,
+                    current: clean_text(option, "currentValue"),
+                }
+            }
+            None => match option.get("currentValue") {
+                Some(Value::Bool(current)) => SessionConfigKind::Boolean { current: *current },
+                _ => SessionConfigKind::Unsupported,
+            },
+        };
+        out.push(SessionConfigOption {
+            id,
+            name,
+            description,
+            category,
+            kind,
+        });
+    }
+    out
 }
 
 /// Thin envelope pluck on a spec-stable key; SDK adds nothing here.
@@ -1081,6 +1152,75 @@ mod tests {
         assert_eq!(options.current_model_id.as_deref(), Some("mini"));
         assert_eq!(options.models[0].name, "Mini");
         assert_eq!(options.current_reasoning_effort.as_deref(), Some("low"));
+    }
+
+    #[test]
+    fn parses_parameterized_config_options_tolerantly() {
+        use crate::domain::model::SessionConfigKind;
+        let response = json!({
+            "result": {
+                "configOptions": [
+                    { "id": "session-mode", "name": "Agent 模式", "category": "mode",
+                      "currentValue": "agent",
+                      "options": [{ "value": "agent", "name": "Agent" }, { "value": "plan", "name": "Plan" }] },
+                    { "id": "model", "currentValue": "grok-4.7",
+                      "options": [{ "value": "grok-4.7", "name": "Grok 4.7" }] },
+                    { "id": "reasoning-effort", "currentValue": "high",
+                      "options": [{ "value": "low", "name": "Low" }, { "value": "high", "name": "High" }] },
+                    { "id": "context", "category": "context",
+                      "options": [{ "value": "256k", "name": "256K" }] },
+                    { "id": "fast", "name": "Fast", "currentValue": true },
+                    { "id": "mystery", "currentValue": 42 },
+                    { "name": "no-id" },
+                    { "id": "  ", "options": [] }
+                ]
+            }
+        });
+        let options = parse_session_model_options(&response);
+        // Classic projection still works on exact ids only.
+        assert_eq!(options.current_model_id.as_deref(), Some("grok-4.7"));
+        assert!(options.reasoning_efforts.is_empty());
+        // Full list keeps everything well-formed, drops the junk.
+        let ids: Vec<&str> = options
+            .extra_options
+            .iter()
+            .map(|option| option.id.as_str())
+            .collect();
+        assert_eq!(
+            ids,
+            vec![
+                "session-mode",
+                "model",
+                "reasoning-effort",
+                "context",
+                "fast",
+                "mystery"
+            ]
+        );
+        let mode = &options.extra_options[0];
+        assert_eq!(mode.category.as_deref(), Some("mode"));
+        match &mode.kind {
+            SessionConfigKind::Select { options, current } => {
+                assert_eq!(current.as_deref(), Some("agent"));
+                assert_eq!(options.len(), 2);
+            }
+            other => panic!("mode must be select, got {other:?}"),
+        }
+        let fast = options
+            .extra_options
+            .iter()
+            .find(|option| option.id == "fast")
+            .expect("fast");
+        assert!(matches!(
+            fast.kind,
+            SessionConfigKind::Boolean { current: true }
+        ));
+        let mystery = options
+            .extra_options
+            .iter()
+            .find(|option| option.id == "mystery")
+            .expect("mystery");
+        assert!(matches!(mystery.kind, SessionConfigKind::Unsupported));
     }
 
     #[test]

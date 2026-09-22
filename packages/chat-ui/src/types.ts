@@ -76,6 +76,35 @@ export type AcpSessionModelOptions = {
   reasoningEfforts: AcpSessionOption[];
   currentModelId?: string | null;
   currentReasoningEffort?: string | null;
+  /**
+   * 全量 advertised configOptions（参数化 Agent 的 mode/model/effort/
+   * context/fast 等）。classic Agent 通常只有 model/reasoning_effort，
+   * 已同时投影到上面四个字段供旧 UI 用。
+   * 读端可选：旧后端/第三方形态缺席即按无维度处理。
+   */
+  extraOptions?: SessionConfigOption[];
+};
+
+/** 参数化配置项的一个可选值。 */
+export type SessionConfigValue = {
+  value: string;
+  name: string;
+  description?: string | null;
+};
+
+/** 参数化配置项形态：select / boolean / 不透明（渲染为缺席）。 */
+export type SessionConfigKind =
+  | { kind: "select"; options: SessionConfigValue[]; current?: string | null }
+  | { kind: "boolean"; current: boolean }
+  | { kind: "unsupported" };
+
+/** Agent 下发的一个会话配置项（只读快照，可下发原值）。 */
+export type SessionConfigOption = {
+  id: string;
+  name: string;
+  description?: string | null;
+  category?: string | null;
+  kind: SessionConfigKind;
 };
 
 export type AcpModelDiscoveryResult = {

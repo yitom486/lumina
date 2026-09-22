@@ -211,6 +211,29 @@ export async function acpSetSessionModel(
   });
 }
 
+/**
+ * 通用 session/set_config_option（参数化 Agent 的 mode/model/effort/
+ * context/fast 等）。value 必须是 agent 已下发的 advertised 原值，
+ * 拼未 listed 值会被拒收；调用方先过 listed 门槛。
+ */
+export async function acpSetSessionConfig(
+  options: {
+    configId: string;
+    value: string;
+  },
+  onEvent?: (event: AcpEvent) => void,
+): Promise<AcpSessionModelOptions> {
+  const channel = new Channel<AcpEvent>();
+  if (onEvent) {
+    channel.onmessage = onEvent;
+  }
+  return invoke<AcpSessionModelOptions>("acp_set_session_config", {
+    configId: options.configId,
+    value: options.value,
+    onEvent: channel,
+  });
+}
+
 export type AcpWatchFeedSource = "sqlite" | "empty";
 
 export type AcpWatchFeedChapter = {

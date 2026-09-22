@@ -7,6 +7,12 @@ import { cn } from "@lumina/ui/utils";
 import type { AcpStatus, ChatImageAttachment, PermissionMode } from "../types";
 import { previewQueuedText, type QueuedPrompt } from "@lumina/chat-ui/promptQueue";
 import { useAgentModelControls } from "../useAgentModelControls";
+import { useCursorConfigControls } from "../useCursorConfigControls";
+import {
+  currentBooleanValue,
+  currentSelectValue,
+} from "@lumina/chat-ui/modelConfig";
+import type { SessionConfigOption } from "@lumina/chat-ui/types";
 import { focusComposerTextarea } from "@lumina/chat-ui/components/composerFocus";
 import { ChatColumn } from "@lumina/chat-ui/components/ChatShell";
 
@@ -35,6 +41,46 @@ export type ChatComposerBarHandle = {
 
 const compactSelectClassName =
   "h-7 max-w-[9.5rem] truncate rounded-md border border-border bg-background px-2 text-[11px] text-foreground outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:opacity-60";
+
+/**
+ * 参数化 Agent（cursor）的一个 select 维度。值绑定 agent 下发的 current，
+ * 空位表示“不动、沿用 agent 默认”（空值从不下发，listed 门槛在 hook 里卡）。
+ */
+function CursorDimSelect({
+  option,
+  emptyLabel,
+  disabled,
+  onPick,
+}: {
+  option: SessionConfigOption;
+  emptyLabel: string;
+  disabled: boolean;
+  onPick: (value: string) => void;
+}) {
+  if (option.kind.kind !== "select") return null;
+  const values = option.kind.options;
+  return (
+    <select
+      className={compactSelectClassName}
+      value={currentSelectValue(option)}
+      disabled={disabled}
+      aria-label={emptyLabel}
+      title={option.description ?? option.name}
+      onChange={(e) => {
+        const next = e.target.value;
+        if (!next) return;
+        onPick(next);
+      }}
+    >
+      <option value="">{emptyLabel}</option>
+      {values.map((item) => (
+        <option key={item.value} value={item.value} title={item.description ?? undefined}>
+          {item.name}
+        </option>
+      ))}
+    </select>
+  );
+}
 
 export const ChatComposerBar = forwardRef<ChatComposerBarHandle, Props>(
   function ChatComposerBar(
@@ -71,6 +117,11 @@ export const ChatComposerBar = forwardRef<ChatComposerBarHandle, Props>(
       patchSettings,
       applyModelSelection,
     } = useAgentModelControls({
+      status,
+      busy,
+      sessionConnected,
+    });
+    const cursor = useCursorConfigControls({
       status,
       busy,
       sessionConnected,
@@ -227,57 +278,140 @@ export const ChatComposerBar = forwardRef<ChatComposerBarHandle, Props>(
               <option value="ask">每次询问</option>
             </select>
 
-            {hasModelOptions ? (
-              <select
-                className={compactSelectClassName}
-                value={modelId}
-                disabled={controlsDisabled}
-                aria-label="模型"
-                onChange={(e) => {
-                  void applyModelSelection({ modelId: e.target.value });
-                }}
-              >
-                <option value="">Agent 默认</option>
-                {modelOptions.map((option) => (
-                  <option key={option.value} value={option.value}>
-                    {option.name}
-                  </option>
-                ))}
-              </select>
+            {cursor.hasCursorDims ? (
+              <>
+                {cursor.dims.mode ? (
+                  <CursorDimSelect
+                    option={cursor.dims.mode}
+                    emptyLabel="模式"
+                    disabled={cursor.controlsDisabled}
+                    onPick={(value) =>
+                      void cursor.applyConfigOption(cursor.dims.mode?.id ?? "", value)
+                    }
+                  />
+                ) : null}
+                {cursor.dims.model ? (
+                  <CursorDimSelect
+                    option={cursor.dims.model}
+                    emptyLabel="模型"
+                    disabled={cursor.controlsDisabled}
+                    onPick={(value) =>
+                      void cursor.applyConfigOption(cursor.dims.model?.id ?? "", value)
+                    }
+                  />
+                ) : null}
+                {cursor.dims.effort ? (
+                  <CursorDimSelect
+                    option={cursor.dims.effort}
+                    emptyLabel="思考"
+                    disabled={cursor.controlsDisabled}
+                    onPick={(value) =>
+                      void cursor.applyConfigOption(cursor.dims.effort?.id ?? "", value)
+                    }
+                  />
+                ) : null}
+                {cursor.dims.context ? (
+                  <CursorDimSelect
+                    option={cursor.dims.context}
+                    emptyLabel="上下文"
+                    disabled={cursor.controlsDisabled}
+                    onPick={(value) =>
+                      void cursor.applyConfigOption(cursor.dims.context?.id ?? "", value)
+                    }
+                  />
+                ) : null}
+                {cursor.dims.fastToggle &&
+                cursor.dims.fastToggle.kind.kind === "boolean" ? (
+                  <label
+                    className="flex shrink-0 cursor-pointer items-center gap-1 px-1 text-[11px] text-muted-foreground hover:text-foreground"
+                    title={cursor.dims.fastToggle.description ?? "Fast 模式"}
+                  >
+                    <input
+                      type="checkbox"
+                      className="size-3.5 rounded border border-border"
+                      checked={currentBooleanValue(cursor.dims.fastToggle)}
+                      disabled={cursor.controlsDisabled}
+                      aria-label="Fast"
+                      onChange={(e) => {
+                        const id = cursor.dims.fastToggle?.id ?? "";
+                        void cursor.applyConfigOption(
+                          id,
+                          e.target.checked ? "true" : "false",
+                        );
+                      }}
+                    />
+                    Fast
+                  </label>
+                ) : null}
+                {cursor.dims.fastSelect ? (
+                  <CursorDimSelect
+                    option={cursor.dims.fastSelect}
+                    emptyLabel={cursor.dims.fastSelect.name || "更多设置"}
+                    disabled={cursor.controlsDisabled}
+                    onPick={(value) =>
+                      void cursor.applyConfigOption(
+                        cursor.dims.fastSelect?.id ?? "",
+                        value,
+                      )
+                    }
+                  />
+                ) : null}
+              </>
             ) : (
-              <input
-                className={cn(compactSelectClassName, "min-w-[7rem]")}
-                value={modelId}
-                disabled={controlsDisabled}
-                placeholder="模型 ID"
-                aria-label="模型 ID"
-                onChange={(e) => patchSettings({ modelId: e.target.value })}
-                onBlur={() => {
-                  if (modelId.trim()) {
-                    void applyModelSelection({ modelId });
-                  }
-                }}
-              />
-            )}
+              <>
+                {hasModelOptions ? (
+                  <select
+                    className={compactSelectClassName}
+                    value={modelId}
+                    disabled={controlsDisabled}
+                    aria-label="模型"
+                    onChange={(e) => {
+                      void applyModelSelection({ modelId: e.target.value });
+                    }}
+                  >
+                    <option value="">Agent 默认</option>
+                    {modelOptions.map((option) => (
+                      <option key={option.value} value={option.value}>
+                        {option.name}
+                      </option>
+                    ))}
+                  </select>
+                ) : (
+                  <input
+                    className={cn(compactSelectClassName, "min-w-[7rem]")}
+                    value={modelId}
+                    disabled={controlsDisabled}
+                    placeholder="模型 ID"
+                    aria-label="模型 ID"
+                    onChange={(e) => patchSettings({ modelId: e.target.value })}
+                    onBlur={() => {
+                      if (modelId.trim()) {
+                        void applyModelSelection({ modelId });
+                      }
+                    }}
+                  />
+                )}
 
-            {hasReasoningOptions ? (
-              <select
-                className={compactSelectClassName}
-                value={reasoningEffort}
-                disabled={controlsDisabled}
-                aria-label="思考程度"
-                onChange={(e) => {
-                  void applyModelSelection({ reasoningEffort: e.target.value });
-                }}
-              >
-                <option value="">默认</option>
-                {reasoningOptions.map((option) => (
-                  <option key={option.value} value={option.value}>
-                    {option.name}
-                  </option>
-                ))}
-              </select>
-            ) : null}
+                {hasReasoningOptions ? (
+                  <select
+                    className={compactSelectClassName}
+                    value={reasoningEffort}
+                    disabled={controlsDisabled}
+                    aria-label="思考程度"
+                    onChange={(e) => {
+                      void applyModelSelection({ reasoningEffort: e.target.value });
+                    }}
+                  >
+                    <option value="">默认</option>
+                    {reasoningOptions.map((option) => (
+                      <option key={option.value} value={option.value}>
+                        {option.name}
+                      </option>
+                    ))}
+                  </select>
+                ) : null}
+              </>
+            )}
 
             <div className="ml-auto flex items-center gap-1">
               {busy ? (
@@ -331,9 +465,9 @@ export const ChatComposerBar = forwardRef<ChatComposerBarHandle, Props>(
           </div>
         </div>
 
-        {controlError ? (
+        {controlError ?? cursor.controlError ? (
           <p className="mt-1 text-[10px] leading-relaxed text-destructive">
-            {controlError}
+            {controlError ?? cursor.controlError}
           </p>
         ) : null}
       </ChatColumn>

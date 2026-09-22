@@ -255,6 +255,48 @@ pub struct AcpSessionModelOptions {
     pub reasoning_efforts: Vec<AcpSessionOption>,
     pub current_model_id: Option<String>,
     pub current_reasoning_effort: Option<String>,
+    /// Full advertised `configOptions` list for parameterized agents
+    /// (cursor mode/model/effort/context/fast …). Classic agents usually
+    /// advertise only `model` / `reasoning_effort`, which are additionally
+    /// projected into the fields above for the existing UI.
+    #[serde(default)]
+    pub extra_options: Vec<SessionConfigOption>,
+}
+
+/// One advertised session config option (select / boolean / opaque).
+/// Parsed tolerantly: malformed items are skipped, never fatal.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionConfigOption {
+    pub id: String,
+    pub name: String,
+    pub description: Option<String>,
+    pub category: Option<String>,
+    pub kind: SessionConfigKind,
+}
+
+/// One selectable value of a select-kind option.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionConfigValue {
+    pub value: String,
+    pub name: String,
+    pub description: Option<String>,
+}
+
+/// Shape of a config option. Unknown shapes stay `Unsupported` (rendered
+/// as absent) rather than failing the whole options payload.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum SessionConfigKind {
+    Select {
+        options: Vec<SessionConfigValue>,
+        current: Option<String>,
+    },
+    Boolean {
+        current: bool,
+    },
+    Unsupported,
 }
 
 /// A model override applied to one newly-created ACP session before its first
