@@ -12,6 +12,7 @@ import {
   normalizeModelSelection,
   resolveModelSelection,
   selectedOptionLabel,
+  withCurrentOption,
 } from "./modelConfig";
 import type { AcpSessionModelOptions, SessionConfigOption } from "./types";
 
@@ -259,5 +260,24 @@ describe("isListedConfigValue", () => {
     expect(currentBooleanValue(booleanOption({ id: "fast", current: true }))).toBe(
       true,
     );
+  });
+});
+
+describe("withCurrentOption", () => {
+  it("swaps only the targeted dimension for optimistic display", () => {
+    const before = options({
+      extraOptions: [
+        selectOption({ id: "model", values: ["a", "b"], current: "a" }),
+        booleanOption({ id: "fast", current: true }),
+      ],
+    });
+    const after = withCurrentOption(before, "model", "b");
+    expect(after.extraOptions?.[0]?.kind).toMatchObject({ current: "b" });
+    expect(after.extraOptions?.[1]?.kind).toMatchObject({ current: true });
+    // 输入不动。
+    expect(before.extraOptions?.[0]?.kind).toMatchObject({ current: "a" });
+
+    const toggled = withCurrentOption(before, "fast", "false");
+    expect(toggled.extraOptions?.[1]?.kind).toMatchObject({ current: false });
   });
 });

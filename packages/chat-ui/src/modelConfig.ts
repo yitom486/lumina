@@ -284,3 +284,36 @@ export function currentSelectValue(option: SessionConfigOption): string {
 export function currentBooleanValue(option: SessionConfigOption): boolean {
   return option.kind.kind === "boolean" && option.kind.current;
 }
+
+/**
+ * 乐观写：把某一维度的 current 换成新值（仅改内存快照，不碰列表）。
+ * 下发前先让 UI 落定，失败靠失效重拉自愈。
+ */
+export function withCurrentOption(
+  options: AcpSessionModelOptions,
+  configId: string,
+  value: string,
+): AcpSessionModelOptions {
+  return {
+    ...options,
+    extraOptions: (options.extraOptions ?? []).map((option) => {
+      if (option.id !== configId) return option;
+      if (option.kind.kind === "select") {
+        return {
+          ...option,
+          kind: { ...option.kind, current: value },
+        };
+      }
+      if (option.kind.kind === "boolean") {
+        return {
+          ...option,
+          kind: {
+            ...option.kind,
+            current: value.trim().toLowerCase() === "true",
+          },
+        };
+      }
+      return option;
+    }),
+  };
+}

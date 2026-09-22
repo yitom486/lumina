@@ -529,19 +529,32 @@ impl AcpService {
             .as_mut()
             .ok_or_else(|| AcpError::protocol(Some("no active agent session")))?;
 
-        Self::set_session_config_option(session, &config_id, value.trim(), self, &mut on_event)?;
-        for option in &mut session.model_options.extra_options {
-            if option.id != config_id {
-                continue;
-            }
-            match &mut option.kind {
-                crate::domain::model::SessionConfigKind::Select { current, .. } => {
-                    *current = Some(value.trim().to_string());
+        let response = Self::set_session_config_option(
+            session,
+            &config_id,
+            value.trim(),
+            self,
+            &mut on_event,
+        )?;
+        // 服务端回包自带最新 configOptions（cursor 实测有）：以它为准刷新
+        // 缓存；缺席则回退乐观更新（只改 current），不丢本地状态。
+        let authoritative = crate::wire::session::parse_session_model_options(&response);
+        if !authoritative.extra_options.is_empty() {
+            session.model_options = authoritative;
+        } else {
+            for option in &mut session.model_options.extra_options {
+                if option.id != config_id {
+                    continue;
                 }
-                crate::domain::model::SessionConfigKind::Boolean { current } => {
-                    *current = value.trim().eq_ignore_ascii_case("true");
+                match &mut option.kind {
+                    crate::domain::model::SessionConfigKind::Select { current, .. } => {
+                        *current = Some(value.trim().to_string());
+                    }
+                    crate::domain::model::SessionConfigKind::Boolean { current } => {
+                        *current = value.trim().eq_ignore_ascii_case("true");
+                    }
+                    crate::domain::model::SessionConfigKind::Unsupported => {}
                 }
-                crate::domain::model::SessionConfigKind::Unsupported => {}
             }
         }
 
@@ -580,35 +593,60 @@ impl AcpService {
         value: &str,
         service: &AcpService,
         on_event: &mut dyn FnMut(AcpEvent),
-    ) -> Result<(), AcpError> {
-        let request_id = session.next_id;
-        session.next_id += 1;
-        crate::runtime::io::write_request(
-            &session.stdin,
-            request_id,
-            "session/set_config_option",
-            crate::wire::session::session_set_config_option_params(
-                &session.session_id,
-                config_id,
-                value,
-            ),
-        )?;
-        let response = crate::runtime::io::read_until_id_raw(
-            service,
-            session,
-            request_id,
-            Duration::from_secs(30),
-            &service.cancel,
-            &service.host,
-            on_event,
-        )?;
-        if let Some(message) = is_error_response(&response) {
-            return Err(AcpError::protocol(Some(&format!(
-                "session config {config_id}: {message}"
-            ))));
+    ) -> Result<Value, AcpError> {
+        // cursor 切模型实测 4~8s、尾部更长；60s 仍不够才报超时。
+        // 超时只重试一次：同值重发幂等，且每次用新 id，老响应按 id 错过，
+        // 不会串台。
+        let mut attempt = 0;
+        loop {
+            let request_id = session.next_id;
+            session.next_id += 1;
+            crate::runtime::io::write_request(
+                &session.stdin,
+                request_id,
+                "session/set_config_option",
+                crate::wire::session::session_set_config_option_params(
+                    &session.session_id,
+                    config_id,
+                    value,
+                ),
+            )?;
+            match crate::runtime::io::read_until_id_raw(
+                service,
+                session,
+                request_id,
+                Duration::from_secs(60),
+                &service.cancel,
+                &service.host,
+                on_event,
+            ) {
+                Err(error) if attempt == 0 && is_read_timeout(&error) => {
+                    attempt += 1;
+                    tracing::warn!(
+                        config_id,
+                        "session/set_config_option timed out; retrying once with a fresh id"
+                    );
+                    continue;
+                }
+                Err(error) => return Err(error),
+                Ok(response) => {
+                    if let Some(message) = is_error_response(&response) {
+                        return Err(AcpError::protocol(Some(&format!(
+                            "session config {config_id}: {message}"
+                        ))));
+                    }
+                    return Ok(response);
+                }
+            }
         }
-        Ok(())
     }
+}
+
+/// True only for our own read timeout (not agent error responses, not
+/// cancel, not EOF): the only case where a same-value retry is safe.
+fn is_read_timeout(error: &AcpError) -> bool {
+    error.code == crate::AcpErrorCode::ProtocolError
+        && error.details.as_deref() == Some("ACP read timed out")
 }
 
 impl Default for AcpService {

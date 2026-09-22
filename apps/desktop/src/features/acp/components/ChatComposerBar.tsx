@@ -469,6 +469,10 @@ export const ChatComposerBar = forwardRef<ChatComposerBarHandle, Props>(
           <p className="mt-1 text-[10px] leading-relaxed text-destructive">
             {controlError ?? cursor.controlError}
           </p>
+        ) : cursor.applying ? (
+          <p className="mt-1 text-[10px] leading-relaxed text-muted-foreground">
+            正在应用 Agent 配置…（cursor 切换模型需要几秒，请稍候）
+          </p>
         ) : null}
       </ChatColumn>
     );

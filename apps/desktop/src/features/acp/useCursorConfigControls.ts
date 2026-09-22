@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 
 import { errorMessage } from "@/lib/format";
@@ -7,9 +7,10 @@ import { useAcpProfilesStore } from "@lumina/chat-ui/acpProfilesStore";
 import {
   classifyCursorDimensions,
   isListedConfigValue,
+  withCurrentOption,
   type CursorConfigDimensions,
 } from "@lumina/chat-ui/modelConfig";
-import type { AcpStatus } from "./types";
+import type { AcpSessionModelOptions, AcpStatus } from "./types";
 import { acpSetSessionConfig } from "./api";
 
 type Options = {
@@ -35,6 +36,23 @@ export function useCursorConfigControls({
 }: Options) {
   const queryClient = useQueryClient();
   const [controlError, setControlError] = useState<string | null>(null);
+  // 下发中状态：UI 置灰防连点。State 管渲染，ref 管同 tick 双发的门
+  // （两次调用发生在同一次渲染闭包里时 state 还没更新）。
+  const [applying, setApplying] = useState(false);
+  const applyingRef = useRef(false);
+  // 待下发队列（按 configId 合并，只留最新意图）：cursor 单次切换固定
+  // 3~6s，连点必须排队消化，不能静默吞掉——吞掉的点击在用户侧就是“坏了”。
+  const queueRef = useRef<{ configId: string; value: string }[]>([]);
+
+  const writeCachedOptions = (
+    update: (options: AcpSessionModelOptions) => AcpSessionModelOptions,
+  ) => {
+    queryClient.setQueriesData<AcpStatus | undefined>(
+      { queryKey: ["acp-status"] },
+      (old) =>
+        old?.sessionModelOptions ? { ...old, sessionModelOptions: update(old.sessionModelOptions) } : old,
+    );
+  };
 
   const activeProfileId = useAcpProfilesStore((s) => s.activeProfileId);
   const isCursor = activeProfileId === "cursor";
@@ -53,9 +71,11 @@ export function useCursorConfigControls({
   // 有模型维度才算“参数化模式”：老 cursor（爆炸 variant 串）无维度，
   // 回落经典模型/思考下拉（下发什么展示什么）。
   const hasCursorDims = Boolean(dims.model);
-  const controlsDisabled = Boolean(busy);
+  // cursor 切模型实测 4~8s、尾部更长：下发中整组置灰 + 单飞，
+  // 不给第二次点击排队的机会（排队只会把等待翻倍）。
+  const controlsDisabled = Boolean(busy || applying);
 
-  const applyConfigOption = async (configId: string, value: string) => {
+  const applyConfigOption = (configId: string, value: string) => {
     if (!configId.trim()) return;
     const option = (
       status?.sessionModelOptions?.extraOptions ?? []
@@ -65,13 +85,37 @@ export function useCursorConfigControls({
       return;
     }
     if (!sessionConnected || busy) return;
+    // 先乐观落定（UI 零等待），再排队下发；失败靠失效重拉自愈。
+    writeCachedOptions((options) => withCurrentOption(options, configId, value));
+    queueRef.current = [
+      ...queueRef.current.filter((item) => item.configId !== configId),
+      { configId, value },
+    ];
+    void drainQueue();
+  };
 
+  const drainQueue = async () => {
+    if (applyingRef.current) return;
+    applyingRef.current = true;
+    setApplying(true);
     try {
       setControlError(null);
-      await acpSetSessionConfig({ configId, value });
+      while (queueRef.current.length > 0) {
+        const next = queueRef.current.shift();
+        if (!next) break;
+        const updated = await acpSetSessionConfig(next);
+        writeCachedOptions(() => updated);
+      }
       await queryClient.invalidateQueries({ queryKey: ["acp-status"] });
     } catch (error) {
+      queueRef.current = [];
       setControlError(errorMessage(error));
+      // 权威重拉：成功 applied 但回包丢失时以服务端为准，
+      // 拒收时回到下发前的值。
+      await queryClient.invalidateQueries({ queryKey: ["acp-status"] });
+    } finally {
+      applyingRef.current = false;
+      setApplying(false);
     }
   };
 
@@ -80,6 +124,7 @@ export function useCursorConfigControls({
     hasCursorDims,
     controlsDisabled,
     controlError,
+    applying,
     applyConfigOption,
   };
 }

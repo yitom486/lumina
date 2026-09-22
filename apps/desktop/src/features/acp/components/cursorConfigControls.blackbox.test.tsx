@@ -201,4 +201,82 @@ describe("cursor composer controls blackbox", () => {
     expect(screen.queryByLabelText("模式")).not.toBeInTheDocument();
     expect(screen.queryByLabelText("Fast")).not.toBeInTheDocument();
   });
+
+  it("applies optimistically and drains queued switches in order", async () => {
+    const pending: ((value: unknown) => void)[] = [];
+    vi.mocked(invoke).mockImplementation((cmd: string) => {
+      if (cmd === "acp_set_session_config") {
+        return new Promise((resolve) => {
+          pending.push(resolve);
+        });
+      }
+      return Promise.resolve(null);
+    });
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    const setQueriesDataSpy = vi.spyOn(client, "setQueriesData");
+    const { result } = renderHook(
+      () => useCursorConfigControls({ status: cursorStatus(), sessionConnected: true }),
+      {
+        wrapper: ({ children }: { children: React.ReactNode }) => (
+          <QueryClientProvider client={client}>{children}</QueryClientProvider>
+        ),
+      },
+    );
+
+    // 连点两次：都不丢，第二次进队列；UI 没等服务端就已落定。
+    act(() => {
+      result.current.applyConfigOption("model", "grok-4.7");
+      result.current.applyConfigOption("model", "claude-sonnet-4");
+    });
+    expect(result.current.applying).toBe(true);
+    expect(setQueriesDataSpy).toHaveBeenCalledTimes(2);
+    const latestUpdater = setQueriesDataSpy.mock.calls[1][1] as (
+      old: unknown,
+    ) => {
+      sessionModelOptions: {
+        extraOptions: { id: string; kind: { current?: string } }[];
+      };
+    };
+    const merged = latestUpdater({
+      sessionModelOptions: {
+        models: [],
+        reasoningEfforts: [],
+        extraOptions: CURSOR_EXTRA,
+      },
+    });
+    expect(
+      merged.sessionModelOptions.extraOptions.find((o) => o.id === "model")?.kind,
+    ).toMatchObject({ current: "claude-sonnet-4" });
+
+    await act(async () => {
+      pending[0]?.({
+        models: [],
+        reasoningEfforts: [],
+        extraOptions: CURSOR_EXTRA,
+      });
+    });
+    // 第一个落定，第二个接上，仍在下发中。
+    expect(result.current.applying).toBe(true);
+    await act(async () => {
+      pending[1]?.({
+        models: [],
+        reasoningEfforts: [],
+        extraOptions: CURSOR_EXTRA,
+      });
+    });
+
+    const sets = vi
+      .mocked(invoke)
+      .mock.calls.filter(([cmd]) => cmd === "acp_set_session_config");
+    expect(sets).toHaveLength(2);
+    expect(sets[0]?.[1]).toMatchObject({ configId: "model", value: "grok-4.7" });
+    expect(sets[1]?.[1]).toMatchObject({
+      configId: "model",
+      value: "claude-sonnet-4",
+    });
+    expect(result.current.applying).toBe(false);
+    expect(result.current.controlError).toBeNull();
+  });
 });
