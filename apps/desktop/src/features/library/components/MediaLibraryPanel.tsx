@@ -39,12 +39,14 @@ import {
 import { useLibrarySettingsStore } from "../settingsStore";
 import { pickSingleCandidate } from "../autoMatch";
 import {
-  buildAgentModelOptions,
-  buildAgentReasoningOptions,
   isAgentResolverReady,
   isDirectResolverReady,
-  mergeAgentDiscoverySettings,
 } from "../resolverSettings";
+import {
+  buildModelOptions,
+  buildReasoningOptions,
+  mergeModelDefaults,
+} from "@lumina/chat-ui/modelConfig";
 import type {
   CredentialKind,
   CredentialValidationResult,
@@ -323,14 +325,25 @@ function LibrarySettingsContent() {
       setAgentConnection(result);
       if (!result.connected) return;
       const saved = useLibrarySettingsStore.getState();
-      const patch = mergeAgentDiscoverySettings(
+      // 媒体库 store 用 agentModelId 前缀命名（与直连 modelId 同 store 防撞），
+      // 统一模块只认 modelId/reasoningEffort，进出各转一次键。
+      const patch = mergeModelDefaults(
         {
-          agentModelId: saved.agentModelId,
-          agentReasoningEffort: saved.agentReasoningEffort,
+          modelId: saved.agentModelId,
+          reasoningEffort: saved.agentReasoningEffort,
         },
-        result,
+        result.options,
       );
-      if (Object.keys(patch).length > 0) patchSettings(patch);
+      if (Object.keys(patch).length > 0) {
+        patchSettings({
+          ...(patch.modelId !== undefined
+            ? { agentModelId: patch.modelId }
+            : {}),
+          ...(patch.reasoningEffort !== undefined
+            ? { agentReasoningEffort: patch.reasoningEffort }
+            : {}),
+        });
+      }
     },
     onError: (err) => setError(errorMessage(err)),
   });
@@ -343,9 +356,12 @@ function LibrarySettingsContent() {
   const agentModelReady = isAgentResolverReady(agentModelId);
   const resolverReady = resolverProvider === "directApi" ? directModelReady : agentModelReady;
   const selectedModelOption = modelConnection?.models.includes(modelId) ? modelId : "__manual__";
-  const agentModelOptions = buildAgentModelOptions(agentConnection, agentModelId);
-  const agentReasoningOptions = buildAgentReasoningOptions(
-    agentConnection,
+  const agentModelOptions = buildModelOptions(
+    agentConnection?.options ?? null,
+    agentModelId,
+  );
+  const agentReasoningOptions = buildReasoningOptions(
+    agentConnection?.options ?? null,
     agentReasoningEffort,
   );
   const showAgentModelPicker = Boolean(

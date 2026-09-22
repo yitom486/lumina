@@ -10,8 +10,9 @@ import { profilesHintFromStore } from "@lumina/chat-ui/defaultAgentProfiles";
 import {
   buildModelOptions,
   buildReasoningOptions,
-  mergeSessionModelDefaults,
-} from "@lumina/chat-ui/modelOptions";
+  mergeModelDefaults,
+  selectedOptionLabel,
+} from "@lumina/chat-ui/modelConfig";
 import type { AcpSessionModelOptions, AcpStatus } from "./types";
 
 type Options = {
@@ -53,7 +54,7 @@ export function useAgentModelControls({
   useEffect(() => {
     if (!optionSource) return;
     const saved = useAcpSettingsStore.getState();
-    const patch = mergeSessionModelDefaults(
+    const patch = mergeModelDefaults(
       {
         modelId: saved.modelId ?? "",
         reasoningEffort: saved.reasoningEffort ?? "",
@@ -74,13 +75,17 @@ export function useAgentModelControls({
     [optionSource, reasoningEffort],
   );
 
-  const selectedModelLabel =
-    modelOptions.find((option) => option.value === modelId)?.name ??
-    (modelId.trim() ? modelId : "Agent 默认");
+  const selectedModelLabel = selectedOptionLabel(
+    modelOptions,
+    modelId,
+    "Agent 默认",
+  );
 
-  const selectedReasoningLabel =
-    reasoningOptions.find((option) => option.value === reasoningEffort)?.name ??
-    (reasoningEffort.trim() ? reasoningEffort : "默认");
+  const selectedReasoningLabel = selectedOptionLabel(
+    reasoningOptions,
+    reasoningEffort,
+    "默认",
+  );
 
   const controlsDisabled = Boolean(busy || discoverBusy);
 
@@ -113,10 +118,7 @@ export function useAgentModelControls({
       );
       if (result.connected) {
         setDiscoveredOptions(result.options);
-        const patch = mergeSessionModelDefaults(
-          { modelId, reasoningEffort },
-          result.options,
-        );
+        const patch = mergeModelDefaults({ modelId, reasoningEffort }, result.options);
         if (Object.keys(patch).length > 0) {
           patchSettings(patch);
         }

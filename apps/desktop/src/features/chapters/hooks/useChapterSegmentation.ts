@@ -7,6 +7,7 @@ import { useTrackStore } from "@/features/player/trackStore";
 
 import {
   profilesHintFromStore,
+  resolveModelSelection,
   useAcpProfilesStore,
   useAcpSettingsStore,
 } from "@lumina/chat-ui";
@@ -100,8 +101,7 @@ export function useChapterSegmentation() {
         episodeIdentity,
         profileId: activeProfileId,
         profiles: profilesHintFromStore(activeProfileId, profiles),
-        modelId: modelId?.trim() || null,
-        reasoningEffort: reasoningEffort?.trim() || null,
+        ...resolveModelSelection({ modelId, reasoningEffort }),
         subtitleChoiceId,
         positionMs,
         spoilerBoundary: "full_media",

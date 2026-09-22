@@ -12,6 +12,7 @@ import {
   useAskAboutStore,
 } from "@lumina/chat-ui/askAboutStore";
 import { useChatUiStore } from "@lumina/chat-ui/chatUiStore";
+import { resolveModelSelection } from "@lumina/chat-ui/modelConfig";
 import type { AsrRange } from "@/features/asr";
 import { useMediaInfoQuery } from "@/features/media";
 import type { Transcript } from "@/features/transcript";
@@ -551,8 +552,10 @@ export function TranscriptPanel({
         stripSoundTags,
         profileId: workshopModels.profileId,
         profiles: workshopModels.profilesHint,
-        modelId: workshopModels.modelId || null,
-        reasoningEffort: workshopModels.reasoningEffort || null,
+        ...resolveModelSelection({
+          modelId: workshopModels.modelId,
+          reasoningEffort: workshopModels.reasoningEffort,
+        }),
         onEvent: (event) => {
           if (event.type === "Progress") {
             setProofreadProgress(event.payload.message);
@@ -613,8 +616,10 @@ export function TranscriptPanel({
         targetLang,
         profileId: workshopModels.profileId,
         profiles: workshopModels.profilesHint,
-        modelId: workshopModels.modelId || null,
-        reasoningEffort: workshopModels.reasoningEffort || null,
+        ...resolveModelSelection({
+          modelId: workshopModels.modelId,
+          reasoningEffort: workshopModels.reasoningEffort,
+        }),
         glossaryBackfill: workshopSettings.backfillGlossary,
         glossaryReviewMode: workshopSettings.glossaryReviewMode,
         onEvent: (event) => {

@@ -7,7 +7,7 @@ export * from "./chatTurns";
 export * from "./conversationContext";
 export * from "./failureHints";
 export * from "./toolStatus";
-export * from "./modelOptions";
+export * from "./modelConfig";
 export * from "./profilesSignature";
 export * from "./defaultAgentProfiles";
 export * from "./promptQueue";

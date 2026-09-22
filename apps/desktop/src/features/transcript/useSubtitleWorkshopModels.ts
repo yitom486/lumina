@@ -7,10 +7,11 @@ import {
   profilesHintFromStore,
 } from "@lumina/chat-ui/defaultAgentProfiles";
 import {
-  buildAgentModelOptions,
-  buildAgentReasoningOptions,
-  mergeAgentDiscoverySettings,
-} from "@/features/library/resolverSettings";
+  buildModelOptions,
+  buildReasoningOptions,
+  mergeModelDefaults,
+  selectedOptionLabel,
+} from "@lumina/chat-ui/modelConfig";
 
 import { useSubtitleWorkshopStore } from "@lumina/transcript-ui";
 
@@ -32,29 +33,25 @@ export function useSubtitleWorkshopModels(enabled = true) {
 
   useEffect(() => {
     if (!discoveryQuery.data?.connected) return;
-    const patch = mergeAgentDiscoverySettings(
-      { agentModelId: modelId, agentReasoningEffort: reasoningEffort },
-      discoveryQuery.data,
+    const patch = mergeModelDefaults(
+      { modelId, reasoningEffort },
+      discoveryQuery.data.options,
     );
-    if (patch.agentModelId || patch.agentReasoningEffort) {
-      patchSettings({
-        ...(patch.agentModelId ? { modelId: patch.agentModelId } : {}),
-        ...(patch.agentReasoningEffort
-          ? { reasoningEffort: patch.agentReasoningEffort }
-          : {}),
-      });
+    if (Object.keys(patch).length > 0) {
+      patchSettings(patch);
     }
   }, [discoveryQuery.data, modelId, reasoningEffort, patchSettings]);
 
-  const modelOptions = buildAgentModelOptions(discoveryQuery.data ?? null, modelId);
-  const reasoningOptions = buildAgentReasoningOptions(
-    discoveryQuery.data ?? null,
+  const modelOptions = buildModelOptions(
+    discoveryQuery.data?.options ?? null,
+    modelId,
+  );
+  const reasoningOptions = buildReasoningOptions(
+    discoveryQuery.data?.options ?? null,
     reasoningEffort,
   );
 
-  const modelLabel =
-    modelOptions.find((option) => option.value === modelId)?.name ??
-    (modelId.trim() ? modelId : "默认");
+  const modelLabel = selectedOptionLabel(modelOptions, modelId, "默认");
 
   return {
     profileId,
