@@ -1,7 +1,13 @@
-import { History, Plus, StickyNote } from "lucide-react";
+import { Check, ChevronDown, History, Plus, StickyNote } from "lucide-react";
 import { useRef } from "react";
 
 import { Button } from "@lumina/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@lumina/ui/dropdown-menu";
 import { QuickNoteDialog } from "@/features/notes/components/QuickNoteDialog";
 import { cn } from "@lumina/ui/utils";
 
@@ -72,24 +78,59 @@ export function ChatToolbar({
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
             {canSwitchAgent ? (
-              <select
-                className="h-6 max-w-[11rem] cursor-pointer truncate rounded-md border border-transparent bg-transparent text-[12px] font-medium text-foreground outline-none hover:border-border focus-visible:border-border disabled:cursor-default disabled:opacity-60"
-                value={activeProfileId}
-                disabled={busy || switchDisabled}
-                aria-label="切换 Agent"
-                title="切换 Agent（各家会话记忆独立保留）"
-                onChange={(e) => {
-                  if (e.target.value !== activeProfileId) {
-                    onSwitchProfile(e.target.value);
-                  }
-                }}
-              >
-                {profiles?.map((profile) => (
-                  <option key={profile.id} value={profile.id}>
-                    {profile.available ? "✓ " : "× "}{profile.name}
-                  </option>
-                ))}
-              </select>
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <button
+                    type="button"
+                    className="flex h-6 max-w-[11rem] cursor-pointer items-center gap-1 truncate rounded-md border border-transparent bg-transparent px-1 text-[12px] font-medium text-foreground outline-none hover:border-border focus-visible:border-border disabled:cursor-default disabled:opacity-60"
+                    disabled={busy || switchDisabled}
+                    aria-label="切换 Agent"
+                    title="切换 Agent（各家会话记忆独立保留）"
+                  >
+                    <span className="min-w-0 flex-1 truncate text-left">
+                      {agentLabel}
+                    </span>
+                    <ChevronDown className="size-3.5 shrink-0 text-muted-foreground" />
+                  </button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent
+                  align="start"
+                  side="bottom"
+                  className="z-[100] min-w-[12rem]"
+                >
+                  {profiles?.map((profile) => {
+                    const isActive = profile.id === activeProfileId;
+                    return (
+                      <DropdownMenuItem
+                        key={profile.id}
+                        disabled={busy || switchDisabled}
+                        aria-current={isActive ? "true" : undefined}
+                        className={cn("cursor-pointer gap-2")}
+                        onSelect={() => {
+                          if (!isActive) {
+                            onSwitchProfile(profile.id);
+                          }
+                        }}
+                      >
+                        <span
+                          className={cn(
+                            "size-1.5 shrink-0 rounded-full",
+                            profile.available
+                              ? "bg-emerald-500"
+                              : "bg-muted-foreground/50",
+                          )}
+                        />
+                        <span className="min-w-0 flex-1 truncate">
+                          {profile.name}
+                        </span>
+                        {isActive ? (
+                          <Check className="size-3.5 shrink-0" />
+                        ) : null}
+                      </DropdownMenuItem>
+                    );
+                  })}
+                </DropdownMenuContent>
+              </DropdownMenu>
             ) : (
               <span className="text-[12px] font-medium text-foreground">
                 {agentLabel}

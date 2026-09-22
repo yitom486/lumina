@@ -49,7 +49,9 @@ export function AgentSettingsPanel({
   const [loginSuccess, setLoginSuccess] = useState<string | null>(null);
 
   const activeProfileId = useAcpProfilesStore((s) => s.activeProfileId);
-  const setActiveProfileId = useAcpProfilesStore((s) => s.setActiveProfileId);
+  // 切换唯一入口：与表头 ChatToolbar 下拉同规则，恒走 switchActiveProfileId。
+  // 裸 setActiveProfileId 只留给非切换场景，这里不用。
+  const switchActiveProfileId = useAcpProfilesStore((s) => s.switchActiveProfileId);
   const profiles = useAcpProfilesStore((s) => s.profiles);
   const upsertProfile = useAcpProfilesStore((s) => s.upsertProfile);
   const thinkingLevel = useAcpSettingsStore((s) => s.thinkingLevel);
@@ -111,7 +113,7 @@ export function AgentSettingsPanel({
       args: [],
       env: {},
     });
-    setActiveProfileId("custom");
+    switchActiveProfileId("custom");
     refreshStatus();
   };
 
@@ -167,9 +169,12 @@ export function AgentSettingsPanel({
               value={activeProfileId}
               disabled={controlsDisabled}
               onChange={(e) => {
-                setActiveProfileId(e.target.value);
+                if (e.target.value === activeProfileId || controlsDisabled) return;
+                switchActiveProfileId(e.target.value);
                 // Model ids are agent-specific (e.g. GPT-5.6 belongs to
                 // Codex); never leak a saved selection into another agent.
+                // permissionMode/thinkingLevel 保持现状不变（全局偏好，
+                // 切 profile 是否保留待产品确认，不擅自改语义）。
                 patchSettings({ modelId: "", reasoningEffort: "" });
                 refreshStatus();
               }}

@@ -1,11 +1,11 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
   cleanup,
-  fireEvent,
   render,
   screen,
   waitFor,
 } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { usePlayerStore } from "@/features/player";
@@ -271,15 +271,25 @@ describe("AcpPanel", () => {
     useAcpSettingsStore.getState().patchSettings({ modelId: "gpt-5.6-luna" });
     renderPanel();
 
+    const user = userEvent.setup();
     const switcher = await screen.findByLabelText("切换 Agent");
-    expect(switcher).toHaveDisplayValue("✓ Codex（默认）");
-    fireEvent.change(switcher, { target: { value: "cursor" } });
+    expect(switcher).toHaveTextContent("Codex（默认）");
+    await user.click(switcher);
+    await user.click(
+      await screen.findByRole("menuitem", { name: "Cursor CLI" }),
+    );
 
     // 画像切过去 + 模型选择清掉（codex 的模型不漏进 cursor）。
     await waitFor(() => {
       expect(useAcpProfilesStore.getState().activeProfileId).toBe("cursor");
     });
     expect(useAcpSettingsStore.getState().modelId).toBe("");
+    // 关旧连新同一条流：旧 codex 进程先退场，再连 cursor。
+    await waitFor(() => {
+      expect(
+        vi.mocked(invoke).mock.calls.filter(([cmd]) => cmd === "acp_close"),
+      ).not.toHaveLength(0);
+    });
     // 新画像发起自己的 connect（自家 hint，各家记忆见 session 隔离）。
     await waitFor(() => {
       const connects = vi
@@ -291,6 +301,68 @@ describe("AcpPanel", () => {
             (args as { profileId?: string })?.profileId === "cursor",
         ),
       ).toBe(true);
+    });
+  });
+
+  it("reconnects on switch even when the old session looks alive", async () => {
+    // 绞杀回归：旧 Agent 进程还活着时 session_active 为 true（后端已按
+    // profile 收敛，但旧实现不分），切换绝不能被“已连接”短路——必须
+    // 先关旧、再连新。这里 mock 旧会话永远不死，照样要求连上 cursor。
+    vi.mocked(invoke).mockImplementation((cmd: string) => {
+      if (cmd === "acp_status") {
+        return Promise.resolve({
+          ...mockStatus,
+          available: true,
+          activeProfileId: useAcpProfilesStore.getState().activeProfileId,
+          profiles: [
+            { ...mockStatus.profiles[0], available: true },
+            {
+              id: "cursor",
+              name: "Cursor CLI",
+              kind: "Cursor" as const,
+              command: "agent.cmd",
+              args: ["acp"],
+              env: {},
+              available: true,
+              resolvedCommand: "agent.cmd",
+            },
+          ],
+          // 旧 codex 会话一直活着：切画像不能把它当成“已连接”。
+          sessionActive: true,
+          message: "ok",
+        });
+      }
+      return Promise.resolve(null);
+    });
+    useAcpProfilesStore.setState({ activeProfileId: "codex" });
+    renderPanel();
+
+    const user = userEvent.setup();
+    const switcher = await screen.findByLabelText("切换 Agent");
+    await user.click(switcher);
+    await user.click(
+      await screen.findByRole("menuitem", { name: "Cursor CLI" }),
+    );
+
+    await waitFor(() => {
+      expect(useAcpProfilesStore.getState().activeProfileId).toBe("cursor");
+    });
+    // 旧进程退场 + 新画像建连，两者缺一不可。
+    await waitFor(() => {
+      expect(
+        vi.mocked(invoke).mock.calls.filter(([cmd]) => cmd === "acp_close"),
+      ).not.toHaveLength(0);
+    });
+    await waitFor(() => {
+      expect(
+        vi
+          .mocked(invoke)
+          .mock.calls.filter(
+            ([cmd, args]) =>
+              cmd === "acp_connect" &&
+              (args as { profileId?: string })?.profileId === "cursor",
+          ),
+      ).not.toHaveLength(0);
     });
   });
 });

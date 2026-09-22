@@ -107,6 +107,11 @@ beforeEach(() => {
   vi.mocked(invoke).mockImplementation((cmd: string) => {
     if (cmd === "acp_status") return Promise.resolve(mockStatus);
     if (cmd === "acp_connect") return Promise.resolve(null);
+    if (cmd === "acp_load_session")
+      return Promise.resolve([
+        { role: "user", text: "cursor 远端老问题" },
+        { role: "agent", text: "cursor 远端老回答" },
+      ]);
     return Promise.resolve(null);
   });
 });
@@ -366,5 +371,37 @@ describe("chat restore blackbox: instant render + auto resume", () => {
       "claude-thread",
       "codex-thread",
     ]);
+  });
+
+  it("reloads the resumed thread text when the panel has no cached snapshot", async () => {
+    // 快照缺失（localStorage 是空的）但 hint 还在：resume 续记忆，
+    // 这次 reload 把远端真实文本摆出来——切到有记忆的 Agent 不再看空白框。
+    useAcpSessionStore.getState().setSavedSessionFor("cursor", {
+      sessionId: "cursor-thread",
+      profileId: "cursor",
+      cwd: "D:\\movie",
+    });
+    useAcpProfilesStore.setState({ activeProfileId: "cursor" });
+    renderPanel();
+    await waitForConnect();
+
+    await act(async () => {
+      channels[0]?.onmessage?.({
+        type: "sessionSaved",
+        sessionId: "cursor-thread",
+        profileId: "cursor",
+        cwd: "D:\\movie",
+        resume: "resumed",
+      });
+    });
+
+    expect(
+      (await screen.findAllByText("cursor 远端老问题")).length,
+    ).toBeGreaterThanOrEqual(1);
+    expect(screen.getByText("cursor 远端老回答")).toBeInTheDocument();
+    // 文本走的是自家线程的 load，不是编出来的。
+    expect(
+      vi.mocked(invoke).mock.calls.filter(([cmd]) => cmd === "acp_load_session"),
+    ).not.toHaveLength(0);
   });
 });

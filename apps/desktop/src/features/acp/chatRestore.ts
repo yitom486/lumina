@@ -236,6 +236,22 @@ export function scheduleClearChatRestore(profileId: string): void {
   ensureFlushTimer();
 }
 
+/**
+ * 丢弃指定 profile 的内存态待写/待清（error/disconnected/切换复用）。
+ * 只删 pendingByProfile 对应槽位，不碰落盘快照：与 scheduleClearChatRestore
+ * （排队删快照）语义相反。调用后该 profile 下次落盘走重新调度的全新输入，
+ * 不会被本次丢弃前的旧 trailing 覆盖。别家槽位一律不动。
+ * 注意：正常切换不断旧世界的 trailing（旧键照样落盘），不要在切换路径上
+ * 误调本函数丢掉旧世界的草稿；只在 pending 已知过期（报错/断连后的脏计划）
+ * 时调用。
+ */
+export function discardTransientChatState(profileId: string): void {
+  if (typeof window === "undefined") return;
+  const key = normalizeProfileKey(profileId);
+  if (!key) return;
+  pendingByProfile.delete(key);
+}
+
 /** 卸载/切后台前把 trailing 的一次写完。 */
 export function flushChatRestore(): void {
   if (typeof window === "undefined") return;

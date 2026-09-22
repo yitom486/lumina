@@ -27,8 +27,11 @@ export function useAgentModelControls({
   sessionConnected,
 }: Options) {
   const queryClient = useQueryClient();
-  const [discoveredOptions, setDiscoveredOptions] =
-    useState<AcpSessionModelOptions | null>(null);
+  // 发现结果按 profile 分桶（对标隔壁 modelCatalogByRuntime 与 chatRestore
+  // pendingByProfile）：切换只失活旧键（下读新键），不清全量，切回即复用。
+  const [discoveredOptionsByProfile, setDiscoveredOptionsByProfile] = useState<
+    Record<string, AcpSessionModelOptions>
+  >({});
   const [discoverBusy, setDiscoverBusy] = useState(false);
   const [controlError, setControlError] = useState<string | null>(null);
 
@@ -39,6 +42,10 @@ export function useAgentModelControls({
   const reasoningEffort = useAcpSettingsStore((s) => s.reasoningEffort ?? "");
   const patchSettings = useAcpSettingsStore((s) => s.patchSettings);
 
+  // 当前世界只读自家桶：旧键躺着不动，新世界读不到旧世界的模型。
+  const discoveredOptions = activeProfileId
+    ? (discoveredOptionsByProfile[activeProfileId] ?? null)
+    : null;
   const optionSource =
     status?.activeProfileId === activeProfileId
       ? (status?.sessionModelOptions ?? discoveredOptions ?? null)
@@ -46,8 +53,8 @@ export function useAgentModelControls({
 
   // Discovery results describe one agent's session; switching profile must
   // not carry, say, Codex GPT models into Antigravity's composer.
+  // 分桶后切换不清全量：只清 transient 的 controlError，各家发现结果保留。
   useEffect(() => {
-    setDiscoveredOptions(null);
     setControlError(null);
   }, [activeProfileId]);
 
@@ -117,7 +124,8 @@ export function useAgentModelControls({
         activeProfileId,
       );
       if (result.connected) {
-        setDiscoveredOptions(result.options);
+        const owner = activeProfileId;
+        setDiscoveredOptionsByProfile((prev) => ({ ...prev, [owner]: result.options }));
         const patch = mergeModelDefaults({ modelId, reasoningEffort }, result.options);
         if (Object.keys(patch).length > 0) {
           patchSettings(patch);
@@ -134,6 +142,8 @@ export function useAgentModelControls({
 
   return {
     permissionMode,
+    discoveredOptions,
+    discoveredOptionsByProfile,
     modelId,
     reasoningEffort,
     modelOptions,

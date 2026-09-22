@@ -29,7 +29,17 @@ function mergeProfiles(
 type AcpProfilesStore = {
   activeProfileId: string;
   profiles: AgentProfileInput[];
+  /** Bare setter: only flips the key. Prefer switchActiveProfileId for UI switches. */
   setActiveProfileId: (id: string) => void;
+  /**
+   * 切换世界 + 清瞬态的唯一入口（对标隔壁 setSelectedRuntimeId）。
+   * 本 store 只做换键：同 id 与空白 id 直接 no-op；瞬态清理
+   * （promptQueue/drainLock、pendingPermission、progress + seal、
+   * proposal 记账、attachments、模型选择）由调用方 AcpPanel
+   * handleSwitchProfile 执行。savedSessions hint 与 chatRestore
+   * 快照按 profile 分键保留，这里绝不删任何键。
+   */
+  switchActiveProfileId: (id: string) => void;
   upsertProfile: (profile: AgentProfileInput) => void;
   profilesHint: () => AgentProfilesHint;
 };
@@ -41,6 +51,13 @@ export const useAcpProfilesStore = create<AcpProfilesStore>()(
       activeProfileId: "codex",
       profiles: defaultAgentProfiles(),
       setActiveProfileId: (activeProfileId) => set({ activeProfileId }),
+      switchActiveProfileId: (id) => {
+        const next = id.trim();
+        if (!next) return;
+        set((state) =>
+          state.activeProfileId === next ? state : { activeProfileId: next },
+        );
+      },
       upsertProfile: (profile) => {
         const next = normalizeProfileInput(profile);
         set((state) => {

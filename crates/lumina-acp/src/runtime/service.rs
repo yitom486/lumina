@@ -86,7 +86,12 @@ impl AcpService {
         let mut status = status_from_profiles(profiles);
         status.busy = self.busy.load(Ordering::SeqCst);
         if let Ok(guard) = self.session.lock() {
-            status.session_active = guard.is_some();
+            // live 槽是单例，但归属是按 profile 的：别家还活着不等于自家
+            // 已连接。以前这里不区分，切画像后前端会把旧 Agent 的活着误认
+            // 成新 Agent 已连，直接跳过重连（绿 badge 常亮、实际没连上）。
+            status.session_active = guard
+                .as_ref()
+                .is_some_and(|session| session.profile_id == status.active_profile_id);
             // Model options describe one agent's live session. Reporting them
             // for a different active profile made the composer show, say,
             // Codex GPT models while Antigravity was connecting.
@@ -1309,12 +1314,15 @@ mod tests {
         assert!(status.session_model_options.is_some());
         assert!(status.session_active);
 
-        // …but hidden the moment another profile becomes active.
+        // …but hidden the moment another profile becomes active — and the
+        // session no longer counts as active either (a live foreign process
+        // must never read as "connected" for the new agent, otherwise the
+        // client skips reconnecting after a profile switch).
         let mut antigravity_hint = codex_hint;
         antigravity_hint.active_profile_id = "antigravity".into();
         let status = service.status(&antigravity_hint);
         assert!(status.session_model_options.is_none());
-        assert!(status.session_active);
+        assert!(!status.session_active);
     }
 
     #[test]
@@ -1452,9 +1460,11 @@ mod tests {
         });
         *service.session.lock().expect("lock") = Some(session);
 
-        // 1. status: 旧 Agent 的模型选项必须立刻消失。
+        // 1. status: 旧 Agent 的模型选项必须立刻消失；旧进程还活着，
+        // 但对 ghost 而言没有可用会话（session_active 同样按 profile 收敛，
+        // 否则前端会把旧 Agent 的活着误认成新 Agent 已连，跳过重连）。
         let status = service.status(&hint);
-        assert!(status.session_active);
+        assert!(!status.session_active);
         assert!(status.session_model_options.is_none());
 
         // 2. session/list 不把 Codex 会话当作 ghost 的历史。
