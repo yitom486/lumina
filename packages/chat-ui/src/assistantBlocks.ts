@@ -421,7 +421,17 @@ function normalizeStructuredResult(
     "description",
   ]);
   const sections = normalizeResultSections(input);
-  const actions = normalizeActionChips(input.actions, id);
+  const explicitActions = normalizeActionChips(input.actions, id);
+  const actions =
+    explicitActions.length > 0
+      ? explicitActions
+      : collectSeekActionsFromTexts(
+          [
+            ...(summary ? [summary] : []),
+            ...sections.flatMap((section) => [...section.paragraphs, ...section.items]),
+          ],
+          id,
+        );
 
   if (!summary && metadata.length === 0 && sections.length === 0) return null;
 
@@ -619,6 +629,55 @@ function normalizeActionChips(
       };
     })
     .filter((item): item is AssistantActionChip => Boolean(item));
+}
+
+const SEEK_TIMESTAMP_PATTERN = /\d{1,3}:\d{2}(?::\d{2})?/g;
+
+/**
+ * Derive seek chips from `ref` timestamps embedded in structured text.
+ * Explicit `actions` always win; this only guarantees a jump affordance
+ * when the backend omitted it. Mirrors the watch-feed-card behavior.
+ */
+function collectSeekActionsFromTexts(
+  texts: readonly string[],
+  idPrefix: string,
+  maxItems = MAX_ACTIONS,
+): AssistantActionChip[] {
+  const seen = new Set<number>();
+  const actions: AssistantActionChip[] = [];
+  for (const text of texts) {
+    SEEK_TIMESTAMP_PATTERN.lastIndex = 0;
+    const matches = text.match(SEEK_TIMESTAMP_PATTERN);
+    if (!matches) continue;
+    for (const timestamp of matches) {
+      const startMs = seekTimestampToMs(timestamp);
+      if (startMs === null || seen.has(startMs)) continue;
+      seen.add(startMs);
+      actions.push({
+        id: `${idPrefix}-seek-${actions.length}`,
+        label: `跳转到 ${timestamp}`,
+        action: { type: "seek", anchor: { startMs } },
+      });
+      if (actions.length >= maxItems) return actions;
+    }
+  }
+  return actions;
+}
+
+function seekTimestampToMs(timestamp: string): number | null {
+  const parts = timestamp.split(":").map((part) => Number(part));
+  if (parts.some((part) => !Number.isFinite(part) || part < 0)) return null;
+  if (parts.length === 2) {
+    const [minutes, seconds] = parts as [number, number];
+    if (seconds > 59) return null;
+    return (minutes * 60 + seconds) * 1000;
+  }
+  if (parts.length === 3) {
+    const [hours, minutes, seconds] = parts as [number, number, number];
+    if (minutes > 59 || seconds > 59) return null;
+    return (hours * 3600 + minutes * 60 + seconds) * 1000;
+  }
+  return null;
 }
 
 function normalizeAction(input: unknown): AssistantAction | null {

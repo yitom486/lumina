@@ -54,7 +54,11 @@ describe("RichBlockRenderer", () => {
     );
 
     expect(renderMarkdown).toHaveBeenCalledWith("叙述");
+    expect(renderMarkdown).toHaveBeenCalledWith("字幕证据 · [00:10]-[00:20]");
+    expect(renderMarkdown).toHaveBeenCalledWith("结构化总结");
     expect(markup).toContain("<strong>叙述</strong>");
+    expect(markup).toContain("<strong>结构化总结</strong>");
+    expect(markup).toContain("字幕证据 · [00:10]-[00:20]");
     expect(markup).toContain("字幕引用");
     expect(markup).toContain("时间线");
     expect(markup).toContain("结构化总结");

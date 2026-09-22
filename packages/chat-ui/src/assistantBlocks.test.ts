@@ -207,7 +207,18 @@ describe("normalizeAssistantBlocks", () => {
           },
         ],
         spoilerLevel: "current",
-        actions: [],
+        actions: [
+          {
+            id: "structured-0-seek-0",
+            label: "跳转到 11:38",
+            action: { type: "seek", anchor: { startMs: 698_000 } },
+          },
+          {
+            id: "structured-0-seek-1",
+            label: "跳转到 11:59",
+            action: { type: "seek", anchor: { startMs: 719_000 } },
+          },
+        ],
       },
     ]);
   });

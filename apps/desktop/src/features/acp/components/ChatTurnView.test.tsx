@@ -164,7 +164,11 @@ describe("ChatTurnView", () => {
     expect(await screen.findByRole("heading", { name: "本段总结" })).toBeInTheDocument();
     expect(screen.getByText("1792个夏日")).toBeInTheDocument();
     expect(screen.getByText("崔雄与国延秀重新面对过去的关系。")).toBeInTheDocument();
-    expect(screen.getByText("两人讨论未来选择。 · [11:38]-[11:59]")).toBeInTheDocument();
+    // Structured evidence now goes through the citation renderer, so the fact
+    // text and the bracketed ref are separate nodes (button when verified,
+    // dotted span while unverified) instead of one plain string.
+    expect(screen.getByText(/两人讨论未来选择/)).toBeInTheDocument();
+    expect(screen.getByText("[11:38]-[11:59]")).toBeInTheDocument();
     expect(screen.getByText("当前台词窗口并不完整。")).toBeInTheDocument();
     expect(screen.queryByText(/chapter_recap\.v1/)).not.toBeInTheDocument();
     expect(screen.queryByText(/spoiler_boundary/)).not.toBeInTheDocument();

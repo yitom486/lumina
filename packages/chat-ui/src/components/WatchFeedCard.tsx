@@ -1,4 +1,5 @@
 import { Bookmark, Clock3 } from "lucide-react";
+import type { ReactNode } from "react";
 
 import { cn } from "@lumina/ui";
 
@@ -13,9 +14,11 @@ type Props = {
   block: WatchFeedCardBlock;
   onAction?: (action: AssistantAction) => void;
   density?: "default" | "compact";
+  /** Injected markdown renderer (with citation linkify); falls back to plain text. */
+  renderMarkdown?: (markdown: string) => ReactNode;
 };
 
-export function WatchFeedCard({ block, onAction, density = "default" }: Props) {
+export function WatchFeedCard({ block, onAction, density = "default", renderMarkdown }: Props) {
   const compact = density === "compact";
   return (
     <article
@@ -39,12 +42,12 @@ export function WatchFeedCard({ block, onAction, density = "default" }: Props) {
 
       <SpoilerGuard level={block.spoilerLevel}>
         {block.summary ? (
-          <p className={cn(
+          <div className={cn(
             "whitespace-pre-wrap break-words leading-relaxed text-foreground/90",
             compact ? "text-xs" : "text-sm",
           )}>
-            {block.summary}
-          </p>
+            {renderMarkdown ? renderMarkdown(block.summary) : block.summary}
+          </div>
         ) : null}
         {block.bullets.length > 0 ? (
           <ul className={cn(
@@ -52,7 +55,9 @@ export function WatchFeedCard({ block, onAction, density = "default" }: Props) {
             compact ? "space-y-0.5 pl-4 text-xs" : "space-y-1 pl-5 text-sm",
           )}>
             {block.bullets.map((bullet, index) => (
-              <li key={`${block.id}-bullet-${index}`}>{bullet}</li>
+              <li key={`${block.id}-bullet-${index}`}>
+                {renderMarkdown ? renderMarkdown(bullet) : bullet}
+              </li>
             ))}
           </ul>
         ) : null}

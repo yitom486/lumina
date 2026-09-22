@@ -1,4 +1,5 @@
 import { HelpCircle } from "lucide-react";
+import type { ReactNode } from "react";
 
 import { cn } from "@lumina/ui";
 
@@ -12,9 +13,10 @@ type Props = {
   block: QuestionCardBlock;
   onAction?: (action: AssistantAction) => void;
   density?: "default" | "compact";
+  renderMarkdown?: (markdown: string) => ReactNode;
 };
 
-export function QuestionCard({ block, onAction, density = "default" }: Props) {
+export function QuestionCard({ block, onAction, density = "default", renderMarkdown }: Props) {
   const compact = density === "compact";
   return (
     <section
@@ -42,7 +44,7 @@ export function QuestionCard({ block, onAction, density = "default" }: Props) {
               compact ? "text-xs" : "text-sm",
             )}
           >
-            {block.question}
+            {renderMarkdown ? renderMarkdown(block.question) : block.question}
           </h3>
           {block.anchor ? (
             <p className="mt-1 text-xs text-muted-foreground">

@@ -68,7 +68,7 @@ function BlockView({
         </section>
       );
     case "transcript-quote":
-      return <TranscriptQuote block={block} />;
+      return <TranscriptQuote block={block} renderMarkdown={renderMarkdown} />;
     case "timeline":
       return (
         <section
@@ -86,11 +86,13 @@ function BlockView({
                 <p className="text-xs font-medium text-muted-foreground">
                   {formatTime(item.atMs)}
                 </p>
-                <p className="text-sm font-medium text-foreground">{item.title}</p>
+                <div className="text-sm font-medium text-foreground">
+                  {renderMarkdown ? renderMarkdown(item.title) : item.title}
+                </div>
                 {item.summary ? (
-                  <p className="whitespace-pre-wrap break-words text-xs leading-relaxed text-muted-foreground">
-                    {item.summary}
-                  </p>
+                  <div className="whitespace-pre-wrap break-words text-xs leading-relaxed text-muted-foreground">
+                    {renderMarkdown ? renderMarkdown(item.summary) : item.summary}
+                  </div>
                 ) : null}
               </li>
             ))}
@@ -98,11 +100,32 @@ function BlockView({
         </section>
       );
     case "structured-result":
-      return <StructuredResult block={block} onAction={onAction} density={density} />;
+      return (
+        <StructuredResult
+          block={block}
+          onAction={onAction}
+          density={density}
+          renderMarkdown={renderMarkdown}
+        />
+      );
     case "watch-feed-card":
-      return <WatchFeedCard block={block} onAction={onAction} density={density} />;
+      return (
+        <WatchFeedCard
+          block={block}
+          onAction={onAction}
+          density={density}
+          renderMarkdown={renderMarkdown}
+        />
+      );
     case "question-card":
-      return <QuestionCard block={block} onAction={onAction} density={density} />;
+      return (
+        <QuestionCard
+          block={block}
+          onAction={onAction}
+          density={density}
+          renderMarkdown={renderMarkdown}
+        />
+      );
     case "agent-task-status":
       return <AgentTaskCard block={block} />;
     case "action-chip":
@@ -116,8 +139,10 @@ function BlockView({
 
 function TranscriptQuote({
   block,
+  renderMarkdown,
 }: {
   block: Extract<AssistantBlock, { kind: "transcript-quote" }>;
+  renderMarkdown?: (markdown: string) => ReactNode;
 }) {
   return (
     <figure
@@ -125,7 +150,7 @@ function TranscriptQuote({
       data-block-kind={block.kind}
     >
       <blockquote className="whitespace-pre-wrap break-words text-sm leading-relaxed text-foreground">
-        {block.quote}
+        {renderMarkdown ? renderMarkdown(block.quote) : block.quote}
       </blockquote>
       <figcaption className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
         {block.speaker ? <span>{block.speaker}</span> : null}

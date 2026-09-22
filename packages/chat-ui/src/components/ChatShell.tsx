@@ -22,6 +22,10 @@ type ColumnProps = {
 };
 
 /** Same content width for messages, activity feed, composer. */
-export function ChatColumn({ children, className }: ColumnProps) {
-  return <div className={cn("w-full min-w-0", className)}>{children}</div>;
+export function ChatColumn({ children, className, ...rest }: ColumnProps & React.HTMLAttributes<HTMLDivElement>) {
+  return (
+    <div className={cn("w-full min-w-0", className)} {...rest}>
+      {children}
+    </div>
+  );
 }

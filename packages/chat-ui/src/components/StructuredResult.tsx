@@ -1,3 +1,5 @@
+import type { ReactNode } from "react";
+
 import { cn } from "@lumina/ui";
 
 import type {
@@ -11,6 +13,8 @@ type Props = {
   block: StructuredResultBlock;
   onAction?: (action: AssistantAction) => void;
   density?: "default" | "compact";
+  /** Injected markdown renderer (with citation linkify); falls back to plain text. */
+  renderMarkdown?: (markdown: string) => ReactNode;
 };
 
 /**
@@ -22,6 +26,7 @@ export function StructuredResult({
   block,
   onAction,
   density = "default",
+  renderMarkdown,
 }: Props) {
   const compact = density === "compact";
 
@@ -55,26 +60,34 @@ export function StructuredResult({
 
       <SpoilerGuard level={block.spoilerLevel}>
         {block.summary ? (
-          <p className="whitespace-pre-wrap break-words leading-relaxed">
-            {block.summary}
-          </p>
+          renderMarkdown ? (
+            <div className="whitespace-pre-wrap break-words leading-relaxed">
+              {renderMarkdown(block.summary)}
+            </div>
+          ) : (
+            <p className="whitespace-pre-wrap break-words leading-relaxed">
+              {block.summary}
+            </p>
+          )
         ) : null}
 
         {block.sections.map((section) => (
           <section key={section.id} className="space-y-1.5">
             <h4 className="font-medium text-foreground">{section.title}</h4>
             {section.paragraphs.map((paragraph, index) => (
-              <p
+              <div
                 key={`${section.id}-paragraph-${index}`}
                 className="whitespace-pre-wrap break-words leading-relaxed text-foreground/90"
               >
-                {paragraph}
-              </p>
+                {renderMarkdown ? renderMarkdown(paragraph) : paragraph}
+              </div>
             ))}
             {section.items.length > 0 ? (
               <ul className="list-disc space-y-1 pl-5 leading-relaxed text-foreground/90">
                 {section.items.map((item, index) => (
-                  <li key={`${section.id}-item-${index}`}>{item}</li>
+                  <li key={`${section.id}-item-${index}`}>
+                    {renderMarkdown ? renderMarkdown(item) : item}
+                  </li>
                 ))}
               </ul>
             ) : null}

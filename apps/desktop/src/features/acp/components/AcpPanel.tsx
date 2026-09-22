@@ -107,18 +107,15 @@ import { ChatHistorySheet } from "@lumina/chat-ui/components/ChatHistorySheet";
 import { ChatComposerBar, type ChatComposerBarHandle } from "./ChatComposerBar";
 import { ChatShell } from "@lumina/chat-ui/components/ChatShell";
 import { ChatColumn } from "@lumina/chat-ui/components/ChatShell";
-import {
-  CompanionModeTabs,
-  type CompanionMode,
-} from "@lumina/chat-ui/components/CompanionModeTabs";
+import type { CompanionMode } from "@lumina/chat-ui/components/CompanionModeTabs";
 import { ChatToolbar } from "./ChatToolbar";
+import { CompanionHeaderPanel } from "./CompanionHeaderPanel";
 import { ChatTurnList } from "./ChatTurnList";
 import {
   COMPANION_TASK_LABELS,
   type CompanionTaskId,
 } from "./CompanionQuickActions";
 import { PermissionPrompt } from "./PermissionPrompt";
-import { WatchFeedView } from "./WatchFeedView";
 
 type AssistantActionHandlerDeps = {
   mediaPath: string | null;
@@ -1424,58 +1421,67 @@ export function AcpPanel() {
 
   return (
     <ChatShell data-chat-shell={listKey}>
-      <ChatColumn className="shrink-0 border-b border-border pb-2 pt-2">
-        <CompanionModeTabs
-          value={companionMode}
-          onChange={setCompanionMode}
-        />
-      </ChatColumn>
-      <ChatColumn className="sticky top-0 z-20 shrink-0 bg-card">
-        <ChatToolbar
-          agentLabel={agentLabel}
-          chatTitle={chatTitle}
-          connectionState={connectionState}
-          statusLine={statusLine}
-          statusError={
-            statusQuery.isError ? errorMessage(statusQuery.error) : null
+      <div className="sticky top-0 z-20 shrink-0 bg-card">
+        <ChatColumn className="shrink-0 bg-card">
+          <ChatToolbar
+            agentLabel={agentLabel}
+            chatTitle={chatTitle}
+            connectionState={connectionState}
+            statusLine={statusLine}
+            statusError={
+              statusQuery.isError ? errorMessage(statusQuery.error) : null
+            }
+            loading={statusQuery.isLoading}
+            busy={composerBusy}
+            historyCount={historyRows.length}
+            onNewChat={startNewChat}
+            onOpenHistory={() => {
+              setQuickNoteOpen(false);
+              handleHistoryOpenChange(!historyOpen);
+            }}
+            quickNoteDisabled={!currentFile}
+            quickNoteOpen={quickNoteOpen}
+            onQuickNoteOpenChange={(open) => {
+              if (open) handleHistoryOpenChange(false);
+              setQuickNoteOpen(open);
+            }}
+            onQuickNoteSaved={() => pushSystem("批注已保存")}
+            onReconnect={handleReconnect}
+          />
+          <ChatHistorySheet
+            open={historyOpen}
+            rows={historyRows}
+            activeSessionId={savedSession?.sessionId ?? null}
+            switchBlocked={historySwitchBlocked}
+            loading={sessionListLoading}
+            onRefresh={() =>
+              void queryClient.invalidateQueries({
+                queryKey: acpQueryKeys.sessionList(
+                  activeProfileId,
+                  sessionCwd ?? null,
+                ),
+              })
+            }
+            onClose={() => handleHistoryOpenChange(false)}
+            onSelect={(sessionId) => void loadConversation(sessionId)}
+            onDelete={(sessionId) => void deleteHistoryConversation(sessionId)}
+            onPurgeEmpty={() => void purgeEmptyConversations()}
+          />
+        </ChatColumn>
+
+        <CompanionHeaderPanel
+          mode={companionMode}
+          onModeChange={setCompanionMode}
+          onSelectTask={selectCompanionTask}
+          onAssistantAction={onAssistantAction}
+          quickActionsDisabled={
+            !currentFile ||
+            !available ||
+            connectionState !== "connected" ||
+            composerBusy
           }
-          loading={statusQuery.isLoading}
-          busy={composerBusy}
-          historyCount={historyRows.length}
-          onNewChat={startNewChat}
-          onOpenHistory={() => {
-            setQuickNoteOpen(false);
-            handleHistoryOpenChange(!historyOpen);
-          }}
-          quickNoteDisabled={!currentFile}
-          quickNoteOpen={quickNoteOpen}
-          onQuickNoteOpenChange={(open) => {
-            if (open) handleHistoryOpenChange(false);
-            setQuickNoteOpen(open);
-          }}
-          onQuickNoteSaved={() => pushSystem("批注已保存")}
-          onReconnect={handleReconnect}
         />
-        <ChatHistorySheet
-          open={historyOpen}
-          rows={historyRows}
-          activeSessionId={savedSession?.sessionId ?? null}
-          switchBlocked={historySwitchBlocked}
-          loading={sessionListLoading}
-          onRefresh={() =>
-            void queryClient.invalidateQueries({
-              queryKey: acpQueryKeys.sessionList(
-                activeProfileId,
-                sessionCwd ?? null,
-              ),
-            })
-          }
-          onClose={() => handleHistoryOpenChange(false)}
-          onSelect={(sessionId) => void loadConversation(sessionId)}
-          onDelete={(sessionId) => void deleteHistoryConversation(sessionId)}
-          onPurgeEmpty={() => void purgeEmptyConversations()}
-        />
-      </ChatColumn>
+      </div>
 
       <div
         ref={turnListRef}
@@ -1487,38 +1493,25 @@ export function AcpPanel() {
           </p>
         ) : null}
         {companionMode === "watch-feed" ? (
-          <>
-            <WatchFeedView
-              onSelectTask={selectCompanionTask}
+          <div
+            id="companion-panel-watch-feed-chat"
+            role="region"
+            aria-label="观剧流对话"
+          >
+            <p className="px-1 pb-1 pt-2 text-[10px] font-medium text-muted-foreground">
+              当前会话
+            </p>
+            <ChatTurnList
+              turns={turns}
+              notices={notices}
+              followEnd={stickToEnd}
+              annotationWorkspace={sessionCwd}
+              onDismissAnnotation={handleDismissAnnotation}
+              onSaveAnnotation={handleSaveAnnotation}
               onAssistantAction={onAssistantAction}
-              quickActionsDisabled={
-                !currentFile ||
-                !available ||
-                connectionState !== "connected" ||
-                composerBusy
-              }
+              emptyHint="快捷操作的完整回答会显示在这里，也可以直接输入问题。"
             />
-            <div
-              id="companion-panel-watch-feed-chat"
-              role="region"
-              aria-label="观剧流对话"
-              className="border-t border-border/70"
-            >
-              <p className="px-1 pb-1 pt-2 text-[10px] font-medium text-muted-foreground">
-                当前会话
-              </p>
-              <ChatTurnList
-                turns={turns}
-                notices={notices}
-                followEnd={stickToEnd}
-                annotationWorkspace={sessionCwd}
-                onDismissAnnotation={handleDismissAnnotation}
-                onSaveAnnotation={handleSaveAnnotation}
-                onAssistantAction={onAssistantAction}
-                emptyHint="快捷操作的完整回答会显示在这里，也可以直接输入问题。"
-              />
-            </div>
-          </>
+          </div>
         ) : (
           <div id="companion-panel-chat" role="tabpanel" aria-label="自由聊天">
             <ChatTurnList
