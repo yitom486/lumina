@@ -58,6 +58,10 @@ describe("profilesHintFromStore", () => {
       args: ["-y", "@deepseek-ai/dsh", "--profile", "acp"],
       authPolicy: "deepseek-key",
     });
+    expect(byId("agy")).toMatchObject({
+      kind: "Custom",
+      args: ["-y", "@yitom/agy-acp-map"],
+    });
     for (const profile of profiles) {
       if (profile.id === "custom") continue;
       expect(profile.command.trim()).not.toBe("");
@@ -74,6 +78,7 @@ describe("profilesHintFromStore", () => {
       "opencode",
       "cursor",
       "deepseek",
+      "agy",
       "custom",
     ]);
     expect(profiles.map((profile) => profile.name)).toEqual([
@@ -84,6 +89,7 @@ describe("profilesHintFromStore", () => {
       "OpenCode",
       "Cursor",
       "DeepSeek",
+      "agy",
       "自定义",
     ]);
   });

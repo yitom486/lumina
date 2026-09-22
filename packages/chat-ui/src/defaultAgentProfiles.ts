@@ -97,6 +97,17 @@ export function defaultAgentProfiles(): AgentProfileInput[] {
       authPolicy: "deepseek-key",
     },
     {
+      id: "agy",
+      name: "agy",
+      kind: "Custom",
+      command: bunx,
+      args: ["-y", "@yitom/agy-acp-map"],
+      env: {},
+      // 第三方 ACP 桥（Antigravity CLI 的 stream-json 桥接）：无参 stdio，
+      // 无认证握手，直连即可（本机需装好已登录的 agy）；模型走通用
+      // configOptions 通道；跨进程 resume 靠桥自身的会话索引 + agy 原生会话。
+    },
+    {
       id: "custom",
       name: "自定义",
       kind: "Custom",
