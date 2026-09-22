@@ -23,4 +23,44 @@ describe("profilesHintFromStore", () => {
     });
     expect(cursor?.command.trim()).not.toBe("");
   });
+
+  it("ships a claude profile with official local-auth reuse", () => {
+    const claude = defaultAgentProfiles().find(
+      (profile) => profile.id === "claude",
+    );
+    expect(claude).toMatchObject({
+      kind: "Claude",
+      authPolicy: "claude-local",
+    });
+    expect(claude?.command.trim()).not.toBe("");
+  });
+
+  it("ships the full agent lineup with per-agent commands and policies", () => {
+    const profiles = defaultAgentProfiles();
+    const byId = (id: string) => profiles.find((profile) => profile.id === id);
+    expect(byId("gemini")).toMatchObject({
+      kind: "Gemini",
+      args: ["--acp"],
+      authPolicy: "gemini-local",
+    });
+    expect(byId("copilot")).toMatchObject({
+      kind: "Copilot",
+      args: ["--acp", "--stdio"],
+      authPolicy: "copilot-local",
+    });
+    expect(byId("opencode")).toMatchObject({
+      kind: "OpenCode",
+      args: ["acp"],
+      authPolicy: "opencode-local",
+    });
+    expect(byId("deepseek")).toMatchObject({
+      kind: "DeepSeek",
+      args: ["-y", "@deepseek-ai/dsh", "--profile", "acp"],
+      authPolicy: "deepseek-key",
+    });
+    for (const profile of profiles) {
+      if (profile.id === "custom") continue;
+      expect(profile.command.trim()).not.toBe("");
+    }
+  });
 });

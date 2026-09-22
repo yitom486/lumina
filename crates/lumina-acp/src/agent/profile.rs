@@ -51,6 +51,13 @@ const CURSOR_AUTH_ERROR_MESSAGE: &str =
     "Cursor 尚未登录，请在本机终端运行 agent login 后重试（或设置 CURSOR_API_KEY）";
 const CURSOR_AUTH_FAILURE_MESSAGE: &str =
     "Cursor 认证失败，请确认本机 Cursor 已登录（agent login）后重试";
+const CLAUDE_AUTH_ERROR_MESSAGE: &str =
+    "Claude 尚未登录，请先运行 claude login 登录 Claude Code 后重试（或设置 ANTHROPIC_API_KEY）";
+const GEMINI_AUTH_ERROR_MESSAGE: &str =
+    "Gemini 尚未登录，请在本机终端运行 gemini 完成登录后重试（或设置 GEMINI_API_KEY）";
+const COPILOT_AUTH_ERROR_MESSAGE: &str = "Copilot 尚未登录，请在本机终端运行 copilot login 后重试";
+const OPENCODE_AUTH_ERROR_MESSAGE: &str = "OpenCode 尚未登录，请先运行 opencode auth login 后重试";
+const DEEPSEEK_AUTH_ERROR_MESSAGE: &str = "DeepSeek 尚未配置，请先设置 DEEPSEEK_API_KEY 后重试";
 
 impl AgentProfile {
     pub fn uses_codex_acp_launcher(&self) -> bool {
@@ -85,6 +92,30 @@ impl AgentProfile {
         self.auth_policy == Some(AuthPolicy::CursorLocal)
     }
 
+    pub fn is_claude_local_auth(&self) -> bool {
+        self.auth_policy == Some(AuthPolicy::ClaudeLocal)
+    }
+
+    pub fn is_gemini_local_auth(&self) -> bool {
+        self.auth_policy == Some(AuthPolicy::GeminiLocal)
+    }
+
+    pub fn is_copilot_local_auth(&self) -> bool {
+        self.auth_policy == Some(AuthPolicy::CopilotLocal)
+    }
+
+    pub fn is_opencode_local_auth(&self) -> bool {
+        self.auth_policy == Some(AuthPolicy::OpenCodeLocal)
+    }
+
+    pub fn is_deepseek_key_auth(&self) -> bool {
+        self.auth_policy == Some(AuthPolicy::DeepSeekKey)
+    }
+
+    pub fn is_claude(&self) -> bool {
+        self.kind == AgentKind::Claude || self.id == "claude"
+    }
+
     pub fn is_cursor(&self) -> bool {
         self.is_cursor_local_auth() || self.kind == AgentKind::Cursor || self.id == "cursor"
     }
@@ -107,6 +138,13 @@ impl AgentProfile {
                 crate::agent::discover::antigravity_credentials_present()
             }
             Some(AuthPolicy::CursorLocal) => crate::agent::discover::cursor_auth_present(),
+            Some(AuthPolicy::ClaudeLocal) => crate::agent::discover::claude_credentials_present(),
+            Some(AuthPolicy::GeminiLocal) => crate::agent::discover::gemini_credentials_present(),
+            Some(AuthPolicy::CopilotLocal) => crate::agent::discover::copilot_credentials_present(),
+            Some(AuthPolicy::OpenCodeLocal) => {
+                crate::agent::discover::opencode_credentials_present()
+            }
+            Some(AuthPolicy::DeepSeekKey) => crate::agent::discover::deepseek_credentials_present(),
             _ => false,
         }
     }
@@ -136,6 +174,16 @@ impl AgentProfile {
             CODEX_AUTH_ERROR_MESSAGE.into()
         } else if self.is_cursor() {
             CURSOR_AUTH_ERROR_MESSAGE.into()
+        } else if self.is_claude_local_auth() {
+            CLAUDE_AUTH_ERROR_MESSAGE.into()
+        } else if self.is_gemini_local_auth() {
+            GEMINI_AUTH_ERROR_MESSAGE.into()
+        } else if self.is_copilot_local_auth() {
+            COPILOT_AUTH_ERROR_MESSAGE.into()
+        } else if self.is_opencode_local_auth() {
+            OPENCODE_AUTH_ERROR_MESSAGE.into()
+        } else if self.is_deepseek_key_auth() {
+            DEEPSEEK_AUTH_ERROR_MESSAGE.into()
         } else {
             GENERIC_AUTH_ERROR_MESSAGE.into()
         }
@@ -155,6 +203,17 @@ impl AgentProfile {
             AcpError::new(
                 AcpErrorCode::ProtocolError,
                 CURSOR_AUTH_FAILURE_MESSAGE,
+                details.map(str::to_string),
+            )
+        } else if self.is_gemini_local_auth()
+            || self.is_copilot_local_auth()
+            || self.is_opencode_local_auth()
+            || self.is_deepseek_key_auth()
+            || self.is_claude_local_auth()
+        {
+            AcpError::new(
+                AcpErrorCode::ProtocolError,
+                self.auth_error_message(),
                 details.map(str::to_string),
             )
         } else {
@@ -270,6 +329,10 @@ fn builtin_profiles() -> Vec<AgentProfile> {
         builtin_antigravity(),
         builtin_claude(),
         builtin_cursor(),
+        builtin_gemini(),
+        builtin_copilot(),
+        builtin_opencode(),
+        builtin_deepseek(),
         builtin_custom_template(),
     ]
 }
@@ -330,7 +393,9 @@ fn builtin_claude() -> AgentProfile {
         env: HashMap::new(),
         launcher: None,
         env_preset: None,
-        auth_policy: None,
+        // 官方渠道本地认证复用：Claude Code 登录（`claude login`）或
+        // ANTHROPIC_API_KEY；命中则跳过 ACP authenticate。
+        auth_policy: Some(AuthPolicy::ClaudeLocal),
         auth_methods: Vec::new(),
         session_storage: None,
     }
@@ -355,6 +420,97 @@ fn builtin_cursor() -> AgentProfile {
         auth_policy: Some(AuthPolicy::CursorLocal),
         auth_methods: Vec::new(),
         // 通用 ACP session/list + hint resume，不读任何厂商私有落盘。
+        session_storage: None,
+    }
+}
+
+fn builtin_gemini() -> AgentProfile {
+    AgentProfile {
+        id: "gemini".into(),
+        name: "Gemini CLI".into(),
+        kind: AgentKind::Gemini,
+        command: if cfg!(windows) {
+            "gemini.cmd".into()
+        } else {
+            "gemini".into()
+        },
+        args: vec!["--acp".into()],
+        env: HashMap::new(),
+        launcher: None,
+        env_preset: None,
+        // 本地已有认证复用：`gemini` 登录或 GEMINI_API_KEY /
+        // GOOGLE_API_KEY 透传；命中则跳过 ACP authenticate。
+        auth_policy: Some(AuthPolicy::GeminiLocal),
+        auth_methods: Vec::new(),
+        session_storage: None,
+    }
+}
+
+fn builtin_copilot() -> AgentProfile {
+    AgentProfile {
+        id: "copilot".into(),
+        name: "Copilot CLI".into(),
+        kind: AgentKind::Copilot,
+        command: if cfg!(windows) {
+            "copilot.cmd".into()
+        } else {
+            "copilot".into()
+        },
+        args: vec!["--acp".into(), "--stdio".into()],
+        env: HashMap::new(),
+        launcher: None,
+        env_preset: None,
+        // 本地已有认证复用：`copilot login` 的 GitHub 登录或
+        // COPILOT_GITHUB_TOKEN / GH_TOKEN / GITHUB_TOKEN 透传。
+        auth_policy: Some(AuthPolicy::CopilotLocal),
+        auth_methods: Vec::new(),
+        session_storage: None,
+    }
+}
+
+fn builtin_opencode() -> AgentProfile {
+    AgentProfile {
+        id: "opencode".into(),
+        name: "OpenCode".into(),
+        kind: AgentKind::OpenCode,
+        command: if cfg!(windows) {
+            "opencode.exe".into()
+        } else {
+            "opencode".into()
+        },
+        args: vec!["acp".into()],
+        env: HashMap::new(),
+        launcher: None,
+        env_preset: None,
+        // 本地已有认证复用：`opencode auth login` 写入的 auth.json。
+        auth_policy: Some(AuthPolicy::OpenCodeLocal),
+        auth_methods: Vec::new(),
+        session_storage: None,
+    }
+}
+
+fn builtin_deepseek() -> AgentProfile {
+    AgentProfile {
+        id: "deepseek".into(),
+        name: "DeepSeek Harness".into(),
+        kind: AgentKind::DeepSeek,
+        command: if cfg!(windows) {
+            "bunx.exe".into()
+        } else {
+            "bunx".into()
+        },
+        args: vec![
+            "-y".into(),
+            "@deepseek-ai/dsh".into(),
+            "--profile".into(),
+            "acp".into(),
+        ],
+        env: HashMap::new(),
+        launcher: None,
+        env_preset: None,
+        // 无 ACP 登录：harness 自读 DEEPSEEK_API_KEY / 自身配置。
+        auth_policy: Some(AuthPolicy::DeepSeekKey),
+        auth_methods: Vec::new(),
         session_storage: None,
     }
 }
@@ -551,7 +707,90 @@ mod tests {
     }
 
     #[test]
-    fn non_codex_profiles_are_fully_generic() {
+    fn builtin_claude_uses_official_local_auth() {
+        let claude = builtin_claude();
+        assert_eq!(claude.kind, AgentKind::Claude);
+        assert!(claude.is_claude());
+        assert!(claude.is_claude_local_auth());
+        assert!(!claude.injects_codex_cli_env());
+        assert!(!claude.is_codex_local_auth());
+        assert!(!claude.stores_codex_rollouts());
+        assert_eq!(claude.auth_error_message(), CLAUDE_AUTH_ERROR_MESSAGE);
+    }
+
+    #[test]
+    fn builtin_agent_lineup_covers_all_runtimes() {
+        let hint = default_profiles_hint();
+        let ids: Vec<&str> = hint
+            .profiles
+            .iter()
+            .map(|profile| profile.id.as_str())
+            .collect();
+        for expected in [
+            "codex",
+            "antigravity",
+            "claude",
+            "cursor",
+            "gemini",
+            "copilot",
+            "opencode",
+            "deepseek",
+            "custom",
+        ] {
+            assert!(ids.contains(&expected), "missing builtin {expected}");
+        }
+        let prepared = prepare_profiles(&hint);
+        let by_id = |id: &str| {
+            prepared
+                .profiles
+                .iter()
+                .find(|profile| profile.id == id)
+                .expect(id)
+        };
+        assert!(by_id("gemini").is_gemini_local_auth());
+        assert!(by_id("claude").is_claude_local_auth());
+        assert_eq!(by_id("gemini").args, vec!["--acp"]);
+        assert!(by_id("copilot").is_copilot_local_auth());
+        assert_eq!(by_id("copilot").args, vec!["--acp", "--stdio"]);
+        assert!(by_id("opencode").is_opencode_local_auth());
+        assert_eq!(by_id("opencode").args, vec!["acp"]);
+        assert!(by_id("deepseek").is_deepseek_key_auth());
+        // 各家只认自家 policy，绝不继承 codex 的 env/存储。
+        for profile in prepared.profiles.iter() {
+            if profile.id == "codex" {
+                continue;
+            }
+            assert!(
+                !profile.injects_codex_cli_env(),
+                "{} must not inject codex env",
+                profile.id
+            );
+            assert!(
+                !profile.stores_codex_rollouts(),
+                "{} must not read codex rollouts",
+                profile.id
+            );
+        }
+        assert_eq!(
+            by_id("gemini").auth_error_message(),
+            GEMINI_AUTH_ERROR_MESSAGE
+        );
+        assert_eq!(
+            by_id("copilot").auth_error_message(),
+            COPILOT_AUTH_ERROR_MESSAGE
+        );
+        assert_eq!(
+            by_id("opencode").auth_error_message(),
+            OPENCODE_AUTH_ERROR_MESSAGE
+        );
+        assert_eq!(
+            by_id("deepseek").auth_error_message(),
+            DEEPSEEK_AUTH_ERROR_MESSAGE
+        );
+    }
+
+    #[test]
+    fn non_codex_profiles_carry_no_codex_behavior() {
         for profile in builtin_profiles() {
             if profile.id == "codex" || profile.id == "antigravity" {
                 continue;
@@ -560,9 +799,19 @@ mod tests {
             assert!(!profile.injects_codex_cli_env());
             assert!(!profile.is_codex_local_auth());
             assert!(!profile.stores_codex_rollouts());
-            assert!(!profile.has_stored_credentials());
-            assert_eq!(profile.empty_reply_hint(), GENERIC_EMPTY_REPLY_HINT);
         }
+    }
+
+    #[test]
+    fn fully_generic_profiles_skip_auth_and_use_generic_copy() {
+        // 只有无 policy 的画像才断言 stored-credentials（带 policy 的探针读
+        // 真实 env/文件，环境相关，不进确定性单测）。目前仅 custom 全 generic。
+        let profile = builtin_profiles()
+            .into_iter()
+            .find(|item| item.id == "custom")
+            .expect("custom");
+        assert!(!profile.has_stored_credentials());
+        assert_eq!(profile.empty_reply_hint(), GENERIC_EMPTY_REPLY_HINT);
     }
 
     #[test]

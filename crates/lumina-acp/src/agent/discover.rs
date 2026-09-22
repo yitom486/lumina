@@ -435,6 +435,131 @@ pub fn find_cursor_agent() -> Option<PathBuf> {
     find_command(binary)
 }
 
+/// Whether the user already carries stored Gemini credentials: `gemini`
+/// login (`~/.gemini/oauth_creds.json`) or a Gemini API key in env.
+/// Hint-level only; when present the ACP `authenticate` step is skipped.
+pub fn gemini_credentials_present() -> bool {
+    if std::env::var("GEMINI_API_KEY")
+        .map(|value| !value.trim().is_empty())
+        .unwrap_or(false)
+    {
+        return true;
+    }
+    if std::env::var("GOOGLE_API_KEY")
+        .map(|value| !value.trim().is_empty())
+        .unwrap_or(false)
+    {
+        return true;
+    }
+    std::env::var_os("USERPROFILE")
+        .or_else(|| std::env::var_os("HOME"))
+        .map(|home| {
+            PathBuf::from(home)
+                .join(".gemini")
+                .join("oauth_creds.json")
+                .is_file()
+        })
+        .unwrap_or(false)
+}
+
+/// Whether the user already carries stored Copilot credentials: `copilot
+/// login` GitHub credentials (`~/.copilot/config.json`) or a GitHub token
+/// in env. Hint-level only; when present `authenticate` is skipped.
+pub fn copilot_credentials_present() -> bool {
+    for key in ["COPILOT_GITHUB_TOKEN", "GH_TOKEN", "GITHUB_TOKEN"] {
+        if std::env::var(key)
+            .map(|value| !value.trim().is_empty())
+            .unwrap_or(false)
+        {
+            return true;
+        }
+    }
+    std::env::var_os("USERPROFILE")
+        .or_else(|| std::env::var_os("HOME"))
+        .map(|home| {
+            PathBuf::from(home)
+                .join(".copilot")
+                .join("config.json")
+                .is_file()
+        })
+        .unwrap_or(false)
+}
+
+/// Where `opencode auth login` writes credentials: `%LOCALAPPDATA%` on
+/// Windows, `~/.local/share` on posix.
+fn opencode_auth_file() -> Option<PathBuf> {
+    if cfg!(windows) {
+        let local = std::env::var_os("LOCALAPPDATA")?;
+        Some(PathBuf::from(local).join("opencode").join("auth.json"))
+    } else {
+        let home = std::env::var_os("HOME")?;
+        Some(
+            PathBuf::from(home)
+                .join(".local")
+                .join("share")
+                .join("opencode")
+                .join("auth.json"),
+        )
+    }
+}
+
+/// Whether the user already ran `opencode auth login`. Hint-level only.
+pub fn opencode_credentials_present() -> bool {
+    opencode_auth_file().is_some_and(|path| path.is_file())
+}
+
+/// Whether DeepSeek harness credentials exist (`DEEPSEEK_API_KEY` in env;
+/// the harness reads its own config otherwise). No ACP login exists.
+pub fn deepseek_credentials_present() -> bool {
+    std::env::var("DEEPSEEK_API_KEY")
+        .map(|value| !value.trim().is_empty())
+        .unwrap_or(false)
+}
+
+/// Whether the user already carries stored Claude credentials: Claude Code
+/// login (`~/.claude.json` / `~/.claude/.credentials.json`, via
+/// `claude login`) or `ANTHROPIC_API_KEY` in env. Official channels only;
+/// hint-level, when present the ACP `authenticate` step is skipped.
+pub fn claude_credentials_present() -> bool {
+    if std::env::var("ANTHROPIC_API_KEY")
+        .map(|value| !value.trim().is_empty())
+        .unwrap_or(false)
+    {
+        return true;
+    }
+    let Some(home) = std::env::var_os("USERPROFILE").or_else(|| std::env::var_os("HOME")) else {
+        return false;
+    };
+    let home = PathBuf::from(home);
+    home.join(".claude.json").is_file() || home.join(".claude").join(".credentials.json").is_file()
+}
+
+/// Dev tree: `node_modules/@agentclientprotocol/claude-agent-acp`
+/// (mirrors the codex-acp dev entry).
+pub fn find_dev_claude_acp_entry() -> Option<PathBuf> {
+    let mut dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    loop {
+        for node_modules in [
+            dir.join("apps").join("desktop").join("node_modules"),
+            dir.join("node_modules"),
+        ] {
+            let entry = node_modules
+                .join("@agentclientprotocol")
+                .join("claude-agent-acp")
+                .join("dist")
+                .join("index.js");
+            if entry.is_file() {
+                return Some(entry.canonicalize().unwrap_or(entry));
+            }
+        }
+        let Some(parent) = dir.parent().map(PathBuf::from) else {
+            break;
+        };
+        dir = parent;
+    }
+    None
+}
+
 /// Dev tree: `node_modules/@agentclientprotocol/codex-acp` (avoids flaky `bun x` on Windows).
 /// Monorepo 拆分后向上兼容查找，desktop 包优先（旧解析顺序）。
 pub fn find_dev_codex_acp_entry() -> Option<PathBuf> {
@@ -477,6 +602,13 @@ mod tests {
         let _ = cursor_auth_candidates();
         let _ = cursor_auth_present();
         let _ = find_cursor_agent();
+        let _ = claude_credentials_present();
+        let _ = find_dev_claude_acp_entry();
+        let _ = gemini_credentials_present();
+        let _ = copilot_credentials_present();
+        let _ = opencode_auth_file();
+        let _ = opencode_credentials_present();
+        let _ = deepseek_credentials_present();
     }
 
     #[test]

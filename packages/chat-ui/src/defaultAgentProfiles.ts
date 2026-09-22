@@ -16,6 +16,10 @@ export function defaultAgentProfiles(): AgentProfileInput[] {
   // Cursor 官方 CLI：Windows 优先 %LOCALAPPDATA%\cursor-agent\agent.cmd，
   // posix 优先 ~/.local/bin/agent，否则回落 PATH（后端 resolve）。
   const cursor = isWindowsPlatform() ? "agent.cmd" : "agent";
+  const gemini = isWindowsPlatform() ? "gemini.cmd" : "gemini";
+  const copilot = isWindowsPlatform() ? "copilot.cmd" : "copilot";
+  const opencode = isWindowsPlatform() ? "opencode.exe" : "opencode";
+  const deepseek = isWindowsPlatform() ? "bunx.exe" : "bunx";
   return [
     {
       id: "codex",
@@ -48,6 +52,9 @@ export function defaultAgentProfiles(): AgentProfileInput[] {
       command: claude,
       args: [],
       env: {},
+      // 官方渠道本地认证复用：Claude Code 登录（`claude login`）或
+      // ANTHROPIC_API_KEY；命中则后端跳过 ACP authenticate。
+      authPolicy: "claude-local",
     },
     {
       id: "cursor",
@@ -59,6 +66,48 @@ export function defaultAgentProfiles(): AgentProfileInput[] {
       // 本地已有认证复用（agent login / CURSOR_API_KEY / CURSOR_AUTH_TOKEN），
       // 命中则后端跳过 ACP authenticate；会话走通用 session/list + hint resume。
       authPolicy: "cursor-local",
+    },
+    {
+      id: "gemini",
+      name: "Gemini CLI",
+      kind: "Gemini",
+      command: gemini,
+      args: ["--acp"],
+      env: {},
+      // 复用本机 Gemini CLI 登录（~/.gemini/oauth_creds.json 或
+      // GEMINI_API_KEY / GOOGLE_API_KEY）。
+      authPolicy: "gemini-local",
+    },
+    {
+      id: "copilot",
+      name: "Copilot CLI",
+      kind: "Copilot",
+      command: copilot,
+      args: ["--acp", "--stdio"],
+      env: {},
+      // 复用本机 Copilot CLI 的 GitHub 登录（~/.copilot/config.json 或
+      // COPILOT_GITHUB_TOKEN / GH_TOKEN / GITHUB_TOKEN）。
+      authPolicy: "copilot-local",
+    },
+    {
+      id: "opencode",
+      name: "OpenCode",
+      kind: "OpenCode",
+      command: opencode,
+      args: ["acp"],
+      env: {},
+      // 复用 `opencode auth login` 写入的 auth.json。
+      authPolicy: "opencode-local",
+    },
+    {
+      id: "deepseek",
+      name: "DeepSeek Harness",
+      kind: "DeepSeek",
+      command: deepseek,
+      args: ["-y", "@deepseek-ai/dsh", "--profile", "acp"],
+      env: {},
+      // 无 ACP 登录，靠 harness 自身凭证（DEEPSEEK_API_KEY）。
+      authPolicy: "deepseek-key",
     },
     {
       id: "custom",

@@ -1,8 +1,10 @@
 //! ACP availability text + status aggregation (profiles + discovery).
 
 use crate::agent::discover::{
-    antigravity_credentials_present, codex_config_present, cursor_auth_present, find_acp_adapter,
-    find_antigravity, find_bunx, find_codex, native_acp_dir,
+    antigravity_credentials_present, claude_credentials_present, codex_config_present,
+    copilot_credentials_present, cursor_auth_present, deepseek_credentials_present,
+    find_acp_adapter, find_antigravity, find_bunx, find_codex, gemini_credentials_present,
+    native_acp_dir, opencode_credentials_present,
 };
 use crate::agent::profile::{list_status, prepare_profiles, AgentKind};
 use crate::domain::model::{AcpStatus, AgentProfilesHint};
@@ -51,6 +53,26 @@ pub fn status_from_profiles(hint: &AgentProfilesHint) -> AcpStatus {
         } else if active_profile.is_some_and(|p| p.is_cursor_local_auth()) && cursor_auth_present()
         {
             format!("{name} 已检测到本机 Cursor 登录配置，将直接复用，无需重新认证")
+        } else if active_profile.is_some_and(|p| p.is_claude_local_auth())
+            && claude_credentials_present()
+        {
+            format!("{name} 已检测到本机 Claude 登录配置，将直接复用，无需重新认证")
+        } else if active_profile.is_some_and(|p| p.is_gemini_local_auth())
+            && gemini_credentials_present()
+        {
+            format!("{name} 已检测到本机 Gemini 登录配置，将直接复用，无需重新认证")
+        } else if active_profile.is_some_and(|p| p.is_copilot_local_auth())
+            && copilot_credentials_present()
+        {
+            format!("{name} 已检测到本机 Copilot 登录配置，将直接复用，无需重新认证")
+        } else if active_profile.is_some_and(|p| p.is_opencode_local_auth())
+            && opencode_credentials_present()
+        {
+            format!("{name} 已检测到本机 OpenCode 登录配置，将直接复用，无需重新认证")
+        } else if active_profile.is_some_and(|p| p.is_deepseek_key_auth())
+            && deepseek_credentials_present()
+        {
+            format!("{name} 已检测到 DEEPSEEK_API_KEY，将直接复用")
         } else {
             format!("{name} 已就绪（仅在你发起会话时启动）")
         }
@@ -59,6 +81,16 @@ pub fn status_from_profiles(hint: &AgentProfilesHint) -> AcpStatus {
             "自定义 Agent 尚未填写启动命令".into()
         } else if p.kind == AgentKind::Cursor {
             "未找到 Cursor CLI（agent）：请先安装 Cursor CLI 并运行 agent login 后重试".into()
+        } else if p.kind == AgentKind::Claude {
+            "未找到 Claude Agent：请确认已安装 claude-agent-acp 或 bunx，并先运行 claude login 登录 Claude Code 后重试".into()
+        } else if p.kind == AgentKind::Gemini {
+            "未找到 Gemini CLI：请先安装 gemini 并在本机终端完成登录后重试".into()
+        } else if p.kind == AgentKind::Copilot {
+            "未找到 Copilot CLI：请先安装 copilot 并运行 copilot login 后重试".into()
+        } else if p.kind == AgentKind::OpenCode {
+            "未找到 OpenCode：请先安装 opencode 并运行 opencode auth login 后重试".into()
+        } else if p.kind == AgentKind::DeepSeek {
+            "未找到 DeepSeek 运行环境：请安装 bun（bunx 将自动拉起 harness）并设置 DEEPSEEK_API_KEY 后重试".into()
         } else if p.kind == AgentKind::Antigravity {
             "未找到 Google Antigravity ACP 程序（agy_acp_server.exe），请确认已安装或自定义程序路径"
                 .into()

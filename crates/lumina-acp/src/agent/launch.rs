@@ -5,7 +5,8 @@ use std::path::{Path, PathBuf};
 
 use crate::agent::discover::{
     codex_config_present, codex_home_dir, find_acp_adapter, find_antigravity, find_bun, find_bunx,
-    find_codex, find_command, find_cursor_agent, find_dev_codex_acp_entry,
+    find_codex, find_command, find_cursor_agent, find_dev_claude_acp_entry,
+    find_dev_codex_acp_entry,
 };
 use crate::error::AcpError;
 use crate::wire::session::{AuthMethod, InitializeResult};
@@ -13,6 +14,7 @@ use crate::wire::session::{AuthMethod, InitializeResult};
 use super::profile::AgentProfile;
 
 pub const CODEX_ACP_PACKAGE: &str = "@agentclientprotocol/codex-acp";
+pub const CLAUDE_ACP_PACKAGE: &str = "@agentclientprotocol/claude-agent-acp";
 
 #[derive(Debug, Clone)]
 pub struct LaunchSpec {
@@ -54,6 +56,9 @@ pub fn resolve_launch(profile: &AgentProfile) -> Result<LaunchSpec, AcpError> {
                 )))
             })?;
         (program, profile.args.clone())
+    } else if profile.is_claude() {
+        // 本机二进制 → bunx 官方包（对齐参考实现，不要求用户预装二进制）。
+        resolve_claude_fallback(profile)?
     } else {
         let program = resolve_program(&profile.command).ok_or_else(|| {
             AcpError::not_configured(Some(&format!(
@@ -112,6 +117,25 @@ fn wrap_windows_batch(program: PathBuf, args: Vec<String>) -> (PathBuf, Vec<Stri
         }
     }
     (program, args)
+}
+
+fn resolve_claude_fallback(profile: &AgentProfile) -> Result<(PathBuf, Vec<String>), AcpError> {
+    // 本机二进制 → 开发树官方包（bun run dist/index.js）→ bunx 官方包。
+    if let Some(program) = resolve_program(&profile.command) {
+        return Ok((program, profile.args.clone()));
+    }
+    if let Some(entry) = find_dev_claude_acp_entry() {
+        if let Some(bun) = find_bun() {
+            return Ok((bun, vec!["run".into(), entry.to_string_lossy().to_string()]));
+        }
+    }
+    if let Some(bunx) = find_bunx() {
+        return Ok((bunx, vec!["-y".into(), CLAUDE_ACP_PACKAGE.into()]));
+    }
+    Err(AcpError::not_configured(Some(&format!(
+        "agent `{}` (Claude) command not found: {}；请安装 claude-agent-acp 二进制或 bunx 后重试",
+        profile.id, profile.command
+    ))))
 }
 
 fn resolve_codex_acp_fallback(profile: &AgentProfile) -> Result<(PathBuf, Vec<String>), AcpError> {

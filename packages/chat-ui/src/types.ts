@@ -1,12 +1,29 @@
 export type { NoteQuote, VideoAnnotationProposal } from "@lumina/contracts";
 import type { VideoAnnotationProposal } from "@lumina/contracts";
 
-export type AgentKind = "Codex" | "Claude" | "Antigravity" | "Cursor" | "Custom";
+export type AgentKind =
+  | "Codex"
+  | "Claude"
+  | "Antigravity"
+  | "Cursor"
+  | "Gemini"
+  | "Copilot"
+  | "OpenCode"
+  | "DeepSeek"
+  | "Custom";
 
 /** Per-profile behavior presets; absent = fully generic ACP behavior. */
 export type AgentLauncherPreset = "codex-acp" | "antigravity-acp";
 export type AgentEnvPreset = "codex-cli" | "antigravity-proxy";
-export type AgentAuthPolicy = "codex-local" | "antigravity-oauth" | "cursor-local";
+export type AgentAuthPolicy =
+  | "codex-local"
+  | "antigravity-oauth"
+  | "cursor-local"
+  | "claude-local"
+  | "gemini-local"
+  | "copilot-local"
+  | "opencode-local"
+  | "deepseek-key";
 export type AgentSessionStoragePreset = "codex-rollouts";
 
 export type AgentProfileStatus = {

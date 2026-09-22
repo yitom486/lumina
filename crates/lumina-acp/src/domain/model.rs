@@ -16,6 +16,10 @@ pub enum AgentKind {
     Claude,
     Antigravity,
     Cursor,
+    Gemini,
+    Copilot,
+    OpenCode,
+    DeepSeek,
     Custom,
 }
 
@@ -56,6 +60,28 @@ pub enum AuthPolicy {
     /// no forced interactive flow; probe is hint-level (keychain misses).
     #[serde(rename = "cursor-local")]
     CursorLocal,
+    /// Claude-style local reuse: Claude Code login (`~/.claude.json` /
+    /// `~/.claude/.credentials.json`, via `claude login`) or
+    /// `ANTHROPIC_API_KEY` env passthrough. Official channels only.
+    #[serde(rename = "claude-local")]
+    ClaudeLocal,
+    /// Gemini CLI local reuse: `gemini` login (`~/.gemini/oauth_creds.json`)
+    /// or `GEMINI_API_KEY` / `GOOGLE_API_KEY` env passthrough.
+    #[serde(rename = "gemini-local")]
+    GeminiLocal,
+    /// Copilot CLI local reuse: `copilot login` GitHub credentials
+    /// (`~/.copilot/config.json`) or `COPILOT_GITHUB_TOKEN` / `GH_TOKEN` /
+    /// `GITHUB_TOKEN` env passthrough.
+    #[serde(rename = "copilot-local")]
+    CopilotLocal,
+    /// OpenCode local reuse: `opencode auth login` credentials
+    /// (`auth.json`) or provider env passthrough. No injection.
+    #[serde(rename = "opencode-local")]
+    OpenCodeLocal,
+    /// DeepSeek harness credentials: no ACP login, the harness reads
+    /// `DEEPSEEK_API_KEY` / its own config on its own.
+    #[serde(rename = "deepseek-key")]
+    DeepSeekKey,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
