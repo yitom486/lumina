@@ -162,7 +162,7 @@ prompt()
 | 步骤 | 代码 | 作用 |
 | --- | --- | --- |
 | 找到并启动 Agent | `agent/launch.rs`、`runtime/lifecycle.rs` | 解析命令、环境变量并启动子进程 |
-| 构造 ACP JSON | `wire/session.rs`、`wire/codec.rs` | 生成 `initialize`、`session/new`、`session/prompt` 等消息 |
+| 构造 ACP JSON | `wire/session.rs`（官方 `agent-client-protocol` schema 类型；包络与兼容位见下） | 生成 `initialize`、`session/new`、`session/prompt` 等消息 |
 | 读写 stdin/stdout | `runtime/io.rs` | 把 JSON 写给 Agent，并等待对应响应 |
 | 处理 Agent 事件 | `runtime/inbound.rs` | 把 `session/update` 转成 `AcpEvent` |
 | 对外提供方法 | `runtime/service.rs`、`runtime/prompt.rs` | 管理 `AcpService` 和一轮 prompt |
@@ -493,7 +493,7 @@ agent/
   查找 Agent、解析 profile、准备启动命令
 
 wire/
-  构造和解析 ACP JSON
+  官方 SDK schema 类型 + 薄手工兜底（见下）；codec（包络）与 sanitize（脱敏）手写
 
 runtime/
   持有真实子进程，负责 session 生命周期、读写和事件分发
@@ -501,6 +501,26 @@ runtime/
 jobs/
   一次性任务、WorkshopPool、rollout 清理和回答收集
 ```
+
+### wire 层与官方 SDK 的分工
+
+`wire/session.rs`、`wire/updates.rs`、`wire/permission.rs` 的构造与解析走
+官方 `agent-client-protocol`（协议 v1，依赖钉死 `=2.2.0`），函数签名保持不变，
+`runtime/*` 无需改动。手写保留且有明确理由的只有：
+
+- `wire/codec.rs`：JSON-RPC 包络 framing（`jsonrpc/id/method/params`），无语义；
+- `initialize_params*`：能力广播是字节精确的安全 posture（restricted 版必须是
+  `{}`），SDK 结构体恒输出能力键；
+- `session_set_config_option_params`：我方 Agent 接受纯字符串 `value`，SDK
+  类型会打出不同的扁平对象字节；
+- `parse_session_id` / `parse_stop_reason`：信封薄读取；`parse_session_model_options`
+ （领域整形）、`classify_resume_failure`、`sanitize`、路径/URI/格式化助手：
+  纯策略或纯函数；
+- 解析侧 SDK 严于实测 Agent 之处（未知 `kind`、缺 `name`、未来 update 变体），
+  保留历史手工漫游做兜底：跳过坏项、不断连接。
+
+被替换的手写实现原文（含单测）冻结在
+`crates/lumina-acp/archive/handrolled-wire/`，只做教学对照，不参编。
 
 推荐阅读顺序：
 

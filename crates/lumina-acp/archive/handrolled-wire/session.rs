@@ -1,32 +1,8 @@
-//! ACP session lifecycle wire helpers (official SDK types; narrow manual fallbacks).
-//!
-//! Request construction goes through
-//! `agent_client_protocol::schema::v1` builders so emitted shapes track the
-//! spec instead of hand-written JSON. Response parsing is SDK-first with the
-//! historical manual walk as fallback wherever the SDK is stricter than
-//! observed agents (per-item skipping, blank filtering, dual capability
-//! paths, auth name defaults).
-//!
-//! Deliberately NOT on SDK (documented per item):
-//! - `initialize_params*`: capability advertisement is byte-exact security
-//!   posture (restricted variant emits exactly `{}`); SDK structs always emit
-//!   capability keys, which changes what agents see.
-//! - `session_set_config_option_params`: our agents accept a plain-string
-//!   `value`; the SDK type emits a flattened typed object (different bytes).
-//! - `parse_initialize_result`: maximal agent-version variance surface
-//!   (numeric protocol versions, dual capability paths, auth name defaulting).
-//! - `parse_session_id` / `parse_stop_reason`: 3-line envelope plucks on
-//!   spec-stable keys; SDK adds nothing.
-//! - `parse_session_model_options`: domain shaping policy over loose data.
-//! - `classify_resume_failure`, path/URI/format helpers: pure policy/pure fns.
+//! ACP session lifecycle wire helpers (initialize/session/* + initialize parsing).
+//! Split from `wire/protocol.rs` without behavior change.
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
-use agent_client_protocol::schema::v1::{
-    AuthenticateRequest, CloseSessionRequest, ContentBlock, DeleteSessionRequest, ImageContent,
-    ListSessionsRequest, ListSessionsResponse, LoadSessionRequest, McpServer, Meta,
-    NewSessionRequest, PromptRequest, ResourceLink, ResumeSessionRequest,
-};
 use serde_json::{json, Value};
 
 use crate::domain::context::VideoPromptContext;
@@ -39,10 +15,6 @@ pub fn initialize_params() -> Value {
 /// Metadata-only sessions never need filesystem or terminal capabilities.
 /// Advertise neither so an Agent cannot treat the media directory as a tool
 /// workspace while resolving filenames.
-///
-/// Hand-written on purpose: the restricted shape must be exactly `{}`.
-/// SDK capability structs always emit their keys (`terminal: false` etc.),
-/// and presence-checking agents could read that as support.
 pub fn initialize_params_restricted() -> Value {
     initialize_params_with_tools(false)
 }
@@ -74,33 +46,8 @@ fn initialize_params_with_tools(tool_access: bool) -> Value {
     })
 }
 
-fn lumina_session_meta(kind: SessionKind) -> Meta {
-    let mut meta = Meta::new();
-    meta.insert("lumina".to_string(), json!({ "kind": kind.as_str() }));
-    meta
-}
-
-fn parse_mcp_servers(mcp_servers: &Value) -> Option<Vec<McpServer>> {
-    serde_json::from_value::<Vec<McpServer>>(mcp_servers.clone()).ok()
-}
-
 /// `cwd` MUST be an absolute path (ACP session-setup).
 pub fn session_new_params(cwd: &str, mcp_servers: Value, kind: SessionKind) -> Value {
-    match parse_mcp_servers(&mcp_servers) {
-        Some(servers) => {
-            let request = NewSessionRequest::new(cwd)
-                .mcp_servers(servers)
-                .meta(Some(lumina_session_meta(kind)));
-            serde_json::to_value(&request)
-                .unwrap_or_else(|_| manual_session_new_params(cwd, &mcp_servers, kind))
-        }
-        // Foreign MCP shapes pass through byte-identical rather than dropping
-        // servers the agent was promised.
-        None => manual_session_new_params(cwd, &mcp_servers, kind),
-    }
-}
-
-fn manual_session_new_params(cwd: &str, mcp_servers: &Value, kind: SessionKind) -> Value {
     json!({
         "cwd": cwd,
         "mcpServers": mcp_servers,
@@ -121,91 +68,7 @@ fn manual_session_new_params(cwd: &str, mcp_servers: &Value, kind: SessionKind) 
 const TOOL_TRIGGER_HEADER: &str = "【工具优先】本轮优先使用 Lumina 本地工具（实际可用以 tools/list 返回为准）：lumina_get_playback_context（播放锚点）、lumina_get_library_context（剧集简介）、lumina_get_episode_index（分集列表）、lumina_get_transcript_window（当前台词）、lumina_get_episode_transcript（他集台词）、lumina_get_audio_marks（音频信号）、lumina_capture_frames（视频截帧）、lumina_propose_video_annotation（批注提议）。剧情类问题禁止先网络搜索；若 tools/list 暂无 lumina 工具，说明接入未完成，请直接说明。";
 const USER_PROMPT_SEPARATOR: &str = "\n\n";
 
-/// Content-block tag merged onto an SDK-built inner: SDK enums are
-/// `non_exhaustive`, so variants cannot be constructed directly.
-/// Inner field names stay official; the merged map is parsed back through
-/// the SDK type, so a drift between inner struct and enum fails closed
-/// (caller falls back to the manual envelope) instead of sending bad bytes.
-fn tagged_content_block(tag: &str, inner: impl serde::Serialize) -> Option<ContentBlock> {
-    let mut map = serde_json::to_value(&inner).ok()?.as_object()?.clone();
-    map.insert("type".to_string(), Value::String(tag.to_string()));
-    serde_json::from_value(Value::Object(map)).ok()
-}
-
 pub fn session_prompt_params(
-    session_id: &str,
-    text: &str,
-    context: Option<&VideoPromptContext>,
-    images: &[PromptImage],
-) -> Value {
-    // SDK-typed assembly first; any shape rejection falls back to the
-    // byte-identical manual envelope below (proven against real agents).
-    if let Some(params) = sdk_session_prompt_params(session_id, text, context, images) {
-        return params;
-    }
-    manual_session_prompt_params(session_id, text, context, images)
-}
-
-fn sdk_session_prompt_params(
-    session_id: &str,
-    text: &str,
-    context: Option<&VideoPromptContext>,
-    images: &[PromptImage],
-) -> Option<Value> {
-    let mut prompt = Vec::new();
-    let has_turn_context = context.is_some_and(|ctx| !ctx.is_empty());
-
-    if let Some(ctx) = context.filter(|c| !c.is_empty()) {
-        prompt.push(ContentBlock::from(TOOL_TRIGGER_HEADER.to_string()));
-        if let Some(path) = ctx.media_path.as_deref().filter(|p| !p.trim().is_empty()) {
-            let name = ctx
-                .media_title
-                .as_deref()
-                .filter(|s| !s.trim().is_empty())
-                .unwrap_or_else(|| file_name(path));
-            // Online page URLs stay as-is (Agent fetches via MCP snapshot);
-            // only local paths become file:// URIs. Never put cookies,
-            // signed URLs, or cache paths here — snapshot is already sanitized.
-            let uri = if is_remote_url(path) {
-                path.to_string()
-            } else {
-                path_to_file_uri(path)
-            };
-            prompt.push(tagged_content_block(
-                "resource_link",
-                ResourceLink::new(name, uri),
-            )?);
-        }
-
-        if let Some(playback) = format_playback_context_block(ctx) {
-            prompt.push(ContentBlock::from(playback));
-        }
-    }
-
-    // Images-only prompts skip the empty text block; text-only prompts
-    // always keep theirs (existing shape, pinned by tests).
-    if !text.is_empty() || images.is_empty() {
-        prompt.push(ContentBlock::from(if has_turn_context {
-            format!("{USER_PROMPT_SEPARATOR}{text}")
-        } else {
-            text.to_string()
-        }));
-    }
-
-    // Pasted images ride after the question: the trigger header stays first
-    // (MCP timing) and user content keeps question-then-evidence order.
-    for image in images {
-        prompt.push(tagged_content_block(
-            "image",
-            ImageContent::new(&image.data, &image.mime_type),
-        )?);
-    }
-
-    let request = PromptRequest::new(session_id.to_string(), prompt);
-    serde_json::to_value(&request).ok()
-}
-
-fn manual_session_prompt_params(
     session_id: &str,
     text: &str,
     context: Option<&VideoPromptContext>,
@@ -225,6 +88,9 @@ fn manual_session_prompt_params(
                 .as_deref()
                 .filter(|s| !s.trim().is_empty())
                 .unwrap_or_else(|| file_name(path));
+            // Online page URLs stay as-is (Agent fetches via MCP snapshot);
+            // only local paths become file:// URIs. Never put cookies,
+            // signed URLs, or cache paths here — snapshot is already sanitized.
             let uri = if is_remote_url(path) {
                 path.to_string()
             } else {
@@ -245,6 +111,8 @@ fn manual_session_prompt_params(
         }
     }
 
+    // Images-only prompts skip the empty text block; text-only prompts
+    // always keep theirs (existing shape, pinned by tests).
     if !text.is_empty() || images.is_empty() {
         prompt.push(json!({
             "type": "text",
@@ -256,6 +124,8 @@ fn manual_session_prompt_params(
         }));
     }
 
+    // Pasted images ride after the question: the trigger header stays first
+    // (MCP timing) and user content keeps question-then-evidence order.
     for image in images {
         prompt.push(json!({
             "type": "image",
@@ -376,23 +246,7 @@ pub fn path_to_file_uri(path: &str) -> String {
     }
 }
 
-fn mcp_servers_or_manual(mcp_servers: &Value) -> Option<Vec<McpServer>> {
-    serde_json::from_value::<Vec<McpServer>>(mcp_servers.clone()).ok()
-}
-
 pub fn session_resume_params(session_id: &str, cwd: &str, mcp_servers: Value) -> Value {
-    match mcp_servers_or_manual(&mcp_servers) {
-        Some(servers) => {
-            let request =
-                ResumeSessionRequest::new(session_id.to_string(), cwd).mcp_servers(servers);
-            serde_json::to_value(&request)
-                .unwrap_or_else(|_| manual_session_resume_params(session_id, cwd, &mcp_servers))
-        }
-        None => manual_session_resume_params(session_id, cwd, &mcp_servers),
-    }
-}
-
-fn manual_session_resume_params(session_id: &str, cwd: &str, mcp_servers: &Value) -> Value {
     json!({
         "sessionId": session_id,
         "cwd": cwd,
@@ -406,17 +260,6 @@ fn manual_session_resume_params(session_id: &str, cwd: &str, mcp_servers: &Value
 /// Shape mirrors `session/resume` (`zLoadSessionRequest` requires
 /// `sessionId` + `cwd` + `mcpServers`).
 pub fn session_load_params(session_id: &str, cwd: &str, mcp_servers: Value) -> Value {
-    match mcp_servers_or_manual(&mcp_servers) {
-        Some(servers) => {
-            let request = LoadSessionRequest::new(session_id.to_string(), cwd).mcp_servers(servers);
-            serde_json::to_value(&request)
-                .unwrap_or_else(|_| manual_session_load_params(session_id, cwd, &mcp_servers))
-        }
-        None => manual_session_load_params(session_id, cwd, &mcp_servers),
-    }
-}
-
-fn manual_session_load_params(session_id: &str, cwd: &str, mcp_servers: &Value) -> Value {
     json!({
         "sessionId": session_id,
         "cwd": cwd,
@@ -444,17 +287,6 @@ pub fn classify_resume_failure(details: Option<&str>) -> ResumeOutcome {
 }
 
 pub fn session_list_params(cwd: Option<&str>, cursor: Option<&str>) -> Value {
-    let mut request = ListSessionsRequest::new();
-    if let Some(cwd) = cwd.filter(|value| !value.trim().is_empty()) {
-        request = request.cwd(PathBuf::from(cwd));
-    }
-    if let Some(cursor) = cursor.filter(|value| !value.trim().is_empty()) {
-        request = request.cursor(cursor.to_string());
-    }
-    serde_json::to_value(&request).unwrap_or_else(|_| manual_session_list_params(cwd, cursor))
-}
-
-fn manual_session_list_params(cwd: Option<&str>, cursor: Option<&str>) -> Value {
     let mut params = json!({});
     if let Some(cwd) = cwd.filter(|value| !value.trim().is_empty()) {
         params["cwd"] = json!(cwd);
@@ -466,26 +298,19 @@ fn manual_session_list_params(cwd: Option<&str>, cursor: Option<&str>) -> Value 
 }
 
 pub fn session_cancel_params(session_id: &str) -> Value {
-    use agent_client_protocol::schema::v1::CancelNotification;
-    let notification = CancelNotification::new(session_id.to_string());
-    serde_json::to_value(&notification).unwrap_or_else(|_| json!({ "sessionId": session_id }))
+    json!({ "sessionId": session_id })
 }
 
 /// `session/delete` params: only the thread id (adapter schema
 /// `zDeleteSessionRequest`: `sessionId` + optional `_meta`).
 pub fn session_delete_params(session_id: &str) -> Value {
-    let request = DeleteSessionRequest::new(session_id.to_string());
-    serde_json::to_value(&request).unwrap_or_else(|_| json!({ "sessionId": session_id }))
+    json!({ "sessionId": session_id })
 }
 
 pub fn session_close_params(session_id: &str) -> Value {
-    let request = CloseSessionRequest::new(session_id.to_string());
-    serde_json::to_value(&request).unwrap_or_else(|_| json!({ "sessionId": session_id }))
+    json!({ "sessionId": session_id })
 }
 
-/// Kept manual on purpose: our agents accept a plain-string `value`, while
-/// the SDK type emits a flattened typed object (different bytes on the wire).
-/// Changing this risks breaking real agents for zero tolerance gain.
 pub fn session_set_config_option_params(session_id: &str, config_id: &str, value: &str) -> Value {
     json!({
         "sessionId": session_id,
@@ -495,8 +320,7 @@ pub fn session_set_config_option_params(session_id: &str, config_id: &str, value
 }
 
 pub fn authenticate_params(method_id: &str) -> Value {
-    let request = AuthenticateRequest::new(method_id.to_string());
-    serde_json::to_value(&request).unwrap_or_else(|_| json!({ "methodId": method_id }))
+    json!({ "methodId": method_id })
 }
 
 fn capability_present(value: &Value, pointer: &str) -> bool {
@@ -526,10 +350,6 @@ pub struct AuthMethod {
     pub name: String,
 }
 
-/// Kept manual on purpose: initialize is the maximal agent-version-variance
-/// surface (numeric protocol versions incl. future ones, dual capability
-/// paths, auth name defaulting). Every field below carries tolerance policy
-/// the SDK types cannot express without failing whole responses.
 pub fn parse_initialize_result(value: &Value) -> InitializeResult {
     let result = value.get("result").unwrap_or(value);
     let protocol_version = result
@@ -606,36 +426,6 @@ pub fn parse_initialize_result(value: &Value) -> InitializeResult {
 
 pub fn parse_session_list(value: &Value) -> (Vec<AgentSessionInfo>, Option<String>) {
     let result = value.get("result").unwrap_or(value);
-    if let Ok(response) = serde_json::from_value::<ListSessionsResponse>(result.clone()) {
-        let mut sessions = Vec::new();
-        for item in &response.sessions {
-            let session_id = item.session_id.0.to_string();
-            let cwd = item.cwd.to_string_lossy().to_string();
-            if session_id.trim().is_empty() || cwd.trim().is_empty() {
-                continue;
-            }
-            let kind = item
-                .meta
-                .as_ref()
-                .and_then(|meta| meta.get("lumina"))
-                .and_then(|lumina| lumina.get("kind"))
-                .and_then(Value::as_str)
-                .map(str::to_string);
-            sessions.push(AgentSessionInfo {
-                session_id,
-                cwd,
-                title: item.title.clone(),
-                updated_at: item.updated_at.clone(),
-                kind,
-            });
-        }
-        return (sessions, response.next_cursor.clone());
-    }
-    parse_session_list_manual(value)
-}
-
-fn parse_session_list_manual(value: &Value) -> (Vec<AgentSessionInfo>, Option<String>) {
-    let result = value.get("result").unwrap_or(value);
     let mut sessions = Vec::new();
     if let Some(items) = result.get("sessions").and_then(Value::as_array) {
         for item in items {
@@ -683,7 +473,6 @@ fn parse_session_list_manual(value: &Value) -> (Vec<AgentSessionInfo>, Option<St
     (sessions, next_cursor)
 }
 
-/// Thin envelope plucks on spec-stable keys; SDK adds nothing here.
 pub fn parse_session_id(value: &Value) -> Option<String> {
     value
         .pointer("/result/sessionId")
@@ -698,7 +487,6 @@ pub fn parse_session_id(value: &Value) -> Option<String> {
         })
 }
 
-/// Domain shaping policy over loosely-shaped option data; kept manual.
 pub fn parse_session_model_options(value: &Value) -> crate::domain::model::AcpSessionModelOptions {
     let result = value.get("result").unwrap_or(value);
     let mut options = crate::domain::model::AcpSessionModelOptions::default();
@@ -749,11 +537,10 @@ pub fn parse_session_model_options(value: &Value) -> crate::domain::model::AcpSe
     options
 }
 
-/// Thin envelope pluck on a spec-stable key; SDK adds nothing here.
 pub fn parse_stop_reason(value: &Value) -> Option<String> {
     value
         .pointer("/result/stopReason")
-        .and_then(|v| v.as_str())
+        .and_then(Value::as_str)
         .map(str::to_string)
 }
 
@@ -809,22 +596,20 @@ mod tests {
         // Generic ACP shape, calibrated against the codex-acp `zLoadSessionRequest`
         // (`sessionId` + `cwd` + `mcpServers`); history itself arrives as
         // streamed `session/update`, never in the final result.
-        // NOTE (official SDK asymmetry, pinned): ResumeSessionRequest skips
-        // empty `mcpServers` while LoadSessionRequest keeps it. Same
-        // sessionId/cwd either way; omitted ≡ empty per spec. Production
-        // always sends a non-empty list (lumina MCP), so real bytes don't change.
         let mcp_servers = json!([]);
-        let load = session_load_params("sess-1", "D:/videos", mcp_servers.clone());
-        let resume = session_resume_params("sess-1", "D:/videos", mcp_servers);
-        for params in [&load, &resume] {
-            assert_eq!(
-                params.get("sessionId").and_then(Value::as_str),
-                Some("sess-1")
-            );
-            assert_eq!(params.get("cwd").and_then(Value::as_str), Some("D:/videos"));
-        }
-        assert!(load.get("mcpServers").and_then(Value::as_array).is_some());
-        assert!(resume.get("mcpServers").is_none());
+        let params = session_load_params("sess-1", "D:/videos", mcp_servers.clone());
+        assert_eq!(
+            params,
+            json!({
+                "sessionId": "sess-1",
+                "cwd": "D:/videos",
+                "mcpServers": [],
+            })
+        );
+        assert_eq!(
+            params,
+            session_resume_params("sess-1", "D:/videos", mcp_servers)
+        );
     }
 
     #[test]
