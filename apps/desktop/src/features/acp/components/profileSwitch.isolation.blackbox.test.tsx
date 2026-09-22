@@ -16,13 +16,60 @@ import { useAcpSessionStore } from "@lumina/chat-ui/acpSessionStore";
 import { useAcpSettingsStore } from "@lumina/chat-ui/acpSettingsStore";
 
 import { AcpPanel } from "./AcpPanel";
-import { chatRestoreKeyFor } from "../chatRestore";
+import {
+  chatRestoreKeyFor,
+  resetChatStoreEphemeralState,
+} from "../chatRestore";
+// B3 SQLite only：不再预置 migrated 标记，不再播备层种子；
+// 快照种子直接进 mock DB（hydrate 异步回填），迁移语义由专测覆盖。
 
 type ChannelHandler = { onmessage: ((event: unknown) => void) | null };
 
 const { channels } = vi.hoisted(() => ({
   channels: [] as ChannelHandler[],
 }));
+
+// B3 mock DB（SQLite 主层）：快照按 (profile, session)，hint 按 profile。
+type MockSnapshotRow = {
+  profileId: string;
+  sessionId: string;
+  cwd: string | null;
+  draft: string;
+  turnsJson: string;
+};
+
+const mockSnapshotTable = new Map<string, MockSnapshotRow>();
+const mockHintTable = new Map<string, { sessionId: string; cwd: string }>();
+
+function dbSnapshotKey(profileId: string, sessionId: string): string {
+  return `${profileId}\0${sessionId}`;
+}
+
+function dbTurn(profileId: string, userText: string, answer: string) {
+  return {
+    id: `db-${profileId}`,
+    userText,
+    answer,
+    status: "done",
+    activities: [],
+    showActivities: false,
+  };
+}
+
+function seedDbSnapshot(
+  profileId: string,
+  sessionId: string,
+  userText: string,
+  answer: string,
+) {
+  mockSnapshotTable.set(dbSnapshotKey(profileId, sessionId), {
+    profileId,
+    sessionId,
+    cwd: null,
+    draft: "",
+    turnsJson: JSON.stringify([dbTurn(profileId, userText, answer)]),
+  });
+}
 
 vi.mock("@tauri-apps/api/core", () => ({
   invoke: vi.fn(),
@@ -48,7 +95,7 @@ const mockStatus = {
   profiles: [
     {
       id: "codex",
-      name: "Codex（默认）",
+      name: "ChatGPT",
       kind: "Codex" as const,
       command: "bunx.exe",
       args: ["@agentclientprotocol/codex-acp"],
@@ -58,7 +105,7 @@ const mockStatus = {
     },
     {
       id: "cursor",
-      name: "Cursor CLI",
+      name: "Cursor",
       kind: "Cursor" as const,
       command: "agent.cmd",
       args: ["acp"],
@@ -71,29 +118,6 @@ const mockStatus = {
   sessionActive: false,
   busy: false,
 };
-
-function seedSnapshot(profileId: string, userText: string, answer: string) {
-  localStorage.setItem(
-    chatRestoreKeyFor(profileId),
-    JSON.stringify({
-      version: 1,
-      profileId,
-      cwd: null,
-      draft: "",
-      turns: [
-        {
-          id: `cached-${profileId}`,
-          userText,
-          answer,
-          status: "done",
-          activities: [],
-          showActivities: false,
-        },
-      ],
-      updatedAtMs: 1,
-    }),
-  );
-}
 
 function renderPanel() {
   const client = new QueryClient({
@@ -110,6 +134,9 @@ beforeEach(() => {
   channels.length = 0;
   promptResolvers.length = 0;
   localStorage.clear();
+  resetChatStoreEphemeralState();
+  mockSnapshotTable.clear();
+  mockHintTable.clear();
   useAcpProfilesStore.setState({ activeProfileId: "codex" });
   useAcpSessionStore.setState({ savedSessions: {} });
   useAcpSettingsStore.setState({
@@ -119,7 +146,34 @@ beforeEach(() => {
     reasoningEffort: "",
   });
   usePlayerStore.setState({ currentFile: null, status: "Idle" });
-  vi.mocked(invoke).mockImplementation((cmd: string) => {
+  vi.mocked(invoke).mockImplementation((cmd: string, args?: unknown) => {
+    if (typeof cmd === "string" && cmd.startsWith("chat_")) {
+      const input =
+        typeof args === "object" && args !== null
+          ? ((args as { input?: Record<string, unknown> }).input ?? {})
+          : {};
+      const profileId =
+        typeof input.profileId === "string" ? input.profileId : "";
+      const sessionId =
+        typeof input.sessionId === "string" ? input.sessionId : "";
+      if (cmd === "chat_snapshot_get") {
+        return Promise.resolve(
+          mockSnapshotTable.get(dbSnapshotKey(profileId, sessionId)) ?? null,
+        );
+      }
+      if (cmd === "chat_hint_get") {
+        const hint = mockHintTable.get(profileId) ?? null;
+        return Promise.resolve(
+          hint
+            ? { profileId, sessionId: hint.sessionId, cwd: hint.cwd }
+            : null,
+        );
+      }
+      if (cmd === "chat_snapshot_upsert" || cmd === "chat_hint_upsert") {
+        return Promise.resolve(null);
+      }
+      return Promise.resolve(null);
+    }
     if (cmd === "acp_status") return Promise.resolve(mockStatus);
     if (cmd === "acp_connect") return Promise.resolve(null);
     if (cmd === "acp_close") return Promise.resolve(null);
@@ -140,8 +194,8 @@ afterEach(() => {
 
 describe("profile switch isolation blackbox (switch world entry)", () => {
   it("swaps worlds via the toolbar dropdown: turns swap, model clears, hints and prefs stay", async () => {
-    seedSnapshot("codex", "codex 的旧问题", "codex 的旧回答");
-    seedSnapshot("cursor", "cursor 的问题", "cursor 的回答");
+    seedDbSnapshot("codex", "codex-thread", "codex 的旧问题", "codex 的旧回答");
+    seedDbSnapshot("cursor", "cursor-thread", "cursor 的问题", "cursor 的回答");
     useAcpSessionStore.getState().setSavedSessionFor("codex", {
       sessionId: "codex-thread",
       profileId: "codex",
@@ -163,7 +217,7 @@ describe("profile switch isolation blackbox (switch world entry)", () => {
 
     const user = userEvent.setup();
     await user.click(await screen.findByLabelText("切换 Agent"));
-    await user.click(await screen.findByRole("menuitem", { name: "Cursor CLI" }));
+    await user.click(await screen.findByRole("menuitem", { name: "Cursor" }));
 
     // 新世界摆新快照，旧世界内容不泄漏。
     expect((await screen.findAllByText("cursor 的问题")).length).toBeGreaterThanOrEqual(1);
@@ -179,13 +233,20 @@ describe("profile switch isolation blackbox (switch world entry)", () => {
     expect(useAcpSessionStore.getState().savedSessionFor("cursor")?.sessionId).toBe(
       "cursor-thread",
     );
-    expect(localStorage.getItem(chatRestoreKeyFor("codex"))).not.toBeNull();
-    expect(localStorage.getItem(chatRestoreKeyFor("cursor"))).not.toBeNull();
+    // 两家 DB 行都在：切回即 resume，谁也不删谁的；备层从不写入。
+    expect(
+      mockSnapshotTable.get(dbSnapshotKey("codex", "codex-thread")),
+    ).toBeDefined();
+    expect(
+      mockSnapshotTable.get(dbSnapshotKey("cursor", "cursor-thread")),
+    ).toBeDefined();
+    expect(localStorage.getItem(chatRestoreKeyFor("codex"))).toBeNull();
+    expect(localStorage.getItem(chatRestoreKeyFor("cursor"))).toBeNull();
   });
 
   it("does not leak the old world's pending permission and progress into the new world", async () => {
-    seedSnapshot("codex", "codex 的旧问题", "codex 的旧回答");
-    seedSnapshot("cursor", "cursor 的问题", "cursor 的回答");
+    seedDbSnapshot("codex", "", "codex 的旧问题", "codex 的旧回答");
+    seedDbSnapshot("cursor", "", "cursor 的问题", "cursor 的回答");
     renderPanel();
     await waitFor(() => {
       expect(screen.getByPlaceholderText(/输入问题/)).toBeInTheDocument();
@@ -236,7 +297,7 @@ describe("profile switch isolation blackbox (switch world entry)", () => {
 
     const user = userEvent.setup();
     await user.click(await screen.findByLabelText("切换 Agent"));
-    await user.click(await screen.findByRole("menuitem", { name: "Cursor CLI" }));
+    await user.click(await screen.findByRole("menuitem", { name: "Cursor" }));
 
     expect((await screen.findAllByText("cursor 的问题")).length).toBeGreaterThanOrEqual(1);
     // 旧世界的弹窗、进度、排队指示一个都不许进新世界。
@@ -244,5 +305,40 @@ describe("profile switch isolation blackbox (switch world entry)", () => {
     expect(screen.queryByText("旧世界发送中…")).not.toBeInTheDocument();
     expect(screen.queryByText(/排队/)).not.toBeInTheDocument();
     expect(screen.queryByText("旧世界的问题")).not.toBeInTheDocument();
+  });
+
+  it("hydrates each world from SQLite primary with empty localStorage and keeps hints across switches", async () => {
+    // B3 主层优先：备层是空的，两家快照与 hint 只活在 SQLite 里。
+    // 挂载先空白，水合回来后摆出自家世界，再切换也不串台。
+    seedDbSnapshot("codex", "codex-thread", "codex 主层问题", "codex 主层回答");
+    seedDbSnapshot("cursor", "cursor-thread", "cursor 主层问题", "cursor 主层回答");
+    mockHintTable.set("codex", { sessionId: "codex-thread", cwd: "D:\\movie" });
+    mockHintTable.set("cursor", { sessionId: "cursor-thread", cwd: "D:\\movie" });
+    renderPanel();
+
+    // codex 世界：DB 水合回来（首帧空白，水合后 reseeding）。
+    expect(
+      (await screen.findAllByText("codex 主层问题")).length,
+    ).toBeGreaterThanOrEqual(1);
+    expect(
+      useAcpSessionStore.getState().savedSessionFor("codex")?.sessionId,
+    ).toBe("codex-thread");
+
+    const user = userEvent.setup();
+    await user.click(await screen.findByLabelText("切换 Agent"));
+    await user.click(await screen.findByRole("menuitem", { name: "Cursor" }));
+
+    // cursor 世界：自家主层快照摆出来，旧世界内容不泄漏。
+    expect(
+      (await screen.findAllByText("cursor 主层问题")).length,
+    ).toBeGreaterThanOrEqual(1);
+    expect(screen.queryByText("codex 主层问题")).not.toBeInTheDocument();
+    // 两家 hint 都在：切回即 resume，谁也不删谁的。
+    expect(
+      useAcpSessionStore.getState().savedSessionFor("codex")?.sessionId,
+    ).toBe("codex-thread");
+    expect(
+      useAcpSessionStore.getState().savedSessionFor("cursor")?.sessionId,
+    ).toBe("cursor-thread");
   });
 });

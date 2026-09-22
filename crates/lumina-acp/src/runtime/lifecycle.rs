@@ -87,6 +87,20 @@ impl Drop for LiveSession {
     }
 }
 
+/// Whether a stored hint earns a `session/resume` attempt. Deliberately
+/// ignores the agent's advertised `sessionCapabilities/resume`: several
+/// agents serve resume without declaring it, and a stale hint disproves
+/// itself with one failed round-trip that the caller classifies into an
+/// honest resume outcome (then creates new). Only a missing, empty, or
+/// out-of-scope hint skips the attempt.
+fn should_attempt_resume(saved: Option<&SavedSessionHint>, profile_id: &str, cwd: &str) -> bool {
+    saved.is_some_and(|hint| {
+        hint.profile_id == profile_id
+            && same_workspace(&hint.cwd, cwd)
+            && !hint.session_id.is_empty()
+    })
+}
+
 impl AcpService {
     /// Workshop pool slot: tool access disabled from birth, with a preset
     /// model selection applied on first use by the normal prompt flow.
@@ -701,12 +715,12 @@ impl AcpService {
         // canonicalized (`\\?\D:\...` verbatim on Windows) while a stored
         // hint keeps the frontend spelling (`D:\...`). A plain `==` reports
         // `scope_mismatch` forever and resume is never attempted.
-        let try_resume = supports_resume
-            && saved.as_ref().is_some_and(|s| {
-                s.profile_id == profile_id
-                    && same_workspace(&s.cwd, cwd)
-                    && !s.session_id.is_empty()
-            });
+        //
+        // A valid, in-scope hint is ALWAYS attempted here (see
+        // `should_attempt_resume`): capability advertisement is unreliable,
+        // and a stale hint fails fast into classify-then-new with an honest
+        // outcome. The advertised flag below is diagnostic only.
+        let try_resume = should_attempt_resume(saved.as_ref(), profile_id, cwd);
 
         if try_resume {
             let Some(saved) = saved else {
@@ -715,6 +729,7 @@ impl AcpService {
             let hint_short: String = saved.session_id.chars().take(8).collect();
             tracing::info!(
                 hint = %hint_short,
+                advertised_resume = supports_resume,
                 session_kind = ?kind,
                 "session/resume attempting"
             );
@@ -787,19 +802,13 @@ impl AcpService {
                 }
             }
         } else {
-            let resume_skip_reason = if !supports_resume {
-                "unsupported"
-            } else {
-                match saved.as_ref() {
-                    Some(hint) if hint.session_id.is_empty() => "no_hint",
-                    Some(hint)
-                        if hint.profile_id != profile_id || !same_workspace(&hint.cwd, cwd) =>
-                    {
-                        "scope_mismatch"
-                    }
-                    Some(_) => "scope_mismatch",
-                    None => "no_hint",
+            let resume_skip_reason = match saved.as_ref() {
+                Some(hint) if hint.session_id.is_empty() => "no_hint",
+                Some(hint) if hint.profile_id != profile_id || !same_workspace(&hint.cwd, cwd) => {
+                    "scope_mismatch"
                 }
+                Some(_) => "scope_mismatch",
+                None => "no_hint",
             };
             let skip_hint_short: String = match saved.as_ref() {
                 Some(hint) => hint.session_id.chars().take(8).collect(),
@@ -935,5 +944,44 @@ impl AcpService {
             current_reasoning_effort = ?parsed.current_reasoning_effort,
             "ACP session model options diagnostic"
         );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::domain::model::SavedSessionHint;
+
+    fn hint(session_id: &str, profile_id: &str, cwd: &str) -> SavedSessionHint {
+        SavedSessionHint {
+            session_id: session_id.to_string(),
+            profile_id: profile_id.to_string(),
+            cwd: cwd.to_string(),
+        }
+    }
+
+    #[test]
+    fn resume_attempted_for_valid_in_scope_hint() {
+        let saved = hint("sess-1", "codex", "D:\\work");
+        assert!(should_attempt_resume(Some(&saved), "codex", "D:\\work"));
+    }
+
+    #[test]
+    fn resume_skipped_without_hint_or_session_id() {
+        assert!(!should_attempt_resume(None, "codex", "D:\\work"));
+        let empty = hint("", "codex", "D:\\work");
+        assert!(!should_attempt_resume(Some(&empty), "codex", "D:\\work"));
+    }
+
+    #[test]
+    fn resume_skipped_for_out_of_scope_hint() {
+        let foreign = hint("sess-1", "cursor", "D:\\work");
+        assert!(!should_attempt_resume(Some(&foreign), "codex", "D:\\work"));
+        let elsewhere = hint("sess-1", "codex", "D:\\other");
+        assert!(!should_attempt_resume(
+            Some(&elsewhere),
+            "codex",
+            "D:\\work"
+        ));
     }
 }

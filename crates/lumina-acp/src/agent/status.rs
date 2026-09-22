@@ -1,10 +1,9 @@
 //! ACP availability text + status aggregation (profiles + discovery).
 
 use crate::agent::discover::{
-    antigravity_credentials_present, claude_credentials_present, codex_config_present,
-    copilot_credentials_present, cursor_auth_present, deepseek_credentials_present,
-    find_acp_adapter, find_antigravity, find_bunx, find_codex, gemini_credentials_present,
-    native_acp_dir, opencode_credentials_present,
+    claude_credentials_present, codex_config_present, copilot_credentials_present,
+    cursor_auth_present, deepseek_credentials_present, find_acp_adapter, find_bunx, find_codex,
+    gemini_credentials_present, native_acp_dir, opencode_credentials_present,
 };
 use crate::agent::profile::{list_status, prepare_profiles, AgentKind};
 use crate::domain::model::{AcpStatus, AgentProfilesHint};
@@ -15,8 +14,6 @@ pub fn status_from_profiles(hint: &AgentProfilesHint) -> AcpStatus {
     let bunx_found = find_bunx().is_some();
     let codex_found = find_codex().is_some();
     let codex_config_found = codex_config_present();
-    let antigravity_found = find_antigravity().is_some();
-    let antigravity_credentials_found = antigravity_credentials_present();
     let prepared = prepare_profiles(hint);
     let (active_id, profiles) = list_status(&prepared);
 
@@ -32,19 +29,8 @@ pub fn status_from_profiles(hint: &AgentProfilesHint) -> AcpStatus {
         let name = active.map(|p| p.name.as_str()).unwrap_or("Agent");
         let active_profile = prepared.profiles.iter().find(|p| p.id == active_id);
         let codex_like = active_profile.is_some_and(|p| p.is_codex_like());
-        let antigravity = active_profile.is_some_and(|p| p.is_antigravity());
         let codex_home = codex_home_label();
-        if antigravity {
-            let port = active
-                .and_then(|p| p.env.get("ACP_PROXY_PORT"))
-                .map(String::as_str)
-                .unwrap_or("7897");
-            if antigravity_credentials_found {
-                format!("{name} 已就绪，已检测到 Google 账号授权凭据（代理端口：{port}）")
-            } else {
-                format!("{name} 已就绪，尚未登录 Google 账号，请在下方点击登录")
-            }
-        } else if codex_like && codex_found && codex_config_found {
+        if codex_like && codex_found && codex_config_found {
             format!("{name} 已检测到本机 Codex 登录配置，将直接复用，无需重新认证")
         } else if codex_like && codex_found {
             format!("{name} 已找到，但未检测到 {codex_home} 登录配置")
@@ -80,20 +66,17 @@ pub fn status_from_profiles(hint: &AgentProfilesHint) -> AcpStatus {
         if p.kind == AgentKind::Custom && p.command.is_empty() {
             "自定义 Agent 尚未填写启动命令".into()
         } else if p.kind == AgentKind::Cursor {
-            "未找到 Cursor CLI（agent）：请先安装 Cursor CLI 并运行 agent login 后重试".into()
+            "未找到 Cursor（agent）：请先安装 Cursor 并运行 agent login 后重试".into()
         } else if p.kind == AgentKind::Claude {
             "未找到 Claude Agent：请确认已安装 claude-agent-acp 或 bunx，并先运行 claude login 登录 Claude Code 后重试".into()
         } else if p.kind == AgentKind::Gemini {
-            "未找到 Gemini CLI：请先安装 gemini 并在本机终端完成登录后重试".into()
+            "未找到 Gemini：请先安装 gemini 并在本机终端完成登录后重试".into()
         } else if p.kind == AgentKind::Copilot {
-            "未找到 Copilot CLI：请先安装 copilot 并运行 copilot login 后重试".into()
+            "未找到 Copilot：请先安装 copilot 并运行 copilot login 后重试".into()
         } else if p.kind == AgentKind::OpenCode {
             "未找到 OpenCode：请先安装 opencode 并运行 opencode auth login 后重试".into()
         } else if p.kind == AgentKind::DeepSeek {
             "未找到 DeepSeek 运行环境：请安装 bun（bunx 将自动拉起 harness）并设置 DEEPSEEK_API_KEY 后重试".into()
-        } else if p.kind == AgentKind::Antigravity {
-            "未找到 Google Antigravity ACP 程序（agy_acp_server.exe），请确认已安装或自定义程序路径"
-                .into()
         } else {
             format!("当前 Agent「{}」不可用：找不到 {}", p.name, p.command)
         }
@@ -106,8 +89,6 @@ pub fn status_from_profiles(hint: &AgentProfilesHint) -> AcpStatus {
         adapter_found,
         codex_found,
         codex_config_found,
-        antigravity_found,
-        antigravity_credentials_found,
         active_profile_id: active_id,
         profiles,
         cli_path,

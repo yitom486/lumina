@@ -52,7 +52,7 @@ export function useAgentModelControls({
       : (discoveredOptions ?? null);
 
   // Discovery results describe one agent's session; switching profile must
-  // not carry, say, Codex GPT models into Antigravity's composer.
+  // not carry, say, Codex GPT models into another agent's composer.
   // 分桶后切换不清全量：只清 transient 的 controlError，各家发现结果保留。
   useEffect(() => {
     setControlError(null);

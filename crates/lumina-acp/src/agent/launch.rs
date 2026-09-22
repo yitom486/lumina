@@ -4,9 +4,8 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use crate::agent::discover::{
-    codex_config_present, codex_home_dir, find_acp_adapter, find_antigravity, find_bun, find_bunx,
-    find_codex, find_command, find_cursor_agent, find_dev_claude_acp_entry,
-    find_dev_codex_acp_entry,
+    codex_config_present, codex_home_dir, find_acp_adapter, find_bun, find_bunx, find_codex,
+    find_command, find_cursor_agent, find_dev_claude_acp_entry, find_dev_codex_acp_entry,
 };
 use crate::error::AcpError;
 use crate::wire::session::{AuthMethod, InitializeResult};
@@ -27,16 +26,6 @@ pub struct LaunchSpec {
 pub fn resolve_launch(profile: &AgentProfile) -> Result<LaunchSpec, AcpError> {
     let (program, args) = if profile.uses_codex_acp_launcher() {
         resolve_codex_acp_fallback(profile)?
-    } else if profile.uses_antigravity_launcher() {
-        let program = resolve_program(&profile.command)
-            .or_else(find_antigravity)
-            .ok_or_else(|| {
-                AcpError::not_configured(Some(&format!(
-                    "agent `{}` (Google Antigravity) command not found: {}",
-                    profile.id, profile.command
-                )))
-            })?;
-        (program, profile.args.clone())
     } else if profile.is_cursor() {
         // 官方安装位直查 → PATH → 未安装（带指引的 NotConfigured，
         // 不把裸 `agent[.cmd]` 丢给 spawn，否则 Windows 上子进程秒退，
@@ -45,7 +34,7 @@ pub fn resolve_launch(profile: &AgentProfile) -> Result<LaunchSpec, AcpError> {
             .or_else(find_cursor_agent)
             .ok_or_else(|| {
                 AcpError::not_configured(Some(&format!(
-                    "agent `{}` (Cursor CLI) command not found: {}；未安装请在终端执行 {} 后重试",
+                    "agent `{}` (Cursor) command not found: {}；未安装请在终端执行 {} 后重试",
                     profile.id,
                     profile.command,
                     if cfg!(windows) {
@@ -177,40 +166,6 @@ fn augment_spawn_env(profile: &AgentProfile, env: &mut HashMap<String, String>) 
         }
     }
 
-    if profile.injects_antigravity_proxy_env() {
-        let proxy_port = env
-            .get("ACP_PROXY_PORT")
-            .and_then(|s| s.trim().parse::<u16>().ok())
-            .unwrap_or(7897);
-        // Clash/v2ray 本地代理对 HTTP_PROXY/HTTPS_PROXY 只认 http:// scheme；
-        // 用户在 profile.env 里误填 https:// 会让 Agent 直连失败。
-        for key in ["HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy"] {
-            if let Some(value) = env.get_mut(key) {
-                force_http_scheme(value);
-            }
-        }
-        let http_proxy = format!("http://127.0.0.1:{proxy_port}");
-        let socks_proxy = format!("socks5://127.0.0.1:{proxy_port}");
-
-        env.entry("HTTP_PROXY".into())
-            .or_insert_with(|| http_proxy.clone());
-        env.entry("HTTPS_PROXY".into())
-            .or_insert_with(|| http_proxy.clone());
-        env.entry("http_proxy".into())
-            .or_insert_with(|| http_proxy.clone());
-        env.entry("https_proxy".into())
-            .or_insert_with(|| http_proxy.clone());
-        env.entry("ALL_PROXY".into())
-            .or_insert_with(|| socks_proxy.clone());
-        env.entry("all_proxy".into())
-            .or_insert_with(|| socks_proxy.clone());
-        env.entry("NO_PROXY".into())
-            .or_insert_with(|| "localhost,127.0.0.1,::1".into());
-        env.entry("no_proxy".into())
-            .or_insert_with(|| "localhost,127.0.0.1,::1".into());
-        return;
-    }
-
     if !profile.injects_codex_cli_env() {
         return;
     }
@@ -257,14 +212,6 @@ fn augment_spawn_env(profile: &AgentProfile, env: &mut HashMap<String, String>) 
     }
 }
 
-/// Clash 系本地代理对 `HTTP_PROXY`/`HTTPS_PROXY` 只认 `http://` scheme；
-/// `https://` 会被直接拒连。主机/端口原样保留，只改 scheme。
-fn force_http_scheme(value: &mut String) {
-    if value.len() >= 8 && value[..8].eq_ignore_ascii_case("https://") {
-        *value = format!("http://{}", value[8..].trim_start());
-    }
-}
-
 fn prepend_path_dir(env: &mut HashMap<String, String>, dir: &Path) {
     let path_key = if cfg!(windows) { "Path" } else { "PATH" };
     let mut merged = vec![dir.to_path_buf()];
@@ -281,26 +228,15 @@ fn prepend_path_dir(env: &mut HashMap<String, String>, dir: &Path) {
 }
 
 /// Pick an auth method compatible with the local setup. Auth *policy* lives
-/// on the profile (`codex-local` reads Codex config/env, `antigravity-oauth`
-/// prefers Google OAuth); profiles without a policy fall back to static
-/// `auth_methods` or the first advertised method. `wire` only parses
-/// `InitializeResult` and constructs requests.
+/// on the profile (`codex-local` reads Codex config/env); profiles without
+/// a policy fall back to static `auth_methods` or the first advertised
+/// method. `wire` only parses `InitializeResult` and constructs requests.
 pub fn pick_auth_method<'a>(
     profile: &AgentProfile,
     init: &'a InitializeResult,
 ) -> Option<&'a AuthMethod> {
     if init.auth_methods.is_empty() {
         return None;
-    }
-    if profile.is_antigravity_oauth() {
-        if let Some(method) = init.auth_methods.iter().find(|m| m.id == "oauth-personal") {
-            return Some(method);
-        }
-        if let Some(method) = init.auth_methods.iter().find(|m| m.id == "gemini-api-key") {
-            if std::env::var("GEMINI_API_KEY").is_ok() {
-                return Some(method);
-            }
-        }
     }
     if profile.is_codex_local_auth() {
         let order: &[&str] = if codex_config_present() {
@@ -334,62 +270,6 @@ pub fn pick_auth_method<'a>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::model::{EnvPreset, LauncherPreset};
-
-    #[test]
-    fn https_scheme_is_rewritten_to_http_for_local_proxies() {
-        let mut value = "https://127.0.0.1:7897".to_string();
-        force_http_scheme(&mut value);
-        assert_eq!(value, "http://127.0.0.1:7897");
-
-        let mut value = "HTTPS://proxy.local:7890".to_string();
-        force_http_scheme(&mut value);
-        assert_eq!(value, "http://proxy.local:7890");
-
-        let mut value = "http://127.0.0.1:7890".to_string();
-        force_http_scheme(&mut value);
-        assert_eq!(value, "http://127.0.0.1:7890");
-
-        let mut value = "127.0.0.1:7897".to_string();
-        force_http_scheme(&mut value);
-        assert_eq!(value, "127.0.0.1:7897");
-    }
-
-    #[test]
-    fn antigravity_proxy_env_never_carries_https_scheme() {
-        let command = std::env::current_exe().expect("test exe");
-        let profile = AgentProfile {
-            id: "antigravity-test".into(),
-            name: "Antigravity Test".into(),
-            kind: crate::domain::model::AgentKind::Antigravity,
-            command: command.to_string_lossy().to_string(),
-            args: Vec::new(),
-            env: HashMap::from([
-                ("ACP_PROXY_PORT".into(), "7897".into()),
-                ("HTTPS_PROXY".into(), "https://127.0.0.1:7897".into()),
-                ("https_proxy".into(), "https://127.0.0.1:7897".into()),
-            ]),
-            launcher: Some(LauncherPreset::AntigravityAcp),
-            env_preset: Some(EnvPreset::AntigravityProxy),
-            auth_policy: None,
-            auth_methods: Vec::new(),
-            session_storage: None,
-        };
-
-        let spec = resolve_launch(&profile).expect("launch resolves");
-
-        for key in ["HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy"] {
-            let value = spec.env.get(key).expect(key);
-            assert!(
-                value.starts_with("http://"),
-                "{key} must use http:// scheme, got {value}"
-            );
-        }
-        for key in ["ALL_PROXY", "all_proxy"] {
-            let value = spec.env.get(key).expect(key);
-            assert!(value.starts_with("socks5://"), "{key} got {value}");
-        }
-    }
 
     #[test]
     fn windows_batch_shims_route_through_shell() {

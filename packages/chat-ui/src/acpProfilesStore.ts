@@ -8,22 +8,68 @@ import {
 } from "./defaultAgentProfiles";
 import type { AgentProfileInput, AgentProfilesHint } from "./types";
 
-function mergeProfiles(
+/**
+ * Profile ids removed from the app. Copies persisted by older builds must be
+ * dropped on load: the backend no longer deserializes their kind/preset
+ * variants, and a single stale entry used to poison the whole profiles hint
+ * (every ACP command failed argument parsing → "未配置" + generic retry).
+ */
+const REMOVED_PROFILE_IDS = new Set(["antigravity"]);
+
+/** Kind/launcher/env/auth variant markers of removed runtimes. Matched by id
+ * above first; these catch hand-renamed copies carrying the stale variants. */
+const REMOVED_VARIANT_MARKERS = new Set([
+  "Antigravity",
+  "antigravity-acp",
+  "antigravity-proxy",
+  "antigravity-oauth",
+]);
+
+function isRemovedProfile(item: AgentProfileInput): boolean {
+  if (REMOVED_PROFILE_IDS.has(item.id)) return true;
+  const markers = [item.kind, item.launcher, item.envPreset, item.authPolicy];
+  return markers.some(
+    (marker) =>
+      typeof marker === "string" && REMOVED_VARIANT_MARKERS.has(marker),
+  );
+}
+
+/**
+ * Reconcile persisted profiles with the current builtin lineup. Runs on every
+ * rehydration so upgrades never leave stale entries behind:
+ * - drop removed runtimes (by id or by stale kind/preset markers);
+ * - refresh builtin shells (display name / presets) from the new defaults
+ *   while preserving the user's own launch command/args/env;
+ * - emit builtins in default order, user custom ids after, extras last.
+ */
+export function mergeProfiles(
   persisted: unknown,
   fallback: AgentProfileInput[],
 ): AgentProfileInput[] {
-  if (!Array.isArray(persisted) || persisted.length === 0) {
-    return fallback;
+  const saved = Array.isArray(persisted) ? persisted : [];
+  const byId = new Map<string, AgentProfileInput>();
+  for (const raw of saved) {
+    const item = normalizeProfileInput(raw as AgentProfileInput);
+    if (!item.id || isRemovedProfile(item)) continue;
+    byId.set(item.id, item);
   }
-  const persistedList = persisted.map((item) =>
-    normalizeProfileInput(item as AgentProfileInput),
-  );
+  const next: AgentProfileInput[] = [];
   for (const fallbackItem of fallback) {
-    if (!persistedList.some((item) => item.id === fallbackItem.id)) {
-      persistedList.push(fallbackItem);
+    const kept = byId.get(fallbackItem.id);
+    byId.delete(fallbackItem.id);
+    if (!kept) {
+      next.push(fallbackItem);
+      continue;
     }
+    next.push({
+      ...fallbackItem,
+      command: kept.command ?? fallbackItem.command,
+      args: kept.args ?? fallbackItem.args,
+      env: kept.env ?? fallbackItem.env,
+    });
   }
-  return persistedList;
+  for (const extra of byId.values()) next.push(extra);
+  return next.length > 0 ? next : fallback;
 }
 
 type AcpProfilesStore = {
@@ -84,10 +130,14 @@ export const useAcpProfilesStore = create<AcpProfilesStore>()(
         const saved = (persisted ?? {}) as Partial<
           Pick<AcpProfilesStore, "activeProfileId" | "profiles">
         >;
+        const profiles = mergeProfiles(saved.profiles, current.profiles);
+        const active = saved.activeProfileId ?? current.activeProfileId;
         return {
           ...current,
-          activeProfileId: saved.activeProfileId ?? current.activeProfileId,
-          profiles: mergeProfiles(saved.profiles, current.profiles),
+          activeProfileId: profiles.some((item) => item.id === active)
+            ? active
+            : current.activeProfileId,
+          profiles,
         };
       },
     },

@@ -203,7 +203,7 @@ impl AcpService {
         };
 
         // Ensure live session (reuse only when it belongs to this profile —
-        // a live Codex process must never answer prompts labeled Antigravity).
+        // a live Codex process must never answer prompts labeled for another profile).
         {
             let mut guard = match self.session.lock() {
                 Ok(guard) => guard,

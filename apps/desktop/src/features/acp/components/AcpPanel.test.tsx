@@ -32,7 +32,7 @@ const mockStatus = {
   profiles: [
     {
       id: "codex",
-      name: "Codex（默认）",
+      name: "ChatGPT",
       kind: "Codex" as const,
       command: "bunx.exe",
       args: ["@agentclientprotocol/codex-acp"],
@@ -203,7 +203,7 @@ describe("AcpPanel", () => {
           profiles: [
             {
               id: "codex",
-              name: "Codex（默认）",
+              name: "ChatGPT",
               kind: "Codex",
               command: "bunx.exe",
               args: ["@agentclientprotocol/codex-acp"],
@@ -253,7 +253,7 @@ describe("AcpPanel", () => {
             { ...mockStatus.profiles[0], available: true },
             {
               id: "cursor",
-              name: "Cursor CLI",
+              name: "Cursor",
               kind: "Cursor" as const,
               command: "agent.cmd",
               args: ["acp"],
@@ -273,10 +273,10 @@ describe("AcpPanel", () => {
 
     const user = userEvent.setup();
     const switcher = await screen.findByLabelText("切换 Agent");
-    expect(switcher).toHaveTextContent("Codex（默认）");
+    expect(switcher).toHaveTextContent("ChatGPT");
     await user.click(switcher);
     await user.click(
-      await screen.findByRole("menuitem", { name: "Cursor CLI" }),
+      await screen.findByRole("menuitem", { name: "Cursor" }),
     );
 
     // 画像切过去 + 模型选择清掉（codex 的模型不漏进 cursor）。
@@ -318,7 +318,7 @@ describe("AcpPanel", () => {
             { ...mockStatus.profiles[0], available: true },
             {
               id: "cursor",
-              name: "Cursor CLI",
+              name: "Cursor",
               kind: "Cursor" as const,
               command: "agent.cmd",
               args: ["acp"],
@@ -341,7 +341,7 @@ describe("AcpPanel", () => {
     const switcher = await screen.findByLabelText("切换 Agent");
     await user.click(switcher);
     await user.click(
-      await screen.findByRole("menuitem", { name: "Cursor CLI" }),
+      await screen.findByRole("menuitem", { name: "Cursor" }),
     );
 
     await waitFor(() => {

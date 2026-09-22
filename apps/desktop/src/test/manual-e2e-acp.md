@@ -94,7 +94,7 @@ bun run test:e2e:acp-mcp-priority
 
 ### Agent 切换
 
-- [ ] 空闲时在 Agent 设置切换 Codex / Antigravity / custom（按本机已配置项）；面板对话、标题和工具轨迹同步清空，不闪现旧 profile 内容
+- [ ] 空闲时在 Agent 设置切换 ChatGPT / Claude / custom（按本机已配置项）；面板对话、标题和工具轨迹同步清空，不闪现旧 profile 内容
 - [ ] 切换后新问题使用新 profile；旧 profile 的模型/推理设置不会泄漏到新 profile
 - [ ] 未配置 Agent 时显示业务化“未配置/无法连接”提示，播放、字幕、笔记仍可用
 

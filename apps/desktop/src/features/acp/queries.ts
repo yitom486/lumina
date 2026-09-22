@@ -31,6 +31,16 @@ export const acpQueryKeys = {
 };
 
 /**
+ * SQLite 快照仓 Query key 工厂（B3 SQLite only）。hydrate 回填与后续订阅走这里，
+ * 新代码禁手写 `chat-store-*` 字面量。
+ */
+export const chatStoreQueryKeys = {
+  snapshot: (profileId: string, sessionId: string) =>
+    ["chat-store-snapshot", profileId, sessionId] as const,
+  hint: (profileId: string) => ["chat-store-hint", profileId] as const,
+};
+
+/**
  * 后端提示词仓库是任务契约的唯一源头。启动时拉一次版本表并写入
  * `shortcutOutput` 的动态表；失败则静默保留本地 fallback（离线/单测），
  * 绝不阻塞聊天。staleTime Infinity：版本随应用版本一起发版。

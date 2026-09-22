@@ -323,9 +323,3 @@ export function discoverAcpModels(
     config: { profileId, profiles },
   });
 }
-
-export function acpLoginAntigravity(proxyPort?: number): Promise<string> {
-  return invoke<string>("acp_login_antigravity", {
-    proxyPort: proxyPort ?? null,
-  });
-}

@@ -27,7 +27,12 @@ import type {
   ResumeOutcome,
   SavedSessionHint,
 } from "../types";
-import { readChatRestore, type ChatRestoreSnapshot } from "../chatRestore";
+import {
+  clearPersistedSessionHintFor,
+  persistSessionHintFor,
+  readChatRestore,
+  type ChatRestoreSnapshot,
+} from "../chatRestore";
 import { mapLoadedTranscript } from "../conversationTranscript";
 import { claimProgressOwner, type ProgressOwner } from "../progressOwner";
 import { fetchAgentTranscript } from "../queries";
@@ -115,6 +120,8 @@ export function useAcpConnection(input: UseAcpConnectionInput) {
   const transcriptLoadSeqRef = useRef(0);
   // 秒开恢复的对账基线：尝试恢复的正是摆出来的那个旧会话、且用户还没
   // 说过话，后端却落了另一个新会话 → 清掉缓存，不把旧线程盖在新会话上。
+  // 基线来自挂载同步快照（initialRestore）或切换 effect；B3 冷启动内存为
+  // 空时由 hydrate 回填经 seedRestoreBaseline 补记一次。
   const restoreRef = useRef<{
     sessionId: string | null;
     turnCount: number;
@@ -213,7 +220,14 @@ export function useAcpConnection(input: UseAcpConnectionInput) {
       clearDraft();
     }
     // 落键即真相：hint 按事件自带的 profileId 分键存放。
+    // B3：内存落键后 void 写穿 DB（失败仅日志 + 留队重试，内存保留，
+    // 下次 trailing 重试），热路径不 await。
     setSavedSessionFor(event.profileId, {
+      sessionId: event.sessionId,
+      profileId: event.profileId,
+      cwd: event.cwd,
+    });
+    persistSessionHintFor(event.profileId, {
       sessionId: event.sessionId,
       profileId: event.profileId,
       cwd: event.cwd,
@@ -239,7 +253,9 @@ export function useAcpConnection(input: UseAcpConnectionInput) {
       setLastSessionResolution(null);
       setSessionBanner(null);
       // 新建对话只清当前 agent 自家键的 hint，别家的续聊不受影响。
+      // B3：内存清完后 void 删 DB hint（失败留队重试）。
       clearSavedSessionFor(profileState.activeProfileId);
+      clearPersistedSessionHintFor(profileState.activeProfileId);
       if (!preserveTurns) {
         setTurns([]);
         setNotices([]);
@@ -297,10 +313,11 @@ export function useAcpConnection(input: UseAcpConnectionInput) {
       const profileState = useAcpProfilesStore.getState();
       const settings = clientSettingsFromStore(useAcpSettingsStore.getState());
       // 同进程切换只清目标线程所属 agent 自家键的 hint（通常就是当前 profile），
-      // 别家的续聊不受影响。
-      clearSavedSessionFor(
-        options.savedSession?.profileId ?? profileState.activeProfileId,
-      );
+      // 别家的续聊不受影响。B3：内存清完后 void 删 DB hint。
+      const hintOwner =
+        options.savedSession?.profileId ?? profileState.activeProfileId;
+      clearSavedSessionFor(hintOwner);
+      clearPersistedSessionHintFor(hintOwner);
       setConnectionState("connecting");
       progressOwnerRef.current = claimProgressOwner("sys:switch-session");
 
@@ -497,12 +514,32 @@ export function useAcpConnection(input: UseAcpConnectionInput) {
     setConnectAttempt((attempt) => attempt + 1);
   };
 
+  /**
+   * hydrate 把空白面板 reseeding 时补对账基线（B3 SQLite only）。
+   * 冷启动内存镜像为空，挂载同步路径建不出基线；水合把旧世界摆出来时
+   * 按同一形状补记一次，已有基线（同步路径已建）不覆盖。调用方只在
+   * 面板仍空白的 reseeding 分支里调，绝不覆盖用户已输入。
+   */
+  const seedRestoreBaseline = (snapshot: ChatRestoreSnapshot) => {
+    if (restoreRef.current) return;
+    if (snapshot.turns.length === 0 && snapshot.draft.trim().length === 0) {
+      return;
+    }
+    restoreRef.current = {
+      sessionId:
+        useAcpSessionStore.getState().savedSessionFor(snapshot.profileId)
+          ?.sessionId ?? null,
+      turnCount: snapshot.turns.length,
+    };
+  };
+
   return {
     connectionState, progress, setProgress, progressOwnerRef,
     lastSessionResolution, setLastSessionResolution,
     sessionBanner, setSessionBanner, titleOverrides, setTitleOverrides,
     resumeExpectedSessionIdRef, resumeNoticePendingRef, transcriptLoadSeqRef,
-    handleSessionSaved, newChatMutation, newChatPending: newChatMutation.isPending,
+    handleSessionSaved, seedRestoreBaseline,
+    newChatMutation, newChatPending: newChatMutation.isPending,
     switchSessionMutation, switchingSession, handleReconnect,
   };
 }

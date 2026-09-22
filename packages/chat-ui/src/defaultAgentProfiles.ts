@@ -12,7 +12,6 @@ function isWindowsPlatform(): boolean {
 export function defaultAgentProfiles(): AgentProfileInput[] {
   const bunx = isWindowsPlatform() ? "bunx.exe" : "bunx";
   const claude = isWindowsPlatform() ? "claude-agent-acp.exe" : "claude-agent-acp";
-  const antigravity = isWindowsPlatform() ? "agy_acp_server.exe" : "agy_acp_server";
   // Cursor 官方 CLI：Windows 优先 %LOCALAPPDATA%\cursor-agent\agent.cmd，
   // posix 优先 ~/.local/bin/agent，否则回落 PATH（后端 resolve）。
   const cursor = isWindowsPlatform() ? "agent.cmd" : "agent";
@@ -23,7 +22,7 @@ export function defaultAgentProfiles(): AgentProfileInput[] {
   return [
     {
       id: "codex",
-      name: "Codex（默认）",
+      name: "ChatGPT",
       kind: "Codex",
       command: bunx,
       args: [CODEX_ACP_PACKAGE],
@@ -34,20 +33,8 @@ export function defaultAgentProfiles(): AgentProfileInput[] {
       sessionStorage: "codex-rollouts",
     },
     {
-      id: "antigravity",
-      name: "Google Antigravity",
-      kind: "Antigravity",
-      command: antigravity,
-      args: [],
-      env: { ACP_PROXY_PORT: "7897" },
-      launcher: "antigravity-acp",
-      envPreset: "antigravity-proxy",
-      authPolicy: "antigravity-oauth",
-      authMethods: ["oauth-personal"],
-    },
-    {
       id: "claude",
-      name: "Claude ACP",
+      name: "Claude",
       kind: "Claude",
       command: claude,
       args: [],
@@ -57,19 +44,8 @@ export function defaultAgentProfiles(): AgentProfileInput[] {
       authPolicy: "claude-local",
     },
     {
-      id: "cursor",
-      name: "Cursor CLI",
-      kind: "Cursor",
-      command: cursor,
-      args: ["acp"],
-      env: {},
-      // 本地已有认证复用（agent login / CURSOR_API_KEY / CURSOR_AUTH_TOKEN），
-      // 命中则后端跳过 ACP authenticate；会话走通用 session/list + hint resume。
-      authPolicy: "cursor-local",
-    },
-    {
       id: "gemini",
-      name: "Gemini CLI",
+      name: "Gemini",
       kind: "Gemini",
       command: gemini,
       args: ["--acp"],
@@ -80,7 +56,7 @@ export function defaultAgentProfiles(): AgentProfileInput[] {
     },
     {
       id: "copilot",
-      name: "Copilot CLI",
+      name: "Copilot",
       kind: "Copilot",
       command: copilot,
       args: ["--acp", "--stdio"],
@@ -100,8 +76,19 @@ export function defaultAgentProfiles(): AgentProfileInput[] {
       authPolicy: "opencode-local",
     },
     {
+      id: "cursor",
+      name: "Cursor",
+      kind: "Cursor",
+      command: cursor,
+      args: ["acp"],
+      env: {},
+      // 本地已有认证复用（agent login / CURSOR_API_KEY / CURSOR_AUTH_TOKEN），
+      // 命中则后端跳过 ACP authenticate；会话走通用 session/list + hint resume。
+      authPolicy: "cursor-local",
+    },
+    {
       id: "deepseek",
-      name: "DeepSeek Harness",
+      name: "DeepSeek",
       kind: "DeepSeek",
       command: deepseek,
       args: ["-y", "@deepseek-ai/dsh", "--profile", "acp"],
@@ -111,7 +98,7 @@ export function defaultAgentProfiles(): AgentProfileInput[] {
     },
     {
       id: "custom",
-      name: "自定义 ACP",
+      name: "自定义",
       kind: "Custom",
       command: "",
       args: [],

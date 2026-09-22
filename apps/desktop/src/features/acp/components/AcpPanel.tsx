@@ -64,12 +64,14 @@ import type { AssistantAction } from "@lumina/chat-ui/assistantBlocks";
 import { buildAnchoredVideoPromptContext } from "../context";
 import { workspaceCwdFromMedia } from "@lumina/player-ui/cwd";
 import {
+  clearPersistedSessionHintFor,
   flushChatRestore,
   isRestorable,
   readChatRestore,
   scheduleClearChatRestore,
   schedulePersistChatRestore,
 } from "../chatRestore";
+import { useChatStoreHydrate } from "../useChatStoreHydrate";
 import {
   acceptsProgressEvent,
   claimProgressOwner,
@@ -204,8 +206,9 @@ export function AcpPanel() {
   const listKey = useId();
   const turnListRef = useRef<HTMLDivElement | null>(null);
   const composerRef = useRef<ChatComposerBarHandle | null>(null);
-  // 秒开恢复（第 1 层）：首渲染直接摆上次退出的 turns + 草稿，零网络、
-  // 无 effect 闪帧。只认当前 profile 自家键的快照；对账信息进 restoreRef，
+  // 秒开恢复（第 1 层）：首渲染直接摆内存镜像里的 turns + 草稿，零网络、
+  // 无 effect 闪帧（冷启动时镜像为空则先空白，随后 hydrate 从 SQLite 回填
+  // reseeding，绝不闪别的世界的旧内容）。只认当前 profile 自家键的快照；对账信息进 restoreRef，
   // 由 sessionSaved 与 resume 尝试做一次新旧会话对账（第 2 层）。
   const [initialRestore] = useState(() => {
     const mountProfileId = useAcpProfilesStore.getState().activeProfileId;
@@ -243,6 +246,8 @@ export function AcpPanel() {
   const [quickNoteOpen, setQuickNoteOpen] = useState(false);
   const turnsRef = useRef<ChatTurn[]>([]);
   turnsRef.current = turns;
+  const draftRef = useRef(draft);
+  draftRef.current = draft;
 
   const available = statusQuery.data?.available ?? false;
   const sessionActive = statusQuery.data?.sessionActive ?? false;
@@ -333,22 +338,24 @@ export function AcpPanel() {
     setTitleOverrides: connection.setTitleOverrides,
   });
 
+  // B3：lumina-acp-session（acpSessionStore persist）保留作纯离线备，
+  // 以 SQLite 为准，挂载时只清已下线的旧历史键，绝不动会话 hint 备层。
   useEffect(() => {
     try {
       window.localStorage.removeItem("lumina-acp-chat-history");
-      window.localStorage.removeItem("lumina-acp-session");
     } catch {
       // 私有模式等极端环境：清不掉也不影响，内存态本来就是空的。
     }
   }, []);
 
-  // turns + 草稿节流落盘（trailing 1.5s）：打字停一下就写，无可存内容
-  // （新建对话清空后）则清自家键的快照，避免僵尸恢复。卸载时 flush。
+  // turns + 草稿节流落盘（trailing 1.5s）：打字停一下就写内存镜像 + SQLite，
+  // 无可存内容（新建对话清空后）则清自家键的快照，避免僵尸恢复。卸载时 flush。
   // 落盘按 profile 分键分槽：快切 profile 时旧世界的 trailing 写照样落回
-  // 旧键，不会被顶掉也不会串键。
+  // 旧 DB 行，不会被顶掉也不会串键。sessionId 显式传入，与 DB 复合主键对齐。
   useEffect(() => {
     const input = {
       profileId: activeProfileId,
+      sessionId: savedSession?.sessionId ?? "",
       cwd: sessionCwd ?? null,
       draft,
       turns,
@@ -356,10 +363,42 @@ export function AcpPanel() {
     if (isRestorable(input)) {
       schedulePersistChatRestore(input);
     } else {
-      scheduleClearChatRestore(activeProfileId);
+      scheduleClearChatRestore(activeProfileId, savedSession?.sessionId ?? "");
     }
-  }, [turns, draft, activeProfileId, sessionCwd]);
-  useEffect(() => () => flushChatRestore(), []);
+  }, [turns, draft, activeProfileId, sessionCwd, savedSession?.sessionId]);
+  // 卸载/切后台/关页面前把 trailing 写完：flush 是异步（先内存后 DB），
+  // 这里一律 void 调用，不阻塞卸载路径；DB 失败回队，下次启动迁移重试。
+  useEffect(() => {
+    const flush = () => {
+      void flushChatRestore();
+    };
+    window.addEventListener("pagehide", flush);
+    window.addEventListener("beforeunload", flush);
+    return () => {
+      window.removeEventListener("pagehide", flush);
+      window.removeEventListener("beforeunload", flush);
+      void flushChatRestore();
+    };
+  }, []);
+
+  // B3 水合：effect 里异步回填（SQLite 主层），首渲染不阻塞。
+  // 回调只在面板仍空白时 reseeding（水合回来的是用户还没动过的旧世界），
+  // 用户已输入/已有 turns 一律不覆盖；同时补对账基线（冷启动同步路径
+  // 建不出基线，新会话落定时靠它清掉旧 turns 防僵尸恢复）；切换 epoch 由 hook 内 seq 守卫。
+  useChatStoreHydrate({
+    queryClient,
+    profileId: activeProfileId,
+    sessionId: savedSession?.sessionId ?? null,
+    onSnapshotHydrated: (snapshot) => {
+      if (turnsRef.current.length > 0 || draftRef.current.trim().length > 0) {
+        return;
+      }
+      connection.seedRestoreBaseline(snapshot);
+      seedHandledProposals(snapshot.turns);
+      setTurns([...snapshot.turns]);
+      setDraft(snapshot.draft);
+    },
+  });
 
   // 换 Agent = 换世界。面板私有对话态（turns/草稿/notices/标题覆盖）在
   // **渲染期同步**重置并摆上目标世界的快照（React "adjust state during
@@ -911,7 +950,9 @@ export function AcpPanel() {
       setPendingPermission(null);
       syncPromptQueue([]);
       // 后端不可用只清当前 agent 自家键，别家的续聊不受影响。
+      // 内存清完后 void 删 DB hint（失败留队重试，内存保留）。
       clearSavedSessionFor(activeProfileId);
+      clearPersistedSessionHintFor(activeProfileId);
       return;
     }
     syncPromptQueue([]);

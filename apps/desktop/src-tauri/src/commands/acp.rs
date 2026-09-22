@@ -1107,15 +1107,6 @@ pub async fn acp_close(app: AppHandle) -> Result<(), AcpError> {
     .map_err(|error| AcpError::internal(Some(&format!("acp close join: {error}"))))?
 }
 
-#[tauri::command]
-pub async fn acp_login_antigravity(proxy_port: Option<u16>) -> Result<String, AcpError> {
-    tauri::async_runtime::spawn_blocking(move || lumina_acp::login_antigravity(proxy_port))
-        .await
-        .map_err(|error| {
-            AcpError::internal(Some(&format!("acp login antigravity join: {error}")))
-        })?
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

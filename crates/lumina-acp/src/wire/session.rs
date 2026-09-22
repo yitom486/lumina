@@ -1095,31 +1095,31 @@ mod tests {
         let init = InitializeResult {
             auth_methods: vec![
                 AuthMethod {
-                    id: "gemini-api-key".into(),
-                    name: "Gemini API Key".into(),
+                    id: "other".into(),
+                    name: "Other".into(),
                 },
                 AuthMethod {
-                    id: "oauth-personal".into(),
-                    name: "Google OAuth".into(),
+                    id: "cursor_login".into(),
+                    name: "Cursor login".into(),
                 },
             ],
             ..InitializeResult::default()
         };
         let profile = crate::agent::profile::AgentProfile {
-            id: "antigravity".into(),
-            name: "Google Antigravity".into(),
-            kind: crate::domain::model::AgentKind::Antigravity,
+            id: "cursor".into(),
+            name: "Cursor".into(),
+            kind: crate::domain::model::AgentKind::Cursor,
             command: String::new(),
             args: Vec::new(),
             env: Default::default(),
             launcher: None,
             env_preset: None,
-            auth_policy: Some(crate::domain::model::AuthPolicy::AntigravityOauth),
-            auth_methods: Vec::new(),
+            auth_policy: Some(crate::domain::model::AuthPolicy::CursorLocal),
+            auth_methods: vec!["other".into()],
             session_storage: None,
         };
         let picked = crate::agent::launch::pick_auth_method(&profile, &init).expect("method");
-        assert_eq!(picked.id, "oauth-personal");
+        assert_eq!(picked.id, "cursor_login");
     }
 
     fn codex_local_test_profile() -> crate::agent::profile::AgentProfile {

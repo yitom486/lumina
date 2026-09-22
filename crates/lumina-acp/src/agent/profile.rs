@@ -35,18 +35,12 @@ pub struct AgentProfile {
 
 pub(crate) const CODEX_EMPTY_REPLY_HINT: &str =
     "（会话结束，未解析到文本回复；请确认 Codex 已登录，且模型走 Responses API）";
-pub(crate) const ANTIGRAVITY_EMPTY_REPLY_HINT: &str =
-    "（会话结束，未解析到文本回复；请确认 Google 账号已授权且网络代理正常）";
 pub(crate) const GENERIC_EMPTY_REPLY_HINT: &str =
     "（会话结束，未解析到文本回复；请确认该 ACP Agent 可用）";
 const CODEX_AUTH_ERROR_MESSAGE: &str =
     "Codex 尚未登录或 API 未配置，请在终端运行 codex login 后重试";
-const ANTIGRAVITY_AUTH_ERROR_MESSAGE: &str =
-    "Google 账号尚未授权，请点击「登录 Google 账号」完成授权并在代理通畅下重试";
 const GENERIC_AUTH_ERROR_MESSAGE: &str =
     "该 AI Agent 尚未完成登录或认证，请按其官方指引完成登录后重试";
-const ANTIGRAVITY_AUTH_FAILURE_MESSAGE: &str =
-    "Google 账号认证失败，请检查网络代理与登录授权后重试";
 const CURSOR_AUTH_ERROR_MESSAGE: &str =
     "Cursor 尚未登录，请在本机终端运行 agent login 后重试（或设置 CURSOR_API_KEY）";
 const CURSOR_AUTH_FAILURE_MESSAGE: &str =
@@ -64,16 +58,8 @@ impl AgentProfile {
         self.launcher == Some(LauncherPreset::CodexAcp)
     }
 
-    pub fn uses_antigravity_launcher(&self) -> bool {
-        self.launcher == Some(LauncherPreset::AntigravityAcp)
-    }
-
     pub fn injects_codex_cli_env(&self) -> bool {
         self.env_preset == Some(EnvPreset::CodexCli)
-    }
-
-    pub fn injects_antigravity_proxy_env(&self) -> bool {
-        self.env_preset == Some(EnvPreset::AntigravityProxy)
     }
 
     pub fn stores_codex_rollouts(&self) -> bool {
@@ -82,10 +68,6 @@ impl AgentProfile {
 
     pub fn is_codex_local_auth(&self) -> bool {
         self.auth_policy == Some(AuthPolicy::CodexLocal)
-    }
-
-    pub fn is_antigravity_oauth(&self) -> bool {
-        self.auth_policy == Some(AuthPolicy::AntigravityOauth)
     }
 
     pub fn is_cursor_local_auth(&self) -> bool {
@@ -126,17 +108,13 @@ impl AgentProfile {
 
     /// Whether this profile has stored local credentials the agent can pick
     /// up on its own. Declared per auth policy (data, not kind): codex-local
-    /// reads `~/.codex/auth.json`, antigravity-oauth reads the Gemini
-    /// credential files, cursor-local reads the Cursor `auth.json` candidates
-    /// or `CURSOR_API_KEY` / `CURSOR_AUTH_TOKEN` env. When present, the ACP
-    /// `authenticate` step must be skipped so a stored login is never replaced
-    /// by an interactive flow.
+    /// reads `~/.codex/auth.json`, cursor-local reads the Cursor `auth.json`
+    /// candidates or `CURSOR_API_KEY` / `CURSOR_AUTH_TOKEN` env. When present,
+    /// the ACP `authenticate` step must be skipped so a stored login is never
+    /// replaced by an interactive flow.
     pub fn has_stored_credentials(&self) -> bool {
         match self.auth_policy {
             Some(AuthPolicy::CodexLocal) => crate::agent::discover::codex_auth_present(),
-            Some(AuthPolicy::AntigravityOauth) => {
-                crate::agent::discover::antigravity_credentials_present()
-            }
             Some(AuthPolicy::CursorLocal) => crate::agent::discover::cursor_auth_present(),
             Some(AuthPolicy::ClaudeLocal) => crate::agent::discover::claude_credentials_present(),
             Some(AuthPolicy::GeminiLocal) => crate::agent::discover::gemini_credentials_present(),
@@ -149,18 +127,8 @@ impl AgentProfile {
         }
     }
 
-    pub fn is_antigravity(&self) -> bool {
-        self.uses_antigravity_launcher()
-            || self.injects_antigravity_proxy_env()
-            || self.is_antigravity_oauth()
-            || self.kind == AgentKind::Antigravity
-            || self.id == "antigravity"
-    }
-
     pub fn empty_reply_hint(&self) -> String {
-        if self.is_antigravity() {
-            ANTIGRAVITY_EMPTY_REPLY_HINT.into()
-        } else if self.is_codex_local_auth() {
+        if self.is_codex_local_auth() {
             CODEX_EMPTY_REPLY_HINT.into()
         } else {
             GENERIC_EMPTY_REPLY_HINT.into()
@@ -168,9 +136,7 @@ impl AgentProfile {
     }
 
     pub fn auth_error_message(&self) -> String {
-        if self.is_antigravity() {
-            ANTIGRAVITY_AUTH_ERROR_MESSAGE.into()
-        } else if self.is_codex_local_auth() {
+        if self.is_codex_local_auth() {
             CODEX_AUTH_ERROR_MESSAGE.into()
         } else if self.is_cursor() {
             CURSOR_AUTH_ERROR_MESSAGE.into()
@@ -191,13 +157,7 @@ impl AgentProfile {
 
     /// Fixed business `message` per profile; raw wire text stays in `details`.
     pub fn auth_failure_error(&self, details: Option<&str>) -> AcpError {
-        if self.is_antigravity() {
-            AcpError::new(
-                AcpErrorCode::ProtocolError,
-                ANTIGRAVITY_AUTH_FAILURE_MESSAGE,
-                details.map(str::to_string),
-            )
-        } else if self.is_codex_local_auth() {
+        if self.is_codex_local_auth() {
             AcpError::codex_auth_required(details)
         } else if self.is_cursor() {
             AcpError::new(
@@ -326,43 +286,20 @@ fn profile_status(profile: &AgentProfile) -> AgentProfileStatus {
 fn builtin_profiles() -> Vec<AgentProfile> {
     vec![
         builtin_codex(),
-        builtin_antigravity(),
         builtin_claude(),
-        builtin_cursor(),
         builtin_gemini(),
         builtin_copilot(),
         builtin_opencode(),
+        builtin_cursor(),
         builtin_deepseek(),
         builtin_custom_template(),
     ]
 }
 
-fn builtin_antigravity() -> AgentProfile {
-    let mut env = HashMap::new();
-    env.insert("ACP_PROXY_PORT".into(), "7897".into());
-    AgentProfile {
-        id: "antigravity".into(),
-        name: "Google Antigravity".into(),
-        kind: AgentKind::Antigravity,
-        command: if cfg!(windows) {
-            "agy_acp_server.exe".into()
-        } else {
-            "agy_acp_server".into()
-        },
-        args: Vec::new(),
-        env,
-        launcher: Some(LauncherPreset::AntigravityAcp),
-        env_preset: Some(EnvPreset::AntigravityProxy),
-        auth_policy: Some(AuthPolicy::AntigravityOauth),
-        auth_methods: vec!["oauth-personal".into()],
-        session_storage: None,
-    }
-}
-
 fn builtin_codex() -> AgentProfile {
     AgentProfile {
         id: "codex".into(),
-        name: "Codex（默认）".into(),
+        name: "ChatGPT".into(),
         kind: AgentKind::Codex,
         command: if cfg!(windows) {
             "bunx.exe".into()
@@ -382,7 +319,7 @@ fn builtin_codex() -> AgentProfile {
 fn builtin_claude() -> AgentProfile {
     AgentProfile {
         id: "claude".into(),
-        name: "Claude ACP".into(),
+        name: "Claude".into(),
         kind: AgentKind::Claude,
         command: if cfg!(windows) {
             "claude-agent-acp.exe".into()
@@ -404,7 +341,7 @@ fn builtin_claude() -> AgentProfile {
 fn builtin_cursor() -> AgentProfile {
     AgentProfile {
         id: "cursor".into(),
-        name: "Cursor CLI".into(),
+        name: "Cursor".into(),
         kind: AgentKind::Cursor,
         command: if cfg!(windows) {
             "agent.cmd".into()
@@ -427,7 +364,7 @@ fn builtin_cursor() -> AgentProfile {
 fn builtin_gemini() -> AgentProfile {
     AgentProfile {
         id: "gemini".into(),
-        name: "Gemini CLI".into(),
+        name: "Gemini".into(),
         kind: AgentKind::Gemini,
         command: if cfg!(windows) {
             "gemini.cmd".into()
@@ -449,7 +386,7 @@ fn builtin_gemini() -> AgentProfile {
 fn builtin_copilot() -> AgentProfile {
     AgentProfile {
         id: "copilot".into(),
-        name: "Copilot CLI".into(),
+        name: "Copilot".into(),
         kind: AgentKind::Copilot,
         command: if cfg!(windows) {
             "copilot.cmd".into()
@@ -492,7 +429,7 @@ fn builtin_opencode() -> AgentProfile {
 fn builtin_deepseek() -> AgentProfile {
     AgentProfile {
         id: "deepseek".into(),
-        name: "DeepSeek Harness".into(),
+        name: "DeepSeek".into(),
         kind: AgentKind::DeepSeek,
         command: if cfg!(windows) {
             "bunx.exe".into()
@@ -518,7 +455,7 @@ fn builtin_deepseek() -> AgentProfile {
 fn builtin_custom_template() -> AgentProfile {
     AgentProfile {
         id: "custom".into(),
-        name: "自定义 ACP".into(),
+        name: "自定义".into(),
         kind: AgentKind::Custom,
         command: String::new(),
         args: Vec::new(),
@@ -535,21 +472,6 @@ fn merge_builtin_profiles(profiles: &mut Vec<AgentProfile>) {
     for builtin in builtin_profiles() {
         if builtin.id == "custom" && builtin.command.is_empty() {
             if !profiles.iter().any(|profile| profile.id == "custom") {
-                profiles.push(builtin);
-            }
-            continue;
-        }
-        if builtin.id == "antigravity" {
-            if let Some(existing) = profiles
-                .iter_mut()
-                .find(|profile| profile.id == "antigravity")
-            {
-                if existing.kind == AgentKind::Antigravity {
-                    apply_missing_antigravity_presets(existing);
-                    continue;
-                }
-            }
-            if !profiles.iter().any(|profile| profile.id == "antigravity") {
                 profiles.push(builtin);
             }
             continue;
@@ -604,22 +526,6 @@ fn apply_missing_codex_presets(profile: &mut AgentProfile) {
     }
 }
 
-fn apply_missing_antigravity_presets(profile: &mut AgentProfile) {
-    let antigravity = builtin_antigravity();
-    if profile.launcher.is_none() {
-        profile.launcher = antigravity.launcher;
-    }
-    if profile.env_preset.is_none() {
-        profile.env_preset = antigravity.env_preset;
-    }
-    if profile.auth_policy.is_none() {
-        profile.auth_policy = antigravity.auth_policy;
-    }
-    if profile.auth_methods.is_empty() {
-        profile.auth_methods = antigravity.auth_methods;
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -635,10 +541,6 @@ mod tests {
             .expect("codex");
         assert!(codex.command.contains("bunx"));
         assert_eq!(codex.args, vec![CODEX_ACP_PACKAGE]);
-        assert!(hint
-            .profiles
-            .iter()
-            .any(|profile| profile.id == "antigravity"));
         assert!(hint.profiles.iter().any(|profile| profile.id == "claude"));
     }
 
@@ -727,15 +629,7 @@ mod tests {
             .map(|profile| profile.id.as_str())
             .collect();
         for expected in [
-            "codex",
-            "antigravity",
-            "claude",
-            "cursor",
-            "gemini",
-            "copilot",
-            "opencode",
-            "deepseek",
-            "custom",
+            "codex", "claude", "cursor", "gemini", "copilot", "opencode", "deepseek", "custom",
         ] {
             assert!(ids.contains(&expected), "missing builtin {expected}");
         }
@@ -755,6 +649,29 @@ mod tests {
         assert!(by_id("opencode").is_opencode_local_auth());
         assert_eq!(by_id("opencode").args, vec!["acp"]);
         assert!(by_id("deepseek").is_deepseek_key_auth());
+        assert_eq!(
+            ids,
+            vec![
+                "codex", "claude", "gemini", "copilot", "opencode", "cursor", "deepseek", "custom"
+            ]
+        );
+        let by_name = |id: &str| {
+            prepared
+                .profiles
+                .iter()
+                .find(|profile| profile.id == id)
+                .expect(id)
+                .name
+                .clone()
+        };
+        assert_eq!(by_name("codex"), "ChatGPT");
+        assert_eq!(by_name("claude"), "Claude");
+        assert_eq!(by_name("gemini"), "Gemini");
+        assert_eq!(by_name("copilot"), "Copilot");
+        assert_eq!(by_name("opencode"), "OpenCode");
+        assert_eq!(by_name("cursor"), "Cursor");
+        assert_eq!(by_name("deepseek"), "DeepSeek");
+        assert_eq!(by_name("custom"), "自定义");
         // 各家只认自家 policy，绝不继承 codex 的 env/存储。
         for profile in prepared.profiles.iter() {
             if profile.id == "codex" {
@@ -792,7 +709,7 @@ mod tests {
     #[test]
     fn non_codex_profiles_carry_no_codex_behavior() {
         for profile in builtin_profiles() {
-            if profile.id == "codex" || profile.id == "antigravity" {
+            if profile.id == "codex" {
                 continue;
             }
             assert!(!profile.uses_codex_acp_launcher());
@@ -812,46 +729,6 @@ mod tests {
             .expect("custom");
         assert!(!profile.has_stored_credentials());
         assert_eq!(profile.empty_reply_hint(), GENERIC_EMPTY_REPLY_HINT);
-    }
-
-    #[test]
-    fn builtin_antigravity_profile_properties() {
-        let agy = builtin_antigravity();
-        assert!(agy.is_antigravity());
-        assert!(agy.uses_antigravity_launcher());
-        assert!(agy.injects_antigravity_proxy_env());
-        assert!(agy.is_antigravity_oauth());
-        assert!(!agy.uses_codex_acp_launcher());
-        assert!(!agy.injects_codex_cli_env());
-        assert!(!agy.is_codex_local_auth());
-        assert_eq!(agy.empty_reply_hint(), ANTIGRAVITY_EMPTY_REPLY_HINT);
-        assert_eq!(agy.auth_error_message(), ANTIGRAVITY_AUTH_ERROR_MESSAGE);
-    }
-
-    #[test]
-    fn legacy_antigravity_hint_without_presets_gets_presets_backfilled() {
-        let mut hint = default_profiles_hint();
-        hint.profiles = hint
-            .profiles
-            .into_iter()
-            .map(|mut profile| {
-                if profile.id == "antigravity" {
-                    profile.launcher = None;
-                    profile.env_preset = None;
-                    profile.auth_policy = None;
-                }
-                profile
-            })
-            .collect();
-        let prepared = prepare_profiles(&hint);
-        let agy = prepared
-            .profiles
-            .iter()
-            .find(|profile| profile.id == "antigravity")
-            .expect("antigravity");
-        assert!(agy.uses_antigravity_launcher());
-        assert!(agy.injects_antigravity_proxy_env());
-        assert!(agy.is_antigravity_oauth());
     }
 
     #[test]
@@ -915,7 +792,7 @@ mod tests {
     fn profile_input_deserializes_without_new_fields() {
         let json = r#"{
             "id": "codex",
-            "name": "Codex（默认）",
+            "name": "ChatGPT",
             "kind": "Codex",
             "command": "bunx.exe",
             "args": ["@agentclientprotocol/codex-acp"]

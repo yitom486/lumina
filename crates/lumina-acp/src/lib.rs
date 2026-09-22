@@ -13,7 +13,7 @@ pub mod runtime;
 pub mod wire;
 
 // ---- Canonical root API (stable; app/Tauri use only these) ----
-pub use agent::{login_antigravity, AgentProfile};
+pub use agent::AgentProfile;
 pub use domain::{
     set_default_environment, AcpClientSettings, AcpEvent, AcpModelDiscoveryResult,
     AcpSessionModelOptions, AcpSessionModelSelection, AcpSessionOption, AcpStatus,

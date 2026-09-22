@@ -14,7 +14,7 @@ use rusqlite::{params, Connection, OptionalExtension};
 use crate::model::{GroupResolution, LibraryIndex, MediaGroupKind, MetadataMediaType};
 
 /// The latest migration included in this crate.
-pub const CURRENT_SCHEMA_VERSION: u32 = 3;
+pub const CURRENT_SCHEMA_VERSION: u32 = 4;
 
 const BUSY_TIMEOUT: Duration = Duration::from_secs(5);
 
@@ -256,6 +256,33 @@ impl Database {
                 })?;
         }
 
+        if current_version < 4 {
+            transaction
+                .execute_batch(MIGRATION_4_SQL)
+                .map_err(|error| {
+                    DatabaseError::sqlite(
+                        DatabaseErrorCode::MigrationFailed,
+                        "应用数据存储初始化失败，请重试",
+                        "add chat snapshot storage migration",
+                        error,
+                    )
+                })?;
+            transaction
+                .execute(
+                    "INSERT OR IGNORE INTO schema_migrations(version, applied_at_ms)
+                     VALUES (?1, ?2)",
+                    params![4_i64, now_ms()],
+                )
+                .map_err(|error| {
+                    DatabaseError::sqlite(
+                        DatabaseErrorCode::MigrationFailed,
+                        "应用数据存储初始化失败，请重试",
+                        "record chat snapshot storage migration",
+                        error,
+                    )
+                })?;
+        }
+
         transaction.commit().map_err(|error| {
             DatabaseError::sqlite(
                 DatabaseErrorCode::MigrationFailed,
@@ -475,6 +502,138 @@ impl Database {
             )
         })?;
         Ok(retryable + terminal)
+    }
+
+    /// Insert or replace the chat snapshot owned by one profile/session pair.
+    ///
+    /// The caller prunes `turns_json` before crossing this boundary; this
+    /// method only guards empty and overlong payloads and rejects malformed
+    /// JSON so a corrupt snapshot can never silently replace a good one.
+    pub fn snapshot_upsert(
+        &self,
+        profile_id: &str,
+        session_id: &str,
+        cwd: Option<&str>,
+        draft: &str,
+        turns_json: &str,
+    ) -> DatabaseResult<ChatSnapshotRecord> {
+        validate_snapshot_identity(profile_id, session_id)?;
+        validate_snapshot_payload(draft, turns_json)?;
+        let cwd = normalize_optional_text(cwd);
+        self.connection
+            .execute(
+                "INSERT INTO chat_snapshots(
+                    profile_id, session_id, cwd, draft, turns_json, updated_at_ms
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+                 ON CONFLICT(profile_id, session_id) DO UPDATE SET
+                    cwd = excluded.cwd,
+                    draft = excluded.draft,
+                    turns_json = excluded.turns_json,
+                    updated_at_ms = excluded.updated_at_ms",
+                params![profile_id, session_id, cwd, draft, turns_json, now_ms()],
+            )
+            .map_err(|error| map_write_error("upsert chat snapshot", error))?;
+        self.snapshot_get(profile_id, session_id)?.ok_or_else(|| {
+            DatabaseError::new(
+                DatabaseErrorCode::QueryFailed,
+                "应用数据存储读取失败，请重试",
+                Some("chat snapshot disappeared after upsert".to_string()),
+            )
+        })
+    }
+
+    /// Read the chat snapshot owned by one profile/session pair.
+    pub fn snapshot_get(
+        &self,
+        profile_id: &str,
+        session_id: &str,
+    ) -> DatabaseResult<Option<ChatSnapshotRecord>> {
+        validate_snapshot_identity(profile_id, session_id)?;
+        self.connection
+            .query_row(
+                "SELECT profile_id, session_id, cwd, draft, turns_json, updated_at_ms
+                 FROM chat_snapshots WHERE profile_id = ?1 AND session_id = ?2",
+                params![profile_id, session_id],
+                map_chat_snapshot_row,
+            )
+            .optional()
+            .map_err(|error| map_read_error("read chat snapshot", error))
+    }
+
+    /// Delete the chat snapshot owned by one profile/session pair.
+    pub fn snapshot_delete(&self, profile_id: &str, session_id: &str) -> DatabaseResult<bool> {
+        validate_snapshot_identity(profile_id, session_id)?;
+        let changed = self
+            .connection
+            .execute(
+                "DELETE FROM chat_snapshots WHERE profile_id = ?1 AND session_id = ?2",
+                params![profile_id, session_id],
+            )
+            .map_err(|error| map_write_error("delete chat snapshot", error))?;
+        Ok(changed == 1)
+    }
+
+    /// Insert or replace the single resume hint owned by one profile.
+    ///
+    /// Each profile keeps at most one row; a newer session overwrites the
+    /// previous hint instead of accumulating history.
+    pub fn hint_upsert(
+        &self,
+        profile_id: &str,
+        session_id: &str,
+        cwd: &str,
+    ) -> DatabaseResult<AcpSessionHintRecord> {
+        require_text(profile_id, "Agent 配置标识不能为空")?;
+        require_text(session_id, "Agent 会话标识不能为空")?;
+        require_key_length(profile_id, "Agent 配置标识过长，无法保存")?;
+        require_key_length(session_id, "Agent 会话标识过长，无法保存")?;
+        require_cwd_length(cwd)?;
+        self.connection
+            .execute(
+                "INSERT INTO acp_session_hints(
+                    profile_id, session_id, cwd, updated_at_ms
+                 ) VALUES (?1, ?2, ?3, ?4)
+                 ON CONFLICT(profile_id) DO UPDATE SET
+                    session_id = excluded.session_id,
+                    cwd = excluded.cwd,
+                    updated_at_ms = excluded.updated_at_ms",
+                params![profile_id, session_id, cwd, now_ms()],
+            )
+            .map_err(|error| map_write_error("upsert session hint", error))?;
+        self.hint_get(profile_id)?.ok_or_else(|| {
+            DatabaseError::new(
+                DatabaseErrorCode::QueryFailed,
+                "应用数据存储读取失败，请重试",
+                Some("session hint disappeared after upsert".to_string()),
+            )
+        })
+    }
+
+    /// Read the resume hint owned by one profile.
+    pub fn hint_get(&self, profile_id: &str) -> DatabaseResult<Option<AcpSessionHintRecord>> {
+        require_text(profile_id, "Agent 配置标识不能为空")?;
+        self.connection
+            .query_row(
+                "SELECT profile_id, session_id, cwd, updated_at_ms
+                 FROM acp_session_hints WHERE profile_id = ?1",
+                params![profile_id],
+                map_session_hint_row,
+            )
+            .optional()
+            .map_err(|error| map_read_error("read session hint", error))
+    }
+
+    /// Delete the resume hint owned by one profile.
+    pub fn hint_delete(&self, profile_id: &str) -> DatabaseResult<bool> {
+        require_text(profile_id, "Agent 配置标识不能为空")?;
+        let changed = self
+            .connection
+            .execute(
+                "DELETE FROM acp_session_hints WHERE profile_id = ?1",
+                params![profile_id],
+            )
+            .map_err(|error| map_write_error("delete session hint", error))?;
+        Ok(changed == 1)
     }
 
     fn configure(&mut self, in_memory: bool) -> DatabaseResult<()> {
@@ -2792,6 +2951,26 @@ pub struct WatchFeedItemRecord {
     pub created_at_ms: i64,
 }
 
+/// Durable chat snapshot owned by one Agent profile/session pair.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ChatSnapshotRecord {
+    pub profile_id: String,
+    pub session_id: String,
+    pub cwd: Option<String>,
+    pub draft: String,
+    pub turns_json: String,
+    pub updated_at_ms: i64,
+}
+
+/// Single resume hint owned by one Agent profile.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AcpSessionHintRecord {
+    pub profile_id: String,
+    pub session_id: String,
+    pub cwd: String,
+    pub updated_at_ms: i64,
+}
+
 fn map_series_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<SeriesRecord> {
     Ok(SeriesRecord {
         id: row.get(0)?,
@@ -2939,6 +3118,26 @@ fn map_watch_feed_item_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<WatchFee
     })
 }
 
+fn map_chat_snapshot_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<ChatSnapshotRecord> {
+    Ok(ChatSnapshotRecord {
+        profile_id: row.get(0)?,
+        session_id: row.get(1)?,
+        cwd: row.get(2)?,
+        draft: row.get(3)?,
+        turns_json: row.get(4)?,
+        updated_at_ms: row.get(5)?,
+    })
+}
+
+fn map_session_hint_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<AcpSessionHintRecord> {
+    Ok(AcpSessionHintRecord {
+        profile_id: row.get(0)?,
+        session_id: row.get(1)?,
+        cwd: row.get(2)?,
+        updated_at_ms: row.get(3)?,
+    })
+}
+
 fn episode_identity_for_media(
     index: &LibraryIndex,
     media_path: &Path,
@@ -3082,6 +3281,66 @@ fn require_text(value: &str, message: &'static str) -> DatabaseResult<()> {
     } else {
         Ok(())
     }
+}
+
+/// Snapshot keys are short caller-owned identifiers, never paths.
+const MAX_SNAPSHOT_KEY_LEN: usize = 256;
+/// Working directories stay small; overlong values are rejected, not trimmed.
+const MAX_CWD_LEN: usize = 4096;
+/// Drafts are plain text edited by the user; anything larger is a caller bug.
+const MAX_SNAPSHOT_DRAFT_LEN: usize = 200_000;
+/// Turn history is pruned by the caller; the store only rejects absurd sizes.
+const MAX_SNAPSHOT_TURNS_LEN: usize = 1_000_000;
+
+fn validate_snapshot_identity(profile_id: &str, session_id: &str) -> DatabaseResult<()> {
+    require_text(profile_id, "Agent 配置标识不能为空")?;
+    require_key_length(profile_id, "Agent 配置标识过长，无法保存")?;
+    require_key_length(session_id, "Agent 会话标识过长，无法保存")?;
+    Ok(())
+}
+
+fn validate_snapshot_payload(draft: &str, turns_json: &str) -> DatabaseResult<()> {
+    if draft.trim().is_empty() {
+        return Err(DatabaseError::invalid_input("聊天草稿不能为空"));
+    }
+    if draft.len() > MAX_SNAPSHOT_DRAFT_LEN {
+        return Err(DatabaseError::invalid_input("聊天草稿过长，无法保存"));
+    }
+    if turns_json.trim().is_empty() {
+        return Err(DatabaseError::invalid_input("聊天记录不能为空"));
+    }
+    if turns_json.len() > MAX_SNAPSHOT_TURNS_LEN {
+        return Err(DatabaseError::invalid_input("聊天记录过长，无法保存"));
+    }
+    let parsed: serde_json::Value = serde_json::from_str(turns_json)
+        .map_err(|_| DatabaseError::invalid_input("聊天记录格式无效，无法保存"))?;
+    if !parsed.is_array() {
+        return Err(DatabaseError::invalid_input("聊天记录格式无效，无法保存"));
+    }
+    Ok(())
+}
+
+fn require_key_length(value: &str, message: &'static str) -> DatabaseResult<()> {
+    if value.len() > MAX_SNAPSHOT_KEY_LEN {
+        Err(DatabaseError::invalid_input(message))
+    } else {
+        Ok(())
+    }
+}
+
+fn require_cwd_length(cwd: &str) -> DatabaseResult<()> {
+    if cwd.len() > MAX_CWD_LEN {
+        Err(DatabaseError::invalid_input("工作目录无效，无法保存"))
+    } else {
+        Ok(())
+    }
+}
+
+fn normalize_optional_text(value: Option<&str>) -> Option<String> {
+    value
+        .map(str::trim)
+        .filter(|text| !text.is_empty())
+        .map(str::to_string)
 }
 
 fn validate_time_bounds(start_ms: i64, end_ms: i64) -> DatabaseResult<()> {
@@ -3275,6 +3534,28 @@ CREATE INDEX IF NOT EXISTS idx_agent_task_chapters_chapter
     ON agent_task_chapters(chapter_id, task_id);
 "#;
 
+const MIGRATION_4_SQL: &str = r#"
+CREATE TABLE IF NOT EXISTS chat_snapshots (
+    profile_id TEXT NOT NULL,
+    session_id TEXT NOT NULL DEFAULT '',
+    cwd TEXT,
+    draft TEXT NOT NULL DEFAULT '',
+    turns_json TEXT NOT NULL DEFAULT '[]',
+    updated_at_ms INTEGER NOT NULL,
+    PRIMARY KEY (profile_id, session_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_chat_snapshots_profile_updated
+    ON chat_snapshots(profile_id, updated_at_ms DESC);
+
+CREATE TABLE IF NOT EXISTS acp_session_hints (
+    profile_id TEXT PRIMARY KEY,
+    session_id TEXT NOT NULL,
+    cwd TEXT NOT NULL DEFAULT '',
+    updated_at_ms INTEGER NOT NULL
+);
+"#;
+
 #[cfg(test)]
 #[allow(clippy::drop_non_drop)]
 mod tests {
@@ -3321,6 +3602,8 @@ mod tests {
             "question_candidates",
             "watch_feed_items",
             "app_settings",
+            "chat_snapshots",
+            "acp_session_hints",
         ] {
             assert!(
                 value_or_panic(database.table_exists(table)),
@@ -4606,5 +4889,159 @@ mod tests {
 
         let series = value_or_panic(database.repository().get_series(1));
         assert!(series.is_none());
+    }
+
+    #[test]
+    fn chat_snapshot_upsert_replaces_and_isolates_by_composite_key() {
+        let database = value_or_panic(Database::open_in_memory());
+
+        let first = value_or_panic(database.snapshot_upsert(
+            "codex",
+            "session-a",
+            Some("D:/work/show"),
+            "草稿一",
+            r#"[{"role":"user","text":"你好"}]"#,
+        ));
+        assert_eq!(first.profile_id, "codex");
+        assert_eq!(first.session_id, "session-a");
+        assert_eq!(first.cwd.as_deref(), Some("D:/work/show"));
+        assert_eq!(first.draft, "草稿一");
+
+        let second = value_or_panic(database.snapshot_upsert(
+            "codex",
+            "session-a",
+            None,
+            "草稿二",
+            r#"[{"role":"user","text":"继续"}]"#,
+        ));
+        assert_eq!(second.draft, "草稿二");
+        assert_eq!(second.turns_json, r#"[{"role":"user","text":"继续"}]"#);
+        assert_eq!(second.cwd, None);
+
+        let other_session = value_or_panic(database.snapshot_upsert(
+            "codex",
+            "session-b",
+            Some("D:/work/other"),
+            "另一会话草稿",
+            r#"[]"#,
+        ));
+        assert_eq!(other_session.session_id, "session-b");
+
+        let other_profile = value_or_panic(database.snapshot_upsert(
+            "claude",
+            "session-a",
+            None,
+            "其他配置草稿",
+            r#"[]"#,
+        ));
+        assert_eq!(other_profile.profile_id, "claude");
+
+        let loaded = value_or_panic(database.snapshot_get("codex", "session-a"));
+        let loaded = match loaded {
+            Some(snapshot) => snapshot,
+            None => panic!("snapshot was not persisted"),
+        };
+        assert_eq!(loaded.draft, "草稿二");
+
+        assert!(value_or_panic(
+            database.snapshot_delete("codex", "session-a")
+        ));
+        assert!(
+            value_or_panic(database.snapshot_get("codex", "session-a")).is_none(),
+            "deleted snapshot must disappear"
+        );
+        assert!(!value_or_panic(
+            database.snapshot_delete("codex", "session-a")
+        ));
+        // Composite-key isolation: deleting one pair keeps the others.
+        assert!(
+            value_or_panic(database.snapshot_get("codex", "session-b")).is_some(),
+            "other session must survive"
+        );
+        assert!(
+            value_or_panic(database.snapshot_get("claude", "session-a")).is_some(),
+            "other profile must survive"
+        );
+    }
+
+    #[test]
+    fn chat_snapshot_rejects_empty_draft_and_malformed_turns() {
+        let database = value_or_panic(Database::open_in_memory());
+
+        let empty_draft = database.snapshot_upsert("codex", "s1", None, "   ", r#"[]"#);
+        assert_eq!(
+            empty_draft.err().map(|error| error.message).as_deref(),
+            Some("聊天草稿不能为空")
+        );
+
+        let dirty_json = database.snapshot_upsert("codex", "s1", None, "草稿", "{不是json");
+        assert_eq!(
+            dirty_json.err().map(|error| error.message).as_deref(),
+            Some("聊天记录格式无效，无法保存")
+        );
+
+        let non_array = database.snapshot_upsert("codex", "s1", None, "草稿", r#"{"a":1}"#);
+        assert_eq!(
+            non_array.err().map(|error| error.message).as_deref(),
+            Some("聊天记录格式无效，无法保存")
+        );
+
+        let empty_turns = database.snapshot_upsert("codex", "s1", None, "草稿", "  ");
+        assert_eq!(
+            empty_turns.err().map(|error| error.message).as_deref(),
+            Some("聊天记录不能为空")
+        );
+
+        let empty_profile = database.snapshot_upsert("", "s1", None, "草稿", r#"[]"#);
+        assert_eq!(
+            empty_profile.err().map(|error| error.message).as_deref(),
+            Some("Agent 配置标识不能为空")
+        );
+
+        assert!(
+            value_or_panic(database.snapshot_get("codex", "s1")).is_none(),
+            "rejected payloads must not leave rows behind"
+        );
+    }
+
+    #[test]
+    fn chat_session_hint_keeps_single_row_per_profile() {
+        let database = value_or_panic(Database::open_in_memory());
+
+        let first = value_or_panic(database.hint_upsert("codex", "session-1", "D:/work/a"));
+        assert_eq!(first.session_id, "session-1");
+
+        let second = value_or_panic(database.hint_upsert("codex", "session-2", "D:/work/b"));
+        assert_eq!(second.profile_id, "codex");
+        assert_eq!(second.session_id, "session-2");
+        assert_eq!(second.cwd, "D:/work/b");
+
+        let loaded = value_or_panic(database.hint_get("codex"));
+        let loaded = match loaded {
+            Some(hint) => hint,
+            None => panic!("hint was not persisted"),
+        };
+        assert_eq!(loaded.session_id, "session-2");
+
+        // Other profiles are independent rows.
+        let _ = value_or_panic(database.hint_upsert("claude", "session-9", ""));
+        assert_eq!(
+            value_or_panic(database.hint_get("codex")).map(|hint| hint.session_id),
+            Some("session-2".to_string())
+        );
+
+        assert!(value_or_panic(database.hint_delete("codex")));
+        assert!(value_or_panic(database.hint_get("codex")).is_none());
+        assert!(!value_or_panic(database.hint_delete("codex")));
+        assert!(
+            value_or_panic(database.hint_get("claude")).is_some(),
+            "other profile hint must survive"
+        );
+
+        let empty_session = database.hint_upsert("codex", "  ", "");
+        assert_eq!(
+            empty_session.err().map(|error| error.message).as_deref(),
+            Some("Agent 会话标识不能为空")
+        );
     }
 }

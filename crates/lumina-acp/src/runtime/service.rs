@@ -94,7 +94,7 @@ impl AcpService {
                 .is_some_and(|session| session.profile_id == status.active_profile_id);
             // Model options describe one agent's live session. Reporting them
             // for a different active profile made the composer show, say,
-            // Codex GPT models while Antigravity was connecting.
+            // Codex GPT models while another agent was connecting.
             status.session_model_options = guard
                 .as_ref()
                 .filter(|session| session.profile_id == status.active_profile_id)
@@ -1318,9 +1318,9 @@ mod tests {
         // session no longer counts as active either (a live foreign process
         // must never read as "connected" for the new agent, otherwise the
         // client skips reconnecting after a profile switch).
-        let mut antigravity_hint = codex_hint;
-        antigravity_hint.active_profile_id = "antigravity".into();
-        let status = service.status(&antigravity_hint);
+        let mut other_hint = codex_hint;
+        other_hint.active_profile_id = "claude".into();
+        let status = service.status(&other_hint);
         assert!(status.session_model_options.is_none());
         assert!(!status.session_active);
     }
@@ -1382,10 +1382,10 @@ mod tests {
         session.init.supports_session_list = true;
         *service.session.lock().expect("lock") = Some(session);
 
-        // The live agent is codex; asking as antigravity must not surface
-        // codex history under the antigravity scope.
+        // The live agent is codex; asking as claude must not surface
+        // codex history under the claude scope.
         let result = service
-            .list_agent_sessions(Some("antigravity"), None)
+            .list_agent_sessions(Some("claude"), None)
             .expect("mismatch degrades to unverified");
         assert!(!result.verified);
         assert!(result.sessions.is_empty());
@@ -1398,7 +1398,7 @@ mod tests {
         *service.session.lock().expect("lock") = Some(dead_slot_session(true));
 
         let err = service
-            .delete_session(Some("antigravity".into()), "sess-1".into())
+            .delete_session(Some("claude".into()), "sess-1".into())
             .expect_err("cross-profile delete refused");
         assert!(err.message.contains("其他 Agent"));
 
@@ -1415,7 +1415,7 @@ mod tests {
         *service.session.lock().expect("lock") = Some(dead_slot_session(true));
 
         let err = service
-            .load_session_transcript(Some("antigravity".into()), "sess-1".into(), None)
+            .load_session_transcript(Some("claude".into()), "sess-1".into(), None)
             .expect_err("cross-profile load refused");
         assert!(err.message.contains("其他 Agent"));
     }

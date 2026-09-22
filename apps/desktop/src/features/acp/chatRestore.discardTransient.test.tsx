@@ -4,10 +4,15 @@ import {
   chatRestoreKeyFor,
   discardTransientChatState,
   readChatRestore,
+  resetChatStoreEphemeralState,
   scheduleClearChatRestore,
   schedulePersistChatRestore,
 } from "./chatRestore";
 import type { ChatTurn } from "./types";
+
+vi.mock("@tauri-apps/api/core", () => ({
+  invoke: vi.fn(() => Promise.resolve(null)),
+}));
 
 function turn(id: string, userText: string): ChatTurn {
   return {
@@ -37,6 +42,8 @@ function seedDisk(profileId: string, userText: string) {
 beforeEach(() => {
   vi.useFakeTimers();
   localStorage.clear();
+  // B3 的排队 timer/内存镜像/会话记忆跨用例不泄漏：每个用例从干净态起步。
+  resetChatStoreEphemeralState();
 });
 
 afterEach(() => {
@@ -54,7 +61,8 @@ describe("discardTransientChatState", () => {
     });
     discardTransientChatState("codex");
     vi.advanceTimersByTime(1500);
-    // 内存丢了，盘上什么都没多出来。
+    // 内存丢了，DB 没收到，备层从不写入。
+    expect(readChatRestore("codex")).toBeNull();
     expect(localStorage.getItem(chatRestoreKeyFor("codex"))).toBeNull();
   });
 
@@ -68,7 +76,8 @@ describe("discardTransientChatState", () => {
     });
     discardTransientChatState("codex");
     vi.advanceTimersByTime(1500);
-    // 盘上还是老快照：既没被覆盖，也没被删除。
+    // 落定内容（此处为迁移前备层）还在：既没被覆盖，也没被删除。
+    // B3 原语义保持：discard 只删 pending + 内存，绝不删已落定的 DB 行/备层。
     expect(readChatRestore("codex")?.turns.map((t) => t.id)).toEqual([
       "disk-codex",
     ]);
@@ -89,16 +98,23 @@ describe("discardTransientChatState", () => {
     });
     discardTransientChatState("codex");
     vi.advanceTimersByTime(1500);
-    expect(localStorage.getItem(chatRestoreKeyFor("codex"))).toBeNull();
+    expect(readChatRestore("codex")).toBeNull();
     expect(readChatRestore("claude")?.draft).toBe("claude 草稿");
   });
 
   it("ignores blank profile ids and composes with a real clear", () => {
-    seedDisk("codex", "盘上老问题");
+    schedulePersistChatRestore({
+      profileId: "codex",
+      sessionId: "s-codex",
+      cwd: null,
+      draft: "草稿",
+      turns: [turn("t1", "问题")],
+    });
     discardTransientChatState("  ");
-    // 空 id 是 no-op：随后排队的真删除照样生效（命名区分正在于此）。
-    scheduleClearChatRestore("codex");
+    // 空 id 是 no-op：内存与排队都不受影响，随后排队的真删除照样生效。
+    expect(readChatRestore("codex", "s-codex")?.draft).toBe("草稿");
+    scheduleClearChatRestore("codex", "s-codex");
     vi.advanceTimersByTime(1500);
-    expect(localStorage.getItem(chatRestoreKeyFor("codex"))).toBeNull();
+    expect(readChatRestore("codex", "s-codex")).toBeNull();
   });
 });

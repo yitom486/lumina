@@ -63,4 +63,28 @@ describe("profilesHintFromStore", () => {
       expect(profile.command.trim()).not.toBe("");
     }
   });
+
+  it("ships display names without technical suffixes in the default order", () => {
+    const profiles = defaultAgentProfiles();
+    expect(profiles.map((profile) => profile.id)).toEqual([
+      "codex",
+      "claude",
+      "gemini",
+      "copilot",
+      "opencode",
+      "cursor",
+      "deepseek",
+      "custom",
+    ]);
+    expect(profiles.map((profile) => profile.name)).toEqual([
+      "ChatGPT",
+      "Claude",
+      "Gemini",
+      "Copilot",
+      "OpenCode",
+      "Cursor",
+      "DeepSeek",
+      "自定义",
+    ]);
+  });
 });

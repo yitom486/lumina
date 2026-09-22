@@ -21,12 +21,13 @@ mod wikitext;
 
 pub use credentials::{CredentialKind, CredentialSaveInput, CredentialStatus};
 pub use database::{
-    AgentAttemptRecord, AgentTaskKeyMigration, AgentTaskRecord, ChapterAssetRecord, ChapterRecord,
-    ChapterRevisionRecord, Database, DatabaseError, DatabaseErrorCode, DatabaseResult,
-    EpisodeMigrationReport, EpisodeMigrationStatus, EpisodeRecord, LegacyEpisodeMigration,
-    NewAgentAttempt, NewAgentTask, NewChapter, NewChapterAsset, NewChapterRevision, NewEpisode,
-    NewQuestionCandidate, NewSeries, NewWatchFeedItem, QuestionCandidateRecord, Repository,
-    SeriesRecord, WatchFeedItemRecord, CURRENT_SCHEMA_VERSION,
+    AcpSessionHintRecord, AgentAttemptRecord, AgentTaskKeyMigration, AgentTaskRecord,
+    ChapterAssetRecord, ChapterRecord, ChapterRevisionRecord, ChatSnapshotRecord, Database,
+    DatabaseError, DatabaseErrorCode, DatabaseResult, EpisodeMigrationReport,
+    EpisodeMigrationStatus, EpisodeRecord, LegacyEpisodeMigration, NewAgentAttempt, NewAgentTask,
+    NewChapter, NewChapterAsset, NewChapterRevision, NewEpisode, NewQuestionCandidate, NewSeries,
+    NewWatchFeedItem, QuestionCandidateRecord, Repository, SeriesRecord, WatchFeedItemRecord,
+    CURRENT_SCHEMA_VERSION,
 };
 pub use error::{LibraryError, LibraryErrorCode};
 pub use metadata::{

@@ -28,5 +28,5 @@ Or install them on `PATH`. Never required for playback, notes, or subtitles.
 
 ## Other agents
 
-Configure additional Agent profiles in the app (Claude ACP, custom command, …).
+Configure additional Agent profiles in the app (Claude, custom command, …).
 Swapping harness = swapping the ACP process, not embedding App Server.

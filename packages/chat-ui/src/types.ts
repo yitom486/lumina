@@ -4,7 +4,6 @@ import type { VideoAnnotationProposal } from "@lumina/contracts";
 export type AgentKind =
   | "Codex"
   | "Claude"
-  | "Antigravity"
   | "Cursor"
   | "Gemini"
   | "Copilot"
@@ -13,11 +12,10 @@ export type AgentKind =
   | "Custom";
 
 /** Per-profile behavior presets; absent = fully generic ACP behavior. */
-export type AgentLauncherPreset = "codex-acp" | "antigravity-acp";
-export type AgentEnvPreset = "codex-cli" | "antigravity-proxy";
+export type AgentLauncherPreset = "codex-acp";
+export type AgentEnvPreset = "codex-cli";
 export type AgentAuthPolicy =
   | "codex-local"
-  | "antigravity-oauth"
   | "cursor-local"
   | "claude-local"
   | "gemini-local"
@@ -68,8 +66,6 @@ export type AcpStatus = {
   adapterFound: boolean;
   codexFound: boolean;
   codexConfigFound?: boolean;
-  antigravityFound?: boolean;
-  antigravityCredentialsFound?: boolean;
   activeProfileId: string;
   profiles: AgentProfileStatus[];
   cliPath?: string | null;

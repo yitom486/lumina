@@ -95,8 +95,8 @@ fn normalize_abs(path: PathBuf) -> PathBuf {
 }
 
 /// Windows `canonicalize` returns `\\?\C:\...` verbatim paths. Codex tolerates
-/// them, but Antigravity's Go fs layer percent-encodes the prefix into
-/// `file://%3F/...` and panics (`invalid URL escape "%3F"`), killing every
+/// them, but some agents' Go fs layers percent-encode the prefix into
+/// `file://%3F/...` and panic (`invalid URL escape "%3F"`), killing every
 /// `session/new`. Agents therefore always get the plain `C:\...` spelling
 /// (UNC keeps the `\\server\share` form).
 #[cfg(windows)]

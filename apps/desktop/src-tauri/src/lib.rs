@@ -52,13 +52,17 @@ use tracing_subscriber::{layer::SubscriberExt as _, util::SubscriberInitExt as _
 
 use commands::acp::{
     acp_cancel, acp_close, acp_connect, acp_delete_session, acp_list_agent_sessions,
-    acp_load_session, acp_login_antigravity, acp_new_chat, acp_prompt, acp_respond_permission,
-    acp_set_session_config, acp_set_session_model, acp_status, acp_switch_session,
-    acp_sync_mcp_capabilities, acp_task_contracts, acp_watch_feed,
+    acp_load_session, acp_new_chat, acp_prompt, acp_respond_permission, acp_set_session_config,
+    acp_set_session_model, acp_status, acp_switch_session, acp_sync_mcp_capabilities,
+    acp_task_contracts, acp_watch_feed,
 };
 use commands::asr::{asr_install, asr_status, asr_transcribe};
 use commands::chapter::{
     chapter_asset_get, chapter_segmentation_start, chapter_segmentation_status,
+};
+use commands::chat_store::{
+    chat_hint_delete, chat_hint_get, chat_hint_upsert, chat_snapshot_delete, chat_snapshot_get,
+    chat_snapshot_upsert,
 };
 use commands::library::{
     library_agent_models_discover, library_apply_tmdb_match, library_context_for_media,
@@ -219,7 +223,6 @@ pub fn run() {
             acp_prompt,
             acp_cancel,
             acp_close,
-            acp_login_antigravity,
             notes_list,
             notes_preview_quotes,
             notes_get_frame,
@@ -231,6 +234,12 @@ pub fn run() {
             notes_export_markdown,
             notes_export_markdown_to_file,
             notes_export_recap_card,
+            chat_snapshot_get,
+            chat_snapshot_upsert,
+            chat_snapshot_delete,
+            chat_hint_get,
+            chat_hint_upsert,
+            chat_hint_delete,
         ])
         .setup(|app| {
             commands::chapter::recover_interrupted_tasks();

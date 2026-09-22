@@ -14,7 +14,6 @@ use super::settings::AcpClientSettings;
 pub enum AgentKind {
     Codex,
     Claude,
-    Antigravity,
     Cursor,
     Gemini,
     Copilot,
@@ -32,9 +31,6 @@ pub enum LauncherPreset {
     /// codex-acp fallback chain: standalone adapter → dev tree → `bun x` → `bunx`.
     #[serde(rename = "codex-acp")]
     CodexAcp,
-    /// `command` → antigravity-acp discovery fallback (`find_antigravity`).
-    #[serde(rename = "antigravity-acp")]
-    AntigravityAcp,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -42,9 +38,6 @@ pub enum EnvPreset {
     /// Inject `CODEX_PATH` / `CODEX_HOME` / `TERM` and prepend the Codex bin dir.
     #[serde(rename = "codex-cli")]
     CodexCli,
-    /// Inject local HTTP/SOCKS proxy env (`ACP_PROXY_PORT`, default 7897).
-    #[serde(rename = "antigravity-proxy")]
-    AntigravityProxy,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -52,9 +45,6 @@ pub enum AuthPolicy {
     /// Codex-style dynamic auth preference (ChatGPT login vs API key).
     #[serde(rename = "codex-local")]
     CodexLocal,
-    /// Antigravity-style dynamic auth preference (Google OAuth vs Gemini key).
-    #[serde(rename = "antigravity-oauth")]
-    AntigravityOauth,
     /// Cursor-style local reuse: `agent login` credentials or
     /// `CURSOR_API_KEY` / `CURSOR_AUTH_TOKEN` env passthrough. No injection,
     /// no forced interactive flow; probe is hint-level (keychain misses).
@@ -215,10 +205,6 @@ pub struct AcpStatus {
     pub codex_found: bool,
     #[serde(default)]
     pub codex_config_found: bool,
-    #[serde(default)]
-    pub antigravity_found: bool,
-    #[serde(default)]
-    pub antigravity_credentials_found: bool,
     pub active_profile_id: String,
     pub profiles: Vec<AgentProfileStatus>,
     pub cli_path: Option<String>,
@@ -234,10 +220,26 @@ pub struct AcpStatus {
     pub session_model_options: Option<AcpSessionModelOptions>,
 }
 
+/// Profiles saved by older clients (or hand-edited configs) can name Agent
+/// kinds/presets this build no longer knows. Every ACP command takes the full
+/// hint, so one stale entry must not fail argument parsing for all of them.
+/// Skip what we cannot parse instead of failing the whole list.
+fn lenient_profile_list<'de, D>(deserializer: D) -> Result<Vec<AgentProfileInput>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let raw: Vec<serde_json::Value> = serde::Deserialize::deserialize(deserializer)?;
+    Ok(raw
+        .into_iter()
+        .filter_map(|entry| serde_json::from_value(entry).ok())
+        .collect())
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct AgentProfilesHint {
     pub active_profile_id: String,
+    #[serde(deserialize_with = "lenient_profile_list")]
     pub profiles: Vec<AgentProfileInput>,
 }
 
@@ -462,6 +464,33 @@ mod tests {
         let too_many: Vec<PromptImage> = (0..5).map(|_| image("image/png", "aGVsbG8=")).collect();
         let capped = validate_prompt_images(&too_many).expect_err("fifth image rejected");
         assert!(capped.message.contains("4 张"));
+    }
+
+    #[test]
+    fn profiles_hint_skips_stale_entries_instead_of_failing() {
+        // An older client persisted a runtime this build removed. The whole
+        // hint must still parse (every ACP command takes it); only the stale
+        // entry is dropped.
+        let hint: AgentProfilesHint = serde_json::from_str(
+            r#"{
+                "activeProfileId": "codex",
+                "profiles": [
+                    {"id": "codex", "name": "ChatGPT", "kind": "Codex", "command": "bunx"},
+                    {"id": "antigravity", "name": "Google Antigravity", "kind": "Antigravity",
+                     "command": "agy_acp_server", "launcher": "antigravity-acp",
+                     "envPreset": "antigravity-proxy", "authPolicy": "antigravity-oauth"}
+                ]
+            }"#,
+        )
+        .expect("stale entry skipped, hint parses");
+        assert_eq!(hint.active_profile_id, "codex");
+        assert_eq!(
+            hint.profiles
+                .iter()
+                .map(|p| p.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["codex"]
+        );
     }
 
     #[test]
