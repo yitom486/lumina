@@ -12,8 +12,23 @@ use crate::wire::session::{AuthMethod, InitializeResult};
 
 use super::profile::AgentProfile;
 
-pub const CODEX_ACP_PACKAGE: &str = "@agentclientprotocol/codex-acp";
+pub const CODEX_ACP_PACKAGE: &str = "@agentclientprotocol/codex-acp@latest";
+/// Shape shipped before the float; persisted profiles may still carry it.
+/// Recognized everywhere the floating spec is so old copies keep presets
+/// (and the merge path upgrades them); see frontend LEGACY_CODEX_ACP_PACKAGE.
+pub const LEGACY_CODEX_ACP_PACKAGE: &str = "@agentclientprotocol/codex-acp";
 pub const CLAUDE_ACP_PACKAGE: &str = "@agentclientprotocol/claude-agent-acp";
+
+/// Default-shape package spec in any version: the floating `@latest`, an
+/// explicit pin, or the legacy bare name. Same package under any of these
+/// receives implicit presets; anything else is user customization.
+pub fn is_default_codex_package_spec(arg: &str) -> bool {
+    arg == CODEX_ACP_PACKAGE
+        || arg == LEGACY_CODEX_ACP_PACKAGE
+        || arg
+            .strip_prefix("@agentclientprotocol/codex-acp@")
+            .is_some_and(|version| !version.is_empty())
+}
 
 #[derive(Debug, Clone)]
 pub struct LaunchSpec {

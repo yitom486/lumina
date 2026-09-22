@@ -11,7 +11,7 @@ pub use crate::domain::model::{
 pub use crate::domain::model::{AgentProfileInput, AgentProfilesHint};
 use crate::error::{AcpError, AcpErrorCode};
 
-use super::launch::{resolve_launch, CODEX_ACP_PACKAGE};
+use super::launch::{is_default_codex_package_spec, resolve_launch, CODEX_ACP_PACKAGE};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -438,7 +438,7 @@ fn builtin_deepseek() -> AgentProfile {
         },
         args: vec![
             "-y".into(),
-            "@deepseek-ai/dsh".into(),
+            "@deepseek-ai/dsh@latest".into(),
             "--profile".into(),
             "acp".into(),
         ],
@@ -498,13 +498,18 @@ fn merge_builtin_profiles(profiles: &mut Vec<AgentProfile>) {
     }
 }
 
-/// The `bunx @agentclientprotocol/codex-acp` shape that the built-in preset
-/// ships with. Only this shape receives implicit presets; a user-customized
-/// codex command keeps fully generic behavior (as before this refactor).
+/// The default-shape `bunx` invocation for the built-in preset: same package
+/// in any version (floating `@latest`, explicit pins, legacy bare name).
+/// Only this shape receives implicit presets; a user-customized codex
+/// command keeps fully generic behavior. Persisted copies from before the
+/// float must not lose their presets.
 fn is_default_codex_command(profile: &AgentProfile) -> bool {
     matches!(profile.command.as_str(), "bunx" | "bunx.exe")
         && profile.args.len() == 1
-        && profile.args.first().map(String::as_str) == Some(CODEX_ACP_PACKAGE)
+        && profile
+            .args
+            .first()
+            .is_some_and(|arg| is_default_codex_package_spec(arg))
 }
 
 fn apply_missing_codex_presets(profile: &mut AgentProfile) {
@@ -786,6 +791,41 @@ mod tests {
         assert!(!codex.uses_codex_acp_launcher());
         assert!(!codex.injects_codex_cli_env());
         assert!(!codex.is_codex_local_auth());
+    }
+
+    #[test]
+    fn default_codex_command_accepts_floating_and_legacy_package() {
+        // Floating default, legacy bare name, and explicit pins of the same
+        // package all keep presets; anything else stays fully generic.
+        let accepted = [
+            CODEX_ACP_PACKAGE.to_string(),
+            "@agentclientprotocol/codex-acp".to_string(),
+            "@agentclientprotocol/codex-acp@1.12.0".to_string(),
+        ];
+        for args in accepted {
+            let mut hint = default_profiles_hint();
+            if let Some(codex) = hint.profiles.iter_mut().find(|p| p.id == "codex") {
+                codex.args = vec![args];
+            }
+            let prepared = prepare_profiles(&hint);
+            let codex = prepared
+                .profiles
+                .iter()
+                .find(|profile| profile.id == "codex")
+                .expect("codex");
+            assert!(is_default_codex_command(codex));
+        }
+        let mut hint = default_profiles_hint();
+        if let Some(codex) = hint.profiles.iter_mut().find(|p| p.id == "codex") {
+            codex.args = vec!["--yolo".to_string()];
+        }
+        let prepared = prepare_profiles(&hint);
+        let codex = prepared
+            .profiles
+            .iter()
+            .find(|profile| profile.id == "codex")
+            .expect("codex");
+        assert!(!is_default_codex_command(codex));
     }
 
     #[test]

@@ -1,6 +1,29 @@
 import type { AgentProfileInput, AgentProfilesHint } from "./types";
 
-export const CODEX_ACP_PACKAGE = "@agentclientprotocol/codex-acp";
+// Float-by-policy: `bunx <pkg>` reuses whatever stale copy sits in the bun
+// cache (seen resolving to 1.7.0 with a 5.6-era model catalog while npm
+// latest serves 6.x display names), and bare names only re-resolve about
+// once a day. The explicit `@latest` suffix forces registry resolution on
+// every cold launch instead. Never ship a bare or version-pinned spec here.
+export const CODEX_ACP_PACKAGE = "@agentclientprotocol/codex-acp@latest";
+// Shape shipped before the float; existing persisted profiles carry these.
+// Merge logic upgrades default-shape copies to the spec above (backend keeps
+// recognizing every same-package shape so old copies never lose presets).
+export const LEGACY_CODEX_ACP_PACKAGE = "@agentclientprotocol/codex-acp";
+
+/** Matches the default-shape spec in any version (`@latest`, explicit pins,
+ *  or the legacy bare name). User args that merely track the same package
+ *  upgrade to the current default; anything else is customization and stays.
+ */
+export function isDefaultCodexPackageSpec(arg: unknown): boolean {
+  if (arg === LEGACY_CODEX_ACP_PACKAGE) return true;
+  const base = `${LEGACY_CODEX_ACP_PACKAGE}@`;
+  return (
+    typeof arg === "string" &&
+    arg.startsWith(base) &&
+    arg.length > base.length
+  );
+}
 
 function isWindowsPlatform(): boolean {
   if (typeof navigator !== "undefined" && navigator.platform) {
@@ -91,7 +114,7 @@ export function defaultAgentProfiles(): AgentProfileInput[] {
       name: "DeepSeek",
       kind: "DeepSeek",
       command: deepseek,
-      args: ["-y", "@deepseek-ai/dsh", "--profile", "acp"],
+      args: ["-y", "@deepseek-ai/dsh@latest", "--profile", "acp"],
       env: {},
       // 无 ACP 登录，靠 harness 自身凭证（DEEPSEEK_API_KEY）。
       authPolicy: "deepseek-key",
@@ -101,7 +124,7 @@ export function defaultAgentProfiles(): AgentProfileInput[] {
       name: "agy",
       kind: "Custom",
       command: bunx,
-      args: ["-y", "@yitom/agy-acp-map"],
+      args: ["-y", "@yitom/agy-acp-map@latest"],
       env: {},
       // 第三方 ACP 桥（Antigravity CLI 的 stream-json 桥接）：无参 stdio，
       // 无认证握手，直连即可（本机需装好已登录的 agy）；模型走通用

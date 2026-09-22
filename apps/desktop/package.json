@@ -57,7 +57,7 @@
   },
   "devDependencies": {
     "@agentclientprotocol/claude-agent-acp": "^0.79.0",
-    "@agentclientprotocol/codex-acp": "^1.7.0",
+    "@agentclientprotocol/codex-acp": "^1.12.0",
     "@tauri-apps/cli": "^2",
     "@testing-library/jest-dom": "^7.0.1",
     "@testing-library/react": "^16.3.3",

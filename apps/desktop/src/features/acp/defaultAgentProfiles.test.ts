@@ -55,12 +55,12 @@ describe("profilesHintFromStore", () => {
     });
     expect(byId("deepseek")).toMatchObject({
       kind: "DeepSeek",
-      args: ["-y", "@deepseek-ai/dsh", "--profile", "acp"],
+      args: ["-y", "@deepseek-ai/dsh@latest", "--profile", "acp"],
       authPolicy: "deepseek-key",
     });
     expect(byId("agy")).toMatchObject({
       kind: "Custom",
-      args: ["-y", "@yitom/agy-acp-map"],
+      args: ["-y", "@yitom/agy-acp-map@latest"],
     });
     for (const profile of profiles) {
       if (profile.id === "custom") continue;

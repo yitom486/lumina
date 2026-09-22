@@ -1,7 +1,11 @@
 import { beforeEach, describe, expect, it } from "vitest";
 
 import type { AgentProfileInput } from "./types";
-import { defaultAgentProfiles } from "./defaultAgentProfiles";
+import {
+  CODEX_ACP_PACKAGE,
+  defaultAgentProfiles,
+  LEGACY_CODEX_ACP_PACKAGE,
+} from "./defaultAgentProfiles";
 import { mergeProfiles, useAcpProfilesStore } from "./acpProfilesStore";
 
 beforeEach(() => {
@@ -134,5 +138,57 @@ describe("mergeProfiles (upgrade migration)", () => {
     expect(
       state.profiles.find((p) => p.id === "codex")?.name,
     ).toBe("ChatGPT");
+  });
+
+  it("upgrades untouched legacy-unpinned codex args to the pinned adapter", () => {
+    const fallback = defaultAgentProfiles();
+    const upgraded = mergeProfiles(
+      [
+        {
+          id: "codex",
+          name: "Codex（默认）",
+          kind: "Codex",
+          command: "bunx",
+          args: [LEGACY_CODEX_ACP_PACKAGE],
+        } as AgentProfileInput,
+      ],
+      fallback,
+    ).find((p) => p.id === "codex");
+    expect(upgraded?.args).toEqual([CODEX_ACP_PACKAGE]);
+  });
+
+  it("upgrades explicit version pins of the same package to the floating default", () => {
+    const fallback = defaultAgentProfiles();
+    const upgraded = mergeProfiles(
+      [
+        {
+          id: "codex",
+          name: "ChatGPT",
+          kind: "Codex",
+          command: "bunx",
+          args: ["@agentclientprotocol/codex-acp@1.12.0"],
+        } as AgentProfileInput,
+      ],
+      fallback,
+    ).find((p) => p.id === "codex");
+    expect(upgraded?.args).toEqual([CODEX_ACP_PACKAGE]);
+  });
+
+  it("keeps user-customized codex args untouched", () => {
+    const fallback = defaultAgentProfiles();
+    const kept = mergeProfiles(
+      [
+        {
+          id: "codex",
+          name: "ChatGPT",
+          kind: "Codex",
+          command: "C:\\tools\\codex-acp.exe",
+          args: ["--yolo"],
+        } as AgentProfileInput,
+      ],
+      fallback,
+    ).find((p) => p.id === "codex");
+    expect(kept?.command).toBe("C:\\tools\\codex-acp.exe");
+    expect(kept?.args).toEqual(["--yolo"]);
   });
 });

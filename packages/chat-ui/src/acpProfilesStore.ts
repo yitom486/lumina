@@ -3,6 +3,7 @@ import { persist } from "zustand/middleware";
 
 import {
   defaultAgentProfiles,
+  isDefaultCodexPackageSpec,
   normalizeProfileInput,
   profilesHintFromStore,
 } from "./defaultAgentProfiles";
@@ -39,7 +40,9 @@ function isRemovedProfile(item: AgentProfileInput): boolean {
  * rehydration so upgrades never leave stale entries behind:
  * - drop removed runtimes (by id or by stale kind/preset markers);
  * - refresh builtin shells (display name / presets) from the new defaults
- *   while preserving the user's own launch command/args/env;
+ *   while preserving the user's own launch command/args/env (except codex:
+ *   untouched same-package specs of any version upgrade to the floating
+ *   default, so nobody stays stuck on a stale cached adapter);
  * - emit builtins in default order, user custom ids after, extras last.
  */
 export function mergeProfiles(
@@ -64,7 +67,15 @@ export function mergeProfiles(
     next.push({
       ...fallbackItem,
       command: kept.command ?? fallbackItem.command,
-      args: kept.args ?? fallbackItem.args,
+      // codex 例外：裸包名只按天重新解析，旧版 shape 指向哪个缓存版本全凭
+      // 运气（曾解析到 1.7.0 的 5.6 时代目录）。同包任意版本都算"原封未动"，
+      // 一律升级到当前默认；用户自己改过的 args 一律保留。
+      args:
+        fallbackItem.id === "codex" &&
+        kept.args?.length === 1 &&
+        isDefaultCodexPackageSpec(kept.args[0])
+          ? (fallbackItem.args ?? kept.args)
+          : (kept.args ?? fallbackItem.args),
       env: kept.env ?? fallbackItem.env,
     });
   }

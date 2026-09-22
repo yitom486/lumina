@@ -5,7 +5,7 @@ Lumina is an **ACP Client**. It does **not** ship Node/bun/pnpm or Codex.
 ## Layers
 
 1. **ACP** — open stdio JSON-RPC (what Lumina speaks)
-2. **codex-acp** — default: `bunx @agentclientprotocol/codex-acp`; fallback: a single-file bundle placed here as `codex-acp.exe`
+2. **codex-acp** — default: `bunx @agentclientprotocol/codex-acp@latest`; fallback: a single-file bundle placed here as `codex-acp.exe`
 3. **Codex App Server** — Codex harness engine started *by* the adapter (not Lumina’s main protocol)
 4. **Models** — Codex providers use the **Responses API** (not legacy Chat Completions)
 
@@ -14,7 +14,7 @@ Lumina is an **ACP Client**. It does **not** ship Node/bun/pnpm or Codex.
 The development/default profile launches the published package on demand:
 
 ```bash
-bunx @agentclientprotocol/codex-acp
+bunx @agentclientprotocol/codex-acp@latest
 ```
 
 `bunx` downloads the package into Bun's cache on first use. The package includes
