@@ -4,7 +4,12 @@
 //! (same pattern as `lumina-media::process`).
 
 use std::ffi::OsStr;
-use std::process::{Child, Command, Stdio};
+/// Only the Windows legacy path (`terminate_without_job`, itself
+/// `#[cfg(windows)]`) formats stdio handles; an unconditional import is an
+/// unused-import hard error under `-D warnings` on unix.
+#[cfg(windows)]
+use std::process::Stdio;
+use std::process::{Child, Command};
 
 pub fn command<P: AsRef<OsStr>>(program: P) -> Command {
     #[cfg(windows)]
@@ -192,10 +197,22 @@ impl AgentProcess {
 
 #[cfg(test)]
 mod tests {
+    /// Every item in this module is Windows-only (Job Object process trees);
+    /// ungated imports are unused-import hard errors under `-D warnings`
+    /// on unix, exactly like the helpers below.
+    #[cfg(windows)]
     use super::*;
+    /// Only Windows test helpers format stdio handles; ungated this is an
+    /// unused-import hard error under `-D warnings` on unix.
+    #[cfg(windows)]
     use std::process::Stdio;
+    #[cfg(windows)]
     use std::time::{Duration, Instant};
 
+    /// Windows-only helper: spawns `cmd /C ping` as a killable sleeper.
+    /// All callers are `#[cfg(windows)]`; an ungated definition is a
+    /// dead-code hard error under `-D warnings` on unix.
+    #[cfg(windows)]
     fn sleeper() -> Child {
         command("cmd")
             .args(["/C", "ping", "-n", "30", "127.0.0.1"])
@@ -205,6 +222,9 @@ mod tests {
             .expect("spawn sleeper")
     }
 
+    /// Windows-only helper: polls a child until it exits. All callers are
+    /// `#[cfg(windows)]`; ungated it is dead code on unix (see `sleeper`).
+    #[cfg(windows)]
     fn wait_dead(child: &mut Child, what: &str) {
         let deadline = Instant::now() + Duration::from_secs(15);
         loop {
