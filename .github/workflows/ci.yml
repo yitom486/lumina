@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
     inputs:
       e2e_url:
-        description: "Optional public video URL for online E2E (defaults to fixture video)"
+        description: "Optional public embeddable YouTube URL for online E2E (defaults to the fixture video)"
         required: false
         default: ""
 
@@ -156,6 +156,6 @@ jobs:
 
       - name: Run online E2E (no cookies)
         working-directory: apps/desktop/src-tauri
-        run: cargo test -p lumina-ytdl --lib public_youtube_resolves_without_cookies -- --ignored --nocapture
+        run: cargo test -p lumina-ytdl --lib public_youtube_embedded_client_resolves_without_cookies -- --ignored --nocapture
         env:
           LUMINA_ONLINE_E2E_URL: ${{ inputs.e2e_url }}
