@@ -7,9 +7,13 @@ mod input;
 
 use std::sync::OnceLock;
 
-use tauri::{AppHandle, Manager};
+use tauri::AppHandle;
+#[cfg(windows)]
+use tauri::Manager;
 
+#[cfg(windows)]
 use crate::player::model::PlayerEvent;
+#[cfg(windows)]
 use crate::state::AppState;
 
 static SURFACE_APP: OnceLock<AppHandle> = OnceLock::new();
@@ -21,9 +25,11 @@ pub fn register_surface_app(app: AppHandle) {
     }
 }
 
-/// Forward one explicit surface event to the custom OSC script. Native
-/// adapters call this shared path so their protocol and error handling stay
-/// identical across platforms.
+/// Forward one explicit surface event to the custom OSC script.
+///
+/// The Windows adapter calls this shared path for the surface protocol and
+/// error handling.
+#[cfg(windows)]
 pub(crate) fn forward_surface_event(phase: &str, x: i32, y: i32) {
     let Some(app) = SURFACE_APP.get() else {
         return;
@@ -42,6 +48,7 @@ pub(crate) fn forward_surface_event(phase: &str, x: i32, y: i32) {
 
 /// Emit a native surface gesture after the platform adapter has completed its
 /// click arbitration.
+#[cfg(windows)]
 pub(crate) fn emit_surface_event(event: PlayerEvent) {
     let Some(app) = SURFACE_APP.get() else {
         return;
@@ -55,6 +62,7 @@ pub(crate) fn emit_surface_event(event: PlayerEvent) {
 /// Toggle playback after native click arbitration. The native surface may
 /// receive a click before the frontend Channel is subscribed, so this stays
 /// on the authoritative PlayerService path.
+#[cfg(windows)]
 pub(crate) fn toggle_surface_play_pause() {
     let Some(app) = SURFACE_APP.get() else {
         return;
