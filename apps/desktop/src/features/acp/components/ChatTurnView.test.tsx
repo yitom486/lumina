@@ -6,7 +6,7 @@ import {
   screen,
   waitFor,
 } from "@testing-library/react";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { usePlayerStore } from "@/features/player";
 
@@ -35,6 +35,13 @@ afterEach(() => {
   cleanup();
   vi.clearAllMocks();
   localStorage.clear();
+});
+
+// ChatMarkdown 是 React.lazy 分包（react-markdown + KaTeX 近 400KB）：
+// 全量并行时首个富文本断言等不到 chunk 加载完。预热只跳过模块加载等待，
+// 不改变任何渲染断言。
+beforeAll(async () => {
+  await import("./ChatMarkdown");
 });
 
 describe("ChatShell", () => {

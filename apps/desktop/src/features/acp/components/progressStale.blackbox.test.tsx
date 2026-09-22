@@ -58,7 +58,7 @@ function renderPanel() {
 beforeEach(() => {
   channels.length = 0;
   localStorage.clear();
-  useAcpSessionStore.setState({ savedSession: null });
+  useAcpSessionStore.setState({ savedSessions: {} });
   useAcpProfilesStore.setState({ activeProfileId: "codex" });
   usePlayerStore.setState({ currentFile: null, status: "Idle" });
   vi.mocked(invoke).mockImplementation((cmd: string) => {

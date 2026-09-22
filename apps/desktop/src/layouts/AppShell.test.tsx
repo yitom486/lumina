@@ -20,6 +20,11 @@ vi.mock("@tauri-apps/api/core", () => ({
   invoke: vi.fn(),
 }));
 
+vi.mock("@/lib/system", () => ({
+  getStartupNotice: vi.fn(async () => null),
+  revealLogDir: vi.fn(),
+}));
+
 import { getVersion } from "@tauri-apps/api/app";
 import { openUrl } from "@tauri-apps/plugin-opener";
 

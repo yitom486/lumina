@@ -60,7 +60,7 @@ beforeEach(() => {
     currentFile: null,
     status: "Idle",
   });
-  useAcpSessionStore.setState({ savedSession: null });
+  useAcpSessionStore.setState({ savedSessions: {} });
 });
 
 afterEach(() => {
@@ -170,7 +170,7 @@ describe("AcpPanel", () => {
   });
 
   it("keeps the persisted resume hint on mount so restart can auto-resume", async () => {
-    useAcpSessionStore.getState().setSavedSession({
+    useAcpSessionStore.getState().setSavedSessionFor("codex", {
       sessionId: "last-thread",
       profileId: "codex",
       cwd: "D:\\movie",
@@ -179,7 +179,9 @@ describe("AcpPanel", () => {
     await waitFor(() => {
       expect(screen.getByRole("button", { name: "新建对话" })).toBeInTheDocument();
     });
-    expect(useAcpSessionStore.getState().savedSession).toMatchObject({
+    expect(
+      useAcpSessionStore.getState().savedSessionFor("codex"),
+    ).toMatchObject({
       sessionId: "last-thread",
     });
   });

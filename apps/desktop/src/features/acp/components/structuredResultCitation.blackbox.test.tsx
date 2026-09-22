@@ -6,7 +6,7 @@ import {
   screen,
   waitFor,
 } from "@testing-library/react";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { usePlayerStore } from "@/features/player";
 
@@ -46,6 +46,11 @@ afterEach(() => {
   cleanup();
   vi.clearAllMocks();
   localStorage.clear();
+});
+
+// 见 ChatTurnView.test.tsx：预热 React.lazy 的 ChatMarkdown 分包。
+beforeAll(async () => {
+  await import("./ChatMarkdown");
 });
 
 describe("structured result citation blackbox: ref -> jumpable", () => {

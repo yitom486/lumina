@@ -1,5 +1,5 @@
 import { cleanup, render, screen } from "@testing-library/react";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeAll, describe, expect, it } from "vitest";
 
 import { applyAcpEventToTurn, createTurn } from "@lumina/chat-ui/chatTurns";
 
@@ -8,6 +8,11 @@ import { mapLoadedTranscript } from "../conversationTranscript";
 import { ChatTurnView } from "./ChatTurnView";
 
 afterEach(cleanup);
+
+// 见 ChatTurnView.test.tsx：预热 React.lazy 的 ChatMarkdown 分包。
+beforeAll(async () => {
+  await import("./ChatMarkdown");
+});
 
 describe("conversation presentation integration", () => {
   it("projects an original-shaped restored transcript into a safe rich card", async () => {

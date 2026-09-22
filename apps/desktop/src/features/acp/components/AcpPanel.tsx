@@ -85,6 +85,7 @@ import {
   flushChatRestore,
   isRestorable,
   readChatRestore,
+  scheduleClearChatRestore,
   schedulePersistChatRestore,
 } from "../chatRestore";
 import {
@@ -202,10 +203,16 @@ export function AcpPanel() {
   const thinkingLevel = useAcpSettingsStore((s) => s.thinkingLevel);
   const activeProfileId = useAcpProfilesStore((s) => s.activeProfileId);
   const profilesSig = useAcpProfilesStore((s) => profilesSignature(s.profiles));
-  const savedSession = useAcpSessionStore((s) => s.savedSession);
-  const hasSavedSession = useAcpSessionStore((s) => s.savedSession !== null);
-  const setSavedSession = useAcpSessionStore((s) => s.setSavedSession);
-  const clearSavedSession = useAcpSessionStore((s) => s.clearSavedSession);
+  // 会话 hint 按 agent 分键：当前 profile 只读自家键。切到 claude/cursor
+  // 时 codex 的 hint 原样躺在 "codex" 键里，切回即 resume，谁也不删谁的。
+  const savedSession = useAcpSessionStore(
+    (s) => s.savedSessions[activeProfileId] ?? null,
+  );
+  const hasSavedSession = savedSession !== null;
+  const setSavedSessionFor = useAcpSessionStore((s) => s.setSavedSessionFor);
+  const clearSavedSessionFor = useAcpSessionStore(
+    (s) => s.clearSavedSessionFor,
+  );
   const setAcpResponding = useChatUiStore((s) => s.setAcpResponding);
 
   const statusQuery = useQuery({
@@ -228,17 +235,11 @@ export function AcpPanel() {
   const turnListRef = useRef<HTMLDivElement | null>(null);
   const composerRef = useRef<ChatComposerBarHandle | null>(null);
   // 秒开恢复（第 1 层）：首渲染直接摆上次退出的 turns + 草稿，零网络、
-  // 无 effect 闪帧。只认同 profile 的快照；对账信息进 restoreRef，
+  // 无 effect 闪帧。只认当前 profile 自家键的快照；对账信息进 restoreRef，
   // 由 sessionSaved 与 resume 尝试做一次新旧会话对账（第 2 层）。
   const [initialRestore] = useState(() => {
-    const snapshot = readChatRestore();
-    if (
-      !snapshot ||
-      snapshot.profileId !== useAcpProfilesStore.getState().activeProfileId
-    ) {
-      return null;
-    }
-    return snapshot;
+    const mountProfileId = useAcpProfilesStore.getState().activeProfileId;
+    return readChatRestore(mountProfileId);
   });
   const [draft, setDraft] = useState(initialRestore?.draft ?? "");
   // 粘贴图片附件：随下一条发送（或排队），发送/建新/切换即清空，不落盘。
@@ -296,7 +297,9 @@ export function AcpPanel() {
     initialRestore
       ? {
           sessionId:
-            useAcpSessionStore.getState().savedSession?.sessionId ?? null,
+            useAcpSessionStore
+              .getState()
+              .savedSessionFor(initialRestore.profileId)?.sessionId ?? null,
           turnCount: initialRestore.turns.length,
         }
       : null,
@@ -316,7 +319,9 @@ export function AcpPanel() {
   const sessionCwd = workspaceCwdFromMedia(currentFile);
 
   // turns + 草稿节流落盘（trailing 1.5s）：打字停一下就写，无可存内容
-  // （新建对话清空后）则清快照，避免僵尸恢复。卸载时 flush。
+  // （新建对话清空后）则清自家键的快照，避免僵尸恢复。卸载时 flush。
+  // 落盘按 profile 分键分槽：快切 profile 时旧世界的 trailing 写照样落回
+  // 旧键，不会被顶掉也不会串键。
   useEffect(() => {
     const input = {
       profileId: activeProfileId,
@@ -324,18 +329,26 @@ export function AcpPanel() {
       draft,
       turns,
     };
-    schedulePersistChatRestore(isRestorable(input) ? input : null);
+    if (isRestorable(input)) {
+      schedulePersistChatRestore(input);
+    } else {
+      scheduleClearChatRestore(activeProfileId);
+    }
   }, [turns, draft, activeProfileId, sessionCwd]);
   useEffect(() => () => flushChatRestore(), []);  const connectKey = `${activeProfileId}:${profilesSig}:${sessionCwd ?? ""}`;
 
-  // 换 Agent = 换世界。面板私有对话态（turns/notices/标题覆盖）在**渲染期
-  // 同步**重置（React "adjust state during render" 模式，无 effect 时序、
-  // 无旧内容闪帧）；跨组件共享的 savedSession 与 ref 记账留给下方 effect
-  // （外部 store 的写不能放渲染期）。
+  // 换 Agent = 换世界。面板私有对话态（turns/草稿/notices/标题覆盖）在
+  // **渲染期同步**重置并摆上目标世界的快照（React "adjust state during
+  // render" 模式，无 effect 时序、无旧内容闪帧）；各世界的 hint 与快照按
+  // profile 分键保留，切回即 resume——本路径不删任何落盘记忆。
+  // 跨组件共享的 ref 记账留给下方 effect（外部 store 的写不能放渲染期，
+  // 但这里本来就没有 store 写：hint 的读写全在各 mutations 里显式带 profile）。
   const [renderedProfileId, setRenderedProfileId] = useState(activeProfileId);
   if (renderedProfileId !== activeProfileId) {
     setRenderedProfileId(activeProfileId);
-    setTurns([]);
+    const snapshot = readChatRestore(activeProfileId);
+    setTurns(snapshot?.turns ?? []);
+    setDraft(snapshot?.draft ?? "");
     setNotices([]);
     setTitleOverrides({});
   }
@@ -349,10 +362,21 @@ export function AcpPanel() {
     }
     if (lastResetProfileRef.current === activeProfileId) return;
     lastResetProfileRef.current = activeProfileId;
-    clearSavedSession();
+    // 只重置本轮记账：目标世界的对账基线（hint sessionId + 摆出来的条数）
+    // 重新 seed，resume 对账规则不变，只是作用域收敛到同 profile。
+    // 注意：各 profile 的 savedSession hint 一律保留，不 clear。
+    const snapshot = readChatRestore(activeProfileId);
+    restoreRef.current = snapshot
+      ? {
+          sessionId:
+            useAcpSessionStore.getState().savedSessionFor(activeProfileId)
+              ?.sessionId ?? null,
+          turnCount: snapshot.turns.length,
+        }
+      : null;
     resumeExpectedSessionIdRef.current = null;
     transcriptLoadSeqRef.current += 1;
-  }, [activeProfileId, clearSavedSession]);
+  }, [activeProfileId]);
 
   const videoContext = useVideoPromptContext();
   const {
@@ -506,7 +530,9 @@ export function AcpPanel() {
       setNotices([]);
       setDraftEmpty();
     }
-    setSavedSession({
+    // 落键即真相：hint 按事件自带的 profileId 分键存放，
+    // store 内强制 key≡hint.profileId，codex 的线程落不到别家键上。
+    setSavedSessionFor(event.profileId, {
       sessionId: event.sessionId,
       profileId: event.profileId,
       cwd: event.cwd,
@@ -537,11 +563,14 @@ export function AcpPanel() {
   const newChatMutation = useMutation({
     mutationFn: async (options?: { preserveTurns?: boolean }) => {
       const preserveTurns = options?.preserveTurns ?? false;
+      const profileState = useAcpProfilesStore.getState();
+      const settings = clientSettingsFromStore(useAcpSettingsStore.getState());
       resumeExpectedSessionIdRef.current = null;
       resumeNoticePendingRef.current = false;
       setLastSessionResolution(null);
       setSessionBanner(null);
-      clearSavedSession();
+      // 新建对话只清当前 agent 自家键的 hint，别家的续聊不受影响。
+      clearSavedSessionFor(profileState.activeProfileId);
       if (!preserveTurns) {
         setTurns([]);
         setNotices([]);
@@ -558,9 +587,6 @@ export function AcpPanel() {
       setConnectionState("connecting");
       setProgress(preserveTurns ? "正在同步 Agent 会话…" : "正在开始新对话…");
       progressOwnerRef.current = claimProgressOwner("sys:new-chat");
-
-      const profileState = useAcpProfilesStore.getState();
-      const settings = clientSettingsFromStore(useAcpSettingsStore.getState());
 
       await acpNewChat(
         (event: AcpEvent) => {
@@ -607,12 +633,15 @@ export function AcpPanel() {
     }) => {
       setLastSessionResolution(null);
       setSessionBanner(null);
-      clearSavedSession();
-      setConnectionState("connecting");
-      progressOwnerRef.current = claimProgressOwner("sys:switch-session");
-
       const profileState = useAcpProfilesStore.getState();
       const settings = clientSettingsFromStore(useAcpSettingsStore.getState());
+      // 同进程切换只清目标线程所属 agent 自家键的 hint（通常就是当前 profile），
+      // 别家的续聊不受影响。
+      clearSavedSessionFor(
+        options.savedSession?.profileId ?? profileState.activeProfileId,
+      );
+      setConnectionState("connecting");
+      progressOwnerRef.current = claimProgressOwner("sys:switch-session");
 
       await acpSwitchSession(
         (event: AcpEvent) => {
@@ -766,7 +795,10 @@ export function AcpPanel() {
     const session = useAcpSessionStore.getState();
     // 记下这次 connect 带没带 resume hint：sessionSaved 落定时，只对
     // “摆了缓存且确实尝试恢复同一会话”做一次新旧对账。
-    resumeAttemptedRef.current = session.savedSession;
+    // hint 取当前 profile 自家键——codex 的 hint 绝不会被带进 claude 的 connect。
+    resumeAttemptedRef.current = session.savedSessionFor(
+      profileState.activeProfileId,
+    );
 
     void acpConnect(
       (event: AcpEvent) => {
@@ -781,7 +813,7 @@ export function AcpPanel() {
       {
         profileId: profileState.activeProfileId,
         cwd: sessionCwd,
-        savedSession: session.savedSession,
+        savedSession: session.savedSessionFor(profileState.activeProfileId),
         clientSettings: settings,
         profiles: profilesHintFromStore(
           profileState.activeProfileId,
@@ -814,7 +846,7 @@ export function AcpPanel() {
     savedSession,
     sessionActive,
     sessionCwd,
-    setSavedSession,
+    setSavedSessionFor,
     statusQuery.isLoading,
     newChatMutation.isPending,
     switchingSession,
@@ -1049,7 +1081,7 @@ export function AcpPanel() {
             cwd: sessionCwd,
             context: frozenContext,
             images: promptImages,
-            savedSession: session.savedSession,
+            savedSession: session.savedSessionFor(profileState.activeProfileId),
             clientSettings: settings,
             taskId,
             profiles: profilesHintFromStore(
@@ -1251,7 +1283,8 @@ export function AcpPanel() {
       progressOwnerRef.current = null;
       setPendingPermission(null);
       syncPromptQueue([]);
-      clearSavedSession();
+      // 后端不可用只清当前 agent 自家键，别家的续聊不受影响。
+      clearSavedSessionFor(activeProfileId);
       return;
     }
     syncPromptQueue([]);
@@ -1313,7 +1346,9 @@ export function AcpPanel() {
       profileId: activeProfileId,
       cwd: sessionCwd,
     };
-    const currentId = useAcpSessionStore.getState().savedSession?.sessionId;
+    const currentId = useAcpSessionStore
+      .getState()
+      .savedSessionFor(activeProfileId)?.sessionId;
     const alreadyOnTarget = sessionActive && currentId === target;
     if (!alreadyOnTarget) {
       resumeExpectedSessionIdRef.current = target;
@@ -1331,7 +1366,8 @@ export function AcpPanel() {
       // resume 若失败，后端会新建会话并把归属切走：此时再去 load 旧线程
       // 必然失败，直接说实话，不浪费一次回放。
       if (
-        useAcpSessionStore.getState().savedSession?.sessionId !== target
+        useAcpSessionStore.getState().savedSessionFor(activeProfileId)
+          ?.sessionId !== target
       ) {
         pushSystem(
           cached.length > 0
@@ -1417,7 +1453,10 @@ export function AcpPanel() {
     }
     const removed: string[] = [];
     for (const target of targets) {
-      if (useAcpSessionStore.getState().savedSession?.sessionId === target) {
+      if (
+        useAcpSessionStore.getState().savedSessionFor(activeProfileId)
+          ?.sessionId === target
+      ) {
         continue;
       }
       try {
@@ -1460,7 +1499,10 @@ export function AcpPanel() {
       pushSystem("正在回答，请稍后再删除对话");
       return;
     }
-    if (useAcpSessionStore.getState().savedSession?.sessionId === target) {
+    if (
+      useAcpSessionStore.getState().savedSessionFor(activeProfileId)
+        ?.sessionId === target
+    ) {
       pushSystem("不能删除正在使用的对话，先切换到其他对话");
       return;
     }
