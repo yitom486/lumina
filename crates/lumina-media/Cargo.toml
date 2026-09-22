@@ -1,6 +1,6 @@
 [package]
 name = "lumina-media"
-version = "0.3.0"
+version = "0.4.0"
 description = "Media inspection and local media-tool integration for Lumina"
 edition = "2021"
 

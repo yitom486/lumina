@@ -1,5 +1,38 @@
 # Changelog
 
+## 0.4.0 — 多智能体 ACP（切换隔离 + resume 优先 + SQLite 会话库）
+
+### Agent 全家桶
+
+- **9 画像可切换**：ChatGPT、Claude、Gemini、Copilot、OpenCode、Cursor、
+  DeepSeek、agy、自定义；表头下拉切换，各家会话记忆独立保留。
+- **显示名去技术化**：`Cursor CLI` → `Cursor` 等，与参考设计对齐。
+- **旧 Antigravity 下线**：`agy_acp_server` 直连方案移除，由第三方桥
+  `agy`（`bunx -y @yitom/agy-acp-map@latest`）接替。
+- **适配器永远最新**：codex / deepseek / agy 三个 bunx 模板全部显式
+  `@latest` 后缀（裸包名只按天复用缓存，曾卡在 1.7.0 的 5.6 时代目录）；
+  同包任意版本都算默认形，老用户存量自动升级，不断 presets。
+
+### 切换与续聊
+
+- **切换优先 resume**：有合法 hint 必试 `session/resume`（不再看 Agent
+  有没有官宣能力），失败才诚实 new；历史打开 resume→load 串行，失败说实话。
+- **切换三清**：permission 弹窗、进度行、排队、proposal 记账、附件不再漏进新世界。
+- **升级迁移**：删画像不毒化整单（后端容忍未知条目 + 前端持久化清洗）。
+
+### SQLite 会话库
+
+- **快照 + resume 钥匙入库**：`chat_snapshots((profile, session))` +
+  `acp_session_hints`（Migration 4，替换式 upsert，只存 UI 文本不存工具结果）。
+- **后台异步**：内存镜像 + 1500ms trailing 写穿，切换/重启读优先秒开；
+  老 localStorage 一次性迁移后只读 SQLite。
+
+### 测试
+
+- **端到端锁死**：mock agent 全链路（切换 resume 成功/失败、历史
+  resume+reload、隔离、清理）+ Rust fake 子进程（resume 成功/失败→new、
+  未官宣也尝试）；前端 500+ 用例 + workspace 全绿。
+
 ## 0.3.0 — AI Video Reader（P6 阅读闭环 + P7 多模态）/ 下限补齐
 
 ### 应用图标

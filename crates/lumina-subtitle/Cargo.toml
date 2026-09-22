@@ -1,6 +1,6 @@
 [package]
 name = "lumina-subtitle"
-version = "0.3.0"
+version = "0.4.0"
 description = "Subtitle discovery, extraction, parsing, and export for Lumina"
 edition = "2021"
 

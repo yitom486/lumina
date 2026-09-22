@@ -2356,7 +2356,7 @@ checksum = "f9f8bd3e56ce4dfc153cf470fffbfa98c7620958b312ca5c3a4b8d5181fd13c6"
 
 [[package]]
 name = "lumina-acp"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "agent-client-protocol",
  "lumina-core",
@@ -2368,7 +2368,7 @@ dependencies = [
 
 [[package]]
 name = "lumina-ai"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "lumina-core",
  "lumina-subtitle",
@@ -2379,7 +2379,7 @@ dependencies = [
 
 [[package]]
 name = "lumina-app"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "base64 0.22.1",
  "cocoa",
@@ -2422,7 +2422,7 @@ dependencies = [
 
 [[package]]
 name = "lumina-asr"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "lumina-media",
  "lumina-subtitle",
@@ -2434,14 +2434,14 @@ dependencies = [
 
 [[package]]
 name = "lumina-core"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "serde",
 ]
 
 [[package]]
 name = "lumina-library"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "keyring",
  "lumina-core",
@@ -2457,7 +2457,7 @@ dependencies = [
 
 [[package]]
 name = "lumina-mcp"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "base64 0.22.1",
  "lumina-core",
@@ -2473,7 +2473,7 @@ dependencies = [
 
 [[package]]
 name = "lumina-media"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -2483,7 +2483,7 @@ dependencies = [
 
 [[package]]
 name = "lumina-notes"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "base64 0.22.1",
  "lumina-media",
@@ -2496,7 +2496,7 @@ dependencies = [
 
 [[package]]
 name = "lumina-player"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "libmpv2",
  "libmpv2-sys",
@@ -2508,7 +2508,7 @@ dependencies = [
 
 [[package]]
 name = "lumina-subtitle"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "lumina-media",
  "serde",
@@ -2517,7 +2517,7 @@ dependencies = [
 
 [[package]]
 name = "lumina-ytdl"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "lumina-core",
  "lumina-media",

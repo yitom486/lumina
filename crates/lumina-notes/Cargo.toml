@@ -1,6 +1,6 @@
 [package]
 name = "lumina-notes"
-version = "0.3.0"
+version = "0.4.0"
 description = "Timestamped notes, subtitle quotes, and Markdown export for Lumina"
 edition = "2021"
 

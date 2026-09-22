@@ -1,6 +1,6 @@
 [package]
 name = "lumina-mcp"
-version = "0.3.0"
+version = "0.4.0"
 description = "Lumina MCP server, snapshots, tools, and policies"
 edition = "2021"
 

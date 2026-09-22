@@ -1,6 +1,6 @@
 [package]
 name = "lumina-player"
-version = "0.3.0"
+version = "0.4.0"
 description = "PlayerService, libmpv playback, and playback state machine"
 edition = "2021"
 
