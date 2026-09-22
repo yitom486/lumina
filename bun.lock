@@ -4,10 +4,13 @@
   "workspaces": {
     "": {
       "name": "lumina",
+      "devDependencies": {
+        "oxlint": "^1.81.0",
+      },
     },
     "apps/desktop": {
       "name": "lumina-desktop",
-      "version": "0.3.0",
+      "version": "0.4.0",
       "dependencies": {
         "@lumina/chat-ui": "workspace:*",
         "@lumina/contracts": "workspace:*",
@@ -64,7 +67,7 @@
     },
     "packages/chat-ui": {
       "name": "@lumina/chat-ui",
-      "version": "0.3.0",
+      "version": "0.4.0",
       "dependencies": {
         "@lumina/contracts": "workspace:*",
         "@lumina/ui": "workspace:*",
@@ -83,11 +86,11 @@
     },
     "packages/contracts": {
       "name": "@lumina/contracts",
-      "version": "0.3.0",
+      "version": "0.4.0",
     },
     "packages/player-ui": {
       "name": "@lumina/player-ui",
-      "version": "0.3.0",
+      "version": "0.4.0",
       "dependencies": {
         "@lumina/contracts": "workspace:*",
       },
@@ -104,11 +107,11 @@
     },
     "packages/query-keys": {
       "name": "@lumina/query-keys",
-      "version": "0.3.0",
+      "version": "0.4.0",
     },
     "packages/transcript-ui": {
       "name": "@lumina/transcript-ui",
-      "version": "0.3.0",
+      "version": "0.4.0",
       "dependencies": {
         "@lumina/contracts": "workspace:*",
       },
@@ -125,7 +128,7 @@
     },
     "packages/ui": {
       "name": "@lumina/ui",
-      "version": "0.3.0",
+      "version": "0.4.0",
       "dependencies": {
         "@radix-ui/react-alert-dialog": "^1.1.23",
         "@radix-ui/react-dropdown-menu": "^2.1.24",
