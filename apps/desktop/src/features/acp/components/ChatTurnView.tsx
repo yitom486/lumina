@@ -18,10 +18,7 @@ import type { AssistantAction } from "@lumina/chat-ui/assistantBlocks";
 import { parseAssistantBlocksText } from "@lumina/chat-ui/assistantBlocks";
 import { RichBlockRenderer } from "@lumina/chat-ui/components/RichBlockRenderer";
 import type { ChatTurn } from "../types";
-import {
-  adaptShortcutOutput,
-  normalizeRestoredShortcutOutput,
-} from "../shortcutOutput";
+import { normalizeRestoredShortcutOutput } from "../shortcutOutput";
 import { ChatActivityFeed } from "@lumina/chat-ui/components/ChatActivityFeed";
 import { ChatColumn } from "@lumina/chat-ui/components/ChatShell";
 import { ChatWaitingDots } from "@lumina/chat-ui/components/ChatWaitingDots";
@@ -187,29 +184,13 @@ export function ChatTurnView({
       ? normalizeRestoredShortcutOutput(visibleAnswer)
       : null;
   const normalizedAnswer = restoredShortcut?.answer ?? visibleAnswer;
-  // Unified shortcut entry: same task-aware adapter as the persisted
-  // watch-feed. The backend owns the contract versions; `adaptShortcutOutput`
-  // validates against the live table (fallback literals only offline/tests).
-  // Free chat and `{blocks:[...]}` envelopes skip this and use the generic
-  // parser below.
-  const shortcutAnswer =
-    !isError && turn.shortcutTaskId && visibleAnswer
-      ? adaptShortcutOutput(turn.shortcutTaskId, visibleAnswer, {
-          streaming: isStreaming,
-        })
-      : null;
   const structuredAnswer =
-    !isError && normalizedAnswer && !shortcutAnswer?.blocks.length
+    !isError && normalizedAnswer
       ? parseAssistantBlocksText(normalizedAnswer, { streaming: isStreaming })
       : null;
-  const shortcutFallback =
-    !isStreaming && shortcutAnswer?.fallbackText ? shortcutAnswer.fallbackText : null;
-  const richBlocks = shortcutAnswer?.blocks.length
-    ? shortcutAnswer.blocks
-    : (structuredAnswer?.blocks ?? []);
+  const richBlocks = structuredAnswer?.blocks ?? [];
   const answerText =
-    shortcutFallback ??
-    (looksLikeStructuredJson(normalizedAnswer) && richBlocks.length === 0
+    (looksLikeStructuredJson(normalizedAnswer) && !richBlocks.length
       ? "正在整理结构化结果…"
       : normalizedAnswer);
   const releaseLiveLabel =

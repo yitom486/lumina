@@ -80,6 +80,38 @@ export type WatchFeedCardBlock = {
   actions: AssistantActionChip[];
 };
 
+export type StructuredResultMetadata = {
+  id: string;
+  label: string;
+  value: string;
+};
+
+export type StructuredResultSection = {
+  id: string;
+  title: string;
+  paragraphs: string[];
+  items: string[];
+};
+
+/**
+ * A contract result rendered as a rich chat document.
+ *
+ * This is intentionally not a watch-feed card. The same block can be shown
+ * in the general chat transcript and projected into a companion surface
+ * without exposing the original JSON envelope.
+ */
+export type StructuredResultBlock = {
+  kind: "structured-result";
+  id: string;
+  contract?: string;
+  title: string;
+  metadata: StructuredResultMetadata[];
+  summary?: string;
+  sections: StructuredResultSection[];
+  spoilerLevel: SpoilerLevel;
+  actions: AssistantActionChip[];
+};
+
 export type QuestionOption = AssistantActionChip;
 
 export type QuestionCardBlock = {
@@ -113,6 +145,7 @@ export type AssistantBlock =
   | NarrativeBlock
   | TranscriptQuoteBlock
   | TimelineBlock
+  | StructuredResultBlock
   | WatchFeedCardBlock
   | QuestionCardBlock
   | AgentTaskStatusBlock
@@ -145,6 +178,9 @@ const MAX_QUESTION_OPTIONS = 6;
 const MAX_TEXT_LENGTH = 20_000;
 const MAX_SHORT_TEXT_LENGTH = 500;
 const MAX_ID_LENGTH = 120;
+const MAX_RESULT_METADATA = 8;
+const MAX_RESULT_SECTIONS = 12;
+const MAX_RESULT_ITEMS = 12;
 
 /**
  * Normalize an untrusted assistant payload into the closed block union.
@@ -254,6 +290,8 @@ function normalizeCandidate(
   const rawKind = readString(input.kind) ?? readString(input.type);
   const kind = normalizeKind(rawKind);
   if (!kind) {
+    const structured = normalizeStructuredResult(input, `structured-${index}`);
+    if (structured) return structured;
     const fallback = fallbackNarrative(input, index);
     notices.push({ index, reason: "unknown-kind", fallback: Boolean(fallback) });
     return fallback;
@@ -305,6 +343,8 @@ function normalizeKnownBlock(
         items,
       };
     }
+    case "structured-result":
+      return normalizeStructuredResult(input, id);
     case "watch-feed-card": {
       const title = readShortText(input.title) ?? readShortText(input.headline);
       if (!title) return null;
@@ -360,6 +400,187 @@ function normalizeKnownBlock(
         disabled: input.disabled === true,
       };
     }
+  }
+}
+
+function normalizeStructuredResult(
+  input: Record<string, unknown>,
+  id: string,
+): StructuredResultBlock | null {
+  const contract = readString(input.contract) ?? readString(input.version);
+  if (!contract || !isStructuredContract(input)) return null;
+
+  const title = structuredResultTitle(input, contract);
+  const metadata = normalizeResultMetadata(input);
+  const summary = firstText(input, [
+    "summary",
+    "recap",
+    "mainline",
+    "content",
+    "text",
+    "description",
+  ]);
+  const sections = normalizeResultSections(input);
+  const actions = normalizeActionChips(input.actions, id);
+
+  if (!summary && metadata.length === 0 && sections.length === 0) return null;
+
+  return {
+    kind: "structured-result",
+    id,
+    contract,
+    title,
+    metadata,
+    ...(summary ? { summary } : {}),
+    sections,
+    spoilerLevel: normalizeSpoilerLevel(
+      input.spoilerLevel ?? input.spoiler_boundary ?? input.spoiler,
+    ),
+    actions,
+  };
+}
+
+function isStructuredContract(input: Record<string, unknown>): boolean {
+  return (
+    readString(input.contract)?.includes(".") === true ||
+    readString(input.version)?.includes(".") === true
+  );
+}
+
+function structuredResultTitle(
+  input: Record<string, unknown>,
+  contract: string,
+): string {
+  const explicit = firstText(input, ["title", "headline", "name"]);
+  if (explicit) return explicit;
+
+  const task = contract.split(".")[0];
+  const labels: Record<string, string> = {
+    chapter_recap: "本段总结",
+    chapter_outlook: "后续看点",
+    plot_summary: "剧情梳理",
+    question_candidates: "观众问题",
+    rewrite_content: "改写结果",
+  };
+  return labels[task] ?? "结构化结果";
+}
+
+function normalizeResultMetadata(
+  input: Record<string, unknown>,
+): StructuredResultMetadata[] {
+  const metadata: StructuredResultMetadata[] = [];
+  const chapter = isRecord(input.chapter) ? input.chapter : undefined;
+  const add = (label: string, value: unknown) => {
+    const text =
+      typeof value === "number" && Number.isFinite(value)
+        ? String(value)
+        : readText(value);
+    if (!text || metadata.some((item) => item.label === label)) return;
+    metadata.push({ id: `metadata-${metadata.length}`, label, value: text });
+  };
+
+  add("范围", input.scope);
+  add("季", chapter?.season ?? input.season);
+  add("集", chapter?.episode ?? input.episode);
+  add("章节", chapter?.title ?? chapter?.name ?? input.chapter_title);
+  add("位置", chapter?.position ?? chapter?.timestamp ?? input.position);
+  add(
+    "剧透边界",
+    spoilerBoundaryLabel(input.spoiler_boundary ?? input.spoilerLevel ?? input.spoiler),
+  );
+  return metadata.slice(0, MAX_RESULT_METADATA);
+}
+
+function normalizeResultSections(
+  input: Record<string, unknown>,
+): StructuredResultSection[] {
+  const sections: StructuredResultSection[] = [];
+  const addSection = (
+    title: string,
+    paragraphs: string[] = [],
+    items: string[] = [],
+  ) => {
+    const safeParagraphs = paragraphs.slice(0, MAX_RESULT_ITEMS);
+    const safeItems = items.slice(0, MAX_RESULT_ITEMS);
+    if (safeParagraphs.length === 0 && safeItems.length === 0) return;
+    sections.push({
+      id: `section-${sections.length}`,
+      title,
+      paragraphs: safeParagraphs,
+      items: safeItems,
+    });
+  };
+
+  addSection("证据", [], normalizeEvidenceItems(input.evidence));
+  addSection("要点", [], normalizeResultTextArray(input.points));
+  addSection(
+    "观察方向",
+    [],
+    normalizeResultTextArray(input.outlook).concat(normalizeResultTextArray(input.items)),
+  );
+  addSection("观察问题", [], normalizeResultTextArray(input.questions));
+  addSection("待确认", [], normalizeResultTextArray(input.uncertainty));
+  addSection("说明", normalizeResultTextArray(input.notes));
+  return sections.slice(0, MAX_RESULT_SECTIONS);
+}
+
+function normalizeResultTextArray(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value.slice(0, MAX_RESULT_ITEMS).flatMap((item) => {
+    if (typeof item === "string") {
+      const text = readText(item);
+      return text ? [text] : [];
+    }
+    if (!isRecord(item)) return [];
+    const text = firstText(item, [
+      "text",
+      "title",
+      "summary",
+      "description",
+      "question",
+      "prompt",
+    ]);
+    return text ? [text] : [];
+  });
+}
+
+function normalizeEvidenceItems(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value.slice(0, MAX_RESULT_ITEMS).flatMap((item) => {
+    if (typeof item === "string") {
+      const text = readText(item);
+      return text ? [text] : [];
+    }
+    if (!isRecord(item)) return [];
+    const text = firstText(item, [
+      "text",
+      "quote",
+      "fact",
+      "label",
+      "title",
+      "description",
+      "summary",
+    ]);
+    const ref = firstText(item, ["ref", "reference", "timestamp", "time_range"]);
+    if (text && ref) return [`${text} · ${ref}`];
+    return text ? [text] : ref ? [ref] : [];
+  });
+}
+
+function spoilerBoundaryLabel(value: unknown): string | null {
+  switch (value) {
+    case "current_position":
+      return "截至当前播放位置";
+    case "current_chapter":
+      return "截至当前章节";
+    case "episode":
+      return "当前集";
+    case "none":
+      return "不剧透";
+    case "full_media":
+      return "全片分析";
+    default:
+      return readText(value);
   }
 }
 
@@ -452,6 +673,9 @@ function normalizeKind(value: string | null): AssistantBlock["kind"] | null {
       return "transcript-quote";
     case "timeline":
       return "timeline";
+    case "structured-result":
+    case "structured_result":
+      return "structured-result";
     case "watch-feed-card":
     case "watch_feed_card":
       return "watch-feed-card";
@@ -499,8 +723,12 @@ function isIncomplete(
 function normalizeSpoilerLevel(value: unknown): SpoilerLevel {
   switch (value) {
     case "none":
+      return "none";
     case "current":
-      return value;
+    case "current_position":
+    case "current_chapter":
+    case "episode":
+      return "current";
     case "future":
     case "spoiler":
       return "future";
@@ -547,6 +775,17 @@ function readId(value: unknown, fallback: string): string {
 
 function readText(value: unknown): string | null {
   return readString(value, MAX_TEXT_LENGTH);
+}
+
+function firstText(
+  value: Record<string, unknown>,
+  keys: readonly string[],
+): string | null {
+  for (const key of keys) {
+    const text = readText(value[key]);
+    if (text) return text;
+  }
+  return null;
 }
 
 function readShortText(value: unknown, maxLength = MAX_SHORT_TEXT_LENGTH): string | null {

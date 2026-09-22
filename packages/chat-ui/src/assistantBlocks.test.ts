@@ -159,6 +159,59 @@ describe("normalizeAssistantBlocks", () => {
     expect(parseAssistantBlocksText("普通 Markdown {不是完整 JSON}")).toBeNull();
   });
 
+  it("parses a versioned contract into a rich document instead of exposing JSON", () => {
+    const result = parseAssistantBlocksText(
+      JSON.stringify({
+        contract: "chapter_recap.v1",
+        chapter: {
+          season: 1,
+          episode: 2,
+          title: "1792个夏日",
+          position: "12:09",
+        },
+        spoiler_boundary: "current_position",
+        recap: "崔雄与国延秀重新面对过去的关系。",
+        evidence: [
+          { ref: "[11:38]-[11:59]", fact: "两人讨论未来选择。" },
+        ],
+        uncertainty: ["当前台词窗口并不完整。"],
+      }),
+    );
+
+    expect(result?.blocks).toEqual([
+      {
+        kind: "structured-result",
+        id: "structured-0",
+        contract: "chapter_recap.v1",
+        title: "本段总结",
+        metadata: [
+          { id: "metadata-0", label: "季", value: "1" },
+          { id: "metadata-1", label: "集", value: "2" },
+          { id: "metadata-2", label: "章节", value: "1792个夏日" },
+          { id: "metadata-3", label: "位置", value: "12:09" },
+          { id: "metadata-4", label: "剧透边界", value: "截至当前播放位置" },
+        ],
+        summary: "崔雄与国延秀重新面对过去的关系。",
+        sections: [
+          {
+            id: "section-0",
+            title: "证据",
+            paragraphs: [],
+            items: ["两人讨论未来选择。 · [11:38]-[11:59]"],
+          },
+          {
+            id: "section-1",
+            title: "待确认",
+            paragraphs: [],
+            items: ["当前台词窗口并不完整。"],
+          },
+        ],
+        spoilerLevel: "current",
+        actions: [],
+      },
+    ]);
+  });
+
   it("returns null for malformed, empty, or incomplete structured payloads", () => {
     expect(parseAssistantBlocksText('{"blocks":')).toBeNull();
     expect(parseAssistantBlocksText('{"blocks":[]}')).toBeNull();

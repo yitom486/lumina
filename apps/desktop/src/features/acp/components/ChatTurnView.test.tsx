@@ -131,6 +131,45 @@ describe("ChatTurnView", () => {
     expect(screen.queryByText(/chapter_outlook\.v1/)).not.toBeInTheDocument();
   });
 
+  it("renders the complete chapter contract as a rich chat document", async () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={client}>
+        <ChatTurnView
+          turn={makeTurn({
+            id: "t-contract",
+            answer: JSON.stringify({
+              contract: "chapter_recap.v1",
+              chapter: {
+                season: 1,
+                episode: 2,
+                title: "1792个夏日",
+                position: "12:09",
+                position_ms: 729_061,
+              },
+              spoiler_boundary: "current_position",
+              recap: "崔雄与国延秀重新面对过去的关系。",
+              evidence: [
+                { ref: "[11:38]-[11:59]", fact: "两人讨论未来选择。" },
+              ],
+              uncertainty: ["当前台词窗口并不完整。"],
+            }),
+            status: "done",
+            showActivities: false,
+          })}
+        />
+      </QueryClientProvider>,
+    );
+
+    expect(await screen.findByRole("heading", { name: "本段总结" })).toBeInTheDocument();
+    expect(screen.getByText("1792个夏日")).toBeInTheDocument();
+    expect(screen.getByText("崔雄与国延秀重新面对过去的关系。")).toBeInTheDocument();
+    expect(screen.getByText("两人讨论未来选择。 · [11:38]-[11:59]")).toBeInTheDocument();
+    expect(screen.getByText("当前台词窗口并不完整。")).toBeInTheDocument();
+    expect(screen.queryByText(/chapter_recap\.v1/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/spoiler_boundary/)).not.toBeInTheDocument();
+  });
+
   it("uses a readable fallback when a shortcut contract is malformed", async () => {
     render(
       <ChatTurnView
@@ -203,6 +242,22 @@ describe("ChatTurnView", () => {
     );
 
     expect(await screen.findByRole("button", { name: "安全操作" })).toBeDisabled();
+  });
+
+  it("does not expose a partial structured JSON response while streaming", async () => {
+    render(
+      <ChatTurnView
+        turn={makeTurn({
+          id: "streaming-contract",
+          shortcutTaskId: "chapter_recap",
+          answer: '{"contract":"chapter_recap.v1","recap":"未完成',
+          status: "streaming",
+        })}
+      />,
+    );
+
+    expect(await screen.findByText("正在整理结构化结果…")).toBeInTheDocument();
+    expect(screen.queryByText(/chapter_recap\.v1/)).not.toBeInTheDocument();
   });
 
   it("keeps assistant bubble full column width while streaming", async () => {

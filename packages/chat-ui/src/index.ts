@@ -31,4 +31,5 @@ export * from "./components/AgentTaskCard";
 export * from "./components/QuestionCard";
 export * from "./components/RichBlockRenderer";
 export * from "./components/SpoilerGuard";
+export * from "./components/StructuredResult";
 export * from "./components/WatchFeedCard";

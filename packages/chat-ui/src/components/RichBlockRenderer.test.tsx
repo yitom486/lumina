@@ -22,6 +22,24 @@ describe("RichBlockRenderer", () => {
         items: [{ id: "t-1-0", atMs: 0, title: "开始" }],
       },
       {
+        kind: "structured-result",
+        id: "result-1",
+        contract: "chapter_recap.v1",
+        title: "本段总结",
+        metadata: [{ id: "m-1", label: "章节", value: "1792个夏日" }],
+        summary: "结构化总结",
+        sections: [
+          {
+            id: "s-1",
+            title: "证据",
+            paragraphs: [],
+            items: ["字幕证据 · [00:10]-[00:20]"],
+          },
+        ],
+        spoilerLevel: "none",
+        actions: [],
+      },
+      {
         kind: "agent-task-status",
         id: "a-1",
         taskId: "task-1",
@@ -39,6 +57,8 @@ describe("RichBlockRenderer", () => {
     expect(markup).toContain("<strong>叙述</strong>");
     expect(markup).toContain("字幕引用");
     expect(markup).toContain("时间线");
+    expect(markup).toContain("结构化总结");
+    expect(markup).toContain("字幕证据 · [00:10]-[00:20]");
     expect(markup).toContain("处理中");
   });
 

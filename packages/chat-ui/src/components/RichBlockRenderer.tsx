@@ -10,6 +10,7 @@ import type {
 import { ActionChip } from "./ActionChip";
 import { AgentTaskCard } from "./AgentTaskCard";
 import { QuestionCard } from "./QuestionCard";
+import { StructuredResult } from "./StructuredResult";
 import { WatchFeedCard } from "./WatchFeedCard";
 
 type Props = {
@@ -96,6 +97,8 @@ function BlockView({
           </ol>
         </section>
       );
+    case "structured-result":
+      return <StructuredResult block={block} onAction={onAction} density={density} />;
     case "watch-feed-card":
       return <WatchFeedCard block={block} onAction={onAction} density={density} />;
     case "question-card":
