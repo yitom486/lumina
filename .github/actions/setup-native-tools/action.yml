@@ -118,10 +118,15 @@ runs:
         done
 
         actual_version=$("$ffmpeg_dir/ffmpeg" -version | sed -n '1s/^ffmpeg version \([^ ]*\).*/\1/p')
-        if [ "$actual_version" != "$unix_version" ]; then
-          echo "Expected FFmpeg $unix_version, got $actual_version." >&2
-          exit 1
-        fi
+        # Prefix match: builders append suffixes (e.g. `-https://www.martin-riedl.de`)
+        # that must not fail the gate as long as the pinned version leads.
+        case "$actual_version" in
+          "$unix_version"*) ;;
+          *)
+            echo "Expected FFmpeg $unix_version, got $actual_version." >&2
+            exit 1
+            ;;
+        esac
         "$ffmpeg_dir/ffprobe" -version >/dev/null
         ls -l "$ffmpeg_dir/ffmpeg" "$ffmpeg_dir/ffprobe"
 

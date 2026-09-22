@@ -6,6 +6,6 @@ url=https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip
 fetched=2026-08-31
 
 unix_source=ffmpeg.martin-riedl.de
-unix_version=9.0.1
+unix_version=9.0.2
 unix_tools=ffprobe,ffmpeg
 unix_url=https://ffmpeg.martin-riedl.de/redirect/latest/{platform}/{arch}/release/{tool}.zip
