@@ -1,6 +1,6 @@
 //! Filesystem / PATH discovery for ACP agents (no config I/O).
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 /// Dev-workspace `native/acp` roots, nearest first. Monorepo 拆分后 acp crate
 /// 不再与 `native/` 同目录，向上兼容查找旧布局。
@@ -307,6 +307,134 @@ pub fn find_antigravity() -> Option<PathBuf> {
     .or_else(|| find_command("agy_acp_server"))
 }
 
+/// Cursor 登录态候选落盘位置（按优先级排序）。
+/// 对齐参考实现：`$XDG_CONFIG_HOME/cursor/auth.json` 优先；Windows 再查
+/// `%USERPROFILE%\.config\cursor\auth.json` 与旧 App 落盘 hint
+/// `%APPDATA%\Cursor\User\globalStorage\storage.json`。
+pub fn cursor_auth_candidates() -> Vec<PathBuf> {
+    let mut out: Vec<PathBuf> = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    let mut push = |path: PathBuf| {
+        if seen.insert(path.clone()) {
+            out.push(path);
+        }
+    };
+    if let Ok(xdg) = std::env::var("XDG_CONFIG_HOME") {
+        let trimmed = xdg.trim();
+        if !trimmed.is_empty() {
+            push(PathBuf::from(trimmed).join("cursor").join("auth.json"));
+        }
+    }
+    let home = std::env::var_os("USERPROFILE").or_else(|| std::env::var_os("HOME"));
+    if cfg!(windows) {
+        if let Some(profile) = home.as_ref().map(PathBuf::from) {
+            push(profile.join(".config").join("cursor").join("auth.json"));
+        }
+        if let Ok(roaming) = std::env::var("APPDATA") {
+            let trimmed = roaming.trim();
+            if !trimmed.is_empty() {
+                push(
+                    PathBuf::from(trimmed)
+                        .join("Cursor")
+                        .join("User")
+                        .join("globalStorage")
+                        .join("storage.json"),
+                );
+            }
+        }
+    } else if let Some(home) = home.map(PathBuf::from) {
+        push(home.join(".config").join("cursor").join("auth.json"));
+    }
+    out
+}
+
+fn is_cursor_storage_hint(path: &Path) -> bool {
+    path.to_string_lossy()
+        .replace('\\', "/")
+        .ends_with("/globalStorage/storage.json")
+}
+
+/// `auth.json` 有效性：非空可解析且顶层 `accessToken` / `refreshToken` 任一非空。
+/// `storage.json` 只做 hint 级判定（存在且为非空对象）。
+fn is_valid_cursor_auth_file(path: &PathBuf) -> bool {
+    if is_cursor_storage_hint(path) {
+        return false;
+    }
+    let Ok(raw) = std::fs::read_to_string(path) else {
+        return false;
+    };
+    if raw.trim().is_empty() {
+        return false;
+    }
+    let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&raw) else {
+        return false;
+    };
+    let Some(row) = parsed.as_object() else {
+        return false;
+    };
+    let non_empty = |key: &str| {
+        row.get(key)
+            .and_then(serde_json::Value::as_str)
+            .is_some_and(|value| !value.trim().is_empty())
+    };
+    non_empty("accessToken") || non_empty("refreshToken")
+}
+
+/// Whether the user already carries stored Cursor credentials.
+/// Hint-level only（新版 token 可能进 OS keychain，文件未命中不断言未登录）：
+/// `CURSOR_API_KEY` / `CURSOR_AUTH_TOKEN` 环境透传（子进程继承父环境）或
+/// 任一候选 auth.json 有效即算命中。命中时 ACP `authenticate` 必须跳过，
+/// 由 agent 自己用本机登录态建会话。
+pub fn cursor_auth_present() -> bool {
+    if std::env::var("CURSOR_API_KEY")
+        .map(|value| !value.trim().is_empty())
+        .unwrap_or(false)
+    {
+        return true;
+    }
+    if std::env::var("CURSOR_AUTH_TOKEN")
+        .map(|value| !value.trim().is_empty())
+        .unwrap_or(false)
+    {
+        return true;
+    }
+    cursor_auth_candidates()
+        .iter()
+        .any(is_valid_cursor_auth_file)
+}
+
+/// Locate the official Cursor CLI (`agent acp`).
+/// 1. 官方安装位直查（Windows `%LOCALAPPDATA%\cursor-agent\agent.cmd`，
+///    posix `~/.local/bin/agent`）；2. PATH。皆无返回 None（未安装），
+///    由调用方转成带安装指引的 `NotConfigured`，不把裸命令丢给 spawn。
+pub fn find_cursor_agent() -> Option<PathBuf> {
+    if let Ok(override_path) = std::env::var("CURSOR_AGENT_PATH") {
+        let path = PathBuf::from(override_path);
+        if path.is_file() {
+            return Some(path);
+        }
+    }
+
+    if cfg!(windows) {
+        if let Some(local_app_data) = std::env::var_os("LOCALAPPDATA") {
+            let candidate = PathBuf::from(local_app_data)
+                .join("cursor-agent")
+                .join("agent.cmd");
+            if candidate.is_file() {
+                return Some(candidate);
+            }
+        }
+    } else if let Some(home) = std::env::var_os("HOME") {
+        let candidate = PathBuf::from(home).join(".local").join("bin").join("agent");
+        if candidate.is_file() {
+            return Some(candidate);
+        }
+    }
+
+    let binary = if cfg!(windows) { "agent.cmd" } else { "agent" };
+    find_command(binary)
+}
+
 /// Dev tree: `node_modules/@agentclientprotocol/codex-acp` (avoids flaky `bun x` on Windows).
 /// Monorepo 拆分后向上兼容查找，desktop 包优先（旧解析顺序）。
 pub fn find_dev_codex_acp_entry() -> Option<PathBuf> {
@@ -346,5 +474,33 @@ mod tests {
         let _ = antigravity_dir();
         let _ = antigravity_credentials_present();
         let _ = find_antigravity();
+        let _ = cursor_auth_candidates();
+        let _ = cursor_auth_present();
+        let _ = find_cursor_agent();
+    }
+
+    #[test]
+    fn cursor_auth_candidates_cover_xdg_and_home() {
+        let candidates = cursor_auth_candidates();
+        assert!(!candidates.is_empty());
+        assert!(candidates
+            .iter()
+            .any(|path| path.ends_with(PathBuf::from("cursor").join("auth.json"))));
+    }
+
+    #[test]
+    fn cursor_auth_file_requires_a_token() {
+        let dir = std::env::temp_dir().join("lumina-cursor-auth-probe");
+        let _ = std::fs::create_dir_all(&dir);
+        let valid = dir.join("auth.json");
+        let _ = std::fs::write(&valid, r#"{"accessToken":"  abc  "}"#);
+        assert!(is_valid_cursor_auth_file(&valid));
+        let empty = dir.join("empty.json");
+        let _ = std::fs::write(&empty, r#"{"accessToken":"  "}"#);
+        assert!(!is_valid_cursor_auth_file(&empty));
+        let dirty = dir.join("dirty.json");
+        let _ = std::fs::write(&dirty, "not-json");
+        assert!(!is_valid_cursor_auth_file(&dirty));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

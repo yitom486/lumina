@@ -24,10 +24,10 @@ use crate::runtime::process::{command, AgentProcess};
 use crate::runtime::service::AcpService;
 use crate::wire::codec::is_error_response;
 use crate::wire::session::{
-    authenticate_params, classify_resume_failure, initialize_params, initialize_params_restricted,
-    parse_initialize_result, parse_session_id, parse_session_list, parse_session_model_options,
-    session_close_params, session_list_params, session_new_params, session_resume_params,
-    InitializeResult,
+    authenticate_params, classify_resume_failure, initialize_params, initialize_params_for_cursor,
+    initialize_params_restricted, parse_initialize_result, parse_session_id, parse_session_list,
+    parse_session_model_options, session_close_params, session_list_params, session_new_params,
+    session_resume_params, InitializeResult,
 };
 
 /// How many `session/list` pages one history query may walk.
@@ -554,7 +554,13 @@ impl AcpService {
             init_id,
             "initialize",
             if self.tool_access_enabled.load(Ordering::SeqCst) {
-                initialize_params()
+                // parameterizedModelPicker 只发 cursor（Zed 对等：非 cursor
+                // 不带该标记，cursor 缺了会退回爆炸 variant 串）。
+                if profile.is_cursor() {
+                    initialize_params_for_cursor()
+                } else {
+                    initialize_params()
+                }
             } else {
                 initialize_params_restricted()
             },

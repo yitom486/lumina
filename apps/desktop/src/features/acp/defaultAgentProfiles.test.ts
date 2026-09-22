@@ -11,4 +11,16 @@ describe("profilesHintFromStore", () => {
     expect(hint.activeProfileId).toBe("codex");
     expect(hint.profiles).toEqual(defaultAgentProfiles());
   });
+
+  it("ships a cursor profile with local-auth reuse and acp args", () => {
+    const cursor = defaultAgentProfiles().find(
+      (profile) => profile.id === "cursor",
+    );
+    expect(cursor).toMatchObject({
+      kind: "Cursor",
+      args: ["acp"],
+      authPolicy: "cursor-local",
+    });
+    expect(cursor?.command.trim()).not.toBe("");
+  });
 });

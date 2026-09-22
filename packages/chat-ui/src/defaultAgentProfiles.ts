@@ -13,6 +13,9 @@ export function defaultAgentProfiles(): AgentProfileInput[] {
   const bunx = isWindowsPlatform() ? "bunx.exe" : "bunx";
   const claude = isWindowsPlatform() ? "claude-agent-acp.exe" : "claude-agent-acp";
   const antigravity = isWindowsPlatform() ? "agy_acp_server.exe" : "agy_acp_server";
+  // Cursor 官方 CLI：Windows 优先 %LOCALAPPDATA%\cursor-agent\agent.cmd，
+  // posix 优先 ~/.local/bin/agent，否则回落 PATH（后端 resolve）。
+  const cursor = isWindowsPlatform() ? "agent.cmd" : "agent";
   return [
     {
       id: "codex",
@@ -45,6 +48,17 @@ export function defaultAgentProfiles(): AgentProfileInput[] {
       command: claude,
       args: [],
       env: {},
+    },
+    {
+      id: "cursor",
+      name: "Cursor CLI",
+      kind: "Cursor",
+      command: cursor,
+      args: ["acp"],
+      env: {},
+      // 本地已有认证复用（agent login / CURSOR_API_KEY / CURSOR_AUTH_TOKEN），
+      // 命中则后端跳过 ACP authenticate；会话走通用 session/list + hint resume。
+      authPolicy: "cursor-local",
     },
     {
       id: "custom",

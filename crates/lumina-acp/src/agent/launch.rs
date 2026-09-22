@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 
 use crate::agent::discover::{
     codex_config_present, codex_home_dir, find_acp_adapter, find_antigravity, find_bun, find_bunx,
-    find_codex, find_command, find_dev_codex_acp_entry,
+    find_codex, find_command, find_cursor_agent, find_dev_codex_acp_entry,
 };
 use crate::error::AcpError;
 use crate::wire::session::{AuthMethod, InitializeResult};
@@ -35,6 +35,25 @@ pub fn resolve_launch(profile: &AgentProfile) -> Result<LaunchSpec, AcpError> {
                 )))
             })?;
         (program, profile.args.clone())
+    } else if profile.is_cursor() {
+        // 官方安装位直查 → PATH → 未安装（带指引的 NotConfigured，
+        // 不把裸 `agent[.cmd]` 丢给 spawn，否则 Windows 上子进程秒退，
+        // UI 只剩一句看不懂的 connection closed）。
+        let program = resolve_program(&profile.command)
+            .or_else(find_cursor_agent)
+            .ok_or_else(|| {
+                AcpError::not_configured(Some(&format!(
+                    "agent `{}` (Cursor CLI) command not found: {}；未安装请在终端执行 {} 后重试",
+                    profile.id,
+                    profile.command,
+                    if cfg!(windows) {
+                        "irm https://cursor.com/install?win32=true | iex"
+                    } else {
+                        "curl https://cursor.com/install -fsS | bash"
+                    },
+                )))
+            })?;
+        (program, profile.args.clone())
     } else {
         let program = resolve_program(&profile.command).ok_or_else(|| {
             AcpError::not_configured(Some(&format!(
@@ -44,6 +63,10 @@ pub fn resolve_launch(profile: &AgentProfile) -> Result<LaunchSpec, AcpError> {
         })?;
         (program, profile.args.clone())
     };
+
+    // Windows 上 .cmd/.bat 不是可执行映像，直接 spawn 必败（连 PATH 命中也一样）；
+    // 经 COMSPEC/cmd /C 包裹。这是之前能跑、之后必坏的通用坑，各 profile 通吃。
+    let (program, args) = wrap_windows_batch(program, args);
 
     let mut env = profile.env.clone();
     if profile.injects_codex_cli_env() && !env.contains_key("CODEX_PATH") {
@@ -67,6 +90,28 @@ fn resolve_program(command: &str) -> Option<PathBuf> {
         return path.is_file().then(|| path.to_path_buf());
     }
     find_command(command)
+}
+
+/// Windows batch shims (`.cmd` / `.bat`, e.g. Cursor's `agent.cmd`) cannot be
+/// executed directly via `CreateProcess`; route them through the system shell.
+/// Non-batch programs pass through untouched on every platform.
+fn wrap_windows_batch(program: PathBuf, args: Vec<String>) -> (PathBuf, Vec<String>) {
+    #[cfg(windows)]
+    {
+        let is_batch = program
+            .extension()
+            .and_then(|ext| ext.to_str())
+            .is_some_and(|ext| ext.eq_ignore_ascii_case("cmd") || ext.eq_ignore_ascii_case("bat"));
+        if is_batch {
+            let shell = std::env::var_os("COMSPEC")
+                .map(PathBuf::from)
+                .unwrap_or_else(|| PathBuf::from("cmd.exe"));
+            let mut wrapped = vec!["/C".to_string(), program.to_string_lossy().to_string()];
+            wrapped.extend(args);
+            return (shell, wrapped);
+        }
+    }
+    (program, args)
 }
 
 fn resolve_codex_acp_fallback(profile: &AgentProfile) -> Result<(PathBuf, Vec<String>), AcpError> {
@@ -247,6 +292,13 @@ pub fn pick_auth_method<'a>(
             }
         }
     }
+    if profile.is_cursor_local_auth() {
+        // cursor-agent 自带的本机登录方法；无 stored 凭据兜底时才走到这里，
+        // 优先它而不是盲取首个 advertised 方法。
+        if let Some(method) = init.auth_methods.iter().find(|m| m.id == "cursor_login") {
+            return Some(method);
+        }
+    }
     for id in &profile.auth_methods {
         if let Some(method) = init.auth_methods.iter().find(|method| &method.id == id) {
             return Some(method);
@@ -313,5 +365,64 @@ mod tests {
             let value = spec.env.get(key).expect(key);
             assert!(value.starts_with("socks5://"), "{key} got {value}");
         }
+    }
+
+    #[test]
+    fn windows_batch_shims_route_through_shell() {
+        let (program, args) = wrap_windows_batch(
+            PathBuf::from("C:\\tools\\agent.cmd"),
+            vec!["acp".to_string()],
+        );
+        #[cfg(windows)]
+        {
+            assert!(program.ends_with("cmd.exe") || program.ends_with("cmd"));
+            assert_eq!(args, vec!["/C", "C:\\tools\\agent.cmd", "acp"]);
+        }
+        #[cfg(not(windows))]
+        {
+            assert_eq!(program, PathBuf::from("C:\\tools\\agent.cmd"));
+            assert_eq!(args, vec!["acp"]);
+        }
+
+        let (program, args) = wrap_windows_batch(
+            PathBuf::from("C:\\tools\\agent.exe"),
+            vec!["acp".to_string()],
+        );
+        assert_eq!(program, PathBuf::from("C:\\tools\\agent.exe"));
+        assert_eq!(args, vec!["acp"]);
+    }
+
+    #[test]
+    fn cursor_prefers_its_own_login_method() {
+        use crate::domain::model::AuthPolicy;
+        use crate::wire::session::{AuthMethod, InitializeResult};
+        let profile = AgentProfile {
+            id: "cursor".into(),
+            name: "Cursor".into(),
+            kind: crate::domain::model::AgentKind::Cursor,
+            command: "agent".into(),
+            args: vec!["acp".into()],
+            env: HashMap::new(),
+            launcher: None,
+            env_preset: None,
+            auth_policy: Some(AuthPolicy::CursorLocal),
+            auth_methods: Vec::new(),
+            session_storage: None,
+        };
+        let init = InitializeResult {
+            auth_methods: vec![
+                AuthMethod {
+                    id: "other".into(),
+                    name: "Other".into(),
+                },
+                AuthMethod {
+                    id: "cursor_login".into(),
+                    name: "Cursor login".into(),
+                },
+            ],
+            ..Default::default()
+        };
+        let picked = pick_auth_method(&profile, &init).expect("method");
+        assert_eq!(picked.id, "cursor_login");
     }
 }

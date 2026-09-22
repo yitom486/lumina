@@ -56,6 +56,18 @@ mod initialize_tests {
         let params = initialize_params_restricted();
         assert_eq!(params["clientCapabilities"], json!({}));
     }
+
+    #[test]
+    fn full_initialize_declares_parameterized_model_picker_for_cursor_only() {
+        let generic = initialize_params();
+        assert!(generic["clientCapabilities"].get("_meta").is_none());
+        let cursor = initialize_params_for_cursor();
+        assert_eq!(
+            cursor["clientCapabilities"]["_meta"]["parameterizedModelPicker"],
+            json!(true)
+        );
+        assert_eq!(cursor["clientCapabilities"]["terminal"], json!(true));
+    }
 }
 
 fn initialize_params_with_tools(tool_access: bool) -> Value {
@@ -72,6 +84,25 @@ fn initialize_params_with_tools(tool_access: bool) -> Value {
             json!({})
         },
     })
+}
+
+/// Cursor-only initialize variant, Zed parity
+/// (`client_capabilities_for_agent`: the flag is sent if and only if the
+/// agent id is cursor; Zed even asserts the negative case for codex).
+/// cursor-agent uses the flag to decide the model-picker shape: declared →
+/// plain model values + independent options; undeclared → explosive variant
+/// strings where any rewrite is rejected with `Invalid params`.
+pub fn initialize_params_for_cursor() -> Value {
+    let mut params = initialize_params_with_tools(true);
+    if let Some(caps) = params.get_mut("clientCapabilities") {
+        if let Some(map) = caps.as_object_mut() {
+            map.insert(
+                "_meta".to_string(),
+                json!({ "parameterizedModelPicker": true }),
+            );
+        }
+    }
+    params
 }
 
 fn lumina_session_meta(kind: SessionKind) -> Meta {

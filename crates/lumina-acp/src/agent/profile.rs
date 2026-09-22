@@ -47,6 +47,10 @@ const GENERIC_AUTH_ERROR_MESSAGE: &str =
     "该 AI Agent 尚未完成登录或认证，请按其官方指引完成登录后重试";
 const ANTIGRAVITY_AUTH_FAILURE_MESSAGE: &str =
     "Google 账号认证失败，请检查网络代理与登录授权后重试";
+const CURSOR_AUTH_ERROR_MESSAGE: &str =
+    "Cursor 尚未登录，请在本机终端运行 agent login 后重试（或设置 CURSOR_API_KEY）";
+const CURSOR_AUTH_FAILURE_MESSAGE: &str =
+    "Cursor 认证失败，请确认本机 Cursor 已登录（agent login）后重试";
 
 impl AgentProfile {
     pub fn uses_codex_acp_launcher(&self) -> bool {
@@ -77,6 +81,14 @@ impl AgentProfile {
         self.auth_policy == Some(AuthPolicy::AntigravityOauth)
     }
 
+    pub fn is_cursor_local_auth(&self) -> bool {
+        self.auth_policy == Some(AuthPolicy::CursorLocal)
+    }
+
+    pub fn is_cursor(&self) -> bool {
+        self.is_cursor_local_auth() || self.kind == AgentKind::Cursor || self.id == "cursor"
+    }
+
     pub fn is_codex_like(&self) -> bool {
         self.injects_codex_cli_env() || self.is_codex_local_auth()
     }
@@ -84,14 +96,17 @@ impl AgentProfile {
     /// Whether this profile has stored local credentials the agent can pick
     /// up on its own. Declared per auth policy (data, not kind): codex-local
     /// reads `~/.codex/auth.json`, antigravity-oauth reads the Gemini
-    /// credential files. When present, the ACP `authenticate` step must be
-    /// skipped so a stored login is never replaced by an interactive flow.
+    /// credential files, cursor-local reads the Cursor `auth.json` candidates
+    /// or `CURSOR_API_KEY` / `CURSOR_AUTH_TOKEN` env. When present, the ACP
+    /// `authenticate` step must be skipped so a stored login is never replaced
+    /// by an interactive flow.
     pub fn has_stored_credentials(&self) -> bool {
         match self.auth_policy {
             Some(AuthPolicy::CodexLocal) => crate::agent::discover::codex_auth_present(),
             Some(AuthPolicy::AntigravityOauth) => {
                 crate::agent::discover::antigravity_credentials_present()
             }
+            Some(AuthPolicy::CursorLocal) => crate::agent::discover::cursor_auth_present(),
             _ => false,
         }
     }
@@ -119,6 +134,8 @@ impl AgentProfile {
             ANTIGRAVITY_AUTH_ERROR_MESSAGE.into()
         } else if self.is_codex_local_auth() {
             CODEX_AUTH_ERROR_MESSAGE.into()
+        } else if self.is_cursor() {
+            CURSOR_AUTH_ERROR_MESSAGE.into()
         } else {
             GENERIC_AUTH_ERROR_MESSAGE.into()
         }
@@ -134,6 +151,12 @@ impl AgentProfile {
             )
         } else if self.is_codex_local_auth() {
             AcpError::codex_auth_required(details)
+        } else if self.is_cursor() {
+            AcpError::new(
+                AcpErrorCode::ProtocolError,
+                CURSOR_AUTH_FAILURE_MESSAGE,
+                details.map(str::to_string),
+            )
         } else {
             AcpError::protocol(details)
         }
@@ -246,6 +269,7 @@ fn builtin_profiles() -> Vec<AgentProfile> {
         builtin_codex(),
         builtin_antigravity(),
         builtin_claude(),
+        builtin_cursor(),
         builtin_custom_template(),
     ]
 }
@@ -308,6 +332,29 @@ fn builtin_claude() -> AgentProfile {
         env_preset: None,
         auth_policy: None,
         auth_methods: Vec::new(),
+        session_storage: None,
+    }
+}
+
+fn builtin_cursor() -> AgentProfile {
+    AgentProfile {
+        id: "cursor".into(),
+        name: "Cursor CLI".into(),
+        kind: AgentKind::Cursor,
+        command: if cfg!(windows) {
+            "agent.cmd".into()
+        } else {
+            "agent".into()
+        },
+        args: vec!["acp".into()],
+        env: HashMap::new(),
+        launcher: None,
+        env_preset: None,
+        // 本地已有认证复用：`agent login` 凭据或 CURSOR_API_KEY /
+        // CURSOR_AUTH_TOKEN 透传；命中则跳过 ACP authenticate。
+        auth_policy: Some(AuthPolicy::CursorLocal),
+        auth_methods: Vec::new(),
+        // 通用 ACP session/list + hint resume，不读任何厂商私有落盘。
         session_storage: None,
     }
 }
@@ -467,6 +514,40 @@ mod tests {
         assert!(codex.stores_codex_rollouts());
         assert_eq!(codex.empty_reply_hint(), CODEX_EMPTY_REPLY_HINT);
         assert_eq!(codex.auth_error_message(), CODEX_AUTH_ERROR_MESSAGE);
+    }
+
+    #[test]
+    fn builtin_cursor_reuses_local_login_without_codex_presets() {
+        let cursor = builtin_cursor();
+        assert_eq!(cursor.id, "cursor");
+        assert_eq!(cursor.kind, AgentKind::Cursor);
+        assert_eq!(cursor.args, vec!["acp"]);
+        assert!(cursor.is_cursor());
+        assert!(cursor.is_cursor_local_auth());
+        // 绝不继承 codex 的 env/存储：各家凭据各家读。
+        assert!(!cursor.injects_codex_cli_env());
+        assert!(!cursor.is_codex_local_auth());
+        assert!(!cursor.stores_codex_rollouts());
+        assert!(cursor.session_storage.is_none());
+        assert_eq!(cursor.auth_error_message(), CURSOR_AUTH_ERROR_MESSAGE);
+    }
+
+    #[test]
+    fn default_hint_and_merge_include_cursor() {
+        let hint = default_profiles_hint();
+        assert!(hint.profiles.iter().any(|profile| profile.id == "cursor"));
+        // 旧落盘缺 cursor 时自动补齐（frontend mergeProfiles 同理）。
+        let mut hint_without_cursor = hint.clone();
+        hint_without_cursor
+            .profiles
+            .retain(|profile| profile.id != "cursor");
+        let prepared = prepare_profiles(&hint_without_cursor);
+        let cursor = prepared
+            .profiles
+            .iter()
+            .find(|profile| profile.id == "cursor")
+            .expect("cursor merged");
+        assert!(cursor.is_cursor_local_auth());
     }
 
     #[test]

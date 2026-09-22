@@ -15,6 +15,7 @@ pub enum AgentKind {
     Codex,
     Claude,
     Antigravity,
+    Cursor,
     Custom,
 }
 
@@ -50,6 +51,11 @@ pub enum AuthPolicy {
     /// Antigravity-style dynamic auth preference (Google OAuth vs Gemini key).
     #[serde(rename = "antigravity-oauth")]
     AntigravityOauth,
+    /// Cursor-style local reuse: `agent login` credentials or
+    /// `CURSOR_API_KEY` / `CURSOR_AUTH_TOKEN` env passthrough. No injection,
+    /// no forced interactive flow; probe is hint-level (keychain misses).
+    #[serde(rename = "cursor-local")]
+    CursorLocal,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

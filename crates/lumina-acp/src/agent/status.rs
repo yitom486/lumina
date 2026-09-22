@@ -1,8 +1,8 @@
 //! ACP availability text + status aggregation (profiles + discovery).
 
 use crate::agent::discover::{
-    antigravity_credentials_present, codex_config_present, find_acp_adapter, find_antigravity,
-    find_bunx, find_codex, native_acp_dir,
+    antigravity_credentials_present, codex_config_present, cursor_auth_present, find_acp_adapter,
+    find_antigravity, find_bunx, find_codex, native_acp_dir,
 };
 use crate::agent::profile::{list_status, prepare_profiles, AgentKind};
 use crate::domain::model::{AcpStatus, AgentProfilesHint};
@@ -48,12 +48,17 @@ pub fn status_from_profiles(hint: &AgentProfilesHint) -> AcpStatus {
             format!("{name} 已找到，但未检测到 {codex_home} 登录配置")
         } else if codex_like && bunx_found {
             format!("{name} 启动器已找到，首次提问将下载并验证 Agent")
+        } else if active_profile.is_some_and(|p| p.is_cursor_local_auth()) && cursor_auth_present()
+        {
+            format!("{name} 已检测到本机 Cursor 登录配置，将直接复用，无需重新认证")
         } else {
             format!("{name} 已就绪（仅在你发起会话时启动）")
         }
     } else if let Some(p) = active {
         if p.kind == AgentKind::Custom && p.command.is_empty() {
             "自定义 Agent 尚未填写启动命令".into()
+        } else if p.kind == AgentKind::Cursor {
+            "未找到 Cursor CLI（agent）：请先安装 Cursor CLI 并运行 agent login 后重试".into()
         } else if p.kind == AgentKind::Antigravity {
             "未找到 Google Antigravity ACP 程序（agy_acp_server.exe），请确认已安装或自定义程序路径"
                 .into()
