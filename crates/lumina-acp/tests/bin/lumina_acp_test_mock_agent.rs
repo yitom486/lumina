@@ -8,6 +8,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let state_path = std::env::var_os("LUMINA_ACP_MOCK_STATE")
         .map(PathBuf::from)
         .ok_or("LUMINA_ACP_MOCK_STATE is required")?;
+    // Resume blackbox scripts (tests/session_resume_blackbox.rs). Unset/empty
+    // keeps the legacy chapter behavior byte-for-byte.
+    let script = std::env::var("LUMINA_ACP_MOCK_SCRIPT").unwrap_or_default();
+    let log_path = std::env::var_os("LUMINA_ACP_MOCK_LOG").map(PathBuf::from);
+    let is_chapter_script = script.is_empty() || script == "chapter";
     let spawn_number = next_spawn_number(&state_path)?;
     let stdin = io::stdin();
     let mut stdout = io::BufWriter::new(io::stdout().lock());
@@ -19,6 +24,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         let request: Value = serde_json::from_str(&line)?;
         let method = request.get("method").and_then(Value::as_str).unwrap_or("");
+        log_method(log_path.as_ref(), method);
         let Some(id) = request.get("id").cloned() else {
             continue;
         };
@@ -40,7 +46,23 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 id,
                 json!({ "sessionId": format!("mock-session-{spawn_number}") }),
             )?,
-            "session/prompt" if spawn_number == 1 => {
+            "session/resume" => match script.as_str() {
+                "resume-fail-unavailable" => {
+                    write_error(&mut stdout, id, -32000, "no rollout found for thread id")?
+                }
+                "resume-fail-occupied" => write_error(
+                    &mut stdout,
+                    id,
+                    -32000,
+                    "thread mock-session already has an active writer",
+                )?,
+                // Success (resume-ok and the legacy default): the harness
+                // asserts on the client's SessionSaved event, not the payload.
+                _ => write_response(&mut stdout, id, json!({}))?,
+            },
+            // The transport-recovery kill belongs to the chapter script only;
+            // resume scripts answer prompts normally so they never interfere.
+            "session/prompt" if spawn_number == 1 && is_chapter_script => {
                 eprintln!("mock-agent-transport-detail-must-not-reach-message");
                 return Ok(());
             }
@@ -113,4 +135,30 @@ fn write_notification(
     stdout.write_all(b"\n")?;
     stdout.flush()?;
     Ok(())
+}
+
+fn write_error(
+    stdout: &mut impl Write,
+    id: Value,
+    code: i64,
+    message: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    serde_json::to_writer(
+        &mut *stdout,
+        &json!({ "jsonrpc": "2.0", "id": id, "error": { "code": code, "message": message } }),
+    )?;
+    stdout.write_all(b"\n")?;
+    stdout.flush()?;
+    Ok(())
+}
+
+/// Append one inbound request method per line so blackbox tests can assert
+/// whether `session/resume` was attempted (and its order vs `session/new`).
+/// Best effort: logging must never break the mocked protocol.
+fn log_method(path: Option<&PathBuf>, method: &str) {
+    if let Some(path) = path {
+        if let Ok(mut file) = fs::OpenOptions::new().create(true).append(true).open(path) {
+            let _ = writeln!(file, "{method}");
+        }
+    }
 }
