@@ -73,6 +73,48 @@ describe("normalizeAssistantBlocks", () => {
       kind: "watch-feed-card",
       actions: [{ action: { type: "seek", anchor: { startMs: 42_000 } } }],
     });
+    expect(blocks[4]).toMatchObject({
+      kind: "question-card",
+      options: [
+        {
+          action: {
+            type: "ask",
+            anchor: { chapterId: "ch-1" },
+            prompt: "请解释这个变化。",
+          },
+        },
+      ],
+    });
+  });
+
+  it("keeps anchorless ask actions for one-click questions", () => {
+    const blocks = normalizeAssistantBlocks({
+      blocks: [
+        {
+          kind: "question-card",
+          question: "崔雄为什么拒绝？",
+          options: [{ label: "直接问", action: { type: "ask", prompt: "崔雄为什么拒绝？" } }],
+        },
+        {
+          kind: "action-chip",
+          label: "空问题",
+          action: { type: "ask" },
+        },
+      ],
+    });
+
+    expect(blocks).toHaveLength(1);
+    expect(blocks[0]).toMatchObject({
+      kind: "question-card",
+      options: [
+        {
+          label: "直接问",
+          action: { type: "ask", prompt: "崔雄为什么拒绝？" },
+        },
+      ],
+    });
+    // 无 prompt 的 ask 照样丢掉，不会产生空按钮。
+    expect(JSON.stringify(blocks)).not.toContain("空问题");
   });
 
   it("falls back incomplete or unknown structured blocks to safe narrative text", () => {
@@ -221,6 +263,31 @@ describe("normalizeAssistantBlocks", () => {
         ],
       },
     ]);
+  });
+
+  it("derives one-click ask chips from contract questions", () => {
+    const result = parseAssistantBlocksText(
+      JSON.stringify({
+        contract: "question_candidates.v1",
+        questions: ["第一问？", "第二问？"],
+      }),
+    );
+
+    expect(result?.blocks[0]).toMatchObject({
+      kind: "structured-result",
+      actions: [
+        {
+          id: "structured-0-ask-0",
+          label: "问：第一问？",
+          action: { type: "ask", prompt: "第一问？" },
+        },
+        {
+          id: "structured-0-ask-1",
+          label: "问：第二问？",
+          action: { type: "ask", prompt: "第二问？" },
+        },
+      ],
+    });
   });
 
   it("returns null for malformed, empty, or incomplete structured payloads", () => {

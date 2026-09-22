@@ -87,6 +87,12 @@ import {
   readChatRestore,
   schedulePersistChatRestore,
 } from "../chatRestore";
+import {
+  acceptsProgressEvent,
+  claimProgressOwner,
+  sealProgressOwner,
+  type ProgressOwner,
+} from "../progressOwner";
 import { profilesSignature } from "@lumina/chat-ui/profilesSignature";
 import {
   bargeInPrompt,
@@ -113,7 +119,6 @@ import { ChatHistorySheet } from "@lumina/chat-ui/components/ChatHistorySheet";
 import { ChatComposerBar, type ChatComposerBarHandle } from "./ChatComposerBar";
 import { ChatShell } from "@lumina/chat-ui/components/ChatShell";
 import { ChatColumn } from "@lumina/chat-ui/components/ChatShell";
-import type { CompanionMode } from "@lumina/chat-ui/components/CompanionModeTabs";
 import { ChatToolbar } from "./ChatToolbar";
 import { CompanionHeaderPanel } from "./CompanionHeaderPanel";
 import { ChatTurnList } from "./ChatTurnList";
@@ -156,11 +161,13 @@ export async function handleAssistantAction(
         await deps.seek(action.anchor.startMs);
         return;
       case "ask":
-        if (typeof action.anchor.startMs !== "number") {
-          deps.notify("该操作缺少时间锚点");
-          return;
-        }
-        deps.askAbout(action.anchor.startMs, action.prompt);
+        // 提问不一定有时间戳（如观众问题）：缺省取当前播放位置，和存批注同策略。
+        deps.askAbout(
+          typeof action.anchor?.startMs === "number"
+            ? action.anchor.startMs
+            : deps.currentTimeMs,
+          action.prompt,
+        );
         return;
       case "save-note":
         await deps.saveNote({
@@ -265,6 +272,9 @@ export function AcpPanel() {
   const [historyOpen, setHistoryOpen] = useState(false);
   const resumeExpectedSessionIdRef = useRef<string | null>(null);
   const resumeNoticePendingRef = useRef(false);
+  // 进度行归属：全局一行 progress，多轮 run/新建/切换串行持有，
+  // 迟到/串台事件不许碰上一轮已经落定的行。
+  const progressOwnerRef = useRef<ProgressOwner>(null);
   const transcriptLoadSeqRef = useRef(0);
   // 标题覆盖（本轮内存，不落盘）：原生标题常是 prompt 脚手架/文件名，
   // 用本轮见过的用户首句覆盖。文本缓存走 TanStack Query（transcript key）。
@@ -397,7 +407,6 @@ export function AcpPanel() {
     seedAnchorPositionMs(askAboutRequest.anchorMs);
     handleDraftChange(askAboutRequest.text);
     setDraft(askAboutRequest.text);
-    setCompanionMode("chat");
     useAskAboutStore.getState().consume();
     useChatUiStore.getState().openChat();
     window.setTimeout(() => composerRef.current?.focusInput(), 0);
@@ -448,8 +457,6 @@ export function AcpPanel() {
   const [sessionBanner, setSessionBanner] = useState<string | null>(null);
   // 读历史时从头看（false），现问现答时跟到底（true）。
   const [stickToEnd, setStickToEnd] = useState(true);
-  const [companionMode, setCompanionMode] =
-    useState<CompanionMode>("watch-feed");
 
   const handleSessionSaved = (
     event: Extract<AcpEvent, { type: "sessionSaved" }>,
@@ -550,6 +557,7 @@ export function AcpPanel() {
       setPendingPermission(null);
       setConnectionState("connecting");
       setProgress(preserveTurns ? "正在同步 Agent 会话…" : "正在开始新对话…");
+      progressOwnerRef.current = claimProgressOwner("sys:new-chat");
 
       const profileState = useAcpProfilesStore.getState();
       const settings = clientSettingsFromStore(useAcpSettingsStore.getState());
@@ -577,6 +585,7 @@ export function AcpPanel() {
     onSuccess: async (_data, options) => {
       setConnectionState("connected");
       setProgress(null);
+      progressOwnerRef.current = null;
       if (!options?.preserveTurns) {
         setHistoryOpen(false);
       }
@@ -585,6 +594,7 @@ export function AcpPanel() {
     onError: (error) => {
       setConnectionState("error");
       setProgress(null);
+      progressOwnerRef.current = null;
       pushSystem(errorMessage(error));
     },
   });
@@ -599,6 +609,7 @@ export function AcpPanel() {
       setSessionBanner(null);
       clearSavedSession();
       setConnectionState("connecting");
+      progressOwnerRef.current = claimProgressOwner("sys:switch-session");
 
       const profileState = useAcpProfilesStore.getState();
       const settings = clientSettingsFromStore(useAcpSettingsStore.getState());
@@ -627,11 +638,13 @@ export function AcpPanel() {
     onSuccess: async () => {
       setConnectionState("connected");
       setProgress(null);
+      progressOwnerRef.current = null;
       await queryClient.invalidateQueries({ queryKey: ["acp-status"] });
     },
     onError: (error) => {
       setConnectionState("error");
       setProgress(null);
+      progressOwnerRef.current = null;
       pushSystem(errorMessage(error));
     },
   });
@@ -896,10 +909,15 @@ export function AcpPanel() {
   ) => {
     switch (event.type) {
       case "started":
-        setProgress("会话已开始");
+        // 进度行只有归属者能写：迟到/串台的 started 不许覆盖新一轮的文案。
+        if (acceptsProgressEvent(progressOwnerRef.current, turnId)) {
+          setProgress("会话已开始");
+        }
         break;
       case "progress":
-        setProgress(event.message);
+        if (acceptsProgressEvent(progressOwnerRef.current, turnId)) {
+          setProgress(event.message);
+        }
         break;
       case "permissionRequest":
         setPendingPermission({
@@ -959,12 +977,17 @@ export function AcpPanel() {
         if (fetchProposal) {
           void tryLoadAnnotationProposal(turnId);
         }
-        if (event.type === "finished") {
-          setProgress(null);
-          void queryClient.invalidateQueries({ queryKey: ["acp-status"] });
-        }
-        if (event.type === "failed") {
-          setProgress(null);
+        if (event.type === "finished" || event.type === "failed") {
+          // 气泡更新上面已做；清行 + seal 只有归属者能做，且只做一次。
+          // 迟到的 finished 不许清掉新一轮的行，finished 之后的迟到
+          // progress 会被 seal 挡掉（“回答结束还在发送”的根因）。
+          if (acceptsProgressEvent(progressOwnerRef.current, turnId)) {
+            progressOwnerRef.current = sealProgressOwner(
+              progressOwnerRef.current,
+              turnId,
+            );
+            setProgress(null);
+          }
           void queryClient.invalidateQueries({ queryKey: ["acp-status"] });
         }
         break;
@@ -999,6 +1022,8 @@ export function AcpPanel() {
         ...(images.length > 0 ? { images: [...images] } : null),
         ...(taskId ? { shortcutTaskId: taskId } : null),
       };
+      // 本轮拥有进度行：此后的 started/progress/finished 才配写行清行。
+      progressOwnerRef.current = claimProgressOwner(turn.id);
       setTurns((prev) => [...prev, turn]);
 
       const profileState = useAcpProfilesStore.getState();
@@ -1059,6 +1084,7 @@ export function AcpPanel() {
       drainLockRef.current = false;
       setBusy(false);
       setProgress(null);
+      progressOwnerRef.current = null;
       void queryClient.invalidateQueries({ queryKey: ["acp-status"] });
       window.setTimeout(() => composerRef.current?.focusInput(), 0);
       window.setTimeout(() => composerRef.current?.focusInput(), 120);
@@ -1222,6 +1248,7 @@ export function AcpPanel() {
       setSessionBanner(null);
       setDraftEmpty();
       setProgress(null);
+      progressOwnerRef.current = null;
       setPendingPermission(null);
       syncPromptQueue([]);
       clearSavedSession();
@@ -1540,8 +1567,6 @@ export function AcpPanel() {
         </ChatColumn>
 
         <CompanionHeaderPanel
-          mode={companionMode}
-          onModeChange={setCompanionMode}
           onSelectTask={selectCompanionTask}
           onAssistantAction={onAssistantAction}
           quickActionsDisabled={
@@ -1562,39 +1587,25 @@ export function AcpPanel() {
             {sessionBanner}
           </p>
         ) : null}
-        {companionMode === "watch-feed" ? (
-          <div
-            id="companion-panel-watch-feed-chat"
-            role="region"
-            aria-label="观剧流对话"
-          >
-            <p className="px-1 pb-1 pt-2 text-[10px] font-medium text-muted-foreground">
-              当前会话
-            </p>
-            <ChatTurnList
-              turns={turns}
-              notices={notices}
-              followEnd={stickToEnd}
-              annotationWorkspace={sessionCwd}
-              onDismissAnnotation={handleDismissAnnotation}
-              onSaveAnnotation={handleSaveAnnotation}
-              onAssistantAction={onAssistantAction}
-              emptyHint="快捷操作的完整回答会显示在这里，也可以直接输入问题。"
-            />
-          </div>
-        ) : (
-          <div id="companion-panel-chat" role="tabpanel" aria-label="自由聊天">
-            <ChatTurnList
-              turns={turns}
-              notices={notices}
-              followEnd={stickToEnd}
-              annotationWorkspace={sessionCwd}
-              onDismissAnnotation={handleDismissAnnotation}
-              onSaveAnnotation={handleSaveAnnotation}
-              onAssistantAction={onAssistantAction}
-            />
-          </div>
-        )}
+        <div
+          id="companion-panel-watch-feed-chat"
+          role="region"
+          aria-label="观剧流对话"
+        >
+          <p className="px-1 pb-1 pt-2 text-[10px] font-medium text-muted-foreground">
+            当前会话
+          </p>
+          <ChatTurnList
+            turns={turns}
+            notices={notices}
+            followEnd={stickToEnd}
+            annotationWorkspace={sessionCwd}
+            onDismissAnnotation={handleDismissAnnotation}
+            onSaveAnnotation={handleSaveAnnotation}
+            onAssistantAction={onAssistantAction}
+            emptyHint="快捷操作的完整回答会显示在这里，也可以直接输入问题。"
+          />
+        </div>
       </div>
 
       {pendingPermission ? (

@@ -174,6 +174,150 @@ describe("ChatTurnView", () => {
     expect(screen.queryByText(/spoiler_boundary/)).not.toBeInTheDocument();
   });
 
+  it("renders the question contract as a structured document instead of a fallback", async () => {
+    render(
+      <ChatTurnView
+        turn={makeTurn({
+          id: "question-contract-1",
+          answer: JSON.stringify({
+            contract: "question_candidates.v1",
+            questions: [
+              "崔雄为什么拒绝开幕日安排？",
+              { prompt: "延秀的提议到底是什么？" },
+            ],
+          }),
+          status: "done",
+          showActivities: false,
+        })}
+      />,
+    );
+
+    expect(await screen.findByRole("heading", { name: "观众问题" })).toBeInTheDocument();
+    expect(screen.getByText("崔雄为什么拒绝开幕日安排？")).toBeInTheDocument();
+    expect(screen.getByText("延秀的提议到底是什么？")).toBeInTheDocument();
+    expect(screen.queryByText(/无法展示/)).not.toBeInTheDocument();
+  });
+
+  it("renders a version-drifted question contract instead of a fallback", async () => {    render(
+      <ChatTurnView
+        turn={makeTurn({
+          id: "question-contract-drift",
+          answer: JSON.stringify({
+            version: "question_candidates.v2",
+            questions: ["漂移版问题也能展示？"],
+          }),
+          status: "done",
+          showActivities: false,
+        })}
+      />,
+    );
+
+    expect(await screen.findByRole("heading", { name: "观众问题" })).toBeInTheDocument();
+    expect(screen.getByText("漂移版问题也能展示？")).toBeInTheDocument();
+    expect(screen.queryByText(/无法展示/)).not.toBeInTheDocument();
+  });
+
+  it.each([
+    {
+      task: "chapter_recap",
+      title: "本段总结",
+      answer: { version: "chapter_recap.v2", recap: "漂移版总结。", evidence: [] },
+      body: "漂移版总结。",
+    },
+    {
+      task: "chapter_outlook",
+      title: "后续看点",
+      answer: { version: "chapter_outlook.v2", items: ["漂移版看点。"] },
+      body: "漂移版看点。",
+    },
+    {
+      task: "plot_summary",
+      title: "剧情梳理",
+      answer: { version: "plot_summary.v2", summary: "漂移版梳理。", evidence: [] },
+      body: "漂移版梳理。",
+    },
+  ])(
+    "renders a drifted $task contract instead of swallowing it",
+    async ({ title, answer, body }) => {
+      render(
+        <ChatTurnView
+          turn={makeTurn({
+            id: `drift-${title}`,
+            answer: JSON.stringify(answer),
+            status: "done",
+            showActivities: false,
+          })}
+        />,
+      );
+
+      expect(await screen.findByRole("heading", { name: title })).toBeInTheDocument();
+      expect(screen.getByText(body)).toBeInTheDocument();
+      expect(screen.queryByText(/无法展示/)).not.toBeInTheDocument();
+    },
+  );
+
+  it("sends a structured ask chip with one click", async () => {
+    const onAssistantAction = vi.fn();
+    render(
+      <ChatTurnView
+        turn={makeTurn({
+          id: "ask-chip-1",
+          answer: JSON.stringify({
+            contract: "question_candidates.v1",
+            questions: ["第一问点即发？"],
+          }),
+          status: "done",
+          showActivities: false,
+        })}
+        onAssistantAction={onAssistantAction}
+      />,
+    );
+
+    const chip = await screen.findByRole("button", { name: "问：第一问点即发？" });
+    fireEvent.click(chip);
+    expect(onAssistantAction).toHaveBeenCalledWith({
+      type: "ask",
+      prompt: "第一问点即发？",
+    });
+  });
+
+  it("sends a question card through its ask option with one click", async () => {
+    const onAssistantAction = vi.fn();
+    render(
+      <ChatTurnView
+        turn={makeTurn({
+          id: "ask-card-1",
+          answer: JSON.stringify({
+            blocks: [
+              {
+                kind: "question-card",
+                id: "q-1",
+                question: "延秀的提议到底是什么？",
+                options: [
+                  {
+                    id: "q-1-ask",
+                    label: "直接问",
+                    action: { type: "ask", prompt: "延秀的提议到底是什么？" },
+                  },
+                ],
+              },
+            ],
+          }),
+          status: "done",
+          showActivities: false,
+        })}
+        onAssistantAction={onAssistantAction}
+      />,
+    );
+
+    const chip = await screen.findByRole("button", { name: "直接问" });
+    fireEvent.click(chip);
+    expect(onAssistantAction).toHaveBeenCalledWith({
+      type: "ask",
+      prompt: "延秀的提议到底是什么？",
+    });
+  });
+
   it("uses a readable fallback when a shortcut contract is malformed", async () => {
     render(
       <ChatTurnView

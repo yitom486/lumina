@@ -13,15 +13,6 @@ vi.mock("@/components/PanelErrorBoundary", () => ({
   ),
 }));
 
-vi.mock("@/layouts/WorkspacePanelFrame", () => ({
-  WorkspacePanelFrame: ({ children, actions }: { children: ReactNode; actions?: ReactNode }) => (
-    <section>
-      {actions}
-      {children}
-    </section>
-  ),
-}));
-
 vi.mock("./AcpPanel", () => ({
   AcpPanel: () => (
     <>
@@ -57,6 +48,16 @@ describe("ChatDock", () => {
     expect(
       screen.getByRole("textbox", { name: "AI 对话输入框", hidden: true }),
     ).toBeInTheDocument();
+  });
+
+  it("renders without a header bar and labels the dock region", () => {
+    useChatUiStore.setState({ chatMounted: true, chatOpen: true });
+    render(<ChatDock />);
+
+    const dock = screen.getByRole("complementary", { name: "AI 对话" });
+    expect(dock).toBeInTheDocument();
+    // 标题栏已端掉：没有多余的标题行，只剩内容。
+    expect(screen.queryByRole("button", { name: "收起对话" })).not.toBeInTheDocument();
   });
 
   it("hides the dock without unmounting its private UI state", () => {

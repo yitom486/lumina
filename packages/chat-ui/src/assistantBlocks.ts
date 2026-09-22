@@ -19,7 +19,8 @@ export type AssistantAction =
     }
   | {
       type: "ask";
-      anchor: AssistantAnchor;
+      /** 缺省表示“当前播放位置”：提问不一定有时间戳，落到执行时再取 live 位置。 */
+      anchor?: AssistantAnchor;
       prompt: string;
     };
 
@@ -422,16 +423,22 @@ function normalizeStructuredResult(
   ]);
   const sections = normalizeResultSections(input);
   const explicitActions = normalizeActionChips(input.actions, id);
+  // 显式 actions 优先；后端没给时派生：时间戳给跳转，问题给追问。
+  // 一点即问就靠这些 ask chips：无锚点，执行时取当前播放位置。
+  const derivedTexts = [
+    ...(summary ? [summary] : []),
+    ...sections.flatMap((section) => [...section.paragraphs, ...section.items]),
+  ];
   const actions =
     explicitActions.length > 0
       ? explicitActions
-      : collectSeekActionsFromTexts(
-          [
-            ...(summary ? [summary] : []),
-            ...sections.flatMap((section) => [...section.paragraphs, ...section.items]),
-          ],
-          id,
-        );
+      : [
+          ...collectSeekActionsFromTexts(derivedTexts, id),
+          ...collectAskActionsFromTexts(
+            normalizeResultTextArray(input.questions),
+            id,
+          ),
+        ].slice(0, MAX_ACTIONS);
 
   if (!summary && metadata.length === 0 && sections.length === 0) return null;
 
@@ -664,6 +671,31 @@ function collectSeekActionsFromTexts(
   return actions;
 }
 
+/**
+ * Derive one-click ask chips from question texts.
+ * No anchor: the handler falls back to the live playback position.
+ */
+function collectAskActionsFromTexts(
+  questions: readonly string[],
+  idPrefix: string,
+  maxItems = MAX_ACTIONS,
+): AssistantActionChip[] {
+  return questions
+    .slice(0, maxItems)
+    .flatMap((question, index): AssistantActionChip[] => {
+      const prompt = question.trim();
+      if (!prompt) return [];
+      const short = prompt.length > 14 ? `${prompt.slice(0, 14)}…` : prompt;
+      return [
+        {
+          id: `${idPrefix}-ask-${index}`,
+          label: `问：${short}`,
+          action: { type: "ask" as const, prompt },
+        },
+      ];
+    });
+}
+
 function seekTimestampToMs(timestamp: string): number | null {
   const parts = timestamp.split(":").map((part) => Number(part));
   if (parts.some((part) => !Number.isFinite(part) || part < 0)) return null;
@@ -683,19 +715,21 @@ function seekTimestampToMs(timestamp: string): number | null {
 function normalizeAction(input: unknown): AssistantAction | null {
   if (!isRecord(input)) return null;
   const type = readString(input.type) ?? readString(input.kind);
+  if (!type) return null;
   const anchor = normalizeAnchor(input.anchor, input);
-  if (!type || !anchor) return null;
 
   switch (type) {
     case "seek":
-      return hasStartMs(anchor) ? { type, anchor } : null;
+      return anchor && hasStartMs(anchor) ? { type, anchor } : null;
     case "save-note": {
+      if (!anchor) return null;
       const content = readText(input.content) ?? readText(input.text);
       return content ? { type, anchor, content } : null;
     }
     case "ask": {
       const prompt = readText(input.prompt) ?? readText(input.text);
-      return prompt ? { type, anchor, prompt } : null;
+      if (!prompt) return null;
+      return anchor ? { type, anchor, prompt } : { type, prompt };
     }
     default:
       return null;

@@ -108,29 +108,45 @@ describe("AcpPanel", () => {
     expect(notify).toHaveBeenCalledWith("已保存为笔记");
   });
 
-  it("safely rejects rich actions without media or a required anchor", async () => {
+  it("safely rejects rich actions without media", async () => {
     const notify = vi.fn();
-    const deps = {
-      mediaPath: null,
-      currentTimeMs: 0,
-      busy: false,
-      seek: vi.fn(async () => undefined),
-      askAbout: vi.fn(),
-      saveNote: vi.fn(async () => undefined),
-      notify,
-    };
-
     await handleAssistantAction(
       { type: "seek", anchor: { startMs: 42_000 } },
-      deps,
+      {
+        mediaPath: null,
+        currentTimeMs: 0,
+        busy: false,
+        seek: vi.fn(async () => undefined),
+        askAbout: vi.fn(),
+        saveNote: vi.fn(async () => undefined),
+        notify,
+      },
     );
     expect(notify).toHaveBeenCalledWith("请先打开视频");
+  });
 
+  it("falls back to the live position for anchorless ask actions", async () => {
+    const askAbout = vi.fn();
+    const deps = {
+      mediaPath: "D:\\show.mp4",
+      currentTimeMs: 12_000,
+      busy: false,
+      seek: vi.fn(async () => undefined),
+      askAbout,
+      saveNote: vi.fn(async () => undefined),
+      notify: vi.fn(),
+    };
+
+    // 章节锚点没有毫秒：取当前播放位置，和存批注同策略。
     await handleAssistantAction(
       { type: "ask", anchor: { chapterId: "ch-1" }, prompt: "解释" },
-      { ...deps, mediaPath: "D:\\show.mp4" },
+      deps,
     );
-    expect(notify).toHaveBeenCalledWith("该操作缺少时间锚点");
+    expect(askAbout).toHaveBeenCalledWith(12_000, "解释");
+
+    // 完全无锚点（如观众问题的一点即问）：同样取当前播放位置直接发送。
+    await handleAssistantAction({ type: "ask", prompt: "直接问" }, deps);
+    expect(askAbout).toHaveBeenCalledWith(12_000, "直接问");
   });
 
   it("mounts without throwing while status is loading", async () => {
@@ -202,15 +218,17 @@ describe("AcpPanel", () => {
     expect(depthErrors).toHaveLength(0);
   });
 
-  it("does not present the single chat dock as the planned two-tab experience", async () => {
+  it("renders a single merged companion surface without mode tabs", async () => {
     renderPanel();
     await waitFor(() => {
       expect(screen.getByRole("button", { name: "新建对话" })).toBeInTheDocument();
     });
 
-    expect(screen.queryByRole("tab", { name: "AI 观剧流" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("tab", { name: "自由聊天" })).not.toBeInTheDocument();
+    // 模式切换已合并：没有 tab，只有手风琴里的观剧流（默认展开）。
+    expect(screen.queryByRole("tablist")).not.toBeInTheDocument();
+    expect(screen.queryByRole("tab")).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("region", { name: "AI 观剧流" }),
+    ).toBeInTheDocument();
   });
 });
-
-it.todo("keeps AI watch-feed and free-chat drafts, activities, and errors isolated on tab switch");

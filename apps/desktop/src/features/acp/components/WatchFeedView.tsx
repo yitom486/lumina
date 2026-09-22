@@ -74,7 +74,7 @@ export function WatchFeedView({
 
   return (
     <ChatColumn className="space-y-2 py-2">
-      <div id="companion-panel-watch-feed" role="tabpanel" aria-label="AI 观剧流">
+      <div id="companion-panel-watch-feed" role="region" aria-label="AI 观剧流">
         <WatchFeedQueryStatus
           isLoading={watchFeedQuery.isLoading}
           isError={watchFeedQuery.isError}

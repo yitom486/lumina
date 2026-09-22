@@ -53,7 +53,18 @@ function expectedVersion(taskId: AcpTaskId): string {
 
 function findTaskByVersion(version: string): AcpTaskId | undefined {
   const ids = Object.keys(FALLBACK_VERSIONS) as AcpTaskId[];
-  return ids.find((taskId) => expectedVersion(taskId) === version);
+  const exact = ids.find((taskId) => expectedVersion(taskId) === version);
+  if (exact) return exact;
+  // 版本漂移（后端先发版或模型自带新戳）：同任务前缀即认身份，
+  // 渲染走通用解析保底，不整单吞掉。跨任务串味仍拒绝。
+  const familial = ids.find((taskId) => version.split(".")[0] === taskId);
+  if (familial) {
+    warnOnce(
+      `[acp] shortcut contract drift: stamped ${version}, registry expects ${expectedVersion(familial)}`,
+      `drift:${version}`,
+    );
+  }
+  return familial;
 }
 
 function isTaskId(value: string): value is AcpTaskId {
@@ -112,8 +123,17 @@ export function adaptShortcutOutput(
   // envelope. Let that envelope continue through parseAssistantBlocksText;
   // it is not one of the task contracts handled by this adapter.
   if (Array.isArray(value.blocks)) return null;
-  if (readContractVersion(value) !== expectedVersion(taskId)) {
-    return fallback(taskId);
+  const stamped = readContractVersion(value);
+  if (stamped !== expectedVersion(taskId)) {
+    // 同任务前缀的版本漂移（任一方向）：形态对就渲染，不整单吞掉；
+    // 跨任务串味（别家任务的 JSON 落到本任务槽位）仍拒绝，避免张冠李戴。
+    if (stamped === null || stamped.split(".")[0] !== taskId) {
+      return fallback(taskId);
+    }
+    warnOnce(
+      `[acp] shortcut contract drift for ${taskId}: stamped ${stamped}, expected ${expectedVersion(taskId)}`,
+      `drift:${taskId}:${stamped}`,
+    );
   }
 
   const candidates = contractCandidates(taskId, value);
@@ -126,6 +146,10 @@ export function adaptShortcutOutput(
  * Rebuild a rich-output identity from a completed persisted answer.
  * Unknown JSON deliberately becomes a business fallback instead of Markdown:
  * restoration must never expose an arbitrary object in a chat bubble.
+ *
+ * 版本注册表只决定“任务身份”，不决定“能不能渲染”：先看通用结构化解析
+ * 能不能产出安全块（allowlist 投影），能就直接展示。这样后端发版把契约
+ * 从 v1 升到 v2 时，旧前端不会满屏“无法展示”，而是降级为通用结构化文档。
  */
 export function normalizeRestoredShortcutOutput(
   answer: string,
@@ -142,18 +166,37 @@ export function normalizeRestoredShortcutOutput(
   if (!isRecord(value)) {
     return { answer: "该结构化结果暂时无法展示，请稍后重试。" };
   }
-  const version = readContractVersion(value);
   if (Array.isArray(value.blocks)) return { answer };
+  const parsed = parseAssistantBlocksText(answer);
+  const version = readContractVersion(value);
   const shortcutTaskId = version ? findTaskByVersion(version) : undefined;
-  if (!shortcutTaskId) {
-    return { answer: "该结构化结果暂时无法展示，请稍后重试。" };
-  }
-  if (!parseAssistantBlocksText(answer)?.blocks.length) {
+  if (parsed?.blocks.length) return { answer, shortcutTaskId };
+  if (shortcutTaskId) {
     return {
       answer: `${TASK_LABELS[shortcutTaskId]}结果暂时无法展示，请稍后重试。`,
     };
   }
-  return { answer, shortcutTaskId };
+  if (version !== null) logUnknownContractVersion(version);
+  return { answer: "该结构化结果暂时无法展示，请稍后重试。" };
+}
+
+function logUnknownContractVersion(version: string): void {
+  // 只记协议 token，不记用户内容：下次再出现“无法展示”，devtools 里
+  // 直接能看到是哪个版本号对不上。按版本去重，避免每次重渲染刷屏。
+  warnOnce(
+    `[acp] unrecognized shortcut contract version: ${version}`,
+    `unknown:${version}`,
+  );
+}
+
+const warnedKeys = new Set<string>();
+
+function warnOnce(message: string, key: string): void {
+  if (warnedKeys.has(key)) return;
+  warnedKeys.add(key);
+  if (typeof console !== "undefined") {
+    console.warn(message);
+  }
 }
 
 function contractCandidates(
@@ -318,7 +361,14 @@ function normalizeQuestions(
         kind: "question-card",
         id: `question-${index}`,
         question,
-        options: [],
+        // 一点即问：无锚点，执行时取当前播放位置。
+        options: [
+          {
+            id: `question-${index}-ask`,
+            label: "直接问",
+            action: { type: "ask", prompt: question },
+          },
+        ],
       },
     ];
   });

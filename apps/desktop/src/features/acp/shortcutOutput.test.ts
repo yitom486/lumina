@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   adaptShortcutOutput,
@@ -96,7 +96,7 @@ describe("adaptShortcutOutput", () => {
     expect(
       adaptShortcutOutput(
         "plot_summary",
-        JSON.stringify({ version: "plot_summary.v9", summary: "不应显示" }),
+        JSON.stringify({ version: "chapter_recap.v1", recap: "不应显示" }),
       )?.fallbackText,
     ).toBe("剧情梳理结果暂时无法展示，请稍后重试。");
   });
@@ -122,16 +122,137 @@ describe("adaptShortcutOutput", () => {
     });
   });
 
+  it("renders version-drifted but well-formed contracts instead of a generic fallback", () => {
+    const drifted = JSON.stringify({
+      version: "question_candidates.v2",
+      questions: ["第一问？", { question: "第二问？", rationale: "依据" }],
+    });
+    const restored = normalizeRestoredShortcutOutput(drifted);
+    // 版本不在注册表里，但同任务前缀认得出身份、形态完好：原样展示，不吞成“无法展示”。
+    expect(restored.answer).toBe(drifted);
+    expect(restored.shortcutTaskId).toBe("question_candidates");
+  });
+
+  it("renders the current question contract as a structured document", () => {
+    const current = JSON.stringify({
+      contract: "question_candidates.v1",
+      questions: [{ prompt: "崔雄为什么拒绝？", reason: "动机" }],
+    });
+    const restored = normalizeRestoredShortcutOutput(current);
+    expect(restored.answer).toBe(current);
+    expect(restored.shortcutTaskId).toBe("question_candidates");
+  });
+
+  it("gives every question a one-click ask option", () => {
+    const result = adaptShortcutOutput(
+      "question_candidates",
+      JSON.stringify({
+        version: "question_candidates.v1",
+        questions: ["第一问？", { question: "第二问？" }],
+      }),
+    );
+
+    expect(result?.blocks).toEqual([
+      expect.objectContaining({
+        kind: "question-card",
+        question: "第一问？",
+        options: [
+          expect.objectContaining({
+            label: "直接问",
+            action: { type: "ask", prompt: "第一问？" },
+          }),
+        ],
+      }),
+      expect.objectContaining({
+        kind: "question-card",
+        question: "第二问？",
+      }),
+    ]);
+    // 第二张卡同样一点即问。
+    const second = result?.blocks[1];
+    expect(second).toMatchObject({
+      kind: "question-card",
+      options: [{ action: { type: "ask", prompt: "第二问？" } }],
+    });
+  });
+
+  it("keeps the generic fallback (and logs the version) for unrenderable JSON", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      // 形似但非法的 JSON（尾逗号，模型常见毛病）：解析失败，只能给通用 fallback。
+      expect(
+        normalizeRestoredShortcutOutput(
+          '{"version":"question_candidates.v1","questions":["第一问？"],}',
+        ).answer,
+      ).toBe("该结构化结果暂时无法展示，请稍后重试。");
+      // 同任务漂移但无可渲染内容：任务级 fallback（比通用句更具体）+ 记版本号方便排查。
+      expect(
+        normalizeRestoredShortcutOutput('{"version":"question_candidates.v9"}')
+          .answer,
+      ).toBe("观众问题结果暂时无法展示，请稍后重试。");
+      expect(warn).toHaveBeenCalledWith(
+        expect.stringContaining("question_candidates.v9"),
+      );
+      // 前缀都认不出的版本：通用 fallback。
+      expect(
+        normalizeRestoredShortcutOutput('{"version":"mystery_task.v3"}')
+          .answer,
+      ).toBe("该结构化结果暂时无法展示，请稍后重试。");
+      // 非对象 JSON（裸数组）：同样不暴露。
+      expect(normalizeRestoredShortcutOutput('["第一问？"]').answer).toBe(
+        "该结构化结果暂时无法展示，请稍后重试。",
+      );
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it("still rejects cross-task content instead of mislabeling it", () => {
+    // 别家任务的 JSON 落到本任务槽位：前缀对不上，宁可 fallback 也不张冠李戴。
+    expect(
+      adaptShortcutOutput(
+        "plot_summary",
+        JSON.stringify({ version: "chapter_recap.v1", recap: "串味的内容" }),
+      )?.fallbackText,
+    ).toBe("剧情梳理结果暂时无法展示，请稍后重试。");
+  });
+
+  it("identifies drifted same-task versions on restore and warns once", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const drifted = normalizeRestoredShortcutOutput(
+        JSON.stringify({ version: "plot_summary.v9", summary: "新版内容" }),
+      );
+      expect(drifted.shortcutTaskId).toBe("plot_summary");
+      // 同任务无内容：任务级 fallback（不再是通用句），且记一次漂移。
+      expect(
+        normalizeRestoredShortcutOutput('{"version":"plot_summary.v9"}')
+          .answer,
+      ).toBe("剧情梳理结果暂时无法展示，请稍后重试。");
+      normalizeRestoredShortcutOutput('{"version":"plot_summary.v9"}');
+      expect(
+        warn.mock.calls.filter(([message]) =>
+          String(message).includes("plot_summary.v9"),
+        ),
+      ).toHaveLength(1);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
   it("binds backend contract versions instead of a second hardcoded copy", () => {
     setTaskContractVersions([
       { taskId: "plot_summary", outputContractVersion: "plot_summary.v2" },
     ]);
-    expect(
-      adaptShortcutOutput(
-        "plot_summary",
-        JSON.stringify({ version: "plot_summary.v1", summary: "旧版本" }),
-      )?.fallbackText,
-    ).toBe("剧情梳理结果暂时无法展示，请稍后重试。");
+    // 注册表漂移到 v2，盖 v1 戳的内容照样渲染（向后兼容），不再整单吞掉。
+    const drifted = adaptShortcutOutput(
+      "plot_summary",
+      JSON.stringify({ version: "plot_summary.v1", summary: "旧版本" }),
+    );
+    expect(drifted?.blocks[0]).toMatchObject({
+      kind: "watch-feed-card",
+      title: "剧情梳理",
+    });
     const fresh = adaptShortcutOutput(
       "plot_summary",
       JSON.stringify({

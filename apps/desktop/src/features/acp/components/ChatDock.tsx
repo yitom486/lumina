@@ -1,8 +1,6 @@
 import { useEffect } from "react";
-import { Sparkles } from "lucide-react";
 
 import { PanelErrorBoundary } from "@/components/PanelErrorBoundary";
-import { WorkspacePanelFrame } from "@/layouts/WorkspacePanelFrame";
 import { cn } from "@lumina/ui/utils";
 
 import { useChatUiStore } from "@lumina/chat-ui/chatUiStore";
@@ -13,13 +11,15 @@ import { AcpPanel } from "./AcpPanel";
  * column instead of visually floating over video pixels. It stays mounted
  * when hidden so an active ACP session survives close/reopen.
  *
- * 收起只有两个入口：左侧导航栏的 AI 对话开关和 Esc。标题栏不放 X，
- * 避免和导航栏重复。
+ * 无标题栏：标题栏只剩静态“AI 对话”四个字（X 已删），纯占高。
+ * 收起走左侧导航栏的 AI 对话开关和 Esc；读屏用 aside 的 label。
+ * 宽度由 App 行里的 RightPanelResizeHandle 统一调节（与章节等侧栏共用）。
  */
 export function ChatDock() {
   const chatMounted = useChatUiStore((s) => s.chatMounted);
   const chatOpen = useChatUiStore((s) => s.chatOpen);
   const closeChat = useChatUiStore((s) => s.closeChat);
+  const dockWidth = useChatUiStore((s) => s.dockWidth);
 
   useEffect(() => {
     if (!chatOpen) return;
@@ -35,28 +35,22 @@ export function ChatDock() {
   return (
     <aside
       aria-hidden={!chatOpen}
+      aria-label="AI 对话"
       inert={!chatOpen}
       className={cn(
-        "relative z-10 flex min-h-0 shrink-0 flex-col overflow-hidden",
+        "relative z-10 flex min-h-0 shrink-0 flex-col overflow-hidden border-l border-border bg-card",
         "transition-[width,border-color] duration-200 ease-out",
-        chatOpen
-          ? "w-[min(100vw,380px)] border-l border-border"
-          : "w-0 pointer-events-none border-l-0",
+        chatOpen ? "max-w-[100vw]" : "w-0 pointer-events-none border-l-0",
       )}
+      style={chatOpen ? { width: dockWidth } : undefined}
     >
-      <WorkspacePanelFrame
-        title="AI 对话"
-        icon={<Sparkles className="size-3.5" />}
-        className="h-full w-[min(100vw,380px)] border-l-0"
+      <PanelErrorBoundary
+        scope="chat-dock"
+        panelLabel="对话"
+        className="flex min-h-0 w-full flex-1 flex-col overflow-hidden"
       >
-        <PanelErrorBoundary
-          scope="chat-dock"
-          panelLabel="对话"
-          className="flex min-h-0 flex-1 flex-col overflow-hidden"
-        >
-          <AcpPanel />
-        </PanelErrorBoundary>
-      </WorkspacePanelFrame>
+        <AcpPanel />
+      </PanelErrorBoundary>
     </aside>
   );
 }

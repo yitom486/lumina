@@ -12,10 +12,13 @@
  *      │   ├─ SettingsWorkspaceFrame ← Settings replaces the player workspace when non-fullscreen
  *      │   ├─ aside (sidebar)   ← playlist / transcript / notes / chapters / library
  *      │   └─ ChatDock           ← layout sibling; never overlays the HWND
- *
- * Never put upward-opening menus or center dialogs on PlayerBar — HWND always
- * paints above WebView. Online resource settings live under Settings.
- */
++ *      │   (sidebar 与 ChatDock 互斥出现，共用 RightPanelResizeHandle 调整宽度；
++ *      │    宽度变化只引起 flex 重排，VideoSurface 的 ResizeObserver 会重新上报
++ *      │    bounds，libmpv HWND 自动跟随，无需 Rust 侧改动)
+  *
+  * Never put upward-opening menus or center dialogs on PlayerBar — HWND always
+  * paints above WebView. Online resource settings live under Settings.
+  */
 
 import { useEffect, useState } from "react";
 
@@ -29,6 +32,7 @@ import {
 } from "@/layouts/SettingsWorkspaceFrame";
 import { ChatDock } from "@/features/acp/components/ChatDock";
 import { useChatUiStore } from "@lumina/chat-ui/chatUiStore";
+import { RightPanelResizeHandle } from "@/layouts/RightPanelResizeHandle";
 import { ChaptersPanel, useChapterProgressEvents } from "@/features/chapters";
 import { MediaInfoPanel } from "@/features/media";
 import { MediaLibraryPanel, useLibraryPlaybackRootSync } from "@/features/library";
@@ -140,6 +144,7 @@ export default function App() {
   const setSidebarTab = useUiStore((s) => s.setSidebarTab);
   const chatOpen = useChatUiStore((s) => s.chatOpen);
   const closeChat = useChatUiStore((s) => s.closeChat);
+  const dockWidth = useChatUiStore((s) => s.dockWidth);
   const [settingsCategory, setSettingsCategory] =
     useState<SettingsCategoryId>("playback");
   const settingsWorkspace = isSettingsWorkspace(fullscreen, sidebarTab);
@@ -200,12 +205,17 @@ export default function App() {
               />
             ) : null}
 
+            {!fullscreen && !settingsWorkspace ? (
+              <RightPanelResizeHandle />
+            ) : null}
+
             {!fullscreen && !chatOpen && !settingsWorkspace ? (
               <WorkspacePanelFrame
                 title={activeTab?.label ?? "工作区"}
                 subtitle="与播放器并行的阅读面板"
                 icon={ActiveTabIcon ? <ActiveTabIcon className="size-3.5" /> : null}
-                className="w-[min(100vw,380px)]"
+                className="max-w-[100vw] shrink-0"
+                style={{ width: dockWidth }}
               >
                 <PanelErrorBoundary
                   scope={`sidebar:${sidebarTab}`}

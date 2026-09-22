@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import type { CSSProperties, ReactNode } from "react";
 
 import { cn } from "@lumina/ui/utils";
 
@@ -10,6 +10,7 @@ type WorkspacePanelFrameProps = {
   children: ReactNode;
   className?: string;
   contentClassName?: string;
+  style?: CSSProperties;
 };
 
 /** Shared right-side workspace shell for ordinary panels and the AI dock. */
@@ -21,10 +22,12 @@ export function WorkspacePanelFrame({
   children,
   className,
   contentClassName,
+  style,
 }: WorkspacePanelFrameProps) {
   return (
     <section
       aria-label={title}
+      style={style}
       className={cn(
         "relative z-10 flex min-h-0 min-w-0 flex-col overflow-hidden border-l border-border bg-card",
         className,

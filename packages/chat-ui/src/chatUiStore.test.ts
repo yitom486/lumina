@@ -1,6 +1,11 @@
 import { beforeEach, describe, expect, it } from "vitest";
 
-import { useChatUiStore } from "./chatUiStore";
+import {
+  DEFAULT_DOCK_WIDTH,
+  MAX_DOCK_WIDTH,
+  MIN_DOCK_WIDTH,
+  useChatUiStore,
+} from "./chatUiStore";
 
 beforeEach(() => {
   useChatUiStore.setState({
@@ -8,6 +13,7 @@ beforeEach(() => {
     chatMounted: false,
     chatOpen: false,
     acpResponding: false,
+    dockWidth: DEFAULT_DOCK_WIDTH,
   });
 });
 
@@ -32,5 +38,17 @@ describe("useChatUiStore chat lifecycle", () => {
     useChatUiStore.getState().toggleChat();
     expect(useChatUiStore.getState().chatOpen).toBe(false);
     expect(useChatUiStore.getState().chatMounted).toBe(true);
+  });
+
+  it("clamps the shared right panel width to usable bounds", () => {
+    expect(useChatUiStore.getState().dockWidth).toBe(DEFAULT_DOCK_WIDTH);
+    useChatUiStore.getState().setDockWidth(480);
+    expect(useChatUiStore.getState().dockWidth).toBe(480);
+    useChatUiStore.getState().setDockWidth(10_000);
+    expect(useChatUiStore.getState().dockWidth).toBe(MAX_DOCK_WIDTH);
+    useChatUiStore.getState().setDockWidth(-5);
+    expect(useChatUiStore.getState().dockWidth).toBe(MIN_DOCK_WIDTH);
+    useChatUiStore.getState().setDockWidth(Number.NaN);
+    expect(useChatUiStore.getState().dockWidth).toBe(DEFAULT_DOCK_WIDTH);
   });
 });

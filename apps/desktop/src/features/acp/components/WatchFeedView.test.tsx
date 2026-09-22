@@ -69,7 +69,7 @@ describe("WatchFeedView", () => {
     renderFeed({ onSelectTask: vi.fn() });
 
     expect(screen.getByText("AI 观剧流已就绪")).toBeInTheDocument();
-    expect(screen.getByRole("tabpanel", { name: "AI 观剧流" })).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "AI 观剧流" })).toBeInTheDocument();
   });
 
   it("shows watch-feed shortcuts and emits a stable task id", async () => {
