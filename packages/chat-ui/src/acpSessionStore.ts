@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import { persist } from "zustand/middleware";
 
 import type { SavedSessionHint } from "./types";
 
@@ -9,11 +10,20 @@ type AcpSessionStore = {
 };
 
 /**
- * 当前连接的原生会话 id。纯内存，不落盘：历史真相在 Agent 侧
- * `session/list`，重启后由用户从历史列表选择，不再静默恢复旧线程。
+ * 当前连接的原生会话 id。落盘持久化：重启后 connect 拿它当 resume hint
+ * 传给后端（真续聊第 2 层）；作用域校验（profile+cwd）在调用方做，
+ * 对不上就当没有、不静默续别人的线程。
  */
-export const useAcpSessionStore = create<AcpSessionStore>()((set) => ({
-  savedSession: null,
-  setSavedSession: (savedSession) => set({ savedSession }),
-  clearSavedSession: () => set({ savedSession: null }),
-}));
+export const useAcpSessionStore = create<AcpSessionStore>()(
+  persist(
+    (set) => ({
+      savedSession: null,
+      setSavedSession: (savedSession) => set({ savedSession }),
+      clearSavedSession: () => set({ savedSession: null }),
+    }),
+    {
+      name: "lumina-acp-session",
+      partialize: (state) => ({ savedSession: state.savedSession }),
+    },
+  ),
+);

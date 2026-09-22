@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import type { ReactNode } from "react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -64,12 +64,17 @@ describe("ChatDock", () => {
     render(<ChatDock />);
 
     const input = screen.getByRole("textbox", { name: "AI 对话输入框" });
-    fireEvent.click(screen.getByRole("button", { name: "收起对话" }));
+    // 标题栏已无 X：收起只走导航栏开关/Esc（同一 closeChat 动作）。
+    act(() => {
+      useChatUiStore.getState().closeChat();
+    });
 
     const dock = screen.getByRole("complementary", { hidden: true });
     expect(dock).toHaveAttribute("aria-hidden", "true");
     expect(dock).toHaveClass("w-0", "pointer-events-none");
-    expect(screen.queryByRole("button", { name: "收起对话" })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "收起对话" }),
+    ).not.toBeInTheDocument();
     expect(input).toBeInTheDocument();
   });
 
@@ -94,7 +99,9 @@ describe("ChatDock", () => {
     await waitFor(() => {
       expect(dock).toHaveAttribute("aria-hidden", "false");
       expect(dock).not.toHaveAttribute("inert");
-      expect(screen.getByRole("button", { name: "收起对话" })).toBeEnabled();
+      expect(
+        screen.getByRole("button", { name: "内部控件" }),
+      ).toBeEnabled();
     });
   });
 

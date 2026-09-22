@@ -12,7 +12,8 @@ import {
 import type { CompanionTaskId } from "./CompanionQuickActions";
 import { WatchFeedView } from "./WatchFeedView";
 
-const STORAGE_KEY = "lumina-companion-header-expanded";
+// v2：上一版默认收起阶段可能已写入 "0"，换 key 让“默认展开”对老用户也生效。
+const STORAGE_KEY = "lumina-companion-header-expanded-v2";
 
 function readInitialExpanded(): boolean {
   try {

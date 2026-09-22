@@ -81,6 +81,12 @@ import type { AssistantAction } from "@lumina/chat-ui/assistantBlocks";
 import { buildAnchoredVideoPromptContext } from "../context";
 import { mapLoadedTranscript } from "../conversationTranscript";
 import { workspaceCwdFromMedia } from "@lumina/player-ui/cwd";
+import {
+  flushChatRestore,
+  isRestorable,
+  readChatRestore,
+  schedulePersistChatRestore,
+} from "../chatRestore";
 import { profilesSignature } from "@lumina/chat-ui/profilesSignature";
 import {
   bargeInPrompt,
@@ -214,10 +220,23 @@ export function AcpPanel() {
   const listKey = useId();
   const turnListRef = useRef<HTMLDivElement | null>(null);
   const composerRef = useRef<ChatComposerBarHandle | null>(null);
-  const [draft, setDraft] = useState("");
+  // 秒开恢复（第 1 层）：首渲染直接摆上次退出的 turns + 草稿，零网络、
+  // 无 effect 闪帧。只认同 profile 的快照；对账信息进 restoreRef，
+  // 由 sessionSaved 与 resume 尝试做一次新旧会话对账（第 2 层）。
+  const [initialRestore] = useState(() => {
+    const snapshot = readChatRestore();
+    if (
+      !snapshot ||
+      snapshot.profileId !== useAcpProfilesStore.getState().activeProfileId
+    ) {
+      return null;
+    }
+    return snapshot;
+  });
+  const [draft, setDraft] = useState(initialRestore?.draft ?? "");
   // 粘贴图片附件：随下一条发送（或排队），发送/建新/切换即清空，不落盘。
   const [attachments, setAttachments] = useState<ChatImageAttachment[]>([]);
-  const [turns, setTurns] = useState<ChatTurn[]>([]);
+  const [turns, setTurns] = useState<ChatTurn[]>(() => initialRestore?.turns ?? []);
   const [notices, setNotices] = useState<SystemNotice[]>([]);
   const [busy, setBusy] = useState(false);
   const busyRef = useRef(false);
@@ -255,23 +274,49 @@ export function AcpPanel() {
   const turnsRef = useRef<ChatTurn[]>([]);
   turnsRef.current = turns;
 
-  // 空白框永不静默恢复：启动不清 hint，第一问就会把看不见的旧线程接进来。
-  // 显式恢复只走历史列表打开路径。同时清掉已下线的本地账本残留
-  // （旧版本把对话存档/session hint 落在 localStorage）。
+  // 秒开恢复（第 1 层：本地渲染缓存）：挂载瞬间先摆上次退出的 turns +
+  // 草稿，零网络。只认同 profile 的快照；旧版本账本残留照旧清理，
+  // 当前版本的快照与 session hint 保留，由 connect 按 resume 对账（第 2 层）。
+  // restoreRef 做一次对账：尝试恢复的正是摆出来的那个旧会话、且用户还没
+  // 说过话，后端却落了另一个新会话 → 清掉缓存，不把旧线程盖在新会话上。
+  const restoreRef = useRef<{
+    sessionId: string | null;
+    turnCount: number;
+  } | null>(
+    initialRestore
+      ? {
+          sessionId:
+            useAcpSessionStore.getState().savedSession?.sessionId ?? null,
+          turnCount: initialRestore.turns.length,
+        }
+      : null,
+  );
+  const resumeAttemptedRef = useRef<SavedSessionHint | null>(null);
   useEffect(() => {
-    clearSavedSession();
     try {
       window.localStorage.removeItem("lumina-acp-chat-history");
       window.localStorage.removeItem("lumina-acp-session");
     } catch {
       // 私有模式等极端环境：清不掉也不影响，内存态本来就是空的。
     }
-  }, [clearSavedSession]);
+  }, []);
 
   const available = statusQuery.data?.available ?? false;
   const sessionActive = statusQuery.data?.sessionActive ?? false;
   const sessionCwd = workspaceCwdFromMedia(currentFile);
-  const connectKey = `${activeProfileId}:${profilesSig}:${sessionCwd ?? ""}`;
+
+  // turns + 草稿节流落盘（trailing 1.5s）：打字停一下就写，无可存内容
+  // （新建对话清空后）则清快照，避免僵尸恢复。卸载时 flush。
+  useEffect(() => {
+    const input = {
+      profileId: activeProfileId,
+      cwd: sessionCwd ?? null,
+      draft,
+      turns,
+    };
+    schedulePersistChatRestore(isRestorable(input) ? input : null);
+  }, [turns, draft, activeProfileId, sessionCwd]);
+  useEffect(() => () => flushChatRestore(), []);  const connectKey = `${activeProfileId}:${profilesSig}:${sessionCwd ?? ""}`;
 
   // 换 Agent = 换世界。面板私有对话态（turns/notices/标题覆盖）在**渲染期
   // 同步**重置（React "adjust state during render" 模式，无 effect 时序、
@@ -286,6 +331,12 @@ export function AcpPanel() {
   }
   const lastResetProfileRef = useRef<string | null>(null);
   useEffect(() => {
+    if (lastResetProfileRef.current === null) {
+      // 首挂载：继承落盘的 session hint（重启自动 resume 用），不清。
+      // 只有运行中切换画像才算“换世界”。
+      lastResetProfileRef.current = activeProfileId;
+      return;
+    }
     if (lastResetProfileRef.current === activeProfileId) return;
     lastResetProfileRef.current = activeProfileId;
     clearSavedSession();
@@ -432,6 +483,22 @@ export function AcpPanel() {
       outcome: event.resume ?? "fresh",
       sessionId: event.sessionId,
     });
+    const restore = restoreRef.current;
+    restoreRef.current = null;
+    const attempted = resumeAttemptedRef.current;
+    resumeAttemptedRef.current = null;
+    if (
+      restore?.sessionId &&
+      attempted?.sessionId === restore.sessionId &&
+      event.sessionId !== restore.sessionId &&
+      turnsRef.current.length === restore.turnCount
+    ) {
+      // 旧会话不在了（后端给了新 id），且用户还没说过话：清掉秒开摆出来的
+      // 旧 turns，新会话配空白框。用户已开聊则不动（那是现线程的内容）。
+      setTurns([]);
+      setNotices([]);
+      setDraftEmpty();
+    }
     setSavedSession({
       sessionId: event.sessionId,
       profileId: event.profileId,
@@ -684,6 +751,9 @@ export function AcpPanel() {
     const profileState = useAcpProfilesStore.getState();
     const settings = clientSettingsFromStore(useAcpSettingsStore.getState());
     const session = useAcpSessionStore.getState();
+    // 记下这次 connect 带没带 resume hint：sessionSaved 落定时，只对
+    // “摆了缓存且确实尝试恢复同一会话”做一次新旧对账。
+    resumeAttemptedRef.current = session.savedSession;
 
     void acpConnect(
       (event: AcpEvent) => {

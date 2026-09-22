@@ -61,14 +61,14 @@ describe("CompanionHeaderPanel", () => {
     expect(screen.queryByRole("tablist")).not.toBeInTheDocument();
     expect(screen.queryByRole("group", { name: "快捷 AI 操作" })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "展开观剧助手" })).toBeInTheDocument();
-    expect(localStorage.getItem("lumina-companion-header-expanded")).toBe("0");
+    expect(localStorage.getItem("lumina-companion-header-expanded-v2")).toBe("0");
 
     fireEvent.click(screen.getByRole("button", { name: "展开观剧助手" }));
     expect(screen.getByRole("tablist", { name: "AI 工作区" })).toBeInTheDocument();
     expect(
       screen.getByRole("group", { name: "快捷 AI 操作" }),
     ).toBeInTheDocument();
-    expect(localStorage.getItem("lumina-companion-header-expanded")).toBe("1");
+    expect(localStorage.getItem("lumina-companion-header-expanded-v2")).toBe("1");
   });
 
   it("面板在滚动流之外：聊天滚动区内没有模式与快捷操作", () => {

@@ -60,6 +60,7 @@ beforeEach(() => {
     currentFile: null,
     status: "Idle",
   });
+  useAcpSessionStore.setState({ savedSession: null });
 });
 
 afterEach(() => {
@@ -152,15 +153,18 @@ describe("AcpPanel", () => {
     expect(connectCalls).toHaveLength(0);
   });
 
-  it("clears any persisted resume hint on mount so a blank chat never silently resumes", async () => {
+  it("keeps the persisted resume hint on mount so restart can auto-resume", async () => {
     useAcpSessionStore.getState().setSavedSession({
-      sessionId: "stale-thread",
+      sessionId: "last-thread",
       profileId: "codex",
       cwd: "D:\\movie",
     });
     renderPanel();
     await waitFor(() => {
-      expect(useAcpSessionStore.getState().savedSession).toBeNull();
+      expect(screen.getByRole("button", { name: "新建对话" })).toBeInTheDocument();
+    });
+    expect(useAcpSessionStore.getState().savedSession).toMatchObject({
+      sessionId: "last-thread",
     });
   });
 
