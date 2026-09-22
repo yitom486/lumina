@@ -1,9 +1,17 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { usePlayerStore } from "@/features/player";
+import { useAcpProfilesStore } from "@lumina/chat-ui/acpProfilesStore";
 import { useAcpSessionStore } from "@lumina/chat-ui/acpSessionStore";
+import { useAcpSettingsStore } from "@lumina/chat-ui/acpSettingsStore";
 
 import { AcpPanel, handleAssistantAction } from "./AcpPanel";
 
@@ -232,5 +240,57 @@ describe("AcpPanel", () => {
     expect(
       screen.getByRole("region", { name: "AI 观剧流" }),
     ).toBeInTheDocument();
+  });
+
+  it("switches agents from the header without losing either side", async () => {
+    vi.mocked(invoke).mockImplementation((cmd: string) => {
+      if (cmd === "acp_status") {
+        return Promise.resolve({
+          ...mockStatus,
+          available: true,
+          activeProfileId: useAcpProfilesStore.getState().activeProfileId,
+          profiles: [
+            { ...mockStatus.profiles[0], available: true },
+            {
+              id: "cursor",
+              name: "Cursor CLI",
+              kind: "Cursor" as const,
+              command: "agent.cmd",
+              args: ["acp"],
+              env: {},
+              available: true,
+              resolvedCommand: "agent.cmd",
+            },
+          ],
+          message: "ok",
+        });
+      }
+      return Promise.resolve(null);
+    });
+    useAcpProfilesStore.setState({ activeProfileId: "codex" });
+    useAcpSettingsStore.getState().patchSettings({ modelId: "gpt-5.6-luna" });
+    renderPanel();
+
+    const switcher = await screen.findByLabelText("切换 Agent");
+    expect(switcher).toHaveDisplayValue("✓ Codex（默认）");
+    fireEvent.change(switcher, { target: { value: "cursor" } });
+
+    // 画像切过去 + 模型选择清掉（codex 的模型不漏进 cursor）。
+    await waitFor(() => {
+      expect(useAcpProfilesStore.getState().activeProfileId).toBe("cursor");
+    });
+    expect(useAcpSettingsStore.getState().modelId).toBe("");
+    // 新画像发起自己的 connect（自家 hint，各家记忆见 session 隔离）。
+    await waitFor(() => {
+      const connects = vi
+        .mocked(invoke)
+        .mock.calls.filter(([cmd]) => cmd === "acp_connect");
+      expect(
+        connects.some(
+          ([, args]) =>
+            (args as { profileId?: string })?.profileId === "cursor",
+        ),
+      ).toBe(true);
+    });
   });
 });

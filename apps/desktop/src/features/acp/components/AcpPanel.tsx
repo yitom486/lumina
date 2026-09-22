@@ -686,6 +686,18 @@ export function AcpPanel() {
     creatingSession: newChatMutation.isPending || switchingSession,
   });
 
+  // 表头一键换 Agent：与“Agent 设置”里的下拉同规则——画像归属各家，
+  // 切换即清模型选择（codex 的模型绝不漏进 cursor），各家会话记忆
+  // 按 profile 分键保留，切回即 resume（见 session 隔离）。
+  const handleSwitchProfile = (id: string) => {
+    if (id === activeProfileId || composerBusy) return;
+    useAcpProfilesStore.getState().setActiveProfileId(id);
+    useAcpSettingsStore
+      .getState()
+      .patchSettings({ modelId: "", reasoningEffort: "" });
+    void queryClient.invalidateQueries({ queryKey: ["acp-status"] });
+  };
+
   const {
     snapshot: agentSessionList,
     isError: sessionListFailed,
@@ -1566,6 +1578,9 @@ export function AcpPanel() {
             agentLabel={agentLabel}
             chatTitle={chatTitle}
             connectionState={connectionState}
+            profiles={statusQuery.data?.profiles}
+            activeProfileId={activeProfileId}
+            onSwitchProfile={handleSwitchProfile}
             statusLine={statusLine}
             statusError={
               statusQuery.isError ? errorMessage(statusQuery.error) : null

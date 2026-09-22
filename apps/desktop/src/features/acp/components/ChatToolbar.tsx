@@ -19,6 +19,11 @@ type Props = {
   historyCount?: number;
   quickNoteDisabled?: boolean;
   quickNoteOpen?: boolean;
+  /** 多 Agent 一键切换：有且仅当 profiles > 1 且给了 onSwitchProfile 才渲染下拉。 */
+  profiles?: { id: string; name: string; available: boolean }[];
+  activeProfileId?: string;
+  switchDisabled?: boolean;
+  onSwitchProfile?: (id: string) => void;
   onQuickNoteOpenChange?: (open: boolean) => void;
   onQuickNoteSaved?: () => void;
   onNewChat: () => void;
@@ -46,6 +51,10 @@ export function ChatToolbar({
   historyCount = 0,
   quickNoteDisabled,
   quickNoteOpen = false,
+  profiles,
+  activeProfileId,
+  switchDisabled,
+  onSwitchProfile,
   onQuickNoteOpenChange,
   onQuickNoteSaved,
   onNewChat,
@@ -53,6 +62,8 @@ export function ChatToolbar({
   onReconnect,
 }: Props) {
   const quickNoteAnchorRef = useRef<HTMLDivElement>(null);
+  const canSwitchAgent =
+    onSwitchProfile && (profiles?.length ?? 0) > 1 && activeProfileId;
 
   return (
     <ChatColumn className="shrink-0 space-y-1 border-b border-border py-2">
@@ -60,9 +71,30 @@ export function ChatToolbar({
       <div className="flex items-start gap-2">
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
-            <span className="text-[12px] font-medium text-foreground">
-              {agentLabel}
-            </span>
+            {canSwitchAgent ? (
+              <select
+                className="h-6 max-w-[11rem] cursor-pointer truncate rounded-md border border-transparent bg-transparent text-[12px] font-medium text-foreground outline-none hover:border-border focus-visible:border-border disabled:cursor-default disabled:opacity-60"
+                value={activeProfileId}
+                disabled={busy || switchDisabled}
+                aria-label="切换 Agent"
+                title="切换 Agent（各家会话记忆独立保留）"
+                onChange={(e) => {
+                  if (e.target.value !== activeProfileId) {
+                    onSwitchProfile(e.target.value);
+                  }
+                }}
+              >
+                {profiles?.map((profile) => (
+                  <option key={profile.id} value={profile.id}>
+                    {profile.available ? "✓ " : "× "}{profile.name}
+                  </option>
+                ))}
+              </select>
+            ) : (
+              <span className="text-[12px] font-medium text-foreground">
+                {agentLabel}
+              </span>
+            )}
             <span
               className={cn(
                 "inline-flex min-w-0 items-center gap-1 rounded-full px-2 py-0.5 text-[10px]",
