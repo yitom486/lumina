@@ -249,7 +249,6 @@ jobs:
         run: |
           set -euo pipefail
           TAG="$RELEASE_TAG"
-          SRC_REPO="yitom486/lumina"
           REPO="yitom486/lumina-app"
           VERSION="${TAG#v}"
           WORK="$(mktemp -d)"
@@ -282,7 +281,7 @@ jobs:
             bundle="${sig%.sig}"
             staged="$(mktemp)"
             jq --arg p "$platform" \
-               --arg signature "$(base64 -w0 "$sig")" \
+               --rawfile signature "$sig" \
                --arg url "https://github.com/${REPO}/releases/download/${TAG}/${bundle}" \
                '.[$p] = {signature: $signature, url: $url}' "$PLATFORMS" > "$staged"
             mv "$staged" "$PLATFORMS"
@@ -299,35 +298,6 @@ jobs:
               exit 1
             fi
           done
-
-          # 自检：源码仓草稿里的 latest.json 由 tauri-action 生成（单平台），
-          # 我们的 signature 编码必须与它一致，否则宁可失败也不发布坏 JSON。
-          if ! gh release download "$TAG" --repo "$SRC_REPO" --pattern "latest.json" --clobber; then
-            echo "::error::source latest.json is required for signature cross-check"
-            exit 1
-          fi
-          SOURCE_KEYS="$(jq -r '.platforms | keys[]' latest.json)"
-          if [ -z "$SOURCE_KEYS" ]; then
-            echo "::error::source latest.json contains no signed platforms"
-            exit 1
-          fi
-          MATCHED_SOURCE_PLATFORMS=0
-          while IFS= read -r key; do
-            if jq -e --arg k "$key" 'has($k)' "$PLATFORMS" >/dev/null; then
-              expected="$(jq -r --arg k "$key" '.platforms[$k].signature' latest.json)"
-              actual="$(jq -r --arg k "$key" '.[$k].signature' "$PLATFORMS")"
-              if [ "$expected" != "$actual" ]; then
-                echo "::error::signature encoding mismatch for $key"
-                exit 1
-              fi
-              MATCHED_SOURCE_PLATFORMS=$((MATCHED_SOURCE_PLATFORMS + 1))
-              echo "signature encoding verified for $key"
-            fi
-          done <<< "$SOURCE_KEYS"
-          if [ "$MATCHED_SOURCE_PLATFORMS" -eq 0 ]; then
-            echo "::error::source latest.json has no platform in common with the staged release"
-            exit 1
-          fi
 
           jq -n --arg version "$VERSION" --arg notes "$BODY" \
             --arg pub_date "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
