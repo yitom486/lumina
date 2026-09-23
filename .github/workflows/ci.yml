@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
     inputs:
       e2e_url:
-        description: "Optional public embeddable YouTube URL for online E2E (defaults to the fixture video)"
+        description: "Optional public direct MP4 URL for online playback E2E (defaults to the fixture video)"
         required: false
         default: ""
 
@@ -122,7 +122,7 @@ jobs:
           retention-days: 14
 
   online-e2e:
-    name: Online source E2E (network)
+    name: Online playback E2E (network)
     runs-on: windows-latest
 
     steps:
@@ -156,6 +156,6 @@ jobs:
 
       - name: Run online E2E (no cookies)
         working-directory: apps/desktop/src-tauri
-        run: cargo test -p lumina-ytdl --lib public_youtube_embedded_client_resolves_without_cookies -- --ignored --nocapture
+        run: cargo test --test online_source_e2e -- --nocapture
         env:
           LUMINA_ONLINE_E2E_URL: ${{ inputs.e2e_url }}

@@ -17,7 +17,7 @@
     "lint:all": "bun run lint && bun run lint:ox",
     "check:rust": "cargo fmt --all --check && cargo check --workspace --all-targets && cargo test --workspace --lib && cargo clippy --workspace --all-targets -- -D warnings",
     "test": "cd apps/desktop && bun run test",
-    "test:e2e:online": "cargo test --manifest-path Cargo.toml -p lumina-ytdl --lib public_youtube_embedded_client_resolves_without_cookies -- --ignored --nocapture",
+    "test:e2e:online": "cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml --test online_source_e2e -- --nocapture",
     "test:e2e:deterministic": "node scripts/test-deterministic-e2e.mjs",
     "test:e2e:acp-mcp-priority": "node scripts/test-acp-mcp-tool-priority.mjs",
     "test:unit": "cd apps/desktop && bun run test:unit",

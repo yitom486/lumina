@@ -74,18 +74,8 @@ fn run_dump_json(
     url: &str,
     cookies: &crate::cookies::CookieSettings,
 ) -> Result<String, YtdlError> {
-    run_dump_json_with_args(cli, url, cookies, &[])
-}
-
-fn run_dump_json_with_args(
-    cli: &Path,
-    url: &str,
-    cookies: &crate::cookies::CookieSettings,
-    extra_args: &[&str],
-) -> Result<String, YtdlError> {
     let mut cmd = command(cli);
     cmd.args(["-J", "--no-playlist", "--no-warnings", "--skip-download"]);
-    cmd.args(extra_args);
     crate::cookies::apply_to_command(&mut cmd, cookies)?;
     cmd.arg(url);
 
@@ -314,40 +304,6 @@ fn is_hls_format(f: &YtdlFormat) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    /// Real network smoke test for online resolve.
-    ///
-    /// Uses YouTube's embedded player client because public CI runners can be
-    /// challenged as bots by the default client. This client only serves
-    /// embeddable videos, so keep the fixture video public and embeddable.
-    /// It intentionally uses `CookieSettings::default()` so a passing result
-    /// proves that metadata and a playable target resolve without login state.
-    /// (M7: the libmpv demux half moved out — this crate must not depend on
-    /// player; demux is covered by the player's own baseline test.)
-    #[test]
-    #[ignore = "requires network and local yt-dlp"]
-    fn public_youtube_embedded_client_resolves_without_cookies() {
-        const DEFAULT_PUBLIC_VIDEO: &str = "https://www.youtube.com/watch?v=aqz-KE-bpKQ";
-
-        let page_url = std::env::var("LUMINA_ONLINE_E2E_URL")
-            .ok()
-            .filter(|value| !value.trim().is_empty())
-            .unwrap_or_else(|| DEFAULT_PUBLIC_VIDEO.to_string());
-        let cli = require_cli().expect("online E2E requires a local yt-dlp executable");
-        let raw = run_dump_json_with_args(
-            &cli,
-            &page_url,
-            &crate::cookies::CookieSettings::default(),
-            &["--extractor-args", "youtube:player_client=web_embedded"],
-        )
-        .expect("public embeddable YouTube metadata should resolve without cookies");
-        let parsed: YtdlJson = serde_json::from_str(&raw).expect("yt-dlp should return valid JSON");
-        let resolved = map_result(parsed, "youtube:e2e");
-        let target = crate::playback::play_target(&resolved, &page_url, None)
-            .expect("resolved public video should have a playable format");
-        assert!(!target.format_id.trim().is_empty());
-        assert!(!target.page_url.trim().is_empty());
-    }
 
     #[test]
     fn map_fixture_chapters_and_formats() {
