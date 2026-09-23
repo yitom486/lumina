@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.4.1 — 三端发布与在线播放回归修复
+
+- 修复 Linux/macOS Release 中 Windows 专用播放器辅助函数触发 `-D warnings` 构建失败的问题。
+- 增加在线播放真实链路 E2E：验证 yt-dlp 解析、libmpv 打开在线流并推进播放位置。
+- 发布流程先完成确定性 E2E 与在线播放 E2E，再并行构建 Windows、macOS、Linux；三端安装包、updater 签名和 `latest.json` 全部校验后才公开发布。
+
 ## 0.4.0 — 多智能体 ACP（切换隔离 + resume 优先 + SQLite 会话库）
 
 ### Agent 全家桶
